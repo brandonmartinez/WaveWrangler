@@ -8,15 +8,15 @@ struct ShowSchema4MigrationTests {
     static let golden = Data(#"{"checksum":"sha256:0d2778357123b3083227cb2d4beda89d781bf20a74b920dd3bb0589b8cb5bfae","format":"com.brandonmartinez.wavewrangler.show","payload":{"episodes":[],"history":{"cursor":0,"entries":[]},"schemaVersion":4,"show":{"id":"00000000-0000-4000-8000-000000000401","notes":"","title":"Schema 4 golden"},"speakers":[]},"publicationID":"00000000-0000-4000-8000-000000000402","revision":7,"schemaVersion":4}"#.utf8)
 
     @Test func oldDocumentsRequireConsentAndPreserveEveryValue() throws {
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 4, minimum: 5)) {
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 4, minimum: 6)) {
             try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Self.golden)
         }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(Self.golden)
-        #expect(upgraded.payload.schemaVersion == 5)
+        #expect(upgraded.payload.schemaVersion == SchemaVersion.show)
         #expect(upgraded.revision == 7)
         #expect(upgraded.payload.show.title == "Schema 4 golden")
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: upgraded.payload).isEmpty)
-        #expect(ShowSchemaMigration.steps.map(\.fromSchema) == [1, 2, 3, 4])
+        #expect(ShowSchemaMigration.steps.map(\.fromSchema) == [1, 2, 3, 4, 5])
     }
 
     @Test func markersAndSourceBoundTextRoundTripAndCannotBeMislabeledAsSchema4() throws {
@@ -45,7 +45,7 @@ struct ShowSchema4MigrationTests {
         try Self.golden.write(to: url)
         let receipt = try DocumentMigrator.show(publisher: rig.publisher).migrate(url, key: key)
         #expect(try Data(contentsOf: receipt.backup) == Self.golden)
-        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url)).payload.schemaVersion == 5)
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url)).payload.schemaVersion == SchemaVersion.show)
     }
 
     @Test func existingFileLocalCorrectionsSurviveMigrationUnchanged() throws {
@@ -63,6 +63,6 @@ struct ShowSchema4MigrationTests {
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(bytes).payload
         #expect(upgraded.episodes[0].alignment == old.episodes[0].alignment)
         #expect(upgraded.episodes[0].cleanup == nil)
-        #expect(upgraded.schemaVersion == 5)
+        #expect(upgraded.schemaVersion == SchemaVersion.show)
     }
 }

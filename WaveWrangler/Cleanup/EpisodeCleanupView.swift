@@ -32,6 +32,7 @@ struct EpisodeCleanupContent: View {
                 transport
                 navigation
                 markerControls
+                FillerTimingReviewSummary(model: model)
                 VStack(alignment: .leading, spacing: 6) {
                     Button {
                         showsPrecisionRange.toggle()
@@ -72,7 +73,7 @@ struct EpisodeCleanupContent: View {
                         .wwFont(.caption)
                         .accessibilityIdentifier("ww.cleanup.status")
                 }
-                Text("Recognizer timing is approximate, not cut-qualified. Filler and silence cut acceptance will be added separately; this view never applies a cut.")
+                Text("Recognizer timing is approximate, not cut-qualified. Filler review captures audible-word bounds only; this view never applies a cut.")
                     .wwFont(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -85,7 +86,7 @@ struct EpisodeCleanupContent: View {
         }
         .wwFont(.body)
         .onAppear { state.cleanupModel = model }
-        .task(id: state.store.modelGeneration) { await model.refresh() }
+        .task(id: state.store.modelGeneration) { await model.refresh(skippingReviewOnlyChange: true) }
         .onDisappear {
             model.cancel()
             if state.cleanupModel === model { state.cleanupModel = nil }
@@ -399,6 +400,7 @@ struct EpisodeCleanupContent: View {
                     Button("Details", systemImage: "info.circle") {
                         model.selectedSpeaker = lane.speaker
                         model.selectedWord = nil
+                        model.selectedFillerID = nil
                         state.inspectorPresented = true
                     }
                     .buttonStyle(.plain)
@@ -420,11 +422,16 @@ struct EpisodeCleanupContent: View {
                     guard model.canNavigate else { return }
                     model.selectedSpeaker = lane.speaker
                     model.selectedWord = nil
+                    model.selectedFillerID = nil
                     model.timelineClick(at: $0)
                 }
                 .frame(height: model.laneHeight)
+                .overlay {
+                    FillerTimingOverlay(model: model, reviews: model.visibleFillers(for: lane))
+                }
+                .accessibilityElement(children: .contain)
                 .accessibilityLabel("\(lane.name), aligned Primary waveform")
-                .accessibilityValue("Measured Primary channel; hatched intervals have no accepted timing. Click to seek or place the selected In/Out marker. No track dragging.")
+                .accessibilityValue("Measured Primary channel; hatched intervals have no accepted timing. Click to seek or set In/Out. Dotted filler rails have independent timing handles; no track dragging or cuts.")
                 .accessibilityIdentifier("ww.cleanup.waveform.\(lane.id)")
                 if let transcript = model.transcript(for: lane) {
                     let visibleWords = model.visibleWords(for: lane)
@@ -574,6 +581,24 @@ struct CleanupInspectorView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Speaker & Word").wwFont(.headline)
+            if let review = model.selectedFiller {
+                FillerTimingToolbar(model: model, reviewID: review.id, accessibilityPrefix: "ww.cleanup.filler.inspector")
+                DisclosureGroup("Captured review origin") {
+                    Text(review.origin == .detected ? "Automatically detected" : "Manually proposed")
+                    Text("Source: \(review.primary.sourceID.description)")
+                    Text("Source identity: \(review.sourceIdentity)")
+                    Text("Alignment revision: \(review.alignmentRevision)")
+                    if let transcript = review.transcriptID { Text("Transcript: \(transcript)") }
+                    if let word = review.word { Text("Word: \(word.id)") }
+                    if let recipe = review.modelRecipe { Text(recipe) }
+                    if let recipe = review.detectorRecipe { Text(recipe) }
+                    Text("Initial source frames: [\(review.initialBounds.sourceStartFrame), \(review.initialBounds.sourceEndFrame))")
+                    Text(String(format: "Initial aligned bounds: %.6f–%.6f s",
+                                review.initialBounds.alignedStart, review.initialBounds.alignedEnd))
+                }
+                .font(.caption).textSelection(.enabled)
+                Divider()
+            }
             if let lane = model.plan?.lanes.first(where: { $0.speaker == model.selectedSpeaker }) {
                 Text(lane.name).wwFont(.headline)
                 Text(lane.sourceName).textSelection(.enabled)

@@ -103,7 +103,7 @@ Full-length review reports progress and can be cancelled without accepting any p
 Listening and derived aligned audio use the same bounded, pitch-preserving audio tiles, not the
 ordinary pitch-changing affine resampler. Source-region processing origins and shared crossfades
 avoid restarting audio phase at playback-window boundaries. Remove file-local corrections before
-editing recorder-group timing. Shows now use schema 5; older shows require the normal backed-up
+editing recorder-group timing. Shows now use schema 6; older shows require the normal backed-up
 migration before saving.
 
 In a recording's inspector, **Prefer this recorder as timing reference** marks an explicit preference
@@ -166,7 +166,7 @@ the preceding hours. Other codecs retain the first-10-source-minutes limit (incl
 offsets); later windows are explicitly refused until exact seeking is established. No persistent
 waveform cache is created; when a wider tile reaches a codec preview limit, a narrower exact
 window is tried before reporting unavailability. Local transcription is available in **Edit & Cleanup**;
-protected filler-word editing remains separate, incomplete MVP work.
+protected filler-word cuts remain separate, incomplete MVP work.
 
 ## Edit & Cleanup: transcription and episode boundaries
 
@@ -299,9 +299,54 @@ Results publish as one undoable episode update. Cancellation or changed document
 publishes no partial transcript. Existing transcripts and markers use the ordinary backed-up schema
 upgrade and Save/autosave path.
 
-**No filler/silence suggestions or cuts are applied in this increment.** Recognizer timestamps are
-approximate, not cut-qualified. Reviewed configurable filler phrases, all-speaker long-silence
-detection, adjustable cut windows, common-timeline shortening and speaker-only silence are next.
+### Nondestructive filler timing review
+
+New episode transcription automatically proposes **audible-word** timing reviews for exact `um`,
+`uh`, `erm` and `er` tokens (case/edge-punctuation tolerant). **Find in saved transcript** adds these
+suggestions to an existing current transcript without inference. It is an explicit undoable action,
+not an edit triggered by merely opening the view; undo does not immediately regenerate suggestions.
+Multiword phrases, lexical `like`, substrings and untimed text are not automatically marked.
+The detector can miss fillers the recognizer omits or rewrites, and can flag mistaken recognition.
+
+Dotted start/end rails and a lightly highlighted region appear only in the relevant speaker's
+Primary waveform. Click a region for its compact toolbar; drag the start and end handles independently,
+or focus a handle and use Left/Right for 1 ms steps. Numeric aligned-second fields and separate 1 ms
+nudge buttons are available in the toolbar and inspector. Drag previews commit once on release.
+At dense zoom levels, lightweight rails replace individual controls; click a marked interval to
+zoom in and inspect it, or zoom in manually for draggable handles.
+Bounds cannot cross, leave the analyzed/working range, or cross unsupported accepted timing,
+source occurrences or epochs. Adaptive timing and affine rates use the existing source-frame mapping;
+there is no amplitude snapping or new alignment.
+
+**Word** auditions the interval, **With context** adds up to 0.5 seconds of connected supported audio
+on each side, and **Loop** repeats that audition until stopped (unchecking it finishes the current pass).
+Audition uses the existing bounded
+Primary-only playback (and current speaker mute settings), never full-recording decode or a new asset.
+Changing a review stops playback. Mark **Reviewed unchanged**, adjust its bounds (**Adjusted**),
+choose **Not a filler**, or return it to **Needs review**. **Revert to detected** restores the immutable
+recognizer interval and pending state without changing raw `TranscriptWord` text/timing.
+
+To capture omissions, select a word and choose **Mark missed filler**, or select a speaker waveform
+and use that button to create a clearly **Manual** 200 ms starting interval at the playhead. Refine it
+by listening; this is a human proposal, never a fabricated detection. Untimed words acquire no automatic
+rails. Both initial manual placement and later adjustments retain original-source frame anchors.
+
+All reviews use ordinary show Save/autosave and Undo/Redo, with immutable source identity, Primary/channel,
+source rate, alignment revision, transcript/word identity and captured model/detector recipe where
+available. Transcription publishes every speaker's text and suggestions in one undoable update and
+retains earlier reviews. Re-transcription, same-ID word edits, changed sources/Primaries or accepted
+alignment do not silently overwrite, retime or reassociate human judgments: incompatible reviews stay
+in **Saved reviews and retained history**, inspectable but inactive, with no rails, editing or audition.
+Reviews outside new Tracks In/Out are similarly inactive; restoring their exact original dependencies
+can reactivate them. Manual proposals without a transcript are source/alignment-bound only.
+**Refresh** and returning to the view reverify source access, including after a review-only edit.
+Schema 5 and earlier shows require the normal explicit-consent, exact-byte-backed-up migration to
+schema 6; migration itself invents no reviews and preserves existing text and timing.
+
+**This is timing review only, not cut acceptance.** Human judgments are useful reference data, not proof
+of phonetic ground truth. No deletion, ripple editing, silence detection, exports or uploads are added.
+Reviewed configurable filler phrases, all-speaker long-silence detection, adjustable editorial cut
+windows, common-timeline shortening and speaker-only silence are future work.
 Speaker-only silence must keep existing overlap in place, not slide later speech earlier.
 
 ## Local development builds and file access

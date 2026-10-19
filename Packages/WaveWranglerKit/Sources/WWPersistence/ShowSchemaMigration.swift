@@ -1,11 +1,12 @@
 import Foundation
 import WWCore
 
-/// Show schema migrations (C5): 1 through 4 to current.
+/// Show schema migrations (C5): 1 through 5 to current.
 ///
 /// Schema 4 adds source-local timing corrections; a schema 3 document cannot contain them.
 /// All previous schemas migrate directly to current, preserving the original bytes in a backup.
 /// Schema 5 adds cleanup state; schema 4 documents retain their timing unchanged and gain no transcript or markers.
+/// Schema 6 adds optional filler timing reviews, leaving existing transcripts and timing untouched.
 ///
 /// **2 → 3** (WW-020): schema 3 adds the optional `Episode.alignment` (versioned positive maps). A schema 2 show
 /// has none, so the upgrade sets `schemaVersion` to 3 and changes nothing else; a schema 2 file that already
@@ -31,9 +32,9 @@ import WWCore
 /// (retained checkpoints, unpublished edit checkpoints) offerable as whole values.
 public enum ShowSchemaMigration {
     /// Older show schemas this build can migrate.
-    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4]
+    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4, 5]
 
-    /// The registered migration steps (schemas 1 through 4 to current). Each goes straight to the
+    /// The registered migration steps (schemas 1 through 5 to current). Each goes straight to the
     /// current schema, so a schema 1 show is never published as an intermediate schema 2 revision.
     public static var steps: [MigrationStep<ShowDocumentModel>] {
         [
@@ -69,6 +70,14 @@ public enum ShowSchemaMigration {
                 },
                 expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
             ),
+            MigrationStep(
+                fromSchema: 5,
+                migrate: { data in
+                    let decoded = try decodeSchema5(data)
+                    return (decoded.payload, decoded.revision)
+                },
+                expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
+            ),
         ]
     }
 
@@ -85,7 +94,26 @@ public enum ShowSchemaMigration {
             return try decodeSchema3(data)
         } catch .unsupportedOlderSchema(found: 4, minimum: _) {
             return try decodeSchema4(data)
+        } catch .unsupportedOlderSchema(found: 5, minimum: _) {
+            return try decodeSchema5(data)
         }
+    }
+
+    static func decodeSchema5(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
+        let format = DocumentFormat(identifier: DocumentFormat.show.identifier,
+            filenameExtension: DocumentFormat.show.filenameExtension,
+            currentSchemaVersion: 5, minimumReadableSchemaVersion: 5)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>(format: format) { payload, schema in
+            var issues = payload.validationIssues(expectedSchemaVersion: schema) + payload.embeddedMapIssues()
+            if payload.episodes.contains(where: { $0.cleanup?.fillerReviews != nil }) {
+                issues.append(.init(.invalidCleanup, "schema 5 cannot contain filler timing reviews"))
+            }
+            return issues
+        }
+        let decoded = try coder.decode(data)
+        var upgraded = decoded.payload
+        upgraded.schemaVersion = SchemaVersion.show
+        return DecodedDocument(payload: upgraded, publication: decoded.publication)
     }
 
     static func decodeSchema4(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {

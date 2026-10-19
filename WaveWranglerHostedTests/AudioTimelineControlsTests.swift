@@ -39,6 +39,20 @@ struct AudioTimelineControlsTests {
         #expect(image.height <= 80)
     }
 
+    @Test(arguments: [320.0, 420.0, 720.0])
+    func fillerReviewSummaryFitsTheAvailableColumn(_ width: Double) throws {
+        let episode = Episode(title: "Synthetic")
+        let store = ShowDocumentStore(model: .init(show: Show(title: "Synthetic"), episodes: [episode]))
+        let model = EpisodeCleanupModel(state: ShowWindowState(store: store), episodeID: episode.id)
+        defer { model.cancel() }
+        let renderer = ImageRenderer(content: FillerTimingReviewSummary(model: model))
+        renderer.scale = 1
+        renderer.proposedSize = ProposedViewSize(width: width, height: nil)
+        let image = try #require(renderer.cgImage)
+        #expect(Double(image.width) <= width + 1, "Review controls must wrap in a narrow editor")
+        #expect(image.height <= 180)
+    }
+
     @Test func transportButtonsReceiveMouseInputWithoutActivatingTheDesktop() async throws {
         var calls = [0, 0, 0, 0]
         var sought: Double?
@@ -193,6 +207,9 @@ struct AudioTimelineControlsTests {
         try await host.click(
             CGPoint(x: sliders[1].minX + sliders[1].width * 0.8, y: sliders[1].midY))
         #expect(model.laneHeight > 130)
+        // Leave room for both speaker controls below the new filler-review panel.
+        try await host.click(
+            CGPoint(x: sliders[1].minX + sliders[1].width * 0.2, y: sliders[1].midY))
         let fit = try #require(
             host.controlFrames.first {
                 $0.width < 60 && abs($0.midY - sliderRow) < 3

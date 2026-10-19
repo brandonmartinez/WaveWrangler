@@ -90,10 +90,13 @@ public struct SpeakerTranscript: Sendable, Equatable, Codable, Identifiable {
 public struct EpisodeCleanup: Sendable, Equatable, Codable {
     public var workingRange: EpisodeWorkingRange?
     public var transcripts: [SpeakerTranscript]
+    public var fillerReviews: [FillerTimingReview]?
 
-    public init(workingRange: EpisodeWorkingRange? = nil, transcripts: [SpeakerTranscript] = []) {
+    public init(workingRange: EpisodeWorkingRange? = nil, transcripts: [SpeakerTranscript] = [],
+                fillerReviews: [FillerTimingReview]? = nil) {
         self.workingRange = workingRange
         self.transcripts = transcripts
+        self.fillerReviews = fillerReviews
     }
 
     public var isValid: Bool {
@@ -101,6 +104,27 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
             && transcripts.allSatisfy(\.isValid)
             && Set(transcripts.map(\.speaker)).count == transcripts.count
             && Set(transcripts.map(\.id)).count == transcripts.count
+            && (fillerReviews?.count ?? 0) <= 100_000
+            && fillerReviews?.allSatisfy(\.isValid) != false
+            && Set((fillerReviews ?? []).map(\.id)).count == (fillerReviews?.count ?? 0)
+    }
+
+    /// Existing decisions, including rejections and stale history, are never overwritten by another scan.
+    public func proposingFillers() -> Self {
+        var result = self
+        var reviews = fillerReviews ?? []
+        let existing = Set(reviews.compactMap { review -> String? in
+            guard let transcript = review.transcriptID, let word = review.word?.id else { return nil }
+            return "\(transcript)/\(word)"
+        })
+        for transcript in transcripts {
+            reviews += FillerTimingReview.detections(in: transcript).filter {
+                guard let word = $0.word else { return false }
+                return !existing.contains("\(transcript.id)/\(word.id)")
+            }
+        }
+        if !reviews.isEmpty { result.fillerReviews = reviews }
+        return result
     }
 }
 

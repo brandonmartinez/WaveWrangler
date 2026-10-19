@@ -47,6 +47,14 @@ final class EpisodeCleanupModel {
     var outText = ""
     var selectedSpeaker: SpeakerID?
     var selectedWord: TranscriptWord?
+    var selectedFillerID: UUID?
+    var fillerStartText = ""
+    var fillerEndText = ""
+    var loopsFillerAudition = false
+    @ObservationIgnored var isEditingFillerReview = false
+    @ObservationIgnored var fillerPublicationGeneration: UInt64?
+    @ObservationIgnored var fillerWordIndexGeneration: UInt64?
+    @ObservationIgnored var fillerWordIndex: [UUID: [UUID: TranscriptWord]] = [:]
     var isBusy = false
     var isRefreshing = false
     var transcriptionStatus: CleanupTranscriptionStatus?
@@ -145,6 +153,7 @@ final class EpisodeCleanupModel {
 
     func modelDidChange() {
         stopPlayback()
+        if isEditingFillerReview { return }
         let sameAudio = waveformEpisode?.sources == episode?.sources
             && waveformEpisode?.alignment == episode?.alignment
             && waveformEpisode?.speakerAssignments == episode?.speakerAssignments
@@ -172,11 +181,14 @@ final class EpisodeCleanupModel {
         isBusy = false
         refreshGeneration = UUID()
         isRefreshing = false
+        fillerPublicationGeneration = nil
         cancelWaveforms()
         stopPlayback()
     }
 
-    func refresh() async {
+    func refresh(skippingReviewOnlyChange: Bool = false) async {
+        if skippingReviewOnlyChange, fillerPublicationGeneration == state.store.modelGeneration { return }
+        fillerPublicationGeneration = nil
         transcriptionSettings.refreshAvailability()
         let token = UUID()
         refreshGeneration = token
@@ -213,6 +225,7 @@ final class EpisodeCleanupModel {
             isRefreshing = false
             loadWaveforms()
             if overviewStrokes.isEmpty { loadWaveforms(overview: true) }
+            updateFillerDrafts()
         } catch is CancellationError {
             return
         } catch {
@@ -292,12 +305,7 @@ final class EpisodeCleanupModel {
                 try Task.checkCancellation()
                 guard generation == token, state.store.model == snapshot, state.canEdit,
                       document === state.store.document else { throw CancellationError() }
-                var cleanup = snapshot.episode(episodeID)?.cleanup ?? EpisodeCleanup()
-                cleanup.transcripts = result
-                let updated = try snapshot.settingCleanup(cleanup, in: episodeID)
-                isPublishing = true
-                defer { isPublishing = false }
-                guard state.store.applyReplacement("Transcribe episode", expecting: snapshot, model: updated, afterChange: { _ in })
+                guard try publishTranscripts(result, expecting: snapshot)
                 else { throw CancellationError() }
                 message = "Transcribed \(result.count) speaker\(result.count == 1 ? "" : "s") locally. Word timing is approximate; no cuts were applied."
             } catch is CancellationError {
@@ -309,6 +317,16 @@ final class EpisodeCleanupModel {
                 }
             }
         }
+    }
+
+    /// Called only after all speakers and live source/timing verification have finished.
+    func publishTranscripts(_ result: [SpeakerTranscript], expecting snapshot: ShowDocumentModel) throws(DomainError) -> Bool {
+        var cleanup = snapshot.episode(episodeID)?.cleanup ?? EpisodeCleanup()
+        cleanup.transcripts = result
+        let updated = try snapshot.settingCleanup(cleanup.proposingFillers(), in: episodeID)
+        isPublishing = true
+        defer { isPublishing = false }
+        return state.store.applyReplacement("Transcribe episode", expecting: snapshot, model: updated, afterChange: { _ in })
     }
 
     private func reportProgress(token: UUID, update: CleanupTranscriptionProgress) {
@@ -499,10 +517,15 @@ final class EpisodeCleanupModel {
     }
 
     func play() {
+        play(interval: nil, loop: false)
+    }
+
+    func play(interval: ClosedRange<Double>?, loop: Bool) {
         guard canNavigate, let document = state.store.document else { return }
         stopPlayback()
-        let start = playhead >= bounds.upperBound ? bounds.lowerBound : max(bounds.lowerBound, playhead)
-        let end = bounds.upperBound
+        let start = interval?.lowerBound
+            ?? (playhead >= bounds.upperBound ? bounds.lowerBound : max(bounds.lowerBound, playhead))
+        let end = interval?.upperBound ?? bounds.upperBound
         let snapshot = state.store.model
         let token = UUID()
         playbackGeneration = token
@@ -546,7 +569,12 @@ final class EpisodeCleanupModel {
                 guard playbackGeneration == token else { return }
                 playhead = end
                 stopPlayback(updatePlayhead: false)
-                transportMessage = "Reached the end of the aligned Primary timeline."
+                if loop, loopsFillerAudition, state.store.model == snapshot {
+                    play(interval: start...end, loop: true)
+                } else {
+                    transportMessage = interval == nil
+                        ? "Reached the end of the aligned Primary timeline." : "Finished filler timing audition."
+                }
             } catch is CancellationError {
                 return
             } catch {
@@ -640,6 +668,9 @@ final class EpisodeCleanupModel {
         stopPlayback()
         selectedSpeaker = speaker
         selectedWord = word
+        selectedFillerID = fillerReviews.first { $0.speaker == speaker && $0.word?.id == word.id
+            && fillerIssue($0) == nil }?.id
+        updateFillerDrafts()
         state.inspectorPresented = true
         if let start = word.alignedStart { playhead = start }
     }

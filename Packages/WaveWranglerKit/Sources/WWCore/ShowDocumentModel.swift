@@ -15,7 +15,8 @@ public enum SchemaVersion {
     /// schema bump (pinned by `AlignmentPersistenceTests.schemaVersionsArePinned`).
     /// 4: human-accepted file-local pitch-preserving timing beside the unchanged recorder maps.
     /// 5: shared episode in/out markers and source-bound local transcripts.
-    public static let show = 5
+    /// 6: nondestructive filler audible-word timing reviews with immutable detection provenance.
+    public static let show = 6
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.

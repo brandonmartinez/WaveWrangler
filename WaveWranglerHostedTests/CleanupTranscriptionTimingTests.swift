@@ -1,12 +1,190 @@
+import AppKit
 import Foundation
 import Testing
 import WWCore
+import WWPersistence
 @testable import WWSpeech
 @testable import WaveWrangler
 
 @MainActor
 @Suite("Sample-exact cleanup transcription windows", .serialized)
 struct CleanupTranscriptionTimingTests {
+    @Test func fillerReviewsPublishAtomicallySaveReopenAndKeepOldJudgmentsAsHistory() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        cleanup.saveRange(inValue: 0, outValue: 5)
+        await cleanup.refresh()
+        try #require(cleanup.plan?.isReady == true)
+        let originalAudio = try f.files.map { try Data(contentsOf: $0) }
+        let snapshot = f.document.store.model
+        let transcripts = try await f.runtime.transcribeCleanup(
+            model: snapshot, episode: f.model.episodeID, modelRevision: "synthetic-filler-review",
+            transcribeWindow: { _ in PCMTranscript(segments: [
+                PCMSegment(text: "Um,", startSeconds: 1, endSeconds: 1.25),
+                PCMSegment(text: "uh", startSeconds: nil, endSeconds: nil),
+            ]) }, progress: { _ in })
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.removeAllActions()
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        undo.beginUndoGrouping()
+        #expect(try cleanup.publishTranscripts(transcripts, expecting: snapshot))
+        undo.endUndoGrouping()
+        let published = f.document.store.model
+        #expect(cleanup.fillerReviews.count == 2)
+        #expect(cleanup.fillerReviews.allSatisfy { $0.origin == .detected && $0.humanBounds == nil })
+        undo.undo()
+        #expect(f.document.store.model == snapshot, "All speakers' transcripts and suggestions undo together")
+        undo.redo()
+        #expect(f.document.store.model == published)
+        await cleanup.refresh()
+        let review = try #require(cleanup.fillerReviews.first)
+        undo.beginUndoGrouping()
+        cleanup.setFillerBounds(review.id, start: 0.98, end: 1.27)
+        undo.endUndoGrouping()
+        #expect(cleanup.error == nil)
+        let adjusted = f.document.store.model
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        #expect(try coder.decode(Data(contentsOf: #require(f.document.fileURL))).payload == adjusted)
+        #expect(f.document.verifiedModel == adjusted)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originalAudio)
+        do {
+            let raw = try NSDocumentController.shared.makeDocument(
+                withContentsOf: #require(f.document.fileURL), ofType: DocumentTypes.show)
+            let reopened = try #require(raw as? ShowDocument)
+            defer { reopened.close() }
+            #expect(reopened !== f.document)
+            #expect(reopened.store.model == adjusted && reopened.verifiedModel == adjusted)
+            #expect(!reopened.isDocumentEdited && reopened.status.formatUpdate == nil)
+        }
+        var replacement = transcripts
+        for index in replacement.indices { replacement[index].id = UUID() }
+        undo.beginUndoGrouping()
+        #expect(try cleanup.publishTranscripts(replacement, expecting: adjusted))
+        undo.endUndoGrouping()
+        let historical = try #require(cleanup.fillerReviews.first)
+        #expect(historical == adjusted.episodes[0].cleanup?.fillerReviews?.first)
+        #expect(cleanup.fillerIssue(historical) != nil)
+        #expect(cleanup.fillerReviews.count == 4, "Old adjusted judgments are retained beside new detections")
+        let beforeLateResult = f.document.store.model
+        #expect(try !cleanup.publishTranscripts(transcripts, expecting: snapshot))
+        #expect(f.document.store.model == beforeLateResult, "An obsolete job cannot overwrite new reviews")
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        #expect(try coder.decode(Data(contentsOf: #require(f.document.fileURL))).payload == beforeLateResult)
+        let raw = try NSDocumentController.shared.makeDocument(
+            withContentsOf: #require(f.document.fileURL), ofType: DocumentTypes.show)
+        let reopened = try #require(raw as? ShowDocument)
+        defer { reopened.close() }
+        let reopenedCleanup = EpisodeCleanupModel(state: ShowWindowState(store: reopened.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { reopenedCleanup.cancel() }
+        await reopenedCleanup.refresh()
+        try #require(reopenedCleanup.plan?.isReady == true, "\(reopenedCleanup.error ?? "")")
+        #expect(reopenedCleanup.fillerReviews.count == 4)
+        #expect(reopenedCleanup.fillerReviews.first == historical)
+        #expect(reopenedCleanup.fillerIssue(historical) != nil)
+        #expect(reopenedCleanup.fillerReviews.filter { reopenedCleanup.fillerIssue($0) == nil }.count == 2)
+    }
+
+    @Test func explicitRefreshAfterReviewReverifiesSourcesAndKeepsJudgments() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        await cleanup.refresh()
+        let lane = try #require(cleanup.plan?.lanes.first)
+        cleanup.addManualFiller(speaker: lane.speaker, start: 1, end: 1.2)
+        let review = try #require(cleanup.selectedFiller)
+        try #require(cleanup.fillerIssue(review) == nil)
+        try #require(cleanup.fillerPublicationGeneration == cleanup.state.store.modelGeneration)
+        let verified = cleanup.identities
+        await cleanup.refresh(skippingReviewOnlyChange: true)
+        #expect(cleanup.identities == verified, "An own-publication task does not dismiss the active review controls")
+        let source = try #require(f.files.first)
+        let original = try Data(contentsOf: source)
+        let replacement = try Data(contentsOf: #require(f.files.last))
+        try #require(replacement != original)
+        cleanup.cancelWaveforms()
+        try replacement.write(to: source)
+        await cleanup.refresh()
+        #expect(cleanup.fillerPublicationGeneration == nil)
+        #expect(cleanup.identities[lane.primary.sourceID] != review.sourceIdentity)
+        #expect(cleanup.fillerIssue(review) != nil, "Explicit Refresh must not reuse the review-only verification skip")
+        #expect(cleanup.visibleFillers(for: lane).isEmpty && !cleanup.canNavigate)
+        #expect(cleanup.fillerReviews == [review], "A failed source recheck retains the original human judgment")
+    }
+
+    @Test func fillerAuditionLoopsStopsWhenUncheckedAndCancelsOnReviewEdits() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        cleanup.saveRange(inValue: 0, outValue: 5)
+        await cleanup.refresh()
+        try #require(cleanup.plan?.isReady == true)
+        let before = f.document.store.model
+        let transcripts = try await f.runtime.transcribeCleanup(
+            model: before, episode: f.model.episodeID, modelRevision: "synthetic-audition",
+            transcribeWindow: { _ in PCMTranscript(segments: [
+                PCMSegment(text: "um", startSeconds: 1, endSeconds: 1.4),
+            ]) }, progress: { _ in })
+        try #require(try cleanup.publishTranscripts(transcripts, expecting: before))
+        await cleanup.refresh()
+        let review = try #require(cleanup.fillerReviews.first)
+        let interval = try #require(cleanup.fillerAuditionRange(review, context: 0.5))
+        #expect(interval.lowerBound == review.bounds.alignedStart - 0.5)
+        #expect(interval.upperBound == review.bounds.alignedEnd + 0.5)
+        let snapshot = f.document.store.model
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        cleanup.loopsFillerAudition = true
+        cleanup.auditionFiller(review.id, context: 0)
+        var reachedLaterAudio = false
+        var repeated = false
+        try await wait {
+            if cleanup.playhead > review.bounds.alignedStart + 0.15 { reachedLaterAudio = true }
+            if reachedLaterAudio && cleanup.isPlaying && cleanup.playhead < review.bounds.alignedStart + 0.1 {
+                repeated = true
+            }
+            return repeated || cleanup.error != nil
+        }
+        try #require(repeated && cleanup.error == nil, "\(cleanup.error ?? cleanup.transportMessage)")
+        cleanup.loopsFillerAudition = false
+        try await wait { !cleanup.isPlaying && !cleanup.isPreparingPlayback || cleanup.error != nil }
+        #expect(cleanup.error == nil)
+        #expect(cleanup.transportMessage == "Finished filler timing audition.")
+        #expect(f.document.store.model == snapshot, "Playback preferences and looping are not document edits")
+        cleanup.loopsFillerAudition = true
+        cleanup.auditionFiller(review.id)
+        try await wait { cleanup.isPlaying || cleanup.error != nil }
+        try #require(cleanup.error == nil && cleanup.isPlaying)
+        cleanup.setFillerBounds(review.id,
+            start: review.bounds.alignedStart - 0.01, end: review.bounds.alignedEnd + 0.01)
+        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback && cleanup.error == nil)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback, "A cancelled loop cannot restart after the edit")
+        #expect(cleanup.fillerReviews.first?.detectedBounds == review.detectedBounds)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
+        cleanup.setFillerBounds(review.id, start: review.bounds.alignedStart, end: review.bounds.alignedStart + 0.000001)
+        try #require(cleanup.error == nil)
+        cleanup.auditionFiller(review.id, context: 0)
+        #expect(cleanup.error?.contains("With context") == true)
+        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback,
+                "Sub-frame intervals report an error instead of pretending to play nothing")
+    }
+
     @Test(arguments: [148.874, 148.874229167, 1.0 / 48_000, -148.874, -86_400])
     func longFractionalTimelinesKeepExactThirtySecondLimits(_ start: Double) throws {
         let end = 4413.319
