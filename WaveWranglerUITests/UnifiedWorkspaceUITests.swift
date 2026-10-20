@@ -292,7 +292,8 @@ final class UnifiedWorkspaceUITests: XCTestCase {
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, scrollID: String = "ww.alignment.workspace") {
         let scroll = app.scrollViews[scrollID]
-        for _ in 0..<12 where !element.isHittable {
+        for _ in 0..<12 {
+            if element.isHittable, scroll.frame.contains(element.frame) { return }
             scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY > scroll.frame.midY ? -120 : 120)
         }
     }

@@ -106,15 +106,20 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(region.waitForExistence(timeout: 5), app.debugDescription)
         revealInWorkspace(region)
         let identifier = region.identifier
+        let zoom = app.sliders["ww.cleanup.zoom"]
+        revealInWorkspace(zoom)
+        zoom.adjust(toNormalizedSliderPosition: 1)
+        revealInWorkspace(region)
         let start = app.buttons[identifier + ".start"]
         let end = app.buttons[identifier + ".end"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5), app.debugDescription)
         let originalStart = try XCTUnwrap(Double((start.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
         let originalEnd = try XCTUnwrap(Double((end.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
         start.click()
         assertFillerToolbarCentered(over: region, within: waveform)
         end.click()
         assertFillerToolbarCentered(over: region, within: waveform)
-        region.click()
+        region.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).click()
         assertFillerToolbarCentered(over: region, within: waveform)
         let startPoint = start.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         startPoint.click(forDuration: 0.1, thenDragTo: startPoint.withOffset(CGVector(dx: -12, dy: 0)))

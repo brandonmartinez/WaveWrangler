@@ -32,6 +32,7 @@ struct FillerTimingOverlay: View {
                     AudioTimelineSelectionOverlay(listening: model.listening,
                         start: model.windowStart, duration: model.visibleDuration,
                         play: { model.auditionFiller(review.id, context: $0) }, cleanup: model)
+                        .zIndex(2)
                 }
             }
         }
