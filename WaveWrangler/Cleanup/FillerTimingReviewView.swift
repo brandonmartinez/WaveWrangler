@@ -178,7 +178,7 @@ private struct FillerTimingRegionView: View {
             .buttonStyle(.plain)
             .offset(x: frame.minX, y: frame.minY)
             .disabled(!model.canReviewFillers)
-            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(review.id))
+            .highPriorityGesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(review.id))
                 .onChanged { value in
                     if dragOrigin == nil {
                         dragOrigin = review.bounds

@@ -435,8 +435,10 @@ struct EpisodeCleanupModelTests {
         for distance in [12.0, 30.0, 60.0, 24.0] {
             let dx = direction * distance
             try await host.mouse([(.leftMouseDragged, CGPoint(x: point.x + dx, y: point.y))])
-            #expect(abs(try handle(endEdge).midX - original.midX - dx) < 1,
+            let moved = try handle(endEdge)
+            #expect(abs(moved.midX - original.midX - dx) < 1,
                     "The boundary must follow each pointer move, including reversing, while held down")
+            #expect(model.selectedFillerID == review.id, "Dragging must begin before mouse up")
             #expect(try handle(!endEdge) == stationary, "The other boundary must not move")
             #expect(model.state.store.model == snapshot, "A preview is not a saved timing edit")
             #expect(model.state.store.modelGeneration == generation)
