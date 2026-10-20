@@ -42,9 +42,10 @@ struct AudioTimelineScrollSurface: NSViewRepresentable {
             removeMonitor()
             guard window != nil else { return }
             monitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
-                MainActor.assumeIsolated {
-                    self?.handleScroll(event) == true ? nil : event
+                let consumed = MainActor.assumeIsolated {
+                    self?.handleScroll(event) == true
                 }
+                return consumed ? nil : event
             }
         }
 
