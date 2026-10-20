@@ -116,7 +116,8 @@ struct AudioTimelineNavigation: View {
     private var zoomControls: some View {
         HStack(spacing: 5) {
             Image(systemName: "minus.magnifyingglass")
-            Slider(
+            NativeTimelineSlider(
+                title: "Horizontal zoom", identifier: "\(prefix).zoom",
                 value: Binding(
                     get: {
                         AlignmentWaveformProjection.zoomLevel(
@@ -126,13 +127,9 @@ struct AudioTimelineNavigation: View {
                         if let value = AlignmentWaveformProjection.zoomDuration(
                             for: $0, maximum: maximumDuration) { duration = value }
                     }
-                ), in: 0...1, onEditingChanged: zoomEditing
-            ) { Text("Horizontal zoom") }
+                ), bounds: 0...1, editingChanged: zoomEditing)
             .frame(minWidth: 90, maxWidth: 220)
             .disabled(!canNavigate)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Horizontal zoom")
-            .accessibilityIdentifier("\(prefix).zoom")
             Image(systemName: "plus.magnifyingglass")
             Text(AlignmentPresentation.formatTime(duration))
                 .font(.caption).monospacedDigit().frame(minWidth: 54)
@@ -150,12 +147,10 @@ struct AudioTimelineNavigation: View {
     private var heightControls: some View {
         HStack(spacing: 5) {
             Image(systemName: "waveform")
-            Slider(value: $laneHeight, in: 64...220) { Text("Track height") }
+            NativeTimelineSlider(title: "Track height", identifier: "\(prefix).laneHeight",
+                                 value: $laneHeight, bounds: 64...220)
                 .frame(minWidth: 70, maxWidth: 130)
                 .disabled(!canNavigate)
-                .accessibilityElement(children: .ignore)
-                .accessibilityLabel("Track height")
-                .accessibilityIdentifier("\(prefix).laneHeight")
         }
     }
 
