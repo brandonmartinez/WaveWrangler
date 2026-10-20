@@ -165,6 +165,7 @@ public enum AutomaticAlignment {
         let available = Double(t.samples.count - 1) - Double(anchorCount - 1) / rateRatio
         guard available >= 0 else { return [] }
         var evidence: [DelayEvidence] = []
+        var cachedTransform: Transform?
         for attempt in 0..<3 {
             try Task.checkCancellation()
             let start = Int((floor(available) * Double(attempt) / 2).rounded())
@@ -183,9 +184,16 @@ public enum AutomaticAlignment {
             }
             let x = Statistics.centered(try Signal.template(targetSamples, start: start, count: n, rateRatio: rateRatio))
             let y = Statistics.centered(Array(referenceSamples[lo..<hi]))
-            let transform = Transform(atLeast: x.count + y.count)
-            let raw = transform.correlation(x, y)
-            let whitened = transform.correlation(x, y, phat: true)
+            let minimum = x.count + y.count
+            let transform: Transform
+            if let cached = cachedTransform, cached.count >= minimum, cached.count / 2 < minimum {
+                transform = cached
+            } else {
+                // Keep the original padding size even when a source boundary clips this attempt.
+                transform = Transform(atLeast: minimum)
+                cachedTransform = transform
+            }
+            let (raw, whitened) = transform.correlations(x, y)
             let ex = x.reduce(0) { $0 + $1 * $1 }
             var scores = [Double](repeating: 0, count: y.count - n + 1)
             var sum = 0.0, energy = 0.0
