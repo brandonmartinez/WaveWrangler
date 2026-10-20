@@ -92,12 +92,13 @@ private struct FillerTimingRegionView: View {
     @State private var dragTime: Double?
     @State private var dragEdge: FillerTimingEdge?
     @State private var showsToolbar = false
+    @State private var toolbarEdge: FillerTimingEdge?
 
     private var bounds: FillerTimingBounds {
-        guard let dragTime, let dragEdge,
+        guard let dragTime, let dragEdge, let dragOrigin,
               let value = model.mappedFillerBounds(review,
-                start: dragEdge == .start ? dragTime : review.bounds.alignedStart,
-                end: dragEdge == .end ? dragTime : review.bounds.alignedEnd) else { return review.bounds }
+                start: dragEdge == .start ? dragTime : dragOrigin.alignedStart,
+                end: dragEdge == .end ? dragTime : dragOrigin.alignedEnd) else { return review.bounds }
         return value
     }
     private var color: Color {
@@ -106,11 +107,16 @@ private struct FillerTimingRegionView: View {
     private func x(_ time: Double) -> Double { (time - start) / duration * size.width }
 
     var body: some View {
+        let bounds = self.bounds
         let lo = max(0, x(bounds.alignedStart)), hi = min(size.width, x(bounds.alignedEnd))
+        let anchor = toolbarEdge.map { edge in
+            handleFrame(edge, time: edge == .start ? bounds.alignedStart : bounds.alignedEnd)
+        } ?? CGRect(x: lo, y: 0, width: max(1, hi - lo), height: size.height)
         ZStack(alignment: .topLeading) {
             if hi > lo {
                 Button {
                     model.selectFiller(review.id, reveal: false)
+                    toolbarEdge = nil
                     showsToolbar = true
                 } label: {
                     Rectangle().fill(color.opacity(model.selectedFillerID == review.id ? 0.23 : 0.1))
@@ -123,10 +129,6 @@ private struct FillerTimingRegionView: View {
                 .accessibilityLabel("\(review.word?.text ?? "Manual filler"), \(review.status), audible-word timing")
                 .accessibilityValue(String(format: "%.6f to %.6f aligned seconds", bounds.alignedStart, bounds.alignedEnd))
                 .accessibilityIdentifier("ww.cleanup.filler.\(review.id)")
-                .popover(isPresented: $showsToolbar, arrowEdge: .bottom) {
-                    FillerTimingToolbar(model: model, reviewID: review.id)
-                        .padding(12).frame(width: 370)
-                }
             }
             Canvas { context, _ in
                 for time in [bounds.alignedStart, bounds.alignedEnd] {
@@ -140,16 +142,30 @@ private struct FillerTimingRegionView: View {
             handle(.start, time: bounds.alignedStart)
             handle(.end, time: bounds.alignedEnd)
         }
+        .frame(width: size.width, height: size.height, alignment: .topLeading)
+        .coordinateSpace(name: review.id)
+        .popover(isPresented: $showsToolbar, attachmentAnchor: .rect(.rect(anchor)), arrowEdge: .bottom) {
+            FillerTimingToolbar(model: model, reviewID: review.id)
+                .padding(12).frame(width: 370)
+        }
         .onChange(of: model.selectedFillerID) { _, id in
             if id != review.id { showsToolbar = false }
         }
     }
 
+    private func handleFrame(_ edge: FillerTimingEdge, time: Double) -> CGRect {
+        CGRect(x: min(max(0, x(time) - 9), max(0, size.width - 18)),
+               y: edge == .start ? 0 : max(0, size.height - 18),
+               width: 18, height: 18)
+    }
+
     @ViewBuilder
     private func handle(_ edge: FillerTimingEdge, time: Double) -> some View {
-        if time >= start, time <= start + duration {
+        if dragEdge == edge || (time >= start && time <= start + duration) {
+            let frame = handleFrame(edge, time: time)
             Button {
                 model.selectFiller(review.id, reveal: false)
+                toolbarEdge = edge
                 showsToolbar = true
             } label: {
                 Image(systemName: edge == .start ? "arrow.right.to.line" : "arrow.left.to.line")
@@ -160,14 +176,15 @@ private struct FillerTimingRegionView: View {
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
-            .offset(x: min(max(0, x(time) - 9), max(0, size.width - 18)),
-                    y: edge == .start ? 0 : max(0, size.height - 18))
+            .offset(x: frame.minX, y: frame.minY)
             .disabled(!model.canReviewFillers)
-            .gesture(DragGesture(minimumDistance: 2)
+            .gesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(review.id))
                 .onChanged { value in
                     if dragOrigin == nil {
                         dragOrigin = review.bounds
                         dragEdge = edge
+                        toolbarEdge = edge
+                        showsToolbar = false
                         model.selectFiller(review.id, reveal: false)
                     }
                     if let dragOrigin {
@@ -175,11 +192,13 @@ private struct FillerTimingRegionView: View {
                         dragTime = origin + value.translation.width / max(1, size.width) * duration
                     }
                 }
-                .onEnded { _ in
-                    if let dragTime, let dragOrigin {
+                .onEnded { value in
+                    if let dragOrigin {
+                        let origin = edge == .start ? dragOrigin.alignedStart : dragOrigin.alignedEnd
+                        let time = origin + value.translation.width / max(1, size.width) * duration
                         model.setFillerBounds(review.id,
-                            start: edge == .start ? dragTime : dragOrigin.alignedStart,
-                            end: edge == .end ? dragTime : dragOrigin.alignedEnd)
+                            start: edge == .start ? time : dragOrigin.alignedStart,
+                            end: edge == .end ? time : dragOrigin.alignedEnd)
                     }
                     dragOrigin = nil
                     dragTime = nil

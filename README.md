@@ -317,9 +317,11 @@ Multiword phrases, lexical `like`, substrings and untimed text are not automatic
 The detector can miss fillers the recognizer omits or rewrites, and can flag mistaken recognition.
 
 Dotted start/end rails and a lightly highlighted region appear only in the relevant speaker's
-Primary waveform. Click a region for its compact toolbar; drag the start and end handles independently,
-or focus a handle and use Left/Right for 1 ms steps. Numeric aligned-second fields and separate 1 ms
-nudge buttons are available in the toolbar and inspector. Drag previews commit once on release.
+Primary waveform. Click a region or handle for its compact toolbar, anchored to the visible interval
+or clicked handle. Drag the start and end handles independently; the handle, dotted rail and highlighted
+region follow the pointer live, with one undoable timing edit on release. Or focus a handle and use
+Left/Right for 1 ms steps. Numeric aligned-second fields and separate 1 ms nudge buttons are available
+in the toolbar and inspector.
 At dense zoom levels, lightweight rails replace individual controls; click a marked interval to
 zoom in and inspect it, or zoom in manually for draggable handles.
 Bounds cannot cross, leave the analyzed/working range, or cross unsupported accepted timing,

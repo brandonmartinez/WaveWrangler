@@ -367,7 +367,7 @@ final class HostedTimelineWindow<Content: View> {
         try await settle()
     }
 
-    private func mouse(_ path: [(NSEvent.EventType, CGPoint)]) async throws {
+    func mouse(_ path: [(NSEvent.EventType, CGPoint)]) async throws {
         for (index, step) in path.enumerated() {
             let event = try #require(
                 NSEvent.mouseEvent(

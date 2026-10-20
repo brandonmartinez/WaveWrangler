@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import WWCore
 import WWPersistence
@@ -404,6 +405,50 @@ struct EpisodeCleanupModelTests {
         #expect(model.selectedFiller == review)
         model.decideFiller(review.id, decision: .reviewed)
         #expect(model.selectedFiller?.status == "Reviewed unchanged")
+    }
+
+    @Test(arguments: [false, true])
+    func fillerHandlesMoveBeforeMouseUpWithoutPublishingTiming(endEdge: Bool) async throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        model.windowStart = 1
+        model.windowDuration = 3
+        let review = try #require(model.fillerReviews.first)
+        let snapshot = model.state.store.model
+        let generation = model.state.store.modelGeneration
+        let host = HostedTimelineWindow(width: 900, height: 96,
+            content: FillerTimingOverlay(model: model, reviews: model.fillerReviews))
+        defer { host.close() }
+        try await host.settle()
+        func handle(_ isEnd: Bool) throws -> CGRect {
+            let frames = host.controlFrames.filter { abs($0.width - 18) < 1 && abs($0.height - 18) < 1 }
+                .sorted { $0.minY < $1.minY }
+            try #require(frames.count == 2, "Expected two real boundary controls: \(host.controlFrames)")
+            return frames[isEnd ? 1 : 0]
+        }
+        let original = try handle(endEdge)
+        let stationary = try handle(!endEdge)
+        let point = CGPoint(x: original.midX, y: original.midY)
+        let direction = endEdge ? 1.0 : -1.0
+        try await host.mouse([(.leftMouseDown, point)])
+        for distance in [12.0, 30.0, 60.0, 24.0] {
+            let dx = direction * distance
+            try await host.mouse([(.leftMouseDragged, CGPoint(x: point.x + dx, y: point.y))])
+            #expect(abs(try handle(endEdge).midX - original.midX - dx) < 1,
+                    "The boundary must follow each pointer move, including reversing, while held down")
+            #expect(try handle(!endEdge) == stationary, "The other boundary must not move")
+            #expect(model.state.store.model == snapshot, "A preview is not a saved timing edit")
+            #expect(model.state.store.modelGeneration == generation)
+        }
+        try host.capture("Live filler boundary preview before mouse up")
+        try await host.mouse([(.leftMouseUp, CGPoint(x: point.x + direction * 24, y: point.y))])
+        let updated = try #require(model.selectedFiller)
+        #expect(abs(updated.bounds.alignedStart - review.bounds.alignedStart - (endEdge ? 0 : -0.08)) < 0.000_001)
+        #expect(abs(updated.bounds.alignedEnd - review.bounds.alignedEnd - (endEdge ? 0.08 : 0)) < 0.000_001)
+        #expect(model.state.store.modelGeneration == generation + 1, "Release publishes exactly one edit")
+        #expect(model.episode?.cleanup?.transcripts == snapshot.episodes[0].cleanup?.transcripts)
+        #expect(model.episode?.alignment == snapshot.episodes[0].alignment)
     }
 
     @Test func cancellingReviewClearsReactiveRefreshSkip() async throws {
