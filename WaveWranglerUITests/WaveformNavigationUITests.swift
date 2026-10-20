@@ -161,12 +161,13 @@ final class WaveformNavigationUITests: XCTestCase {
             capture(app, name: "Unavailable marker action before coordinate diagnostic")
             let applications = NSRunningApplication.runningApplications(
                 withBundleIdentifier: "com.brandonmartinez.wavewrangler")
+            var details = "matching applications=\(applications.count), trusted=\(AXIsProcessTrusted())\n"
             if applications.count == 1, let application = applications.first {
                 var hit: AXUIElement?
                 let result = AXUIElementCopyElementAtPosition(
                     AXUIElementCreateApplication(application.processIdentifier),
                     Float(element.frame.midX), Float(element.frame.midY), &hit)
-                var details = "hit result=\(result), trusted=\(AXIsProcessTrusted())\n"
+                details += "hit result=\(result)\n"
                 if let hit {
                     for attribute in [kAXRoleAttribute, kAXIdentifierAttribute, kAXTitleAttribute,
                                       kAXDescriptionAttribute, "AXActivationPoint"] {
@@ -175,11 +176,11 @@ final class WaveformNavigationUITests: XCTestCase {
                         details += "\(attribute): \(status), \(String(describing: value))\n"
                     }
                 }
-                let hitAttachment = XCTAttachment(string: details)
-                hitAttachment.name = "Marker action native accessibility hit"
-                hitAttachment.lifetime = .keepAlways
-                add(hitAttachment)
             }
+            let hitAttachment = XCTAttachment(string: details)
+            hitAttachment.name = "Marker action native accessibility hit"
+            hitAttachment.lifetime = .keepAlways
+            add(hitAttachment)
             element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
             capture(app, name: "Unavailable marker action after coordinate diagnostic")
             let tree = XCTAttachment(string: app.debugDescription)

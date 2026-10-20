@@ -8,33 +8,6 @@ import WWCore
 @MainActor
 @Suite("Shared timeline control layout and owned-window interaction", .serialized)
 struct AudioTimelineControlsTests {
-    @Test func nativeSliderPreservesRoleValueAndEditingCallbacks() async throws {
-        var value = 0.25
-        var editing: [Bool] = []
-        let host = HostedTimelineWindow(width: 220, height: 30,
-            content: NativeTimelineSlider(title: "Synthetic zoom", identifier: "test.timeline.zoom",
-                value: Binding(get: { value }, set: { value = $0 }),
-                bounds: 0...1, editingChanged: { editing.append($0) }))
-        defer { host.close() }
-        try await host.settle()
-        let slider = try #require(host.descendants.compactMap { $0 as? NSSlider }.first)
-        #expect(slider.accessibilityRole() == .slider)
-        #expect(slider.accessibilityLabel() == "Synthetic zoom")
-        #expect(slider.accessibilityIdentifier() == "test.timeline.zoom")
-        #expect(slider.minValue == 0 && slider.maxValue == 1)
-        #expect(slider.accessibilityValue() as? Double == 0.25)
-        #expect(slider.accessibilityMinValue() as? Double == 0)
-        #expect(slider.accessibilityMaxValue() as? Double == 1)
-        #expect(slider.accessibilityChildren()?.isEmpty == true)
-        slider.doubleValue = 0.75
-        #expect(slider.sendAction(slider.action, to: slider.target))
-        #expect(value == 0.75 && editing == [true, false])
-        #expect(slider.accessibilityPerformDecrement())
-        #expect(value < 0.75 && editing == [true, false, true, false])
-        slider.setAccessibilityValue(NSNumber(value: 0.9))
-        #expect(value == 0.9 && editing == [true, false, true, false, true, false])
-    }
-
     @Test(arguments: [320.0, 420.0, 720.0])
     func navigationFitsTheAvailableColumn(_ width: Double) throws {
         let renderer = ImageRenderer(
