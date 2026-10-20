@@ -33,7 +33,7 @@ struct NativeActionMenu: NSViewRepresentable {
         menu.addItem(heading)
         for action in actions {
             let target = ActionTarget(action.perform)
-            let item = NSMenuItem(title: action.title, action: #selector(ActionTarget.perform(_:)), keyEquivalent: "")
+            let item = NSMenuItem(title: action.title, action: #selector(ActionTarget.invokeMenuAction(_:)), keyEquivalent: "")
             if let symbol = action.symbol {
                 item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
             }
@@ -65,6 +65,6 @@ struct NativeActionMenu: NSViewRepresentable {
 
         init(_ action: @escaping @MainActor () -> Void) { self.action = action }
 
-        @objc func perform(_ sender: NSMenuItem) { action() }
+        @objc func invokeMenuAction(_ sender: NSMenuItem) { action() }
     }
 }
