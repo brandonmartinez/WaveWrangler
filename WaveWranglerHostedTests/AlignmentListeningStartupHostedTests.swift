@@ -13,7 +13,7 @@ struct AlignmentListeningStartupHostedTests {
         while !ready(), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        try #require(ready(), reason())
+        try #require(ready(), Comment(rawValue: reason()))
     }
 
     private func preparedFixture() async throws -> AlignmentWaveformRetentionHostedTests.Fixture {
@@ -42,7 +42,7 @@ struct AlignmentListeningStartupHostedTests {
             return completed < 3
         })
         #expect(fixture.model.isPreparingAudition)
-        try #require(fixture.model.canStopAudition, fixture.model.auditionLabel)
+        try #require(fixture.model.canStopAudition, Comment(rawValue: fixture.model.auditionLabel))
         try await wait(fixture.model.lastError ?? fixture.model.auditionLabel) {
             completed == 3 && !fixture.model.canStopAudition
         }
@@ -67,12 +67,12 @@ struct AlignmentListeningStartupHostedTests {
         let deadline = ContinuousClock.now.advanced(by: .seconds(5))
         while !fixture.model.auditionLabel.contains("Playing 2 timed"),
               ContinuousClock.now < deadline {
-            #expect(fixture.model.isAuditioning, fixture.model.auditionLabel)
+            #expect(fixture.model.isAuditioning, Comment(rawValue: fixture.model.auditionLabel))
             #expect(fixture.model.waveformPlayheadSeconds >= prior)
             prior = fixture.model.waveformPlayheadSeconds
             try await Task.sleep(for: .milliseconds(10))
         }
-        try #require(fixture.model.auditionLabel.contains("Playing 2 timed"), fixture.model.auditionLabel)
+        try #require(fixture.model.auditionLabel.contains("Playing 2 timed"), Comment(rawValue: fixture.model.auditionLabel))
         fixture.model.setSoloed(true, scope: .source(fixture.target))
         #expect(fixture.model.auditionLabel.contains("Playing 1 timed"))
         #expect(fixture.model.isAuditioning && fixture.model.waveformPlayheadSeconds >= prior)
