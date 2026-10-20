@@ -231,18 +231,15 @@ struct AlignmentWaveformView: View {
 
     private var editingPlaybackControls: some View {
         HStack {
-            Menu("After alignment") {
-                Picker("After alignment", selection: Binding(
-                    get: { model.editingPlaybackPolicy },
-                    set: { model.setEditingPlaybackPolicy($0) }
-                )) {
-                    ForEach(EditingPlaybackPolicy.allCases, id: \.self) { policy in
-                        Text(policy.title).tag(policy)
+            NativeActionMenu(label: "After alignment", symbol: nil, identifier: "ww.listening.savedPolicy",
+                value: model.editingPlaybackPolicy.title, prefix: "After alignment",
+                actions: EditingPlaybackPolicy.allCases.map { policy in
+                    .init(title: policy.title, isSelected: policy == model.editingPlaybackPolicy) {
+                        model.setEditingPlaybackPolicy(policy)
                     }
-                }
-            }
+                })
+            .frame(width: 140, height: 24)
             .help("Saved editing playback policy. Applied once per accepted revision only when you explicitly begin editing; Listen now presets do not change it.")
-            .accessibilityIdentifier("ww.listening.savedPolicy")
             Button("Begin editing", systemImage: "pencil") { model.beginEditing() }
                 .disabled(!model.hasAcceptedRevision || model.isWorking)
         }
@@ -464,7 +461,8 @@ struct AlignmentWaveformView: View {
             .overlay(alignment: .topLeading) {
                 if tracks.contains(where: { $0.group == dragSession?.group }) { dragPreview }
             }
-            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3)))
+            .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3))
+                .allowsHitTesting(false).accessibilityHidden(true))
             .accessibilityElement(children: .contain)
             .accessibilityLabel("\(speakerName), \(tracks.count) \(tracks.count == 1 ? "track" : "tracks") overlaid")
             .accessibilityHint("Select a recording and unlock its position before using the Move recorder tool. Solo and Mute do not hide waveforms.")
@@ -606,7 +604,8 @@ struct AlignmentWaveformView: View {
                     if dragSession?.group == track.group { dragPreview }
                 }
                 .overlay(RoundedRectangle(cornerRadius: 4)
-                    .stroke(model.selectedWaveformSource == track.id ? Color.accentColor : Color.secondary.opacity(0.3)))
+                    .stroke(model.selectedWaveformSource == track.id ? Color.accentColor : Color.secondary.opacity(0.3))
+                    .allowsHitTesting(false).accessibilityHidden(true))
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("\(track.groupName), \(track.name), audio waveform. \(model.waveformInteractionStrokes(for: track.id).count) measured amplitude bins."
                     + (model.selectedWaveformSource == track.id

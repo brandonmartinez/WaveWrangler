@@ -11,7 +11,7 @@ struct NativeActionMenu: NSViewRepresentable {
     }
 
     let label: String
-    let symbol: String
+    let symbol: String?
     let identifier: String
     var value: String? = nil
     var prefix: String? = nil
@@ -29,7 +29,7 @@ struct NativeActionMenu: NSViewRepresentable {
     func updateNSView(_ button: Button, context: Context) {
         let menu = NSMenu()
         let heading = NSMenuItem(title: prefix ?? value ?? label, action: nil, keyEquivalent: "")
-        heading.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        heading.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
         menu.addItem(heading)
         for action in actions {
             let target = ActionTarget(action.perform)
@@ -42,7 +42,7 @@ struct NativeActionMenu: NSViewRepresentable {
             item.representedObject = target
             menu.addItem(item)
         }
-        button.imagePosition = prefix == nil ? .imageOnly : .imageLeading
+        button.imagePosition = symbol == nil ? .noImage : prefix == nil ? .imageOnly : .imageLeading
         button.menu = menu
         button.selectionValue = value
         button.isEnabled = isEnabled

@@ -163,7 +163,12 @@ struct ControlsSidebarHostedTests {
         model.setWindow(start: 1.9, duration: 0.5)
         try #require(model.selectedFillerID == detected.id && model.canReviewFillers)
         let host = HostedTimelineWindow(width: 744, height: 110,
-            content: FillerTimingOverlay(model: model, reviews: [detected]))
+            content: FillerTimingOverlay(model: model, reviews: [detected])
+                .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary)
+                    .allowsHitTesting(false).accessibilityHidden(true))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Synthetic recording waveform")
+                .accessibilityAction { f.model.selectWaveform(f.model.waveformTracks[0]) })
         defer { host.close() }
         host.window.makeKeyAndOrderFront(nil)
         try await host.settle()
