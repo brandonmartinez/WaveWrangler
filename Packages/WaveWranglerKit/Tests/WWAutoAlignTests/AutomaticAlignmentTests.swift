@@ -129,7 +129,7 @@ struct AutomaticConsensusTests {
         }
     }
 
-    @Test func cancelledWorkStopsBeforeSignalProcessing() async throws {
+    @Test func canceledWorkStopsBeforeSignalProcessing() async throws {
         let reference = try SyntheticSpeech.track(start: 0, duration: 4)
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }

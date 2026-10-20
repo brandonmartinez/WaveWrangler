@@ -2,7 +2,7 @@
 /// the original automatically: neither the pending automatic retry nor any autosave. If the original's folder came
 /// back meanwhile, an automatic save would write the edits into the original before the copy exists, and the original
 /// must keep its last saved version. A retry that was pending, or that a failure asked for meanwhile, is re-armed
-/// with a fresh interval (never at once) when the copy is cancelled or fails. After a saved copy the window edits the
+/// with a fresh interval (never at once) when the copy is canceled or fails. After a saved copy the window edits the
 /// copy (a separate show), whose own saves decide any later retry.
 struct CopyElsewhereRetryGate: Equatable {
     private(set) var isActive = false

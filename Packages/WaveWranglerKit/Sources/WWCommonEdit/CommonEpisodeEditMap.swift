@@ -129,8 +129,8 @@ public struct CommonEpisodeEditMap: Sendable, Equatable {
         return outputRate.instant(ofFrame: span.alignedStart + (frame - span.outputStart))
     }
 
-    /// Partial inverse: removed instants are reported, never mapped to a neighbouring seam. Off-grid
-    /// positions stay exact until HALF-UP quantisation; the rounded value is a position, not a sample.
+    /// Partial inverse: removed instants are reported, never mapped to a neighboring seam. Off-grid
+    /// positions stay exact until HALF-UP quantization; the rounded value is a position, not a sample.
     public func outputPosition(atAlignedInstant instant: ExactRational) throws(TimeMapError) -> CommonAlignedOutputMapping {
         guard instant >= outputRate.instant(ofFrame: alignedFrameOrigin),
               instant < outputRate.instant(ofFrame: alignedFrameEnd) else { return .outsideCoverage }

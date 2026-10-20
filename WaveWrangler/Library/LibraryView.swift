@@ -466,7 +466,7 @@ private struct LibraryMessageBar: View {
             }
             if let conflicts = location.providerConflictNotice {
                 // #117: informational and persistent while the unusable versions exist (nothing to do in M1; the
-                // versions are kept, never applied). Text, not colour, carries the meaning.
+                // versions are kept, never applied). Text, not color, carries the meaning.
                 MessageBar(
                     heading: "Other copies of your library weren't used",
                     message: conflicts,
@@ -506,7 +506,7 @@ private struct LibraryMessageBar: View {
     }
 }
 
-/// #109: content that is centred when it fits and scrolls when it doesn't (large in-app text, short windows),
+/// #109: content that is centered when it fits and scrolls when it doesn't (large in-app text, short windows),
 /// so it never raises its split-view column's minimum height above the window.
 struct CenteredScrollView<Content: View>: View {
     @ViewBuilder let content: Content

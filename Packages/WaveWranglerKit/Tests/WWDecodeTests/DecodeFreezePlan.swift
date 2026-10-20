@@ -32,7 +32,7 @@ enum DecodeGates {
     /// "and no stale publication": planted cases that finished a sink, left appended output unabandoned,
     /// left a reader open or unbalanced a security scope.
     static let maximumPlantedPublications = 0
-    /// A landmark counts as found only above this normalised correlation (otherwise it fails the
+    /// A landmark counts as found only above this normalized correlation (otherwise it fails the
     /// landmark gate). Exact formats must also be bit-exact with lag 0.
     static let lossyMinimumCorrelation = 0.5
     static let exactMinimumCorrelation = 0.999

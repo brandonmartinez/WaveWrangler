@@ -129,7 +129,7 @@ struct WWSourcesSetupEngineTests {
 
         await store.removeRecord(for: key)
         let missing = await engine.compare(candidate: original, for: sourceID)
-        #expect(missing.requiresAcknowledgement)
+        #expect(missing.requiresAcknowledgment)
         #expect(missing.canConfirm)
         await #expect(throws: SourceEngineError.self) {
             _ = try await engine.commitRelink(sourceID, to: original, identity: .detailsMatch)
@@ -151,7 +151,7 @@ struct WWSourcesSetupEngineTests {
         let replacementBytes = Data(repeating: 7, count: 80)
         try replacementBytes.write(to: replacement)
         let different = await engine.compare(candidate: replacement, for: sourceID)
-        #expect(different.requiresAcknowledgement)
+        #expect(different.requiresAcknowledgment)
         #expect(different.canConfirm)
         try Data(repeating: 7, count: 81).write(to: replacement)
         await #expect(throws: SourceEngineError.self) {

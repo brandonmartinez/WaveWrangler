@@ -75,11 +75,11 @@ final class EpisodeAlignmentModel {
         analysisStates = [:]
     }
     private var analysisSourceEndByEpoch: [RecordingEpochID: Double] = [:]
-    private var analysedSources: [SourceRecord]?
-    private var analysedGroups: [RecorderGroup]?
-    private var analysedAssignments: [SpeakerAssignment]?
+    private var analyzedSources: [SourceRecord]?
+    private var analyzedGroups: [RecorderGroup]?
+    private var analyzedAssignments: [SpeakerAssignment]?
     private var observedAssignments: [SpeakerAssignment]?
-    private var analysedRevision: Int?
+    private var analyzedRevision: Int?
     private var observedRevision: Int?
     private(set) var message = "Alignment has not read or analyzed any audio."
     private(set) var dependents = "No dependent work yet."
@@ -328,9 +328,9 @@ final class EpisodeAlignmentModel {
               (!hasAcceptedRevision || waveformMap != nil),
               let episode = document?.store.model.episode(episodeID)
         else { return false }
-        return analysedSources == episode.sources && analysedGroups == episode.recorderGroups
-            && analysedAssignments == episode.speakerAssignments
-            && analysedRevision == episode.alignment?.acceptedRevision
+        return analyzedSources == episode.sources && analyzedGroups == episode.recorderGroups
+            && analyzedAssignments == episode.speakerAssignments
+            && analyzedRevision == episode.alignment?.acceptedRevision
             && selectedRow?.groupID != acceptedMap?.reference.group
     }
 
@@ -451,7 +451,7 @@ final class EpisodeAlignmentModel {
         selectWaveform(track)
         selectedMatchSpeaker = option.speaker
         selectedMatchOption = option
-        analyse()
+        analyze()
     }
     func speakerMatchDescription(_ option: SpeakerMatchOption, fileLocal: Bool = false) -> String {
         guard let episode = document?.store.model.episode(episodeID),
@@ -1844,25 +1844,25 @@ final class EpisodeAlignmentModel {
             analysisStates = [:]
             speakerMatches = [:]
             selectedMatchOption = nil
-            analysedRevision = nil
+            analyzedRevision = nil
         }
         if observedAssignments != episode?.speakerAssignments {
             observedAssignments = episode?.speakerAssignments
             analysisStates = [:]
             speakerMatches = [:]
-            analysedAssignments = nil
+            analyzedAssignments = nil
             selectedMatchOption = nil
             selectedMatchSpeaker = nil
         }
-        if analysedSources != episode?.sources || analysedGroups != episode?.recorderGroups {
+        if analyzedSources != episode?.sources || analyzedGroups != episode?.recorderGroups {
             analysisStates = [:]
             speakerMatches = [:]
             selectedMatchOption = nil
             selectedMatchSpeaker = nil
             analysisSourceEndByEpoch = [:]
-            analysedSources = nil
-            analysedGroups = nil
-            analysedAssignments = nil
+            analyzedSources = nil
+            analyzedGroups = nil
+            analyzedAssignments = nil
         }
         if let pendingWaveformMove,
            pendingWaveformMove.expectedGeneration != document.store.modelGeneration {
@@ -1919,7 +1919,7 @@ final class EpisodeAlignmentModel {
         }
     }
 
-    func analyse() {
+    func analyze() {
         guard let document, !isWorking else { return }
         guard !pendingResetVerification || timingIsVerified(document.store.model) else {
             message = "Save verification must finish before analyzing the fresh timeline."
@@ -1936,15 +1936,15 @@ final class EpisodeAlignmentModel {
         lastError = nil
         analysisStates = [:]
         analysisSourceEndByEpoch = [:]
-        analysedSources = nil
-        analysedGroups = nil
-        analysedAssignments = nil
-        analysedRevision = nil
+        analyzedSources = nil
+        analyzedGroups = nil
+        analyzedAssignments = nil
+        analyzedRevision = nil
         message = "Indexing full speaker recordings and matching passages… The first scan can take a while; unchanged fingerprints are cached."
         let model = document.store.model
         Task {
             do {
-                let report = try await runtime.analyseSpeaker(
+                let report = try await runtime.analyzeSpeaker(
                     model: model, episode: episodeID, targetEpoch: epoch, speaker: pair.speaker,
                     referenceSource: pair.reference.source, targetSource: pair.target
                 )
@@ -1960,10 +1960,10 @@ final class EpisodeAlignmentModel {
                     isWorking = false
                     return
                 }
-                analysedSources = model.episode(episodeID)?.sources
-                analysedGroups = model.episode(episodeID)?.recorderGroups
-                analysedAssignments = model.episode(episodeID)?.speakerAssignments
-                analysedRevision = model.episode(episodeID)?.alignment?.acceptedRevision
+                analyzedSources = model.episode(episodeID)?.sources
+                analyzedGroups = model.episode(episodeID)?.recorderGroups
+                analyzedAssignments = model.episode(episodeID)?.speakerAssignments
+                analyzedRevision = model.episode(episodeID)?.alignment?.acceptedRevision
                 analysisStates = Dictionary(uniqueKeysWithValues: states.map { ($0.epoch, $0) })
                 analysisSourceEndByEpoch = Dictionary(uniqueKeysWithValues: report.plan.epochs.map { epoch in
                     (epoch.epoch, epoch.sources.compactMap { source in
@@ -1990,7 +1990,7 @@ final class EpisodeAlignmentModel {
         }
     }
 
-    func analyseAdaptively(_ track: AlignmentWaveformTrack, with pair: SpeakerMatchOption) {
+    func analyzeAdaptively(_ track: AlignmentWaveformTrack, with pair: SpeakerMatchOption) {
         guard let document, !isWorking, matchOptions(for: track).contains(pair) else { return }
         guard !pendingResetVerification || timingIsVerified(document.store.model) else {
             message = "Save verification must finish before adaptive analysis."
@@ -2002,7 +2002,7 @@ final class EpisodeAlignmentModel {
         adaptiveAnalysis = nil
         adaptiveEpisode = nil
         analysisStates = [:]
-        analysedSources = nil
+        analyzedSources = nil
         isWorking = true
         lastError = nil
         adaptiveProgress = 0
@@ -2016,7 +2016,7 @@ final class EpisodeAlignmentModel {
                 adaptiveProgress = 0
             }
             do {
-                let record = try await runtime.analyseAdaptiveSpeaker(
+                let record = try await runtime.analyzeAdaptiveSpeaker(
                     model: model, episode: episodeID, targetEpoch: track.epoch, pair: pair
                 ) { value in
                     await MainActor.run {
@@ -2039,9 +2039,9 @@ final class EpisodeAlignmentModel {
                 adaptivePair = pair
                 message = "Adaptive review: \(record.timing.regions.count) independent measured runs, \(record.timing.anchoredRecovery?.regions.count ?? 0) anchor-guided matches and \(record.timing.quietTransitions?.count ?? 0) quiet-only transitions. Estimated gap timing is optional. Nothing was applied or played."
             } catch is CancellationError {
-                message = "Adaptive review cancelled. No timing was applied."
-            } catch AlignmentWorkFailure.cancelled {
-                message = "Adaptive review cancelled. No timing was applied."
+                message = "Adaptive review canceled. No timing was applied."
+            } catch AlignmentWorkFailure.canceled {
+                message = "Adaptive review canceled. No timing was applied."
             } catch {
                 lastError = String(describing: error)
                 message = "Adaptive analysis did not complete. No timing was applied."
@@ -2052,7 +2052,7 @@ final class EpisodeAlignmentModel {
     func cancelAdaptiveAnalysis() {
         guard let adaptiveTask else { return }
         adaptiveTask.cancel()
-        message = "Cancelling adaptive review… No timing was applied."
+        message = "Canceling adaptive review… No timing was applied."
     }
 
     func saveAdaptiveCorrection(removing source: SourceID? = nil) {

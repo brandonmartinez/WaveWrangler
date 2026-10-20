@@ -321,8 +321,8 @@ struct DerivedJobCoordinatorTests {
         }
         await started.wait()
         await coordinator.cancel(slot)
-        #expect(await job.outcome == .cancelled)
-        #expect(await coordinator.state(of: slot) == .cancelled(key))
+        #expect(await job.outcome == .canceled)
+        #expect(await coordinator.state(of: slot) == .canceled(key))
         #expect(coordinator.store.payload(for: key) == nil)
     }
 
@@ -500,7 +500,7 @@ struct DerivedJobCoordinatorTests {
 
     // MARK: - Lifetime (review #182 finding 3)
 
-    /// A job whose work ignores cancellation until `release` opens, then records whether it was cancelled.
+    /// A job whose work ignores cancellation until `release` opens, then records whether it was canceled.
     struct GatedWork {
         let started = Latch()
         let release = Latch()
@@ -525,14 +525,14 @@ struct DerivedJobCoordinatorTests {
         await gated.started.wait()
 
         let shutdown = Task { await coordinator.shutdown() }
-        // Deterministic point: shutdown has cancelled every job and marked the running slot cancelled.
-        for await change in coordinator.changes where change.slot == slot && change.state == .cancelled(key) { break }
+        // Deterministic point: shutdown has canceled every job and marked the running slot canceled.
+        for await change in coordinator.changes where change.slot == slot && change.state == .canceled(key) { break }
         await gated.release.open()
         await shutdown.value
 
         #expect(gated.sawCancellation.value, "the running work observes cancellation")
-        #expect(await job.outcome == .cancelled)
-        #expect(await coordinator.state(of: slot) == .cancelled(key))
+        #expect(await job.outcome == .canceled)
+        #expect(await coordinator.state(of: slot) == .canceled(key))
         #expect(coordinator.store.payload(for: key) == nil)
         #expect(try FileManager.default.contentsOfDirectory(atPath: coordinator.store.stagingDirectory.path).isEmpty, "nothing staged")
     }
@@ -547,7 +547,7 @@ struct DerivedJobCoordinatorTests {
             runs.increment()
             return Data("never".utf8)
         }
-        #expect(await job.outcome == .cancelled)
+        #expect(await job.outcome == .canceled)
         #expect(runs.value == 0, "work submitted after shutdown never runs")
         #expect(await coordinator.state(of: slot) == .idle)
         #expect(await coordinator.isShutdown)
@@ -570,7 +570,7 @@ struct DerivedJobCoordinatorTests {
         #expect(released == nil, "the coordinator was released")
         await gated.release.open()
 
-        #expect(await job.outcome == .cancelled)
+        #expect(await job.outcome == .canceled)
         #expect(gated.sawCancellation.value, "deinit cancels the running work")
         #expect(store.payload(for: key) == nil)
         #expect(try FileManager.default.contentsOfDirectory(atPath: store.stagingDirectory.path).isEmpty, "nothing staged")

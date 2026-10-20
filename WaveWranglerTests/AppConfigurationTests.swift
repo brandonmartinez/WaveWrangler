@@ -157,7 +157,7 @@ struct UITestHooksDebugOnlyTests {
         @Test func inspectionNeverActivatesTheMutableLiveModel() throws {
             let source = try Self.runtimeSource()
             let start = try #require(source.range(of: "func inspect("))
-            let end = try #require(source[start.upperBound...].range(of: "\n    func analyse("))
+            let end = try #require(source[start.upperBound...].range(of: "\n    func analyze("))
             let body = source[start.lowerBound..<end.lowerBound]
             #expect(!body.contains("activate("))
         }

@@ -60,9 +60,9 @@ struct BoundedPCMInferenceTests {
                                                    samples.baseAddress, 32_000, active, nil)
                 #expect(result.status == WW_INFERENCE_INVALID_INPUT)
                 #expect(result.segments == nil)
-                let cancelled = ww_whisper_infer_pcm(bytes.baseAddress, bytes.count,
+                let canceled = ww_whisper_infer_pcm(bytes.baseAddress, bytes.count,
                                                       samples.baseAddress, 32_000, stopped, nil)
-                #expect(cancelled.status == WW_INFERENCE_CANCELLED)
+                #expect(canceled.status == WW_INFERENCE_CANCELED)
             }
         }
         pcm[0] = .nan
@@ -103,9 +103,9 @@ struct BoundedPCMInferenceTests {
             try inference.transcribe(model: model, pcm: [.nan] + Array(generated.dropFirst()),
                                      sampleRate: 16_000, channelCount: 1)
         }
-        #expect(throws: PCMInferenceRefusal.cancelled) {
+        #expect(throws: PCMInferenceRefusal.canceled) {
             try inference.transcribe(model: model, pcm: generated, sampleRate: 16_000,
-                                     channelCount: 1, isCancelled: { true })
+                                     channelCount: 1, isCanceled: { true })
         }
         let result = try inference.transcribe(model: model, pcm: generated, sampleRate: 16_000, channelCount: 1)
         #expect(result.segments.count <= 16)

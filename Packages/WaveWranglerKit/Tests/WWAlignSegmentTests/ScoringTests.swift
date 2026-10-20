@@ -252,7 +252,7 @@ struct SegmentScoringTests {
     }
 
     /// Monotonic placement is enforced by WWTimeMap itself: overlapping images cannot even form a map. The
-    /// scorer's own monotonic check is defence in depth behind this.
+    /// scorer's own monotonic check is defense in depth behind this.
     @Test func overlappingImagesCannotFormAMap() throws {
         let kase = Self.stepCase(-0.2)
         let request = try Self.request(kase)

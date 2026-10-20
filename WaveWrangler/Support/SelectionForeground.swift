@@ -7,7 +7,7 @@ import SwiftUI
 /// non-vibrant and reaches 5.2:1 (diagnostic run, this Mac, 2026-10-05). SwiftUI's `backgroundProminence` never
 /// reads `.increased` in the macOS sidebar `List`, so emphasis is derived from the row's own state instead: the
 /// row is selected, its list has keyboard focus, and the window is key (the conditions under which AppKit draws
-/// the accent-filled selection). An unemphasized (grey) selection keeps the system colours.
+/// the accent-filled selection). An unemphasized (gray) selection keeps the system colors.
 struct EmphasizedSelectionForeground: ViewModifier {
     let isSelectedInFocusedList: Bool
     @Environment(\.controlActiveState) private var controlActiveState

@@ -1,7 +1,7 @@
 import XCTest
 
 /// #117: the Library window tells the user about cloud-provider conflict versions of the library that
-/// WaveWrangler can't use; the notice is a labelled, identified message bar and the library stays usable.
+/// WaveWrangler can't use; the notice is a labeled, identified message bar and the library stays usable.
 @MainActor
 final class LibraryProviderConflictUITests: XCTestCase {
     private var app: XCUIApplication!

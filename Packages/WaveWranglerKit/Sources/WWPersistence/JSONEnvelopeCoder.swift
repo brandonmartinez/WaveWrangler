@@ -19,7 +19,7 @@ import WWCore
 /// the canonical encoding of the payload (sorted keys); it is integrity bookkeeping, not authenticity.
 ///
 /// This coder only maps values to bytes. Publication (staging, prior-checkpoint retention, coordinated
-/// replacement, acknowledgement) and recovery are separate responsibilities owned by persistence.
+/// replacement, acknowledgment) and recovery are separate responsibilities owned by persistence.
 public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentCoding {
     public typealias Validator = @Sendable (_ payload: Payload, _ schemaVersion: Int) -> [ValidationIssue]
     /// Finds content inside a supported-schema payload that a newer build wrote (e.g. an embedded map with a newer

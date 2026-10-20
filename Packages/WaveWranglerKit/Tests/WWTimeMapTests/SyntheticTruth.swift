@@ -127,7 +127,7 @@ enum OracleForward: Equatable {
 enum OracleInverse: Equatable {
     case source(ExactRational, RecordingEpochID)
     case gap
-    /// Where unsupported spans could lie, with the unsupported spans between the neighbouring mapped spans.
+    /// Where unsupported spans could lie, with the unsupported spans between the neighboring mapped spans.
     case unsupported([RecordingEpochID])
     case outside
 }

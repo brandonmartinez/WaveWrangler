@@ -49,7 +49,7 @@ struct AdaptiveAnalysisTests {
         _ fixture: PipelineFixture, _ speaker: SpeakerID,
         progress: @escaping @Sendable (Double) async -> Void = { _ in }
     ) async throws -> AdaptiveAnalysisRecord {
-        try await fixture.pipeline.analyseAdaptiveSpeaker(
+        try await fixture.pipeline.analyzeAdaptiveSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker,
             referenceSource: fixture.id("ref"), targetSource: fixture.id("backup"), progress: progress
@@ -110,7 +110,7 @@ struct AdaptiveAnalysisTests {
         let armed = Box(false), fired = Box(false)
         let slot = DerivedSlot("adaptive/\(fixture.id("backup"))")
         let coordinator = fixture.coordinator
-        await #expect(throws: AlignmentWorkFailure.cancelled) {
+        await #expect(throws: AlignmentWorkFailure.canceled) {
             try await Self.run(fixture, speaker) { progress in
                 guard progress >= 0.94, !armed.update({ let old = $0; $0 = true; return old }) else { return }
                 fixture.content.setOnRead { _, _ in
@@ -147,7 +147,7 @@ struct AdaptiveAnalysisTests {
         let armed = Box(false), fired = Box(false)
         let slot = DerivedSlot("adaptive/\(fixture.id("backup"))")
         let coordinator = fixture.coordinator
-        await #expect(throws: AlignmentWorkFailure.cancelled) {
+        await #expect(throws: AlignmentWorkFailure.canceled) {
             try await Self.run(fixture, speaker) { progress in
                 guard progress >= 0.86, !armed.update({ let old = $0; $0 = true; return old }) else { return }
                 fixture.content.setOnRead { _, _ in
@@ -240,7 +240,7 @@ struct AdaptiveAnalysisTests {
 
     @Test func cancellationDuringDenseDecodeClosesReadersAndPublishesNoAdaptiveResult() async throws {
         let (fixture, speaker) = try await Self.fixture()
-        _ = try await fixture.pipeline.analyseSpeaker(
+        _ = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
@@ -251,7 +251,7 @@ struct AdaptiveAnalysisTests {
             guard fired.update({ let first = !$0; $0 = true; return first }) else { return }
             cancelSlotDuringRead(coordinator, slot)
         }
-        await #expect(throws: AlignmentWorkFailure.cancelled) { try await Self.run(fixture, speaker) }
+        await #expect(throws: AlignmentWorkFailure.canceled) { try await Self.run(fixture, speaker) }
         #expect(fired.value)
         #expect(await coordinator.readyPayload(for: slot) == nil)
         await ConcurrencyTests.expectQuiescent(fixture)

@@ -91,11 +91,11 @@ public struct RelinkComparison: Hashable, Sendable {
 
     /// Anything but an exact match needs the "I've checked this is the same recording" checkbox and has
     /// no default button.
-    public var requiresAcknowledgement: Bool { outcome != .match }
+    public var requiresAcknowledgment: Bool { outcome != .match }
 
-    public var confirmTitle: String { requiresAcknowledgement ? "Use This File Anyway" : "Use This File" }
+    public var confirmTitle: String { requiresAcknowledgment ? "Use This File Anyway" : "Use This File" }
 
-    public static let acknowledgementTitle = "I've checked this is the same recording"
+    public static let acknowledgmentTitle = "I've checked this is the same recording"
 
     /// The identity value that results from confirming this comparison.
     public var acceptedIdentity: IdentityStatus {
@@ -178,7 +178,7 @@ public enum TransferAction: String, Hashable, Sendable, CaseIterable {
     /// Short inspector button title for a given transfer state.
     public func buttonTitle(for transfer: TransferStatus) -> String {
         switch (self, transfer) {
-        case (.download, .cancelled): "Download Again"
+        case (.download, .canceled): "Download Again"
         case (.download, _): "Download"
         case (.pause, _): "Pause"
         case (.resume, _): "Resume"
@@ -196,7 +196,7 @@ public enum TransferAction: String, Hashable, Sendable, CaseIterable {
         case .queued: return [.cancel]
         case .downloading: return pauseSupported ? [.pause, .cancel] : [.cancel]
         case .paused: return pauseSupported ? [.resume, .cancel] : [.cancel]
-        case .cancelled: return [.download]
+        case .canceled: return [.download]
         case .failed, .noConnection: return [.retry]
         case .providerMayFinish: return []
         }

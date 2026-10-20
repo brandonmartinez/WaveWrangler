@@ -18,7 +18,7 @@ struct OutputSettingsTests {
     func mixedRatesRenderAtThePreferredRate() async throws {
         let fixture = try await PipelineFixture(Self.groups(), label: "policy-mixed")
         let tgt = fixture.id("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.facts[tgt]?.sampleRate == 44_100)
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
 
@@ -59,7 +59,7 @@ struct OutputSettingsTests {
             outputSettings: OutputSettingsConfiguration(rateChoice: choice)
         )
         let fixture = try await PipelineFixture(Self.groups(referenceRate: 44_100), configuration: configuration, label: "policy-choice")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let rendered = try await fixture.render()
         #expect(rendered.isComplete)
@@ -81,7 +81,7 @@ struct OutputSettingsTests {
     @Test("With nothing renderable there is no decision and no output rate, and nothing is opened")
     func nothingRenderableHasNoDecision() async throws {
         let fixture = try await PipelineFixture(Self.groups(), label: "policy-none")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let opens = fixture.content.total.opens
         let rendered = try await fixture.pipeline.renderAlignedAssets(model: fixture.model, episode: fixture.episodeID, sources: fixture.sources, authorizations: [])

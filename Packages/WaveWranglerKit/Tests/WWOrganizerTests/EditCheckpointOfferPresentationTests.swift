@@ -60,7 +60,7 @@ struct EditCheckpointOfferPresentationTests {
         }
     }
 
-    @Test func symbolsAreCatalogued() {
+    @Test func symbolsAreCataloged() {
         for state in [EditCheckpointOfferState.restore(createdAt: date), .olderRevision(createdAt: date), .unusable(damaged: 1, newerFormat: 0)] {
             #expect(SymbolCatalog.all.contains(EditCheckpointOfferPresentation(state, showName: "x").symbolName))
         }

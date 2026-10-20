@@ -113,12 +113,12 @@ public struct LocalWhisper: Sendable {
 
     public func transcribe(
         pcm: [Float], sampleRate: Int,
-        isCancelled: @escaping @Sendable () -> Bool = { Task<Never, Never>.isCancelled }
+        isCanceled: @escaping @Sendable () -> Bool = { Task<Never, Never>.isCancelled }
     ) throws -> PCMTranscript {
         guard (8000...192000).contains(sampleRate), pcm.count >= sampleRate / 10,
               pcm.count <= sampleRate * 30, pcm.allSatisfy({ $0.isFinite && abs($0) <= 8 })
         else { throw PCMInferenceRefusal.invalidPCM }
-        guard !isCancelled() else { throw PCMInferenceRefusal.cancelled }
+        guard !isCanceled() else { throw PCMInferenceRefusal.canceled }
         // Digital zero is known empty input, not a VAD decision or a general silence classifier.
         if pcm.allSatisfy({ $0 == 0 }) { return PCMTranscript(segments: []) }
         var samples = try Self.resample(pcm, sampleRate: sampleRate)
@@ -126,7 +126,7 @@ public struct LocalWhisper: Sendable {
         let peak = samples.reduce(Float(0)) { max($0, abs($1)) }
         // Resampling can overshoot full scale. Normalize this analysis buffer only, never source/playback audio.
         if peak > 1 { samples = samples.map { $0 / peak } }
-        let cancellation = WindowCancellation(isCancelled)
+        let cancellation = WindowCancellation(isCanceled)
         let raw = Unmanaged.passUnretained(cancellation).toOpaque()
         let callback: @convention(c) (UnsafeMutableRawPointer?) -> Int32 = { pointer in
             guard let pointer else { return 1 }
@@ -142,7 +142,7 @@ public struct LocalWhisper: Sendable {
         }
         defer { ww_whisper_free_transcript(&native) }
         withExtendedLifetime(cancellation) {}
-        guard !isCancelled(), native.status != WW_INFERENCE_CANCELLED else { throw PCMInferenceRefusal.cancelled }
+        guard !isCanceled(), native.status != WW_INFERENCE_CANCELED else { throw PCMInferenceRefusal.canceled }
         if native.status == WW_INFERENCE_BACKEND_UNAVAILABLE { throw TranscriptionConfigurationError.metalUnavailable }
         guard native.status == WW_INFERENCE_OK else {
             throw native.status == WW_INFERENCE_LOAD_FAILED ? PCMInferenceRefusal.modelLoadFailed : .inferenceFailed

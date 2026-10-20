@@ -1,8 +1,8 @@
 # WaveWrangler engineering guide
 
-How the native macOS app is laid out, who owns which folder, and how to build and test it. Product
-scope, milestones and decisions live in [`docs/planning/`](../planning/milestone-runbook.md); this page
-covers code only.
+How the native macOS app is laid out and how to build and test it. The
+[development workflow](../planning/milestone-runbook.md) and current refinement
+session govern work; older milestone documents are historical references.
 
 ## Layout
 
@@ -53,18 +53,21 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 .github/workflows/ci.yml          Ordinary build/test CI
 ```
 
-**Planned (M2):** `WWTimeMap` (WW-015) adds its row through its own lane. Each lane adds its own
-`Sources/<Module>/` row here when its module merges.
+`WWTimeMap` contains the exact source/group/aligned coordinate maps.
+`WWCommonEdit` contains the provisional common episode edit-map implementation;
+its presence does not mean export or protected-cut acceptance is complete.
 
 Because app folders are `PBXFileSystemSynchronizedRootGroup`s, adding/removing files under
 `WaveWrangler/`, `WaveWranglerTests/` or `WaveWranglerUITests/` does **not** edit `project.pbxproj`.
-Only touch the project file for genuine target/build-setting changes, and coordinate those through the
-Mac owner to avoid parallel pbxproj conflicts. Non-source files placed in `WaveWrangler/` are copied as
+Only touch the project file for genuine target/build-setting changes and avoid
+overlapping edits. Non-source files placed in `WaveWrangler/` are copied as
 resources unless listed in the target's membership exceptions (as `Info.plist` is).
 
-## Module and folder ownership
+## Module boundaries
 
-Parallel sessions work on disjoint folders. Cross-folder changes go through the owning lane.
+The owner names in the historical table below describe the original implementation,
+not active Squad roles or approval gates. Work directly across the relevant
+boundaries as needed, keeping independently edited surfaces disjoint.
 
 | Area | Owner | Notes |
 | --- | --- | --- |
@@ -185,7 +188,7 @@ the aligned-asset renderer's applicability, dependency and exact active-content 
 `AlignedAuditionWindowReader` reuses `WWRender` and its cursor sample provider for at most five
 seconds of 48 kHz listening PCM. The app plays the reference's first decoded channel on the left
 and the explicitly selected target channel on the right. Nothing is written to a source, export or
-canonical document. Waveform results are discarded on cancelled/superseded loads; switching episode,
+canonical document. Waveform results are discarded on canceled/superseded loads; switching episode,
 changing source assignments or undoing/changing the accepted map invalidates or reloads the view.
 PCM cursors seek through the existing opened-descriptor gateway with `ExtAudioFileSeek`/`Tell`,
 preserving exact source frames and checking identity/cancellation around each seek and on return.
@@ -348,8 +351,28 @@ scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, D
 scripts/build.sh Release
 scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, segment, pipeline memory, timing and render calibration passes, then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
-scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
+scripts/test.sh --ui        # XCUITests only on the current host; use the VM lease pipeline instead on the development Mac
 ```
+
+### Source maintenance and historical qualification
+
+The [2026-10-20 source baselines](source-tree-baselines.json) pin the maintained
+estimator, segmenter, renderer, time-map and decoder source/test trees after
+American English cleanup. They also pin the SHA-256 of each unchanged historical
+freeze record. The shared test-only `WWTestSupport` helper checks these baselines
+and includes edited/untracked files when calculating a tree identity.
+
+These pins are source-integrity checks, **not new DSP qualification**. The
+historical measurements, seeds, gates and vendored engine bytes are unchanged.
+Old one-shot holdout entry points now refuse changed historical source trees
+before generating cases. A future qualification needs its own explicit freeze,
+approval and evidence; do not replace old measurement records or clear that guard.
+
+First-party names use American English. Platform spellings such as
+`Task.isCancelled` and the legacy serialized `"cancelled"` case/key remain
+unchanged so OS integration and existing documents/access records stay compatible.
+
+### Local speech diagnostics
 
 The isolated `ww-tiny-pcm-probe` is a **headless experiment**, not app inference. Standard
 package tests exercise missing, wrong-size and wrong-hash model refusal, descriptor I/O
@@ -370,15 +393,20 @@ checks the descriptor before/after, and hashes the bytes against
 before loading them from memory into the pinned CPU library. It generates two seconds
 of 16 kHz mono PCM with two inference threads and at most 16 decoded tokens. Output is
 aggregate only; segment timing availability is **not** word timing or accuracy.
-Never put model bytes in the repo. `SpeechInference.infer` still refuses even for a
-selected primary; no production source binding, sandbox offline proof or media use is
-established by this command.
+Never put model bytes in the repo. The legacy diagnostic `SpeechInference.infer` still refuses even for a
+selected primary. It is not the live cleanup transcription entry point
+(`PrimarySpeechSourceIssuer` and `LocalWhisperRecognizer`), and this command does
+not establish production source binding, sandbox offline proof or media consent.
+
+### GUI testing
 
 For headless functional XCUITests, build on the development Mac and run the
 signed Products inside the [macOS VM GUI hosts](ui-test-vm-hosts.md) through
 their own lease helpers. `scripts/test.sh --ui` launches on the **current
 host** and must not be run on the user's desktop outside an approved window.
-Performance and responsiveness gates stay on the Mac mini.
+Do not fall back to the Mac mini when a VM is unavailable. Physical-device
+performance, audio hardware, and unsupported virtualized GPU behavior need a
+concrete hardware-specific reason and separate approval.
 
 Per-PR GUI selection and the reviewed conditional flake-quarantine policy (currently only the
 #218 broad synthetic Library contrast test) are documented in [GUI flake quarantine](gui-flake-quarantine.md).

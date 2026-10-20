@@ -43,7 +43,7 @@ final class DocumentLifecycleUITests: XCTestCase {
         XCTAssertTrue(bar.waitForExistence(timeout: 10), "the unsaved-changes offer appears on open")
         record("offer: \(bar.label) | \(bar.value as? String ?? "")")
         XCTAssertTrue(bar.label.hasPrefix("Restore unsaved changes from "), bar.label)
-        // VoiceOver: a group labelled by its heading; the heading (header trait) and body are its children.
+        // VoiceOver: a group labeled by its heading; the heading (header trait) and body are its children.
         let body = bar.staticTexts.matching(NSPredicate(format: "value CONTAINS 'never saved' OR label CONTAINS 'never saved'")).firstMatch
         XCTAssertTrue(body.exists, "the body text is exposed to VoiceOver")
         XCTAssertTrue(bar.buttons["Restore Unsaved Changes"].exists && bar.buttons["Discard…"].exists)

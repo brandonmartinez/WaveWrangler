@@ -103,7 +103,7 @@ struct SetupPresentationTests {
         #expect(p.speakerRows[0].status.text == "Primary unavailable — Not found")
     }
 
-    @Test func unconfirmedRolesAreLabelled() throws {
+    @Test func unconfirmedRolesAreLabeled() throws {
         let f = try Fixture()
         let model = try f.model.assigningSpeaker(f.guest.id, toSource: f.tr2.id, in: f.episodeID)
         let p = SetupPresentation(model: model, episodeID: f.episodeID, statuses: [:])
@@ -212,7 +212,7 @@ struct RelinkComparisonTests {
         let c = RelinkComparison.compare(recorded: recorded, chosen: recorded, formatter: formatter)
         #expect(c.outcome == .match)
         #expect(c.headline == "File details match. WaveWrangler compared file details, not audio.")
-        #expect(!c.requiresAcknowledgement)
+        #expect(!c.requiresAcknowledgment)
         #expect(c.confirmTitle == "Use This File")
         #expect(c.rows.map(\.result) == Array(repeating: .same, count: 5))
         #expect(c.acceptedIdentity == .detailsMatch)
@@ -221,18 +221,18 @@ struct RelinkComparisonTests {
     @Test func alreadyLinkedSourceCannotBeConfirmedAnyway() {
         let c = RelinkComparison(rows: [], outcome: .alreadyLinked(otherSource: "Other source"))
         #expect(!c.canConfirm)
-        #expect(c.requiresAcknowledgement)
+        #expect(c.requiresAcknowledgment)
         #expect(c.headline.contains("Other source"))
         #expect(c.acceptedIdentity == .notChecked)
     }
 
-    @Test func sameNameDifferentSizeNeedsAcknowledgement() {
+    @Test func sameNameDifferentSizeNeedsAcknowledgment() {
         var chosen = recorded
         chosen.size = 101
         let c = RelinkComparison.compare(recorded: recorded, chosen: chosen, formatter: formatter)
         #expect(c.outcome == .different(fields: ["Size"]))
         #expect(c.headline == "Some file details are different: size.")
-        #expect(c.requiresAcknowledgement)
+        #expect(c.requiresAcknowledgment)
         #expect(c.confirmTitle == "Use This File Anyway")
         #expect(c.rows[1].accessibilityLabel == "Size — Recorded 100 B — Chosen 101 B — Different")
         #expect(c.acceptedIdentity == .changed(differences: "size differ", acceptedByUser: true))
@@ -242,7 +242,7 @@ struct RelinkComparisonTests {
         let c = RelinkComparison.compare(recorded: recorded, chosen: FileDetails(name: "tr2.wav"), unknownReason: "the file isn't downloaded and downloads are off", formatter: formatter)
         #expect(c.outcome == .unknown(reason: "the file isn't downloaded and downloads are off"))
         #expect(c.headline == "WaveWrangler can't compare some details because the file isn't downloaded and downloads are off.")
-        #expect(c.requiresAcknowledgement)
+        #expect(c.requiresAcknowledgment)
     }
 
     @Test func panelMessage() {
@@ -261,7 +261,7 @@ struct DownloadControlTests {
         #expect(TransferAction.available(transfer: .downloading(fraction: 0.5), residency: .cloudOnly, pauseSupported: true) == [.pause, .cancel])
         #expect(TransferAction.available(transfer: .noConnection, residency: .cloudOnly, pauseSupported: false) == [.retry])
         #expect(TransferAction.available(transfer: .failed(reason: "x"), residency: .cloudOnly, pauseSupported: false) == [.retry])
-        #expect(TransferAction.download.buttonTitle(for: .cancelled) == "Download Again")
+        #expect(TransferAction.download.buttonTitle(for: .canceled) == "Download Again")
         #expect(TransferAction.cancelNeedsConfirmation(.downloading(fraction: nil)))
         #expect(!TransferAction.cancelNeedsConfirmation(.queued))
     }

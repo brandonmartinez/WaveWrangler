@@ -34,9 +34,9 @@ public enum ContentDigestRefusal: Error, Sendable, Equatable {
     /// No explicit user request for this source.
     case notExplicitlyRequested
     /// Source availability is OFF: no content, hash or decode requests. The user must make the source
-    /// available first (an explicit, separately labelled transfer).
+    /// available first (an explicit, separately labeled transfer).
     case sourceAvailabilityOff
-    /// The decoder refused or failed (not local/materialized, unsupported envelope, changed, cancelled…).
+    /// The decoder refused or failed (not local/materialized, unsupported envelope, changed, canceled…).
     case decode(DecodeFailure)
 }
 

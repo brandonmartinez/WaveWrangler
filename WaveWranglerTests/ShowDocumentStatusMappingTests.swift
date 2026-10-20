@@ -18,7 +18,7 @@ struct ShowDocumentStatusMappingTests {
         .saveFailed(retainedRevision: 2, kind: .diskFull, message: "full"),         // D8
         .saveFailed(retainedRevision: 2, kind: .permissionDenied, message: "no"),   // D9
         .saveFailed(retainedRevision: 2, kind: .other, message: "broken"),          // D9
-        .acknowledgementUncertain(message: "unconfirmed"),                          // D5
+        .acknowledgmentUncertain(message: "unconfirmed"),                          // D5
     ]
 
     @Test func promisesARetryOnlyWhileOneIsPending() {
@@ -37,10 +37,10 @@ struct ShowDocumentStatusMappingTests {
             #expect(!popover(state, autosave: false, retrying: true).status.retryingAutomatically, "\(state)")
         }
         let unretried: [WWPersistence.DocumentSaveState] = [
-            .saveFailed(retainedRevision: 2, kind: .cancelled, message: "cancelled"),   // D10
+            .saveFailed(retainedRevision: 2, kind: .canceled, message: "canceled"),   // D10
             .conflict(onDiskRevision: 3, missing: false),                               // D6
             .edited(autosaveEnabled: true),
-            .cancelled,
+            .canceled,
         ]
         for state in unretried {
             let mapped = popover(state, autosave: true, retrying: true)

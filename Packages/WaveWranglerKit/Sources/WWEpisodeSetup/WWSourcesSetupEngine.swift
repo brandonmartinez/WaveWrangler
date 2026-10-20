@@ -75,7 +75,7 @@ public enum WWSourcesStatusMapping {
         case .notRequested(.awaitingAccess): .idle
         case .requested: .downloading(fraction: nil)
         case let .inProgress(fraction): .downloading(fraction: fraction.value)
-        case .cancelled: .cancelled
+        case .canceled: .canceled
         case let .failed(error): .failed(reason: describe(error))
         // The provider reported a network/iCloud-server error: an observed connection failure (T29/T30).
         case .offlineOrUnknown(.some): .noConnection
@@ -561,7 +561,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     }
 
     /// Current snapshots for `sourceIDs`, then again whenever the monitor changes. The observing task
-    /// holds the engine only briefly (never while waiting), so dropping the engine or cancelling the
+    /// holds the engine only briefly (never while waiting), so dropping the engine or canceling the
     /// consumer ends it; `shutdown()` finishes the stream.
     public nonisolated func observe(_ sourceIDs: Set<SourceID>) -> AsyncStream<[SourceID: SourceStatusSnapshot]> {
         let (stream, continuation) = AsyncStream<[SourceID: SourceStatusSnapshot]>.makeStream(bufferingPolicy: .bufferingNewest(1))

@@ -220,7 +220,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 23))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 23, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let target = fixture.epochs[1]
         let accepted = try await fixture.pipeline.accept(
             model: fixture.model,
@@ -241,7 +241,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 231))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 231, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let target = fixture.epochs[1]
         let accepted = try await fixture.pipeline.accept(
             model: fixture.model,
@@ -270,7 +270,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 24))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 24, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let target = fixture.epochs[1]
         let first = try await fixture.acceptAndActivate(
             report, [target: .numeric(ppm: 1, offsetMilliseconds: 2)]
@@ -297,7 +297,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 25))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 25, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let oldEpoch = fixture.epochs[1]
         let accepted = try await fixture.acceptAndActivate(
             report, [oldEpoch: .numeric(ppm: 1, offsetMilliseconds: 2)]
@@ -350,7 +350,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 25))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 25, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let oldEpoch = fixture.epochs[1]
         let accepted = try await fixture.acceptAndActivate(
             report, [oldEpoch: .anchors([
@@ -397,7 +397,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 26))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 26, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let target = fixture.epochs[1]
         let first = try await fixture.acceptAndActivate(
             report, [target: .numeric(ppm: 1, offsetMilliseconds: 2)]
@@ -428,7 +428,7 @@ struct InspectionTests {
                 .init(name: "target", seconds: 30, signal: .scene(seed: 26, offset: 0.02)),
             ]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let epoch = fixture.epochs[1]
         let first = try await fixture.acceptAndActivate(
             report, [epoch: .numeric(ppm: 0, offsetMilliseconds: 20)]
@@ -504,7 +504,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 27))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 27, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let target = fixture.epochs[1]
         let accepted = try await fixture.acceptAndActivate(
             report, [target: .numeric(ppm: 1, offsetMilliseconds: 2)]
@@ -561,7 +561,7 @@ struct InspectionTests {
             .init(name: "Reference", sources: [.init(name: "reference", seconds: 30, signal: .scene(seed: 28))]),
             .init(name: "Target", sources: [.init(name: "target", seconds: 30, signal: .scene(seed: 28, rate: 1.00001, offset: 0.02))]),
         ])
-        let report = try await fixture.analyse()
+        let report = try await fixture.analyze()
         let oldEpoch = fixture.epochs[1]
         let accepted = try await fixture.acceptAndActivate(
             report, [oldEpoch: .numeric(ppm: 1, offsetMilliseconds: 2)]

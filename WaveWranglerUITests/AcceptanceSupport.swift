@@ -128,7 +128,7 @@ enum Acceptance {
 /// types and the lane suites' structural waivers (system chrome, non-interactive SwiftUI containers, pop-up
 /// AXShowMenu, system overlays, AppKit alert icons). For `.contrast`, every finding is screenshotted (crop
 /// attached) and measured, and it is waived only as:
-/// - **measured artefact**: a surface in `measuredArtefact` (each measured from pixels and cited there) **and**
+/// - **measured artifact**: a surface in `measuredArtifact` (each measured from pixels and cited there) **and**
 ///   the screenshot taken now shows legible text: ≥ `minimumGlyphPixels` (40) glyph pixels (≥ 1.5:1 against the background) whose
 ///   75th-percentile ratio is ≥ 4.5:1. A blurred, clipped or low-contrast instance stays unwaived;
 /// - **offscreen**: not hittable and no glyph pixels (scrolled out of view: nothing is drawn);
@@ -341,7 +341,7 @@ enum AcceptanceAudit {
     /// surfaces still requires the glyph test to pass on the screenshot taken now, so a blurred, clipped or
     /// low-contrast instance (e.g. a selected row measured 4.02:1) stays unwaived.
     @MainActor
-    static func measuredArtefact(_ element: XCUIElement, inspectorFrame: CGRect?, episodeInspectorShown: Bool,
+    static func measuredArtifact(_ element: XCUIElement, inspectorFrame: CGRect?, episodeInspectorShown: Bool,
                                  entriesFrame: CGRect?, windowFrames: [CGRect], popoverFrame: CGRect?, inSheet: Bool) -> String? {
         let id = element.identifier
         let text = (element.value as? String).flatMap { $0.isEmpty ? nil : $0 } ?? element.label
@@ -507,7 +507,7 @@ enum AcceptanceAudit {
             // Scrolled out of view: nothing is rendered where the element is (its screenshot has no glyphs).
             if element.exists, !element.isHittable, (stats["glyphPixels"] as? Int ?? 0) < 20 {
                 waived.append(["finding": description, "kind": "offscreen", "measured": stats,
-                               "rationale": "element not visible (not hittable, no glyph pixels): scrolled out of view, not a colour"])
+                               "rationale": "element not visible (not hittable, no glyph pixels): scrolled out of view, not a color"])
                 print("AUDIT WAIVED \(description) — offscreen; measured \(stats)")
                 continue
             }
@@ -531,13 +531,13 @@ enum AcceptanceAudit {
                 }
                 if selectedStatus.waived {
                     waived.append([
-                        "finding": description, "kind": "selected-status-sampling-artefact",
+                        "finding": description, "kind": "selected-status-sampling-artifact",
                         "measured": selectedStatus.record,
                         "rationale": "Apple sampled the accent selection fill as glyphs; isolated light text passes",
                     ])
-                    print("AUDIT WAIVED \(description) — selected status sampling artefact; measured \(selectedStatus.record)")
+                    print("AUDIT WAIVED \(description) — selected status sampling artifact; measured \(selectedStatus.record)")
                 } else {
-                    unwaived.append("\(description) — selected status did not satisfy narrow artefact rule \(selectedStatus.record)")
+                    unwaived.append("\(description) — selected status did not satisfy narrow artifact rule \(selectedStatus.record)")
                 }
                 continue
             }
@@ -549,12 +549,12 @@ enum AcceptanceAudit {
                 print("AUDIT WAIVED \(description) — disabled inspector text measured \(stats)")
                 continue
             }
-            if let artefact = measuredArtefact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown,
+            if let artifact = measuredArtifact(element, inspectorFrame: inspectorFrame, episodeInspectorShown: episodeInspectorShown,
                                                entriesFrame: entriesFrame, windowFrames: windowFrames,
                                                popoverFrame: popoverFrame, inSheet: inSheet),
                passesGlyphContrast(measured) {
-                waived.append(["finding": description, "kind": "measured-artefact", "measured": stats, "rationale": artefact])
-                print("AUDIT WAIVED \(description) — \(artefact); measured now \(stats)")
+                waived.append(["finding": description, "kind": "measured-artifact", "measured": stats, "rationale": artifact])
+                print("AUDIT WAIVED \(description) — \(artifact); measured now \(stats)")
             } else {
                 unwaived.append("\(description) — measured \(stats)")
             }
@@ -618,12 +618,12 @@ enum AcceptanceAudit {
         // carries the hidden columns; the audit's heuristic calls a file name "not human-readable". Scoped to Name
         // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`) and of the frozen M1 golden shows
         // (F-OLDER, #159), where the label is verifiably the file's name. This is the M2 baseline's "Setup source-name
-        // cells" artefact class (docs/m2/evidence/m2-gui-baseline.md).
+        // cells" artifact class (docs/m2/evidence/m2-gui-baseline.md).
         if issue.auditType == .sufficientElementDescription, element.elementType == .staticText,
            element.identifier.range(of: #"^ww\.setup\.source\.[0-9A-F-]{36}$"#, options: .regularExpression) != nil,
            element.label.range(of: #"^(synthetic-[0-9]+|tr[0-9]+)\.wav$"#, options: .regularExpression) != nil
             || goldenFixtureFileNames.contains(element.label) {
-            return "Setup Name cell labelled with the source's file name '\(element.label)' (the visible name; heuristic finding)"
+            return "Setup Name cell labeled with the source's file name '\(element.label)' (the visible name; heuristic finding)"
         }
         if element.elementType == .popUpButton, element.label == "emoji & symbols" { return "system input item, not app UI" }
         if element.elementType == .dialog, element.title.isEmpty, element.buttons["siri"].exists { return "system Siri overlay, not app UI" }

@@ -43,7 +43,7 @@ public protocol SourceSetupEngine: AnyObject, Sendable {
     /// (called after the canonical import). Throws when the scan is unknown or a record is missing.
     func commitImport(_ accepted: [UUID: SourceID], fromScan token: UUID) async throws(SourceEngineError)
 
-    /// Forgets a scan the user cancelled.
+    /// Forgets a scan the user canceled.
     func discardScan(_ token: UUID) async
 
     /// Stops observation and background work when no window uses this engine any more.
@@ -240,7 +240,7 @@ public final class InMemorySourceSetupEngine: SourceSetupEngine, @unchecked Send
             case .download, .retry: next.transfer = .downloading(fraction: nil)
             case .pause: next.transfer = .paused
             case .resume: next.transfer = .downloading(fraction: nil)
-            case .cancel: next.transfer = .cancelled
+            case .cancel: next.transfer = .canceled
             }
             return next
         }

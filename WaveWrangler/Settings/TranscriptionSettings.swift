@@ -205,7 +205,7 @@ final class TranscriptionSettings {
                 }
             } catch {
                 if Task.isCancelled {
-                    status = "Download cancelled. Incomplete weights were not installed."
+                    status = "Download canceled. Incomplete weights were not installed."
                 } else {
                     self.error = "Model download failed: \(EpisodeCleanupModel.describe(error))"
                     status = "No unverified model was installed. You can retry the download."
@@ -216,7 +216,7 @@ final class TranscriptionSettings {
 
     func cancelDownload() {
         job?.cancel()
-        status = "Cancelling model download…"
+        status = "Canceling model download…"
     }
 
     @concurrent
@@ -287,7 +287,7 @@ nonisolated private final class WhisperModelTransfer: NSObject, URLSessionDownlo
     private var task: URLSessionDownloadTask?
     private var continuation: CheckedContinuation<Void, any Error>?
     private var result: Result<Void, any Error>?
-    private var cancelled = false
+    private var canceled = false
     private var lastReport: ContinuousClock.Instant?
 
     init(weights: LocalWhisperWeights, destination: URL, configuration: URLSessionConfiguration,
@@ -308,14 +308,14 @@ nonisolated private final class WhisperModelTransfer: NSObject, URLSessionDownlo
                     self.session = session
                     self.task = task
                     self.continuation = continuation
-                    return cancelled
+                    return canceled
                 }
                 if cancel { task.cancel() }
                 task.resume()
             }
         } onCancel: {
             let task = self.lock.withLock {
-                self.cancelled = true
+                self.canceled = true
                 return self.task
             }
             task?.cancel()

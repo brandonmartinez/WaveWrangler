@@ -3,7 +3,7 @@ import Foundation
 /// Admission control for pipeline work: at most `permits` units at once and at most `budgetBytes` of
 /// estimated working set across admitted units. Waiters are served strictly in arrival order (no
 /// starvation of large units) and never block a thread: waiting is a suspended continuation, and a
-/// cancelled waiter is removed and resumed with `CancellationError`.
+/// canceled waiter is removed and resumed with `CancellationError`.
 actor ResourceGate {
     struct Snapshot: Sendable, Equatable {
         var active: Int

@@ -1,6 +1,11 @@
 # WaveWrangler
 Local-first macOS multitrack podcast alignment and editing
 
+Development is directed by the current refinement session, not the retired Squad
+milestone process. Use American English for first-party code and interface text.
+UI tests prefer the [macOS VMs](docs/engineering/ui-test-vm-hosts.md); a physical
+host requires a specific hardware-dependent reason and approval.
+
 Native macOS multitrack podcast preparation: local audio processing, referenced media, cloud canonical projects.
 
 ## Library and episode editors
@@ -99,7 +104,7 @@ unverified gaps and ends. This is not yet a reliable whole-track repair for ever
 One shared multichannel processor applies the curve to every channel in that file; sibling files
 and original media remain unchanged. Blue clock icons mark applied timing. **Remove adaptive file
 timing** and native Undo/Redo restore earlier timing without discarding decoded waveform bins.
-Full-length review reports progress and can be cancelled without accepting any partial timing.
+Full-length review reports progress and can be canceled without accepting any partial timing.
 Listening and derived aligned audio use the same bounded, pitch-preserving audio tiles, not the
 ordinary pitch-changing affine resampler. Source-region processing origins and shared crossfades
 avoid restarting audio phase at playback-window boundaries. Remove file-local corrections before
@@ -390,8 +395,8 @@ the standard `scripts/test.sh` path.
 
 - [Editing-first transcription engine research: Gemma feasibility and measured Whisper filler retention](docs/research/transcription-engine-comparison.md)
 - [Apple Silicon transcription: CPU/Metal/Core ML measurements and shipped resource budgets](docs/research/apple-silicon-transcription.md)
-- [Start M1: copyable Squad kickoff](docs/planning/kickoffs/m1.md) · [milestone execution runbook](docs/planning/milestone-runbook.md)
-- [Live GitHub milestone/issue index](docs/planning/github-backlog.md) · [machine-readable mapping](docs/planning/github-backlog.json)
+- [Development workflow](docs/planning/milestone-runbook.md)
+- [Historical milestone/issue snapshot](docs/planning/github-backlog.md) · [historical mapping](docs/planning/github-backlog.json)
 - [Public sanitized-provenance index](docs/planning/publication-provenance.json)
 - [Product brief](docs/planning/product-brief.md)
 - [Accepted decision ledger, historical research/reviews, and future experiments](docs/planning/research.md)
@@ -403,7 +408,15 @@ the standard `scripts/test.sh` path.
 - [Parallel research reconciliation and owned remaining gates](docs/research/parallel-readiness-reconciliation.md)
 - [Native policy/library evidence](docs/research/native-policy-library-readiness.md) · [waveform estimation and retained clock failure](docs/research/waveform-clock-render-readiness.md) · [source reconstruction/speech choices](docs/research/source-reconstruction-speech-readiness.md) · [native review interaction contract](docs/research/native-review-contract-readiness.md)
 
-## Accepted direction — 2026-10-04
+## Historical direction and evidence
+
+The material below records earlier decisions, not current execution instructions.
+On 2026-10-20 the Squad setup was removed and, at the user's explicit request,
+all 90 then-open GitHub issues were permanently deleted. Completed issues and
+pull requests were left unchanged. Historical issue counts and links below are
+not a live backlog or evidence that unfinished work is complete.
+
+### Accepted direction — 2026-10-04
 
 [Q01–Q10 are answered](docs/planning/research.md#approval-questions); the twenty decision facets distinguish approved policy from unmeasured implementation:
 
@@ -415,9 +428,9 @@ the standard `scripts/test.sh` path.
 - Automatic **source downloads ON/configurable/off**, accessible status/progress/unknown/offline/cancel/retry/native coordination and immutable originals. Default-OFF metadata fixture trials are separate tests, not product default or a generic provider classifier.
 - Numerical quality/accessibility goals provisionally approved; controlled calibration before holdout, explicit approval for weaker gates, including cloud and shortening coverage. Compare AppKit NSDocument + SwiftUI with SwiftUI document lifecycle for native/cloud-safe saves/autosave/recovery; no framework/file/package/JSON/SQLite choice adopted.
 
-## Current delivery policy - user-directed 2026-10-04
+### Historical delivery policy - user-directed 2026-10-04
 
-GitHub issues and six milestones are the operational backlog. The 2026-10-10 user decision supersedes
+GitHub issues and six milestones were the operational backlog. The 2026-10-10 user decision superseded
 the earlier Squad/orchestrate delivery process: direct implementation now prioritizes saved manual
 alignment and playback; export and speech/cut work come later. File management
 and numeric tables alone do not satisfy the MVP. Existing M1/M2 evidence is retained; M3 and the full
@@ -425,9 +438,14 @@ MVP are not complete. **First audio handoff is cleaned-track M4; no uncut M2 han
 signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are
 separate Release work, not pre-app gates.
 
-This publication changes documents/context only. Pasting [the M1 kickoff](docs/planning/kickoffs/m1.md) grants M1 engineering, scoped dependency restores, isolated worktrees/branches, commits/push, independently reviewed merges and issue updates. WW-009 records contracts/evidence/risks, not another generic approval. Dependencies gate accepted outcomes, not safe preparatory coding. Immutable sources, cloud canonical durability, protected speech, offline/privacy and essential native keyboard/accessibility are never deferred. Recording/model/provider/native/GUI/signing/external publishing consent remains exact-scope; source-download ON is not agent sample permission.
+The old milestone kickoffs and their standing orchestration permissions are retired.
+Immutable sources, durable saves, protected speech, offline/privacy and essential
+native keyboard/accessibility remain product requirements. Recording/model/provider/
+native/GUI/signing/external publishing consent remains exact-scope; source-download
+ON is not agent sample permission.
 
-Later decisions supersede the historical no-issues/research-only statements below without rewriting their evidence. Current graph: **52 stable IDs / 203 acyclic edges / 49 open issues**; WW-001/002/004 stay completed history. WW-003/008 are staged M1; WW-041 now follows WW-042 in Release; new WW-052 holds broader qualification. [Runbook](docs/planning/milestone-runbook.md) explains completion, review, concurrency and next-session handoff.
+The old graph of **52 stable IDs / 203 acyclic edges / 49 open issues** is a
+historical snapshot only; it no longer governs development.
 
 **Public provenance:** published research JSON companions are pointer-redacted and **NOT byte-identical to archived originals**. [Original versus published hashes](docs/planning/publication-provenance.json) are separate; measurements, pins, artifact hashes and failed controls remain unchanged. Local evidence placeholders are descriptive, not accessible repository files.
 

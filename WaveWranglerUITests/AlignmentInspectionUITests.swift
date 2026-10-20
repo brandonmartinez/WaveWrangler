@@ -223,7 +223,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
     }
 
-    func testTM210BlockedStateAndRemedyAreLabelled() {
+    func testTM210BlockedStateAndRemedyAreLabeled() {
         selectTargetEpoch()
         replace(app.textFields["ww.alignment.audition.range.start"], with: "2.5")
         let heading = app.staticTexts["ww.alignment.region.heading"]
@@ -339,17 +339,17 @@ final class AlignmentInspectionUITests: XCTestCase {
                   element.elementType == .group || element.elementType == .other
             else { return self.reportUnwaived(issue) }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
-            // SwiftUI owns the inspector column's chrome around our labelled Inspector scroll area, so no
+            // SwiftUI owns the inspector column's chrome around our labeled Inspector scroll area, so no
             // modifier reaches it. It is waived only as the one container resolved above: the same exact
-            // frame (width and height) and still exposing the labelled `ww.inspector` scroll area.
+            // frame (width and height) and still exposing the labeled `ww.inspector` scroll area.
             let exposedInspector = element.descendants(matching: .any)["ww.inspector"].exists
                 ? ["ww.inspector"] : []
             let isInspectorColumn = inspector.exists
                 && inspectorColumn?.matches(element, exposing: exposedInspector) == true
             // AppKit builds the container around an outline's disclosure-column cell itself, and no
-            // SwiftUI description reaches it: labelling the cell content, combining its children and
+            // SwiftUI description reaches it: labeling the cell content, combining its children and
             // the value-keypath shorthand all leave this one container undescribed (#219). It is waived
-            // only while its own labelled text child is still exposed to assistive technology.
+            // only while its own labeled text child is still exposed to assistive technology.
             // The action buttons' own grid rows are undescribed layout containers: declaring one a
             // containing element drops its buttons from the tree in a narrow window (#219). Each is waived
             // only as a row resolved above: the same exact frame, exposing exactly the same alignment
@@ -371,19 +371,19 @@ final class AlignmentInspectionUITests: XCTestCase {
                 actionRowFindings += 1
                 print(
                     "AUDIT WAIVED [alignment-action-row] \(issue.compactDescription) \(element.frame) — " +
-                    "layout row holding only labelled alignment buttons"
+                    "layout row holding only labeled alignment buttons"
                 )
             } else if isOutlineCell {
                 outlineCellFindings += 1
                 print(
                     "AUDIT WAIVED [alignment-outline-cell] \(issue.compactDescription) — " +
-                    "AppKit-owned outline cell container; its labelled text child remains exposed"
+                    "AppKit-owned outline cell container; its labeled text child remains exposed"
                 )
             } else if isInspectorColumn && !isContent {
                 inspectorColumnFindings += 1
                 print(
                     "AUDIT WAIVED [show-inspector-column] \(issue.compactDescription) \(element.frame) — " +
-                    "SwiftUI-owned inspector column; the labelled Inspector scroll area remains exposed"
+                    "SwiftUI-owned inspector column; the labeled Inspector scroll area remains exposed"
                 )
             } else {
                 layoutContainerFindings += 1
@@ -395,7 +395,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             return true
         }
         // The show's split layout nests two containers over the whole content area, and the episode
-        // sidebar adds a third; each is waived only by matching one of those labelled frames exactly.
+        // sidebar adds a third; each is waived only by matching one of those labeled frames exactly.
         XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
         XCTAssertLessThanOrEqual(inspectorColumnFindings, 1)
         XCTAssertLessThanOrEqual(actionRowFindings, 2)
@@ -463,7 +463,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         )
     }
 
-    /// Scrolls the Alignment workspace until the element's centre sits inside the show window.
+    /// Scrolls the Alignment workspace until the element's center sits inside the show window.
     /// Scroll-wheel deltas are used rather than swipes: a 5000 px/s swipe overshoots the section and the
     /// correction swipes oscillate without ever settling (#219).
     private func scrollIntoWindow(
@@ -478,16 +478,16 @@ final class AlignmentInspectionUITests: XCTestCase {
                 scroll.scroll(byDeltaX: 0, deltaY: -80)
                 continue
             }
-            let centre = CGPoint(x: element.frame.midX, y: element.frame.midY)
-            if window.frame.insetBy(dx: 0, dy: 24).contains(centre) { return }
-            if scroll.frame.minY <= centre.y, centre.y <= scroll.frame.maxY,
+            let center = CGPoint(x: element.frame.midX, y: element.frame.midY)
+            if window.frame.insetBy(dx: 0, dy: 24).contains(center) { return }
+            if scroll.frame.minY <= center.y, center.y <= scroll.frame.maxY,
                let outline = app.outlines.allElementsBoundByIndex.first(where: {
                    $0.descendants(matching: .any).matching(identifier: element.identifier).count > 0
                }) {
-                outline.scroll(byDeltaX: centre.x > scroll.frame.midX ? -80 : 80, deltaY: 0)
+                outline.scroll(byDeltaX: center.x > scroll.frame.midX ? -80 : 80, deltaY: 0)
                 continue
             }
-            scroll.scroll(byDeltaX: 0, deltaY: centre.y > window.frame.midY ? -40 : 40)
+            scroll.scroll(byDeltaX: 0, deltaY: center.y > window.frame.midY ? -40 : 40)
         }
         XCTAssertTrue(
             window.frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)),
@@ -703,7 +703,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         return rows
     }
 
-    /// SwiftUI's own inspector column: the smallest container that wraps the labelled `ww.inspector` scroll
+    /// SwiftUI's own inspector column: the smallest container that wraps the labeled `ww.inspector` scroll
     /// area without being the content or sidebar region. Resolved to exactly one element, or none.
     private func resolveInspectorColumn(
         around inspector: XCUIElement,

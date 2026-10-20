@@ -18,7 +18,7 @@ struct HoldoutTimingTests {
         let result = await runFamily(
             "M1-DUR-002", calibration: 20, holdout: 100,
             label: "headless WWPersistence on the claimed host (no native NSDocument scheduling)",
-            notes: ["Default ON (1 s quiescence). End point = first independent poll (5 ms) that decodes the full expected state from disk: a published canonical revision or an unpublished edit-checkpoint record, labelled by kind. Callback success is not used."],
+            notes: ["Default ON (1 s quiescence). End point = first independent poll (5 ms) that decodes the full expected state from disk: a published canonical revision or an unpublished edit-checkpoint record, labeled by kind. Callback success is not used."],
             timingGate: ("p95 <= 2 s provisional (WW-005)", 2.0)
         ) { _, seed in
             var rng = SeededGenerator(seed: seed)

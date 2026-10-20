@@ -13,14 +13,14 @@ struct ReconnectRetryTests {
     static let other = SourceErrorDescriptor(domain: NSCocoaErrorDomain, code: NSFileReadUnknownError)
 
     @Test func decision() {
-        #expect(ReconnectRetry.shouldRetry(.offlineOrUnknown(Self.offline), setting: .on, userCancelled: false))
-        #expect(!ReconnectRetry.shouldRetry(.offlineOrUnknown(Self.offline), setting: .off, userCancelled: false), "OFF never retries")
-        #expect(!ReconnectRetry.shouldRetry(.offlineOrUnknown(Self.offline), setting: .on, userCancelled: true), "a user cancel waits for Retry")
-        #expect(!ReconnectRetry.shouldRetry(.offlineOrUnknown(nil), setting: .on, userCancelled: false), "a stall is not an observed connection failure")
-        #expect(!ReconnectRetry.shouldRetry(.failed(Self.other), setting: .on, userCancelled: false))
-        #expect(!ReconnectRetry.shouldRetry(.cancelled, setting: .on, userCancelled: false))
-        #expect(!ReconnectRetry.shouldRetry(.idle, setting: .on, userCancelled: false))
-        #expect(!ReconnectRetry.shouldRetry(nil, setting: .on, userCancelled: false))
+        #expect(ReconnectRetry.shouldRetry(.offlineOrUnknown(Self.offline), setting: .on, userCanceled: false))
+        #expect(!ReconnectRetry.shouldRetry(.offlineOrUnknown(Self.offline), setting: .off, userCanceled: false), "OFF never retries")
+        #expect(!ReconnectRetry.shouldRetry(.offlineOrUnknown(Self.offline), setting: .on, userCanceled: true), "a user cancel waits for Retry")
+        #expect(!ReconnectRetry.shouldRetry(.offlineOrUnknown(nil), setting: .on, userCanceled: false), "a stall is not an observed connection failure")
+        #expect(!ReconnectRetry.shouldRetry(.failed(Self.other), setting: .on, userCanceled: false))
+        #expect(!ReconnectRetry.shouldRetry(.canceled, setting: .on, userCanceled: false))
+        #expect(!ReconnectRetry.shouldRetry(.idle, setting: .on, userCanceled: false))
+        #expect(!ReconnectRetry.shouldRetry(nil, setting: .on, userCanceled: false))
     }
 
     private struct Env {
@@ -83,7 +83,7 @@ struct ReconnectRetryTests {
         await env.monitor.stop()
     }
 
-    @Test func userCancelledIsNotRetried() async throws {
+    @Test func userCanceledIsNotRetried() async throws {
         let env = try await makeEnv("t30-cancel", scripts: [[.progress(0.2), .error(Self.offline)]], setting: .on)
         let id = env.records[0].sourceID
         try await env.monitor.adopt(env.records)

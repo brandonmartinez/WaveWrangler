@@ -73,7 +73,7 @@ struct SourceAccessTests {
         #expect(Set(residency).count == residency.count)
         let transfers: [TransferState] = [
             .unknown, .idle, .notRequested(.availabilityOff), .notRequested(.unsupportedLocation), .notRequested(.awaitingAccess),
-            .requested, .inProgress(fractionCompleted: .unknown), .inProgress(fractionCompleted: .known(0.5)), .cancelled,
+            .requested, .inProgress(fractionCompleted: .unknown), .inProgress(fractionCompleted: .known(0.5)), .canceled,
             .failed(SourceErrorDescriptor(domain: "d", code: 1)), .offlineOrUnknown(nil),
         ]
         let texts = transfers.map(\.diagnosticText)

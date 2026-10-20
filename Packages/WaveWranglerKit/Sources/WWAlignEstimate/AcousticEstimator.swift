@@ -38,7 +38,7 @@ public enum AcousticEstimator {
 
         var drafts: [Draft] = []
         for track in request.tracks {
-            var draft = try analyse(track, reference: reference, referenceStart: referenceStart, search: request.search, parameters: parameters, windowLength: windowLength, correlator: &correlator)
+            var draft = try analyze(track, reference: reference, referenceStart: referenceStart, search: request.search, parameters: parameters, windowLength: windowLength, correlator: &correlator)
             if (epochsPerGroup[track.group] ?? 0) > 1 { draft.flags.insert(.restartedEpoch) }
             drafts.append(draft)
         }
@@ -69,7 +69,7 @@ public enum AcousticEstimator {
         }
     }
 
-    private static func analyse(_ track: EstimatorTrack, reference: ProxySignal, referenceStart: Double, search: SearchRange, parameters: EstimatorParameters, windowLength nw: Int, correlator: inout WindowCorrelator) throws(AlignEstimateError) -> Draft {
+    private static func analyze(_ track: EstimatorTrack, reference: ProxySignal, referenceStart: Double, search: SearchRange, parameters: EstimatorParameters, windowLength nw: Int, correlator: inout WindowCorrelator) throws(AlignEstimateError) -> Draft {
         let proxy = ProxySignal(buffer: track.buffer, parameters: parameters)
         let rate = Double(track.buffer.sampleRate)
         let fp = parameters.proxyRate
@@ -153,7 +153,7 @@ public enum AcousticEstimator {
         guard ppb.isFinite, abs(ppb) < 1e9 else { return abstain(.implausibleDrift, "fitted drift is not representable") }
         let aNumerator = Int64(1_000_000_000) + Int64(ppb)
         let aDouble = Double(aNumerator) / 1e9
-        let bDouble = (line.centre + line.intercept) - aDouble * line.centre
+        let bDouble = (line.center + line.intercept) - aDouble * line.center
         let bNanos = (bDouble * 1e9).rounded()
         guard bNanos.isFinite, abs(bNanos) < 9e18 else { throw .timeMap(.exactArithmeticEnvelopeExceeded) }
         let segment: AffineClockSegment

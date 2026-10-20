@@ -36,7 +36,7 @@ import WWTimeMap
 ///   mono WAV (4-30 s) into that isolated fixture. Never supply private recordings.
 /// - `-WWUITestMinimumShowWindow YES`: open a synthetic show at the supported 760×440 minimum content size.
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
-///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labelled "override, not
+///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labeled "override, not
 ///   system setting" in evidence; implements the `-WWForceIncreaseContrast` idea of the acceptance suite).
 /// - `-WWUITestCenterWindows YES` (implied by `-WWUITestHooks YES`): place windows fully on the primary
 ///   display so audits and clicks never straddle a display edge.

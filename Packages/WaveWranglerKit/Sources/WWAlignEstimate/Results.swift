@@ -19,13 +19,13 @@ public enum WindowStatus: String, Sendable, Hashable, CaseIterable {
     case ambiguous
 }
 
-/// One analysis window. Offsets are aligned time minus group-clock time at the window centre.
+/// One analysis window. Offsets are aligned time minus group-clock time at the window center.
 public struct WindowMeasurement: Sendable, Hashable {
     public let index: Int
-    /// Group-clock time of the window centre, seconds.
+    /// Group-clock time of the window center, seconds.
     public let groupClockCenter: Double
     public let status: WindowStatus
-    /// Normalised-correlation peak (a correlation coefficient in -1...1, not a probability).
+    /// Normalized-correlation peak (a correlation coefficient in -1...1, not a probability).
     public let peakScore: Double
     /// Highest other local correlation peak outside the main lobe.
     public let secondPeakScore: Double

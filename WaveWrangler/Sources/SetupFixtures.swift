@@ -5,7 +5,7 @@ import WWEpisodeSetup
 
 /// Synthetic UI-test fixtures (F-MESSY import tree and F-STATES simulated provider states). Selected only
 /// by the `WW_SETUP_ENGINE=fixture-states` environment variable; no file is read or written and every
-/// state here is labelled "simulated provider state".
+/// state here is labeled "simulated provider state".
 @MainActor
 enum SetupFixtures {
     /// Debug builds only; Release builds ignore `WW_SETUP_ENGINE` entirely.
@@ -98,7 +98,7 @@ enum SetupFixtures {
             case .download, .retry: next.transfer = .downloading(fraction: nil)  // as WWSources' `.requested`
             case .pause: next.transfer = .paused
             case .resume: next.transfer = .downloading(fraction: nil)
-            case .cancel: next.transfer = .cancelled
+            case .cancel: next.transfer = .canceled
             }
             return next
         }
@@ -154,7 +154,7 @@ enum SimulatedNetwork {
     /// attention count changes once and no row is announced on its own.
     private static func transfer(_ ids: Set<SourceID>, in engine: InMemorySourceSetupEngine) {
         guard !ids.isEmpty else { return }
-        apply(ids, engine, from: [.noConnection, .downloading(fraction: nil), .cancelled]) { $0.transfer = .downloading(fraction: nil) }
+        apply(ids, engine, from: [.noConnection, .downloading(fraction: nil), .canceled]) { $0.transfer = .downloading(fraction: nil) }
         Task { @MainActor in
             try? await Task.sleep(for: step)
             guard online else { return apply(ids, engine, from: [.downloading(fraction: nil)]) { $0.transfer = .noConnection } }

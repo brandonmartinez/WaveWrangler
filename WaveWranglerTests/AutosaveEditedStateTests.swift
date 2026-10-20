@@ -1,7 +1,7 @@
 import AppKit
 import Testing
 
-/// #87 / #195 (M1 gate T26): pins the AppKit behaviour that `ShowDocument.finishSave` relies on. After AppKit's own
+/// #87 / #195 (M1 gate T26): pins the AppKit behavior that `ShowDocument.finishSave` relies on. After AppKit's own
 /// change-count update for an autosave in place, `isDocumentEdited` is already false, yet AppKit keeps its "recent
 /// changes" (not public API; measured on macOS 27), which keep "— Edited" beside the title. A clear guarded by
 /// `isDocumentEdited` therefore never runs; the verified autosave clears with `.changeCleared` unconditionally.

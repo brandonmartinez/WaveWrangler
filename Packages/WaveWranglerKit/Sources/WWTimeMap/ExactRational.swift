@@ -8,7 +8,7 @@ import Foundation
 /// never overflows (it uses a continued-fraction comparison, not cross-multiplication).
 ///
 /// No time-map computation in WWTimeMap goes through `Double`. The only rounding anywhere is the explicit,
-/// single, documented quantisation of an exact result to an integer frame (``roundedHalfUp()``).
+/// single, documented quantization of an exact result to an integer frame (``roundedHalfUp()``).
 public struct ExactRational: Sendable, Hashable, Comparable, CustomStringConvertible {
     public let numerator: Int128
     /// Always `> 0`.
@@ -76,7 +76,7 @@ public struct ExactRational: Sendable, Hashable, Comparable, CustomStringConvert
 
     public func divided(by other: ExactRational) throws(TimeMapError) -> ExactRational {
         guard other.numerator != 0 else { throw .zeroDenominator }
-        return try multiplied(by: ExactRational(canonicalNumerator: other.denominator, denominator: other.numerator).normalisedSign())
+        return try multiplied(by: ExactRational(canonicalNumerator: other.denominator, denominator: other.numerator).normalizedSign())
     }
 
     public func negated() -> ExactRational {
@@ -84,11 +84,11 @@ public struct ExactRational: Sendable, Hashable, Comparable, CustomStringConvert
         ExactRational(canonicalNumerator: -numerator, denominator: denominator)
     }
 
-    private func normalisedSign() -> ExactRational {
+    private func normalizedSign() -> ExactRational {
         denominator < 0 ? ExactRational(canonicalNumerator: -numerator, denominator: -denominator) : self
     }
 
-    // MARK: Integer quantisation
+    // MARK: Integer quantization
 
     /// Largest integer `<= self`.
     public func floor() -> Int128 { Self.floorDivMod(numerator, denominator).quotient }
@@ -99,9 +99,9 @@ public struct ExactRational: Sendable, Hashable, Comparable, CustomStringConvert
         return r == 0 ? q : q + 1
     }
 
-    /// Nearest integer with ties rounded towards positive infinity: `floor(self + 1/2)`.
+    /// Nearest integer with ties rounded toward positive infinity: `floor(self + 1/2)`.
     ///
-    /// This is the single rounding rule of WWTimeMap (the same HALF-UP quantiser as the WW-025 synthetic
+    /// This is the single rounding rule of WWTimeMap (the same HALF-UP quantizer as the WW-025 synthetic
     /// contract): `54.5 -> 55`, `-54.5 -> -54`. The absolute error is always `<= 1/2`.
     public func roundedHalfUp() -> Int128 {
         let (q, r) = Self.floorDivMod(numerator, denominator)

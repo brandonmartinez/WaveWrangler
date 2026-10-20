@@ -30,7 +30,7 @@ struct EligibilityTests {
         let expected: [String: SourceIneligibility] = [
             "off": .availabilityOff, "unauthorized": .notAuthorized, "unregistered": .notRegistered, "unlocated": .locationUnknown,
         ]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.plan.ineligible == Dictionary(uniqueKeysWithValues: expected.map { (fixture.id($0.key), $0.value) }))
         #expect(Set(report.plan.eligiblePlacedSources) == [fixture.id("ref"), fixture.id("ok")])
         #expect(Set(report.probes.keys) == [fixture.id("ref"), fixture.id("ok")])
@@ -64,7 +64,7 @@ struct EligibilityTests {
         var groups = TwoRecorder.groups()
         for g in groups.indices { for s in groups[g].sources.indices { groups[g].sources[s].availability = .off } }
         let fixture = try await PipelineFixture(groups, label: "all-off")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.plan.reference == nil)
         #expect(report.probes.isEmpty && report.analyses.isEmpty && report.records.isEmpty)
         #expect(fixture.content.total.opens == 0)
@@ -83,7 +83,7 @@ struct EligibilityTests {
     func offAtRenderIsNotOpened() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(referenceSeconds: 6, targetSeconds: 4), label: "off-render")
         let tgt = fixture.id("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: .numeric(ppm: 100, offsetMilliseconds: 1250)])
         let before = fixture.content.record(fixture.url("tgt"))
 
@@ -112,7 +112,7 @@ struct EligibilityTests {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "changed-before")
         let tgt = fixture.id("tgt")
         try fixture.rewrite("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.sourceFailures == [tgt: .sourceChangedSinceRegistration])
         #expect(fixture.content.record(fixture.url("tgt")).reads == 0, "a changed source must not be decoded")
         #expect(report.analyses[fixture.epochs[1]] == nil)
@@ -120,9 +120,9 @@ struct EligibilityTests {
         #expect(state.status == .sourceBlocked(tgt, .readFailed(.sourceChangedSinceRegistration)))
         #expect(state.remedies == [.retryAnalysis, .goToSetup])
 
-        // The app re-registers the new revision; the retry analyses it.
+        // The app re-registers the new revision; the retry analyzes it.
         await fixture.coordinator.updateSource(try PipelineFixture.registration(tgt, fixture.url("tgt")))
-        let retried = try await fixture.analyse(preferredReference: "ref")
+        let retried = try await fixture.analyze(preferredReference: "ref")
         #expect(retried.sourceFailures.isEmpty)
         #expect(await fixture.states(retried)[fixture.epochs[1]]?.status.proposal != nil)
     }
@@ -132,7 +132,7 @@ struct EligibilityTests {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "changed-after")
         let tgt = fixture.id("tgt")
         let targetEpoch = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(await fixture.states(report)[targetEpoch]?.status.proposal != nil)
 
         try fixture.rewrite("tgt")

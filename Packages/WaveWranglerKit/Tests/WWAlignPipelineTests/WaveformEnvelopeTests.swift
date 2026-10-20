@@ -115,7 +115,7 @@ struct WaveformEnvelopeTests {
             }
             Issue.record("Cancellation must not publish a partial overview")
         } catch {
-            #expect(error is CancellationError || error as? DecodeFailure == .cancelled)
+            #expect(error is CancellationError || error as? DecodeFailure == .canceled)
         }
         let first = RecordingEpochID()
         let restarted = RecordingEpochID()
@@ -206,19 +206,19 @@ struct WaveformEnvelopeTests {
             startSeconds: 4, durationSeconds: 1, groupMap: map
         )
         #expect(empty.bins.isEmpty)
-        let cancelled = Task {
+        let canceled = Task {
             try Task.checkCancellation()
             return try await WaveformWindowReader.readWindow(
                 sourceURL: url, source: source, matching: witness, decoder: decoder,
                 startSeconds: 0, durationSeconds: 1
             )
         }
-        cancelled.cancel()
+        canceled.cancel()
         do {
-            _ = try await cancelled.value
-            Issue.record("A cancelled read must not publish an envelope")
+            _ = try await canceled.value
+            Issue.record("A canceled read must not publish an envelope")
         } catch {
-            #expect(error is CancellationError || (error as? DecodeFailure) == .cancelled)
+            #expect(error is CancellationError || (error as? DecodeFailure) == .canceled)
         }
         try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent("saved.wav"))
         try data.write(to: url)

@@ -16,7 +16,7 @@ import WWCore
 /// - `recoveredOld`: the current file is damaged (torn publish) and the newest whole validated checkpoint
 ///   (or byte-identical migration backup) is the previous revision.
 ///
-/// `mixed` (any other value, or a library acknowledgement ahead of the verified show) and `zeroValid`
+/// `mixed` (any other value, or a library acknowledgment ahead of the verified show) and `zeroValid`
 /// (nothing valid anywhere) must be zero. Every iteration also audits that no write targeted the synthetic
 /// source folder and that source bytes are unchanged.
 ///
@@ -69,7 +69,7 @@ struct FaultInjectionHarnessTests {
         return Double.random(in: 0.05...0.95, using: &rng)
     }
 
-    // MARK: - Show document P1–P7 (with library acknowledgement and derived index)
+    // MARK: - Show document P1–P7 (with library acknowledgment and derived index)
 
     @Test(arguments: PublicationBoundary.show)
     func showBoundary(_ boundary: PublicationBoundary) throws {

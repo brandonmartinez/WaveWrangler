@@ -205,7 +205,7 @@ extension LocationState {
 extension TransferState {
     var isTerminal: Bool {
         switch self {
-        case .idle, .cancelled, .failed, .offlineOrUnknown, .notRequested: true
+        case .idle, .canceled, .failed, .offlineOrUnknown, .notRequested: true
         default: false
         }
     }
@@ -545,15 +545,15 @@ enum MatrixScenarios {
         try await Task.sleep(for: .milliseconds(env.int(0...6)))
         await controller.cancel(record.key)
         let settled = await controller.waitUntilSettled(record.key)
-        env.check(settled == .cancelled || settled == .idle, "after cancel \(settled)")
+        env.check(settled == .canceled || settled == .idle, "after cancel \(settled)")
         try await Task.sleep(for: .milliseconds(5))
         env.check(await controller.state(of: record.key) == settled, "state changed after cancel")
         env.check(await controller.activeCount == 0, "active after cancel")
         env.check(env.io.count(.downloadRequest) == 1, "requests \(env.io.count(.downloadRequest))")
-        if settled == .cancelled {
+        if settled == .canceled {
             let evaluation = await env.evaluate(record, transfer: settled)
             env.check(evaluation.observation.remedies.contains(.retryTransfer), "cancel must offer retry")
-            env.check(evaluation.observation.residency != .local || item.status != .notDownloaded, "cancelled shown as available")
+            env.check(evaluation.observation.residency != .local || item.status != .notDownloaded, "canceled shown as available")
         }
     }
 
@@ -633,7 +633,7 @@ enum MatrixScenarios {
         case 2:
             await controller.cancel(record.key)
             let afterCancel = await controller.state(of: record.key)
-            env.check(afterCancel == .cancelled, "after cancel \(afterCancel)")
+            env.check(afterCancel == .canceled, "after cancel \(afterCancel)")
             env.check(env.context.ledger.snapshot.openScopes == 0, "scope open after cancel returned")
             env.check(await controller.activeCount == 0, "still observing after cancel")
         case 3:
@@ -846,9 +846,9 @@ enum MatrixScenarios {
         for (offset, (_, record)) in placeholders.enumerated() {
             let state = await controller.state(of: record.key)
             if keepUserRequested && offset == 0 {
-                env.check(state != .cancelled, "user-requested transfer cancelled by OFF")
+                env.check(state != .canceled, "user-requested transfer canceled by OFF")
             } else {
-                env.check(state == .cancelled || state == .idle, "after OFF \(state)")
+                env.check(state == .canceled || state == .idle, "after OFF \(state)")
             }
         }
         // OFF: re-evaluation and automatic requests issue nothing.

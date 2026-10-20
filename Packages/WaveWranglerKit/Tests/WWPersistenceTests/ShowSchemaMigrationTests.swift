@@ -213,7 +213,7 @@ struct ShowSchemaMigrationTests {
         let url = rig.url()
         try golden.bytes.write(to: url)
         let migrator = DocumentMigrator.show(publisher: rig.publisher)
-        #expect(throws: PublicationError.cancelled) { try migrator.migrate(url, key: golden.key, isCancelled: { true }) }
+        #expect(throws: PublicationError.canceled) { try migrator.migrate(url, key: golden.key, isCanceled: { true }) }
         #expect(try Data(contentsOf: url) == golden.bytes, "cancel leaves the schema 1 file")
         let receipt = try migrator.migrate(url, key: golden.key)
         let migrated = try Data(contentsOf: url)

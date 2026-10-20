@@ -174,7 +174,7 @@ struct CleanupTranscriptionTimingTests {
             start: review.bounds.alignedStart - 0.01, end: review.bounds.alignedEnd + 0.01)
         #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback && cleanup.error == nil)
         try await Task.sleep(for: .milliseconds(300))
-        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback, "A cancelled loop cannot restart after the edit")
+        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback, "A canceled loop cannot restart after the edit")
         #expect(cleanup.fillerReviews.first?.detectedBounds == review.detectedBounds)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
         cleanup.setFillerBounds(review.id, start: review.bounds.alignedStart, end: review.bounds.alignedStart + 0.000001)

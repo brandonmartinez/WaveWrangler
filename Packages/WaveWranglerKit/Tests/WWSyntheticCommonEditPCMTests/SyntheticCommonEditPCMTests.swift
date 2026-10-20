@@ -41,7 +41,7 @@ struct SyntheticCommonEditPCMTests {
         #expect(output[2].allSatisfy { $0 == 0 })
     }
 
-    @Test func priorAdjacentRemovalIsAppliedOnceAndOverlapsRefuse() throws {
+    @Test func priorAdjacentermovalIsAppliedOnceAndOverlapsRefuse() throws {
         let fixture = try PCMFixture()
         let adjacent = try CommonEpisodeEditMap(
             alignment: fixture.base.alignment, alignmentRevision: fixture.base.alignmentRevision,
@@ -265,21 +265,21 @@ struct SyntheticCommonEditPCMTests {
         }
     }
 
-    @Test func cancelledBeforePCMWorkReturnsNoProduct() async throws {
+    @Test func canceledBeforePCMWorkReturnsNoProduct() async throws {
         let fixture = try PCMFixture()
         let (plan, input) = try fixture.prepare(.shorten)
-        let cancelled = Task {
+        let canceled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             do {
                 _ = try SyntheticCommonEditPCMRenderer.render(plan, input: input, chunkFrames: 3)
                 return false
             } catch let error as SyntheticCommonEditPCMError {
-                return error == .cancelled
+                return error == .canceled
             } catch {
                 return false
             }
         }
-        #expect(await cancelled.value)
+        #expect(await canceled.value)
     }
 
     @Test func protectedAndMissingStructuralProofRefuseBeforePCM() throws {

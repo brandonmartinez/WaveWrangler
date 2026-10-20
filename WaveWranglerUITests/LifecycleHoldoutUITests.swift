@@ -26,7 +26,7 @@ final class LifecycleHoldoutUITests: XCTestCase {
         case dockQuitOffDontSave = "Dock › Quit, OFF dirty: review shown, Don't Save quits without writing"
         case as01EditThenOffWithinDelay = "AS01: edit while ON, turn OFF within the delay: nothing written, Close prompts"
         case as05CloseDontSave = "AS05: OFF dirty Close › Don't Save: closes, disk unchanged"
-        case saveAsCancel = "Save As… panel cancelled: nothing written, document unchanged and still dirty"
+        case saveAsCancel = "Save As… panel canceled: nothing written, document unchanged and still dirty"
         case revertToSaved = "Revert To › Last Saved Version: edits discarded, disk title shown"
         case relaunchWithEditCheckpoint = "Relaunch with an edit checkpoint present: 'Restore unsaved changes' offered"
     }
@@ -152,7 +152,7 @@ final class LifecycleHoldoutUITests: XCTestCase {
 
         case .saveAsCancel:
             let window = try launchAndOpen(document, autosave: false)
-            try edit(window, title: "Save As cancelled \(index)")
+            try edit(window, title: "Save As canceled \(index)")
             let before = Set((try? FileManager.default.contentsOfDirectory(atPath: workDirectory.path)) ?? [])
             let titleBefore = window.title
             app.menuBars.menuBarItems["File"].click()
@@ -163,11 +163,11 @@ final class LifecycleHoldoutUITests: XCTestCase {
             check(Acceptance.waitFor(timeout: 5) { !self.app.sheets.firstMatch.exists }, "panel dismissed")
             check(diskTitle(document) == Self.original, "nothing written")
             check(window.title == titleBefore, "still the same document: \(titleBefore) → \(window.title)")
-            check(window.textFields["Show title"].value as? String == "Save As cancelled \(index)", "edit kept")
+            check(window.textFields["Show title"].value as? String == "Save As canceled \(index)", "edit kept")
             let after = Set((try? FileManager.default.contentsOfDirectory(atPath: workDirectory.path)) ?? [])
             check(after == before, "no copy created: \(after.subtracting(before))")
             app.typeKey("w", modifierFlags: .command)
-            check(closeSheet() != nil, "still dirty after cancelled Save As")
+            check(closeSheet() != nil, "still dirty after canceled Save As")
 
         case .revertToSaved:
             let window = try launchAndOpen(document, autosave: false)

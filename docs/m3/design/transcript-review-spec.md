@@ -2,7 +2,7 @@
 
 **Owner:** Design · **Status:** proposed M3 interaction contract; documentary only, not implemented or validated.
 
-**Refs:** [WW-025 (#22)](https://github.com/brandonmartinez/WaveWrangler/issues/22) · [WW-044 (#48)](https://github.com/brandonmartinez/WaveWrangler/issues/48) · [WW-029 (#26)](https://github.com/brandonmartinez/WaveWrangler/issues/26) · [M2 alignment inspection](../../m2/design/alignment-inspection-spec.md) · [M3 kickoff](../../planning/kickoffs/m3.md)
+**Refs:** [WW-025 (#22)](https://github.com/brandonmartinez/WaveWrangler/issues/22) · [WW-044 (#48)](https://github.com/brandonmartinez/WaveWrangler/issues/48) · [WW-029 (#26)](https://github.com/brandonmartinez/WaveWrangler/issues/26) · [M2 alignment inspection](../../m2/design/alignment-inspection-spec.md) · [M3 kickoff](https://github.com/brandonmartinez/WaveWrangler/blob/792aa6687ab0b7a196d41fe13e54f7dd9e048392/docs/planning/kickoffs/m3.md)
 
 This specification extends the M1/M2 review conventions; it does not supersede their source immutability, state honesty, map-coordinate, keyboard, undo, or accessibility contracts. Its words are proposed UI copy and acceptance criteria, not evidence that a native surface or workflow exists. Pipeline, Alignment, and Mac must review the protected-edit, timing, and native feasibility details before implementation is treated as accepted.
 

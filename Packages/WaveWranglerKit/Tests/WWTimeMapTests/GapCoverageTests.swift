@@ -77,7 +77,7 @@ struct GapCoverageTests {
         #expect(forward == .unsupported(epoch: u, reason: .estimatorAbstained))
         #expect(forward.regionState == .unsupported(.estimatorAbstained))
         // The unsupported span has no aligned image, but its frames may lie anywhere between the mapped
-        // neighbours: instants there are reported unsupported (same epoch and reason as the forward
+        // neighbors: instants there are reported unsupported (same epoch and reason as the forward
         // query), never a gap that skips the unsupported span and never inverted.
         let region = UnsupportedInverseRegion(
             occurrence: occurrence.id, precedingMappedEpoch: a, followingMappedEpoch: b,
@@ -88,7 +88,7 @@ struct GapCoverageTests {
             #expect(inverse == .unsupported(region))
             #expect(inverse.regionState == forward.regionState)
         }
-        // The mapped neighbours' own instants still invert.
+        // The mapped neighbors' own instants still invert.
         if case .source(let s) = try group.sourceFrame(at: q(2), in: occurrence.id) { #expect(s.frame == 96000 && s.epoch == b) } else { Issue.record("following span not inverted") }
     }
 

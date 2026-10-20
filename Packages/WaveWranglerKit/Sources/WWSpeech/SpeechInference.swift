@@ -11,7 +11,7 @@ public enum SpeechRefusal: Error, Sendable, Equatable {
 }
 
 /// Media-free admission boundary. The caller must supply the current canonical show model, not a
-/// cached selection. Production has no sealed source issuer or transcript publisher.
+/// cached selection. This diagnostic is separate from the live PrimarySpeechSourceIssuer pipeline.
 public struct SpeechInference: Sendable {
     public init() {}
 

@@ -26,7 +26,7 @@ enum AutomaticAnalysis {
             // all sparse fine buffers and multichannel gateway chunks remain inside this single admission.
             let fineBytes = 48 * 10 * maximumRate * 4 + 10 * maximumRate * 32 + chunks
             let record = try await environment.gate.withAdmission(bytes: fineBytes + (160 << 20)) {
-                try await analyse(unit: unit, environment: environment)
+                try await analyze(unit: unit, environment: environment)
             }
             return try EpochAnalysisRecord.encode(record)
         } catch let error as AlignEstimateError {
@@ -36,7 +36,7 @@ enum AutomaticAnalysis {
         } catch { throw workFailure(error) }
     }
 
-    private static func analyse(unit: AnalysisUnit, environment: PipelineEnvironment) async throws -> EpochAnalysisRecord {
+    private static func analyze(unit: AnalysisUnit, environment: PipelineEnvironment) async throws -> EpochAnalysisRecord {
         let targetRate = Double(unit.targetFacts.sampleRate)
         let referenceRate = Double(unit.referenceFacts.sampleRate)
         let duration = Double(unit.targetFacts.frameCount) / targetRate

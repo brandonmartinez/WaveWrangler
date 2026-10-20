@@ -59,7 +59,7 @@ struct ConcurrencyTests {
             guard committing == slot, fired.update({ let first = !$0; $0 = true; return first }) else { return }
             await coordinator.updateSource(SourceRevision(source: tgt, token: "metadata:changed-while-committing"))
         }
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(fired.value)
         let analysis = try #require(report.analyses[targetEpoch])
         if skipCurrencyCheck {
@@ -81,7 +81,7 @@ struct ConcurrencyTests {
     @Test("A map change that lands while aligned segments commit discards them all; skipping the currency check would publish them", arguments: [false, true])
     func lateRenderResult(skipCurrencyCheck: Bool) async throws {
         let fixture = try await PipelineFixture(Self.short(), skipCurrencyCheck: skipCurrencyCheck, label: "late-render")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: Self.truth])
         let coordinator = fixture.coordinator
         let next = MapRevisionReference(episode: fixture.episodeID, revision: 2)
@@ -134,7 +134,7 @@ struct ConcurrencyTests {
         var hooks = AlignmentPipelineTestHooks()
         hooks.mapIdentityKeysSources = identityKeysSources
         let fixture = try await PipelineFixture(Self.short(), hooks: hooks, label: "late-render-other-source")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: Self.truth])
         let coordinator = fixture.coordinator
         let ref = fixture.id("ref")
@@ -205,7 +205,7 @@ struct ConcurrencyTests {
 
     // MARK: Cancellation
 
-    @Test("Cancelling mid-decode stops reading, closes every reader, releases the gate, publishes nothing; a rerun succeeds")
+    @Test("Canceling mid-decode stops reading, closes every reader, releases the gate, publishes nothing; a rerun succeeds")
     func cancelMidDecode() async throws {
         let fixture = try await PipelineFixture(Self.short(), label: "cancel-decode")
         let targetEpoch = fixture.epochs[1]
@@ -217,27 +217,27 @@ struct ConcurrencyTests {
             guard path == targetPath, index == 1, fired.update({ let first = !$0; $0 = true; return first }) else { return }
             cancelSlotDuringRead(coordinator, slot)
         }
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(fired.value)
-        #expect(report.epochFailures[targetEpoch] == .cancelled)
+        #expect(report.epochFailures[targetEpoch] == .canceled)
         #expect(report.records[targetEpoch] == nil)
         let analysis = try #require(report.analyses[targetEpoch])
         #expect(!analysis.isAvailable)
         #expect(fixture.store.payload(for: analysis.key) == nil)
         let target = fixture.content.record(fixture.url("tgt"))
-        #expect(target.reads == 2, "no read after the cancelled one")
+        #expect(target.reads == 2, "no read after the canceled one")
         #expect(target.furthestFrame < fixture.specs["tgt"]!.frames)
         await Self.expectQuiescent(fixture)
 
         fixture.content.setOnRead(nil)
-        let rerun = try await fixture.analyse(preferredReference: "ref")
+        let rerun = try await fixture.analyze(preferredReference: "ref")
         #expect(rerun.epochFailures.isEmpty)
         #expect(rerun.records[targetEpoch] != nil)
         #expect(rerun.analyses[targetEpoch]?.outcome == .published(analysis.key), "same key, now published")
         await Self.expectQuiescent(fixture)
     }
 
-    @Test("Cancelling the caller while its analysis commits cancels the job; nothing publishes; a rerun succeeds")
+    @Test("Canceling the caller while its analysis commits cancels the job; nothing publishes; a rerun succeeds")
     func cancelCallerAtCommit() async throws {
         let fixture = try await PipelineFixture(Self.short(), label: "cancel-caller")
         let targetEpoch = fixture.epochs[1]
@@ -252,29 +252,29 @@ struct ConcurrencyTests {
         let pipeline = fixture.pipeline
         let (model, episode, sources, authorizations, ref) = (fixture.model, fixture.episodeID, fixture.sources, fixture.authorizations, fixture.id("ref"))
         let caller = Task {
-            await pipeline.analyse(model: model, episode: episode, sources: sources, authorizations: authorizations, preferredReference: ref)
+            await pipeline.analyze(model: model, episode: episode, sources: sources, authorizations: authorizations, preferredReference: ref)
         }
         await reached.wait()
         caller.cancel()
         let coordinator = fixture.coordinator
-        try await Self.until { if case .cancelled = await coordinator.state(of: slot) { true } else { false } }
+        try await Self.until { if case .canceled = await coordinator.state(of: slot) { true } else { false } }
         await release.open()
         let report = try #require(await caller.value)
         let analysis = try #require(report.analyses[targetEpoch])
-        #expect(analysis.outcome == .cancelled)
-        #expect(report.epochFailures[targetEpoch] == .cancelled)
+        #expect(analysis.outcome == .canceled)
+        #expect(report.epochFailures[targetEpoch] == .canceled)
         #expect(fixture.store.payload(for: analysis.key) == nil)
         await Self.expectQuiescent(fixture)
 
         fixture.script.set(nil)
-        let rerun = try await fixture.analyse(preferredReference: "ref")
+        let rerun = try await fixture.analyze(preferredReference: "ref")
         #expect(rerun.analyses[targetEpoch]?.outcome == .published(analysis.key))
     }
 
     @Test("Shutdown while aligned segments commit: nothing publishes, every reader closes, later work is refused")
     func shutdownDuringRender() async throws {
         let fixture = try await PipelineFixture(Self.short(), label: "shutdown-render")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: Self.truth])
         let reached = Latch()
         let release = Latch()
@@ -292,12 +292,12 @@ struct ConcurrencyTests {
         await shutdown.value
         let rendered = try await render.value
         #expect(Self.published(rendered.groups.flatMap(\.results)).isEmpty)
-        for group in rendered.groups { #expect(group.failure == .cancelled, "group \(group.group): \(String(describing: group.failure))") }
+        for group in rendered.groups { #expect(group.failure == .canceled, "group \(group.group): \(String(describing: group.failure))") }
         for result in rendered.groups.flatMap(\.results) { #expect(fixture.store.payload(for: result.key) == nil) }
         await Self.expectQuiescent(fixture)
         let opens = fixture.content.total.opens
         await #expect(throws: AlignedAssetRefusal.coordinatorShutDown) { try await fixture.render() }
-        #expect(await fixture.pipeline.analyse(model: fixture.model, episode: fixture.episodeID, sources: fixture.sources, authorizations: fixture.authorizations)?.records.isEmpty == true)
+        #expect(await fixture.pipeline.analyze(model: fixture.model, episode: fixture.episodeID, sources: fixture.sources, authorizations: fixture.authorizations)?.records.isEmpty == true)
         #expect(fixture.content.total.opens == opens, "nothing opened after shutdown")
     }
 
@@ -306,7 +306,7 @@ struct ConcurrencyTests {
     @Test("Analysis and rendering never exceed the configured concurrency: admissions and open readers are bounded")
     func boundedWork() async throws {
         let fixture = try await PipelineFixture(Self.fanOut(5), label: "bounds")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.analyses.count == 5)
         #expect(report.sourceFailures.isEmpty && report.epochFailures.isEmpty)
         var gate = await fixture.pipeline.gate.snapshot
@@ -333,7 +333,7 @@ struct ConcurrencyTests {
     func gateIsShared() async throws {
         let fixture = try await PipelineFixture(Self.fanOut(3), label: "shared-gate")
         try await fixture.pipeline.gate.acquire(bytes: 0)
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         await fixture.pipeline.gate.release(bytes: 0)
         #expect(report.epochFailures.isEmpty)
         #expect(fixture.content.peakOpenReaders == 1)
@@ -347,7 +347,7 @@ struct ConcurrencyTests {
         let configuration = AlignmentPipelineConfiguration(concurrency: 2, analysisMemoryBudgetBytes: 1, targetExcerptSeconds: 600, searchDeviationSeconds: 120, renderSegmentSeconds: 2)
         #expect(configuration.analysisMemoryBudgetBytes == 16 << 20)
         let fixture = try await PipelineFixture(TwoRecorder.groups(referenceSeconds: 900, targetSeconds: 700), configuration: configuration, label: "budget")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         guard case let .memoryBudget(requested, budget)? = report.epochFailures[fixture.epochs[1]] else {
             Issue.record("expected a memory-budget refusal, got \(String(describing: report.epochFailures[fixture.epochs[1]]))")
             return

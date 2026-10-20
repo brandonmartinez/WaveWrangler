@@ -169,7 +169,7 @@ final class EpisodeCleanupModel {
         selectedWord = nil
         if !isPublishing, let workSnapshot, workSnapshot != state.store.model {
             cancel()
-            message = "The show changed. Transcription was cancelled; no partial result was saved."
+            message = "The show changed. Transcription was canceled; no partial result was saved."
         }
     }
 
@@ -309,7 +309,7 @@ final class EpisodeCleanupModel {
                 else { throw CancellationError() }
                 message = "Transcribed \(result.count) speaker\(result.count == 1 ? "" : "s") locally. Word timing is approximate; no cuts were applied."
             } catch is CancellationError {
-                if generation == token { message = "Transcription cancelled. No partial result was saved." }
+                if generation == token { message = "Transcription canceled. No partial result was saved." }
             } catch {
                 if generation == token {
                     self.error = "Transcription failed: \(Self.describe(error))"

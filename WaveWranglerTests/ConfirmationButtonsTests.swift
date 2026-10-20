@@ -3,7 +3,7 @@ import Testing
 
 /// #114 (A13, K05): confirmation sheets' button configuration. `ConfirmationButtons.swift` is compiled into this
 /// unhosted target, so this runs without the app (and on CI's macOS, where UI tests can't show the macOS 27
-/// behaviour: a destructive button never keeps Return).
+/// behavior: a destructive button never keeps Return).
 @MainActor
 @Suite("Confirmation buttons")
 struct ConfirmationButtonsTests {

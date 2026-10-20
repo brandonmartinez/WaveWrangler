@@ -2,6 +2,7 @@ import CryptoKit
 import Foundation
 import Testing
 import WWAlignEstimate
+import WWTestSupport
 import WWTimeMap
 
 /// m2-freeze-estimator-2: revised test harness (docs/m2/fixtures/m2-freeze-estimator-2.json), same frozen estimator.
@@ -63,31 +64,18 @@ struct HoldoutTests {
     /// sorted "100644 <name>\0<20-byte blob ID>" entries). Matches `git rev-parse HEAD:<dir>` for a clean
     /// checkout; any untracked or edited file changes it.
     static func gitTreeID(_ directory: URL) throws -> String {
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path).sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
-        var body = Data()
-        for name in names {
-            let content = try Data(contentsOf: directory.appendingPathComponent(name))
-            var blob = Data("blob \(content.count)\0".utf8)
-            blob.append(content)
-            body.append(Data("100644 \(name)\0".utf8))
-            body.append(contentsOf: Insecure.SHA1.hash(data: blob))
-        }
-        var tree = Data("tree \(body.count)\0".utf8)
-        tree.append(body)
-        return Insecure.SHA1.hash(data: tree).map { String(format: "%02x", $0) }.joined()
+        try SourceTreeBaseline.gitTreeID(directory)
     }
 
-    /// The estimator source and this test tree (generator, plan, gate, harness) are pinned by the freeze. A
-    /// change after the freeze is a new freeze revision (and a fresh holdout), never a silent edit.
-    @Test func estimatorAndHarnessTreesMatchTheFreezeRecord() throws {
-        let json = try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: Self.freezeURL)) as? [String: Any])
-        let trees = try #require(json["pinnedTrees"] as? [String: String])
+    /// Maintenance pins do not extend the historical holdout's qualification.
+    @Test func estimatorAndHarnessTreesMatchTheMaintenanceBaseline() throws {
+        let trees = try SourceTreeBaseline.currentTrees(for: Self.freezeURL)
         let package = Self.freezeURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().appendingPathComponent("Packages/WaveWranglerKit")
         #expect(trees.count == 2)
         for (path, frozen) in trees {
             let actual = try Self.gitTreeID(package.appendingPathComponent(path))
-            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-estimator-2 pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
+            #expect(actual == frozen, "\(path) is \(actual), but the source maintenance baseline pins \(frozen)")
         }
     }
 
@@ -123,8 +111,9 @@ struct HoldoutTests {
 
     @Test(.enabled(if: HoldoutTests.holdoutEnabled, "m2-freeze-estimator-2 holdout: run once with WW_ESTIMATOR_HOLDOUT=1"))
     func frozenHoldout() async throws {
+        try SourceTreeBaseline.requireHistoricalTrees(for: Self.freezeURL)
         let scored = try await CalibrationTests.runAll(CalibrationPlan.cases(master: CalibrationPlan.revision2HoldoutMasterSeed, counts: CalibrationPlan.revision2HoldoutCounts))
-        let summaries = CalibrationTests.summarise(scored)
+        let summaries = CalibrationTests.summarize(scored)
         print("WW-016 FROZEN HOLDOUT m2-freeze-estimator-2 (master seed \(Self.hex(CalibrationPlan.revision2HoldoutMasterSeed)), estimator \(AcousticEstimator.identifier))\n" + CalibrationTests.table(summaries))
         for s in scored { print("  " + CalibrationTests.line(s)) }
         let gate = GateEvaluation(scored)

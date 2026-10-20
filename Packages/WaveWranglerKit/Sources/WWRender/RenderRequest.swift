@@ -74,7 +74,7 @@ public struct RenderRequest: Sendable {
 /// Why a render was refused or stopped. Every failure after the sink was created abandons it, so nothing
 /// partial is ever published.
 public enum RenderFailure: Error, Sendable, Equatable {
-    case cancelled
+    case canceled
     case invalidRecipe(String)
     case emptyChannelList
     case invalidOutputRange

@@ -28,21 +28,21 @@ enum ShowDocumentStatusMapping {
             switch kind {
             case .diskFull: .diskFull(volumeName: folderDisplayName ?? "the disk")
             case .unavailable: .locationUnavailable
-            case .cancelled: .cancelled
+            case .canceled: .canceled
             case .permissionDenied: .failed(reason: "WaveWrangler doesn't have permission to save in this folder")
             case .other: .failed(reason: message.isEmpty ? "an unknown problem" : message)
             @unknown default: .failed(reason: message.isEmpty ? "an unknown problem" : message)
             }
         case .conflict:
             .conflict(changedAt: nil)
-        case .acknowledgementUncertain:
+        case .acknowledgmentUncertain:
             .notConfirmed
         case .readOnlyNewerFormat:
             .readOnlyNewerFormat
         case .recoveredReadOnly:
             .readOnly(reason: "it's a recovered earlier version")
-        case .cancelled:
-            .cancelled
+        case .canceled:
+            .canceled
         @unknown default:
             .unknown(reason: "the save state isn't recognized")
         }

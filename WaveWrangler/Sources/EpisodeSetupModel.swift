@@ -123,7 +123,7 @@ final class EpisodeSetupModel {
     var inspectorFollowsSpeakers = false
     /// Incremented to ask the inspector to focus its first editable field (Return in the tables).
     var inspectorFocusRequest = 0
-    /// A focus request not yet honoured (the details may still be appearing). Consumed once.
+    /// A focus request not yet honored (the details may still be appearing). Consumed once.
     @ObservationIgnored private var pendingInspectorFocus = false
 
     /// Return in a table: move focus to the details' first editable field, opening them if collapsed.
@@ -418,7 +418,7 @@ final class EpisodeSetupModel {
     func deleteSpeaker(_ id: SpeakerID) {
         let rows = presentation.speakerRows.map(\.id)
         if edit({ $0.deleteSpeaker(id) }) {
-            speakerSelection = Self.neighbour(of: id, in: rows).map { [$0] } ?? []
+            speakerSelection = Self.neighbor(of: id, in: rows).map { [$0] } ?? []
             announce(speakerSelection.first.map { "Selected \(speakerName($0))" } ?? "No speakers")
         }
     }
@@ -439,7 +439,7 @@ final class EpisodeSetupModel {
         let order = presentation.orderedSourceIDs
         if edit({ $0.removeSources(ids) }) {
             let remaining = order.filter { !ids.contains($0) }
-            let next = ids.last.flatMap { last in Self.neighbour(of: last, in: order).flatMap { remaining.contains($0) ? $0 : nil } } ?? remaining.last
+            let next = ids.last.flatMap { last in Self.neighbor(of: last, in: order).flatMap { remaining.contains($0) ? $0 : nil } } ?? remaining.last
             selection = next.map { [.source($0)] } ?? []
             if let next, let name = episode?.source(next)?.displayNameHint { announce("Selected \(name)") }
         }
@@ -637,7 +637,7 @@ final class EpisodeSetupModel {
 
     // MARK: Helpers
 
-    static func neighbour<T: Equatable>(of item: T, in list: [T]) -> T? {
+    static func neighbor<T: Equatable>(of item: T, in list: [T]) -> T? {
         guard let index = list.firstIndex(of: item) else { return nil }
         if index + 1 < list.count { return list[index + 1] }
         return index > 0 ? list[index - 1] : nil

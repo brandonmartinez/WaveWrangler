@@ -89,7 +89,7 @@ public actor SourceTransferController {
 
     private var states: [DeviceAccessKey: TransferState] = [:]
     private var active: [DeviceAccessKey: Active] = [:]
-    private var cancelledByUser: Set<DeviceAccessKey> = []
+    private var canceledByUser: Set<DeviceAccessKey> = []
     /// Observers that were replaced (explicit retry of a stalled transfer) and may still be finishing
     /// their last poll; `waitUntilSettled` drains them so no scope or poll outlives the call.
     private var draining: [DeviceAccessKey: [Task<Void, Never>]] = [:]
@@ -140,7 +140,7 @@ public actor SourceTransferController {
     public func reportableState(of key: DeviceAccessKey) -> TransferState? {
         if active[key] != nil { return state(of: key) }
         switch state(of: key) {
-        case .cancelled where cancelledByUser.contains(key): return .cancelled
+        case .canceled where canceledByUser.contains(key): return .canceled
         case let .failed(error): return .failed(error)
         case let .offlineOrUnknown(error): return .offlineOrUnknown(error)
         default: return nil
@@ -198,7 +198,7 @@ public actor SourceTransferController {
             case request
             /// A shutdown began while deciding; nothing was requested.
             case refused
-            /// The provider is already transferring (e.g. after an earlier request was cancelled):
+            /// The provider is already transferring (e.g. after an earlier request was canceled):
             /// observe without issuing another request.
             case observeOnly
         }
@@ -241,13 +241,13 @@ public actor SourceTransferController {
             return state
         case .request where isClosed(decidedAt):
             // The request already went out, but a shutdown began meanwhile: never install an observer.
-            // The request is counted and the transfer reported cancelled (the provider may still finish).
-            publish(key, .cancelled)
-            return .cancelled
+            // The request is counted and the transfer reported canceled (the provider may still finish).
+            publish(key, .canceled)
+            return .canceled
         case .observeOnly where isClosed(decidedAt):
             return state(of: key)
         case .request, .observeOnly:
-            cancelledByUser.remove(key)
+            canceledByUser.remove(key)
             let current = nextEpoch()
             let initial: TransferState = if case .request = decision { .requested } else { .inProgress(fractionCompleted: .unknown) }
             publish(key, initial)
@@ -265,8 +265,8 @@ public actor SourceTransferController {
     public func cancel(_ key: DeviceAccessKey) async {
         guard let running = active.removeValue(forKey: key) else { return }
         running.task.cancel()
-        cancelledByUser.insert(key)
-        publish(key, .cancelled)
+        canceledByUser.insert(key)
+        publish(key, .canceled)
         await running.task.value
     }
 
@@ -277,7 +277,7 @@ public actor SourceTransferController {
         makeAvailable(key, at: url, userRequested: userRequested)
     }
 
-    /// Stores the setting. ON→OFF cancels automatic transfers honestly (state `.cancelled`); OFF→ON
+    /// Stores the setting. ON→OFF cancels automatic transfers honestly (state `.canceled`); OFF→ON
     /// issues nothing by itself — callers re-evaluate sources and request only placeholders.
     public func availabilitySettingChanged(to setting: SourceAvailabilitySetting) async {
         self.setting = setting
@@ -287,14 +287,14 @@ public actor SourceTransferController {
             active[key] = nil
             running.task.cancel()
             stopped.append(running.task)
-            publish(key, .cancelled)
+            publish(key, .canceled)
         }
         for task in stopped { await task.value }
     }
 
     /// Waits until no transfer is active for `key` (following any replacement started by a retry while
     /// waiting) and returns the final state. A stalled transfer keeps observing, so this returns only
-    /// once it completes, fails or is cancelled.
+    /// once it completes, fails or is canceled.
     public func waitUntilSettled(_ key: DeviceAccessKey) async -> TransferState {
         while true {
             if let running = active[key] {
@@ -335,7 +335,7 @@ public actor SourceTransferController {
     /// Owner teardown (window closed, monitor stopped/deallocated): stops observers without recording
     /// a user cancel, finishes event streams and returns once those observers have finished. With a
     /// `ticket`, only transfers and subscriptions created at or before it are affected, so a late
-    /// teardown never cancels a request made afterwards. Cancelled transfers publish `.cancelled`
+    /// teardown never cancels a request made afterwards. Canceled transfers publish `.canceled`
     /// (so remaining subscribers are not left stale). The originals are untouched.
     public func shutdown(through ticket: Int? = nil) async {
         let limit = ticket ?? Int.max
@@ -345,7 +345,7 @@ public actor SourceTransferController {
             active[key] = nil
             running.task.cancel()
             stopped.append(running.task)
-            publish(key, .cancelled)
+            publish(key, .canceled)
         }
         for (id, entry) in continuations where entry.epoch <= limit {
             entry.continuation.finish()
@@ -364,7 +364,7 @@ public actor SourceTransferController {
     // MARK: - Observation
 
     /// Polls metadata for one transfer generation. Runs detached and holds the controller only weakly
-    /// between polls; it exits when the controller is gone, the generation was replaced/cancelled, or
+    /// between polls; it exits when the controller is gone, the generation was replaced/canceled, or
     /// the transfer finished.
     private static func observe(
         owner: WeakOwner,

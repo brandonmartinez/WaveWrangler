@@ -204,11 +204,11 @@ struct PrimarySpeechIssuerHostedTests {
         await #expect(throws: PrimaryPCMRefusal.accessChanged) {
             _ = try await OpenSelectedPrimaryPCMSource.issueSynthetic(for: f.setup, accessStore: store)
         }
-        let cancelled = Task {
+        let canceled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await OpenSelectedPrimaryPCMSource.issueSynthetic(for: f.setup, accessStore: f.accessStore)
         }
-        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        await #expect(throws: CancellationError.self) { try await canceled.value }
     }
 
     @Test func replacedSetupAfterStoreAwaitCannotIssueEvenForSameSpeakerAndModel() async throws {
@@ -345,15 +345,15 @@ struct PrimarySpeechIssuerHostedTests {
     @Test func cancellationAfterSyntheticInferenceCannotPublish() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let cancelled = Task {
+        let canceled = Task {
             try await OpenSelectedPrimaryPCMSource.presentSynthetic(
                 for: f.setup, accessStore: f.accessStore
             ) { _, _, _ in
                 withUnsafeCurrentTask { $0?.cancel() }
-                return ["Cancelled"]
+                return ["Canceled"]
             }
         }
-        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        await #expect(throws: CancellationError.self) { try await canceled.value }
         #expect(f.state.reviewState.presentation == .syntheticFixture)
     }
 

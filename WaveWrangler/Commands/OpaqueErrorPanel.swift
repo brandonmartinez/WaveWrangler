@@ -82,7 +82,7 @@ final class OpaqueErrorPanel: NSPanel {
     private func buildContent() {
         let background = OpaqueBackgroundView()
 
-        // No icon: the mini's XCUITest audit flagged a decorative app icon (unlabelled image, "potentially
+        // No icon: the mini's XCUITest audit flagged a decorative app icon (unlabeled image, "potentially
         // inaccessible text") even with `setAccessibilityElement(false)`. The message carries the meaning.
         messageField = Self.label(content.message, font: .boldSystemFont(ofSize: NSFont.systemFontSize), identifier: "ww.app.errorDialog.message")
         informativeField = Self.label(content.informative, font: .systemFont(ofSize: NSFont.systemFontSize), identifier: "ww.app.errorDialog.informative")
@@ -138,7 +138,7 @@ final class OpaqueErrorPanel: NSPanel {
     }
 }
 
-/// Fills its bounds with the window background colour; never translucent.
+/// Fills its bounds with the window background color; never translucent.
 final class OpaqueBackgroundView: NSView {
     static let fill = NSColor.windowBackgroundColor
 
@@ -158,7 +158,7 @@ enum OpaqueErrorPresenter {
         case sheet
         /// App-modal on the opaque panel.
         case opaquePanel
-        /// Not shown: the user cancelled (AppKit never presents `NSUserCancelledError`).
+        /// Not shown: the user canceled (AppKit never presents `NSUserCancelledError`).
         case suppressed
     }
 

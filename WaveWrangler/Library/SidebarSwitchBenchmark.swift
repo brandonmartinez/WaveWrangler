@@ -10,7 +10,7 @@ import WWOrganizer
 /// 1000x600, the window's normal size), then the sidebar selection is changed N times through the same state
 /// path the List selection binding uses for arrow keys, walking down and up the 8 rows like the SCALE-001
 /// harness. Each change is measured from the change until the entry list shows the new rows (end of the first
-/// committed run-loop pass with every visible row realized), logged as a `WWBENCH` line, summarised, and the
+/// committed run-loop pass with every visible row realized), logged as a `WWBENCH` line, summarized, and the
 /// app then quits.
 ///
 /// Read results with:

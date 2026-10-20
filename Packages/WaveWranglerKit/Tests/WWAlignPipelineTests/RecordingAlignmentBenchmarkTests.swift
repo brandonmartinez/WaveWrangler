@@ -208,7 +208,7 @@ struct RecordingAlignmentBenchmarkTests {
                     configuration: AlignmentPipeline.speakerLocatorConfiguration(durationDifference: 0, base: pipeline.configuration),
                     chunkFrames: decoder.configuration.chunkFrames, referenceChannel: lane, targetChannel: lane, automatic: true)
                 var start = Self.now()
-                let report = try await pipeline.analyseSpeaker(model: model, episode: episode.id, sources: sources,
+                let report = try await pipeline.analyzeSpeaker(model: model, episode: episode.id, sources: sources,
                     authorizations: authorizations, targetEpoch: epochs[1].id, speaker: speaker.id)
                 let coldTime = Self.now() - start
                 #expect(report.epochFailures.isEmpty && report.sourceFailures.isEmpty)
@@ -218,7 +218,7 @@ struct RecordingAlignmentBenchmarkTests {
                 let warmTime = Self.now() - start
                 #expect(warm == cold)
                 start = Self.now()
-                let cached = try await pipeline.analyseSpeaker(model: model, episode: episode.id, sources: sources,
+                let cached = try await pipeline.analyzeSpeaker(model: model, episode: episode.id, sources: sources,
                     authorizations: authorizations, targetEpoch: epochs[1].id, speaker: speaker.id)
                 let cachedTime = Self.now() - start
                 #expect(cached.records[epochs[1].id] == cold && model.episodes[0].alignment == nil)

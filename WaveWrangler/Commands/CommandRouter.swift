@@ -267,7 +267,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
     @objc func renameEpisode(_ sender: Any?) { activeDocumentState?.renameSelectedEpisode() }
     @objc func deleteEpisode(_ sender: Any?) { activeDocumentState?.deleteSelectedEpisode() }
-    @objc func analyseAlignment(_ sender: Any?) { activeShowState?.alignmentModel?.analyse() }
+    @objc func analyzeAlignment(_ sender: Any?) { activeShowState?.alignmentModel?.analyze() }
     @objc func acceptAlignmentProposal(_ sender: Any?) { activeShowState?.alignmentModel?.acceptProposal() }
     @objc func rejectAlignmentProposal(_ sender: Any?) { activeShowState?.alignmentModel?.rejectProposal() }
     @objc func editAlignmentTiming(_ sender: Any?) { activeShowState?.alignmentModel?.requestNumericEditor() }
@@ -415,7 +415,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
             return documentState?.selectedEpisode != nil
         case #selector(renameEpisode(_:)), #selector(deleteEpisode(_:)):
             return documentState?.canEdit == true && documentState?.selectedEpisode != nil
-        case #selector(analyseAlignment(_:)):
+        case #selector(analyzeAlignment(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.isWorking == false
         case #selector(acceptAlignmentProposal(_:)), #selector(rejectAlignmentProposal(_:)):
             return show?.destination == .alignment

@@ -54,8 +54,8 @@ struct EndToEndTests {
         let tgt = fixture.id("tgt")
         let (referenceEpoch, targetEpoch) = (fixture.epochs[0], fixture.epochs[1])
 
-        // Analyse.
-        let report = try await fixture.analyse(preferredReference: "ref")
+        // Analyze.
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.plan.reference?.source == ref)
         #expect(report.sourceFailures.isEmpty)
         #expect(report.epochFailures.isEmpty)

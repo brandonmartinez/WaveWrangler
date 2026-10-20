@@ -53,8 +53,8 @@ func describe(_ error: PublicationError) -> [String: Any] {
     case let .conflict(conflict):
         return ["result": "conflict", "onDiskRevision": conflict.onDisk?.revision ?? -1, "preservedCandidate": conflict.preservedCandidate?.path ?? ""]
     case let .failed(stage, kind, detail): return ["result": "failed", "stage": stage.rawValue, "kind": kind.rawValue, "detail": detail]
-    case .cancelled: return ["result": "cancelled"]
-    case let .acknowledgementUncertain(detail): return ["result": "acknowledgementUncertain", "detail": detail]
+    case .canceled: return ["result": "cancelled"]
+    case let .acknowledgmentUncertain(detail): return ["result": "acknowledgmentUncertain", "detail": detail]
     case let .readOnly(reason): return ["result": "readOnly", "detail": reason]
     case let .invalidCandidate(error): return ["result": "invalidCandidate", "detail": "\(error)"]
     }
@@ -322,7 +322,7 @@ struct Probe {
         let lastEdit = ContinuousClock.now
         guard scheduler.noteEdit() else {
             try? await Task.sleep(for: .seconds(2.5))
-            let skipped: Bool = if case .failure(.cancelled) = await session.save(automatic: true) { true } else { false }
+            let skipped: Bool = if case .failure(.canceled) = await session.save(automatic: true) { true } else { false }
             emit(["result": "off", "scheduled": false, "automaticSaveSkipped": skipped, "dirty": await session.isDirty])
             return 0
         }

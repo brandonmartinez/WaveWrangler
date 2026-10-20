@@ -1,8 +1,13 @@
 # WaveWrangler prioritized planning backlog
 
-## Current operational authority - user-directed 2026-10-04
+> Retired 2026-10-20. This is historical planning, not current execution
+> authority. Open issues were permanently deleted at the user's request.
+> Use the [development workflow](milestone-runbook.md); do not execute the old
+> milestone or kickoff instructions below.
 
-[Live GitHub issues/milestones](github-backlog.md) and [machine-readable mapping](github-backlog.json) now govern execution; this backlog retains evidence, stable IDs and original thresholds. Use [the runbook](milestone-runbook.md) and [M1 user kickoff](kickoffs/m1.md). Publish via independent PR review; this session is documentation only. A pasted named kickoff authorizes that milestone's engineering; WW-009/019/030/037 record contracts/evidence/risks, not another generic approval. Dependencies gate accepting outcomes, not safe preparatory code behind isolated/provisional interfaces.
+## Historical operational authority - user-directed 2026-10-04
+
+[Live GitHub issues/milestones](github-backlog.md) and [machine-readable mapping](github-backlog.json) now govern execution; this backlog retains evidence, stable IDs and original thresholds. Use [the runbook](milestone-runbook.md) and [M1 user kickoff](https://github.com/brandonmartinez/WaveWrangler/blob/792aa6687ab0b7a196d41fe13e54f7dd9e048392/docs/planning/kickoffs/m1.md). Publish via independent PR review; this session is documentation only. A pasted named kickoff authorizes that milestone's engineering; WW-009/019/030/037 record contracts/evidence/risks, not another generic approval. Dependencies gate accepting outcomes, not safe preparatory code behind isolated/provisional interfaces.
 
 Internal M1-M4 run on this Mac first; **first audio handoff is full cleaned-track M4, not uncut M2**. Public Release WW-041/052 separately qualifies signing/notarization, actual macOS26/16GB and broader participant/device/listening/rights/clean-install claims; broad accessibility qualification is M5/WW-053. Core source/durability/protected-speech/offline/privacy/keyboard/accessibility and existing numeric gates remain current-milestone requirements. WW-003/008 are M1, with stage-scoped closure in the runbook; later domain qualification remains owned. Informational owner labels never auto-dispatch.
 
@@ -58,7 +63,7 @@ Companions: [product brief](product-brief.md), [research/evidence/experiment con
 
 [Actual report](../research/native-document-spike.md) · [compact mirror](../research/native-document-results.json): **28 passes/0 failed assertions**, comprising 24 native runtime/one SwiftUI snapshot runtime/three compile-control cases and **nine overlapping blocked limits**, not 37 independent executed tests. Genuine callbacks and three limited ≤2s observations add evidence to WW-005/006/049; custom publication/stale/snapshot/timer policies are separately labelled. Stock native publication/automatic controls/UI/provider/fault/device gates remain open. Mac author technical review and Design **approve-with-limits** are evidence reviews, not reproduction or app approval.
 
-**Only status delta:** WW-008 PENDING → narrowly PARTIAL for target26 protocol/scene compilation and a plain synthetic local bookmark; signed/sandbox/runtime/distribution gates remain unmet. WW-007 stays PENDING: manifests/timing do not establish library-scale/UI/index reconciliation. WW-004 remains documentary-completed; WW-009/M1/WW-010–012 remain pending and unapproved. IDs/dependencies/owners/criteria are unchanged. **Keep backlog LOCAL; no GitHub issues now.** Brandon's [latest directive](../../.squad/decisions/inbox/copilot-directive-2026-10-04-native-document-local-backlog.md) conditions later issue promotion on completed planning/research, not an immediate authorization. No further native qualification cycle or production scaffold.
+**Only status delta:** WW-008 PENDING → narrowly PARTIAL for target26 protocol/scene compilation and a plain synthetic local bookmark; signed/sandbox/runtime/distribution gates remain unmet. WW-007 stays PENDING: manifests/timing do not establish library-scale/UI/index reconciliation. WW-004 remains documentary-completed; WW-009/M1/WW-010–012 remain pending and unapproved. IDs/dependencies/owners/criteria are unchanged. **Keep backlog LOCAL; no GitHub issues now.** Brandon's [latest directive](https://github.com/brandonmartinez/WaveWrangler/blob/792aa6687ab0b7a196d41fe13e54f7dd9e048392/.squad/decisions/inbox/copilot-directive-2026-10-04-native-document-local-backlog.md) conditions later issue promotion on completed planning/research, not an immediate authorization. No further native qualification cycle or production scaffold.
 
 ## Historical chronological research progress — 2026-10-04
 

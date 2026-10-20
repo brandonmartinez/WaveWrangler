@@ -100,7 +100,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
             }
             let measuredSidebar = (surface == "Show window (blocked Alignment)" || surface == "Show window (Setup)")
                 && element.identifier == "ww.show.sidebar.showInfo"
-                && AcceptanceAudit.measuredArtefact(element, inspectorFrame: nil, episodeInspectorShown: false,
+                && AcceptanceAudit.measuredArtifact(element, inspectorFrame: nil, episodeInspectorShown: false,
                                                     entriesFrame: nil, windowFrames: windowRects,
                                                     popoverFrame: nil, inSheet: false) != nil
             guard isLibraryText(element) || measuredSidebar else {
@@ -123,7 +123,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         print("AUDIT \(surface): \(findings.isEmpty ? "no unwaived issues" : "\(findings.count) unwaived issue(s)")")
     }
 
-    /// Library sidebar rows and entry-table text (system label colour, no custom styling): the surfaces whose
+    /// Library sidebar rows and entry-table text (system label color, no custom styling): the surfaces whose
     /// contrast findings may be waived, each only after its own measurement (see `audit`). Cells can extend past
     /// the outline's clip frame horizontally, so the table match uses its left edge and vertical extent.
     private func isLibraryText(_ element: XCUIElement) -> Bool {
@@ -191,7 +191,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         XCTAssertEqual(entries.outlineRows.count, 3, "Unavailable is a filter showing exactly the 3 unavailable entries")
         for status in ["Can't find show file", "Needs permission", "Needs newer WaveWrangler"] {
             let cell = entries.staticTexts.matching(NSPredicate(format: "label == 'Status' AND value == %@", status)).firstMatch
-            XCTAssertTrue(cell.exists, "Status text \(status) (text, not colour)")
+            XCTAssertTrue(cell.exists, "Status text \(status) (text, not color)")
         }
         // The Episodes column is hidden at the default width (#140); its "unknown" value is checked where it's shown,
         // in testEntryColumnsKeepStatusVisibleAtDefaultSizeZoomAnd200Percent.
@@ -331,7 +331,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
 
         // ⌫ in the entry list removes the show from the collection (no confirmation). Once the list is gone, ⌫
         // must no longer target entries (#108 review): the next ⌫ asks to delete the collection instead.
-        // Checked by behaviour, not by opening the Edit menu: dismissing that menu with Esc leaves macOS 27's
+        // Checked by behavior, not by opening the Edit menu: dismissing that menu with Esc leaves macOS 27's
         // remote-view (Writing Tools/AutoFill items) holding keyboard focus (`+[NSRemoteView
         // _menuDidEndTracking:]` → viewbridge-key-window), and a sheet opened next receives no clicks or keys.
         app.typeKey("\t", modifierFlags: [])

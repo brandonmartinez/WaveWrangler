@@ -47,7 +47,7 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
 
     public var migratableSchemas: Set<Int> { Set(steps.keys) }
 
-    public func migrate(_ url: URL, key: DocumentKey, isCancelled: () -> Bool = { false }) throws -> MigrationReceipt {
+    public func migrate(_ url: URL, key: DocumentKey, isCanceled: () -> Bool = { false }) throws -> MigrationReceipt {
         guard let recovery = publisher.recovery else {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "migration requires a recovery store")
         }
@@ -94,7 +94,7 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
         }
         try publisher.hooks.reached(.migrationValidated)
 
-        guard !isCancelled() else { throw PublicationError.cancelled }
+        guard !isCanceled() else { throw PublicationError.canceled }
 
         let receipt = try publisher.publish(
             staged.payload,
@@ -105,7 +105,7 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
                 revision: nil, schemaVersion: schema, checksum: nil, byteDigest: originalFingerprint.byteDigest
             )),
             retainPrior: false,
-            isCancelled: isCancelled
+            isCanceled: isCanceled
         )
         return MigrationReceipt(backup: backup, originalFingerprint: originalFingerprint, publication: receipt)
     }

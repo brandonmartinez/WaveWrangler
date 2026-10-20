@@ -75,7 +75,7 @@ private struct SourceInspector: View {
 
     var body: some View {
         Text("Source").setupFont(.headline).accessibilityAddTraits(.isHeader)
-        // Plain label-colour text (not LabeledContent's secondary value, not a selectable field AppKit
+        // Plain label-color text (not LabeledContent's secondary value, not a selectable field AppKit
         // dims): the file name is essential text.
         HStack(alignment: .firstTextBaseline) {
             Text("Name").setupFont(.body)

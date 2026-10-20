@@ -23,7 +23,7 @@ struct EpisodeSourceAccessTests {
             .init(name: "Primary", sources: [.init(name: "primary", seconds: 4, signal: .scene(seed: 81))]),
             .init(name: "Backup", sources: [.init(name: "backup", seconds: 4, signal: .scene(seed: 81))]),
         ], label: "source-access")
-        let report = try await fixture.analyse(preferredReference: "primary")
+        let report = try await fixture.analyze(preferredReference: "primary")
         _ = try await fixture.acceptAndActivate(report, [fixture.epochs[1]: .numeric(ppm: 0, offsetMilliseconds: 0)])
         let io = SystemSourceIO()
         let show = fixture.model.show.id
@@ -302,10 +302,10 @@ struct EpisodeSourceAccessTests {
         ]))
     }
 
-    @Test func cancellingFourthDocumentCallbackCannotIssueWitness() async throws {
+    @Test func cancelingFourthDocumentCallbackCannotIssueWitness() async throws {
         let (fixture, _, verifier) = try await fixture()
         let calls = Box(0)
-        // Cancel the verification *task*, not Swift Testing's enclosing test task (a cancelled
+        // Cancel the verification *task*, not Swift Testing's enclosing test task (a canceled
         // test is skipped and cannot establish this regression).
         let request = Task.detached {
             try await verifier.survey(episode: fixture.episodeID) {

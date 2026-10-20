@@ -7,7 +7,7 @@ import WWTimeMap
 public enum DiscontinuityKind: String, Sendable, Hashable, CaseIterable {
     /// The two segment lines jump at the boundary (dropped or inserted samples, a clock step, a restart).
     case offsetStep
-    /// The lines meet but their slopes differ (a rate change); localised by their intersection.
+    /// The lines meet but their slopes differ (a rate change); localized by their intersection.
     case slopeChange
     /// Windows between the two segments fit neither line nor form a segment of their own.
     case unresolved
@@ -41,7 +41,7 @@ public struct Discontinuity: Sendable, Hashable {
     /// Median correlation peak of each side's windows (coefficients, not probabilities).
     public let leftMedianPeakScore: Double
     public let rightMedianPeakScore: Double
-    /// Status counts of the dense windows centred inside the bracket.
+    /// Status counts of the dense windows centered inside the bracket.
     public let bracketWindowStatus: [WindowStatus: Int]
 }
 
@@ -51,7 +51,7 @@ public enum RegionCause: Sendable, Hashable {
     case discontinuity([Int])
     /// Consistent windows here belong to no segment (too few or fitting no line).
     case unresolvedWindows(Int)
-    /// No usable window evidence; `dominant` is the most frequent non-eligible window status centred here.
+    /// No usable window evidence; `dominant` is the most frequent non-eligible window status centered here.
     case noEvidence(dominant: WindowStatus)
     /// Within half a window of the last evidence of a segment: a step here could not be seen.
     case edgeMargin
@@ -61,7 +61,7 @@ public enum RegionCause: Sendable, Hashable {
     case estimatorAbstained(AbstentionReason)
     /// The estimator's proposal disagreed with the segment line by this much at a region end, milliseconds.
     case lineDisagreement(Double)
-    /// The candidate's aligned image overlapped a neighbouring mapped region's (not monotonic).
+    /// The candidate's aligned image overlapped a neighboring mapped region's (not monotonic).
     case imageOverlap
 }
 
@@ -93,7 +93,7 @@ public struct DenseWindow: Sendable, Hashable {
     public let status: WindowStatus
     public let peakScore: Double
     public let secondPeakScore: Double
-    /// Aligned minus group-clock time at the window centre, seconds (nil for noReference/silent).
+    /// Aligned minus group-clock time at the window center, seconds (nil for noReference/silent).
     public let offsetSeconds: Double?
 }
 

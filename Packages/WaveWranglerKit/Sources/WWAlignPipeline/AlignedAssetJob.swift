@@ -85,7 +85,7 @@ public enum NotRenderedReason: Sendable, Equatable {
     case epochUnsupported(RecordingEpochID)
     /// Content work is not allowed for it (availability, authorization or registration).
     case ineligible(SourceIneligibility)
-    /// No current probed facts (analyse first).
+    /// No current probed facts (analyze first).
     case factsUnavailable
 }
 
@@ -328,8 +328,8 @@ enum AlignedAssetRun {
     /// The accepted map must still be the job's exact map (revision and content), and the coordinator must
     /// be running.
     static func checkCurrent(_ job: GroupRenderJob, coordinator: DerivedJobCoordinator) async throws(AlignmentWorkFailure) {
-        if Task.isCancelled { throw .cancelled }
-        if await coordinator.isShutdown { throw .cancelled }
+        if Task.isCancelled { throw .canceled }
+        if await coordinator.isShutdown { throw .canceled }
         guard await coordinator.inputs.acceptedMaps[job.episode] == job.revision.revision else { throw .acceptedMapChanged }
         guard await coordinator.state(of: job.identity.slot) == .ready(job.identity.key) else { throw .acceptedMapChanged }
     }
@@ -369,7 +369,7 @@ enum AlignedAssetRun {
         do throws(RenderFailure) {
             result = try await GroupRenderer.render(request, provider: provider) { manifest in CollectingSink(manifest: manifest) }
         } catch {
-            throw error == .cancelled ? .cancelled : .render(error)
+            throw error == .canceled ? .canceled : .render(error)
         }
         report.peakRenderWorkingSetBytes = Swift.max(report.peakRenderWorkingSetBytes, result.report.peakWorkingSetBytes)
         // A result derived from what the cursors returned is published only once every source is verified
@@ -411,7 +411,7 @@ enum AlignedAssetRun {
         report.segmentsRendered += 1
         if let failed = results.first(where: { !$0.isAvailable }) {
             switch failed.outcome {
-            case .cancelled: throw .cancelled
+            case .canceled: throw .canceled
             case let .discardedStale(reasons): throw .staleInputs(reasons)
             default: throw failed.failure ?? .encoding("an aligned segment did not publish")
             }

@@ -101,7 +101,7 @@ public enum GroupRenderer {
     }
 
     static func checkCancellation() throws(RenderFailure) {
-        if Task.isCancelled { throw .cancelled }
+        if Task.isCancelled { throw .canceled }
     }
 }
 
@@ -210,7 +210,7 @@ private struct RenderEngine {
             do {
                 samples = try await provider.samples(for: request)
             } catch {
-                if Task.isCancelled { throw .cancelled }
+                if Task.isCancelled { throw .canceled }
                 throw .providerFailed(String(describing: error))
             }
             let count = Int(request.frames.count)

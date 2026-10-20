@@ -14,7 +14,7 @@ public enum LibraryLoadOutcome: Sendable, Equatable {
     /// The configured location cannot be reached. Nothing is created there silently.
     case unavailable(reason: String)
     /// The location cannot be reached or needs permission (Design L2/L3). The newest verified library on this
-    /// Mac is shown (labelled); organizing edits are **queued** in the device-local pending-edits journal and
+    /// Mac is shown (labeled); organizing edits are **queued** in the device-local pending-edits journal and
     /// published when the location is reachable again (`LibraryEditResult.queued`).
     case unavailableShowingPrior(reason: String, revision: Int)
 
@@ -566,7 +566,7 @@ public actor LibraryStore {
         } catch let error as PublicationError {
             return .failure(error)
         } catch {
-            return .failure(.acknowledgementUncertain("\(error)"))
+            return .failure(.acknowledgmentUncertain("\(error)"))
         }
         hasConflict = false
         // The combined library is published and verified: back each provider version up, then mark it resolved.
@@ -710,7 +710,7 @@ public actor LibraryStore {
             } catch let error as PublicationError {
                 return .failure(error)
             } catch {
-                return .failure(.acknowledgementUncertain("\(error)"))
+                return .failure(.acknowledgmentUncertain("\(error)"))
             }
         }
         // Any queued edits were part of `mine` and are now verified in the combined library.
@@ -791,7 +791,7 @@ public actor LibraryStore {
             _ = try recovery.retainCheckpoint(bytes, for: .library)
             _ = try publisher.publish(
                 encoded: EncodedDocument(data: bytes, publication: current.publication), key: .library, to: destination,
-                target: .newLocation, retainPrior: false, isCancelled: { false }, step: .stagedReplace, followUp: .none
+                target: .newLocation, retainPrior: false, isCanceled: { false }, step: .stagedReplace, followUp: .none
             )
         } catch let error as PublicationError {
             return .failure(error)

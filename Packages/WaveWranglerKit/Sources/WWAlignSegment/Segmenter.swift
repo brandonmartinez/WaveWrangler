@@ -7,12 +7,12 @@ import WWTimeMap
 /// estimator's public API, and returns a validated `GroupTimeMap`.
 ///
 /// Algorithm (all frames of every declared span end up in exactly one region):
-/// 1. Dense pass: the span is cut into overlapping tiles (`tileSeconds`, stride chosen so window centres
+/// 1. Dense pass: the span is cut into overlapping tiles (`tileSeconds`, stride chosen so window centers
 ///    continue at the estimator's own spacing) and every tile is measured by `AcousticEstimator`. Each
-///    eligible window gives one point (group-clock centre u, offset y = aligned − u).
+///    eligible window gives one point (group-clock center u, offset y = aligned − u).
 /// 2. Segmentation: the points are split recursively at the least-squares two-line split until every piece
 ///    fits one line within `splitToleranceMilliseconds` or is too small (an island of unresolved windows).
-///    Island points are absorbed into a neighbour only if it still fits; neighbouring segments merge only if
+///    Island points are absorbed into a neighbor only if it still fits; neighboring segments merge only if
 ///    their union still fits. A single line is therefore never fitted across a jump larger than the
 ///    tolerance.
 /// 3. Boundaries: between consecutive segments the discontinuity is bracketed from the window evidence. A
@@ -20,8 +20,8 @@ import WWTimeMap
 ///    window start and before the right segment's first window end; the bracket is widened by the jump
 ///    size (inserted frames) and, for slope changes, by the interval where the two lines are within
 ///    `stepToleranceFactor` × tolerance of each other around their intersection.
-/// 4. Supported candidates: each segment's frames from its first window centre + w/2 to its last window
-///    centre − w/2 (a change closer to the edge evidence could not be seen), minus brackets, at least
+/// 4. Supported candidates: each segment's frames from its first window center + w/2 to its last window
+///    center − w/2 (a change closer to the edge evidence could not be seen), minus brackets, at least
 ///    `minimumSupportedSeconds` long. Everything else is unsupported with an explicit cause.
 /// 5. Each candidate is re-estimated by the frozen estimator on exactly its frames. Abstention, or a
 ///    proposal disagreeing with the segment line, leaves it unsupported. Mapped images must be monotonic
@@ -155,7 +155,7 @@ func segmentPoints(_ points: [Point], tolerance: Double, minimumPoints: Int) -> 
     }
     split(0..<points.count)
 
-    // Coalesce neighbouring islands.
+    // Coalesce neighboring islands.
     var pieces: [Piece] = []
     for piece in raw {
         if case .island(let b) = piece, case .island(let a)? = pieces.last {
@@ -165,7 +165,7 @@ func segmentPoints(_ points: [Point], tolerance: Double, minimumPoints: Int) -> 
         }
     }
 
-    // Absorb island points into a neighbouring segment while it still fits.
+    // Absorb island points into a neighboring segment while it still fits.
     for index in pieces.indices {
         guard case .island(var island) = pieces[index] else { continue }
         if index > 0, case .segment(var left) = pieces[index - 1] {
@@ -186,7 +186,7 @@ func segmentPoints(_ points: [Point], tolerance: Double, minimumPoints: Int) -> 
     }
     pieces.removeAll { if case .island(let i) = $0 { return i.isEmpty } else { return false } }
 
-    // Merge neighbouring segments whose union fits one line. A small island between them is treated as
+    // Merge neighboring segments whose union fits one line. A small island between them is treated as
     // outlying windows (excluded from the line), never as support for bridging a jump: the union must fit.
     var merged = true
     while merged {
@@ -299,7 +299,7 @@ private struct Run {
         var candidates: [Candidate] = []
         var regions: [PendingRegion] = []
         for (index, span) in spans.enumerated() {
-            let (spanCandidates, spanRegions) = analyse(spanIndex: index, span: span)
+            let (spanCandidates, spanRegions) = analyze(spanIndex: index, span: span)
             candidates += spanCandidates
             regions += spanRegions
         }
@@ -331,7 +331,7 @@ private struct Run {
         }
         regions.sort { $0.frames.lowerBound < $1.frames.lowerBound }
 
-        // Monotonic images: demote any neighbouring mapped pair whose aligned images overlap.
+        // Monotonic images: demote any neighboring mapped pair whose aligned images overlap.
         var changed = true
         while changed {
             changed = false
@@ -380,7 +380,7 @@ private struct Run {
 
     // MARK: Per-span analysis
 
-    private mutating func analyse(spanIndex: Int, span: DeclaredSpan) -> ([Candidate], [PendingRegion]) {
+    private mutating func analyze(spanIndex: Int, span: DeclaredSpan) -> ([Candidate], [PendingRegion]) {
         let s0 = span.frames.lowerBound, s1 = span.frames.upperBound
         if s1 - s0 < minimumSupportedFrames {
             return ([], [PendingRegion(spanIndex: spanIndex, frames: span.frames, outcome: .unsupported(.insufficientOverlap, .tooShort))])

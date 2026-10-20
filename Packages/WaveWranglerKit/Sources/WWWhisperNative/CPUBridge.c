@@ -145,13 +145,13 @@ void ww_whisper_free_transcript(WWNativeTranscript *transcript) {
 
 static WWNativeTranscript infer_pcm(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    int32_t (*cancelled)(void *), void *cancel_context, int window, WWWhisperConfiguration configuration
+    int32_t (*canceled)(void *), void *cancel_context, int window, WWWhisperConfiguration configuration
 ) {
     WWNativeTranscript result = { .status = WW_INFERENCE_INVALID_INPUT };
-    if (!cancelled || configuration.threads < 1 || configuration.threads > 8 ||
+    if (!canceled || configuration.threads < 1 || configuration.threads > 8 ||
         (configuration.use_metal != 0 && configuration.use_metal != 1)) return result;
-    if (cancelled(cancel_context)) {
-        result.status = WW_INFERENCE_CANCELLED;
+    if (canceled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELED;
         return result;
     }
     if (!model_bytes || !pcm) return result;
@@ -168,8 +168,8 @@ static WWNativeTranscript infer_pcm(
         result.status = WW_INFERENCE_FAILED;
         return result;
     }
-    if (cancelled(cancel_context)) {
-        result.status = WW_INFERENCE_CANCELLED;
+    if (canceled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELED;
         pthread_mutex_unlock(&context_init_lock);
         return result;
     }
@@ -182,7 +182,7 @@ static WWNativeTranscript infer_pcm(
     // Upstream initializes shared FFT/backend tables here. Decode uses independent contexts.
     pthread_mutex_unlock(&context_init_lock);
     if (!context) {
-        result.status = cancelled(cancel_context) ? WW_INFERENCE_CANCELLED :
+        result.status = canceled(cancel_context) ? WW_INFERENCE_CANCELED :
             (configuration.use_metal ? WW_INFERENCE_BACKEND_UNAVAILABLE : WW_INFERENCE_LOAD_FAILED);
         return result;
     }
@@ -190,12 +190,12 @@ static WWNativeTranscript infer_pcm(
         result.status = WW_INFERENCE_BACKEND_UNAVAILABLE;
         goto release_context;
     }
-    if (cancelled(cancel_context)) {
-        result.status = WW_INFERENCE_CANCELLED;
+    if (canceled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELED;
         goto release_context;
     }
 
-    struct cancel_state cancel_state = { cancelled, cancel_context };
+    struct cancel_state cancel_state = { canceled, cancel_context };
     struct whisper_full_params params = whisper_full_default_params(
         window ? WHISPER_SAMPLING_BEAM_SEARCH : WHISPER_SAMPLING_GREEDY);
     params.n_threads = configuration.threads;
@@ -219,8 +219,8 @@ static WWNativeTranscript infer_pcm(
     params.abort_callback = abort_inference;
     params.abort_callback_user_data = &cancel_state;
     const int status = whisper_full(context, params, pcm, sample_count);
-    if (cancelled(cancel_context)) {
-        result.status = WW_INFERENCE_CANCELLED;
+    if (canceled(cancel_context)) {
+        result.status = WW_INFERENCE_CANCELED;
         goto release_context;
     }
     if (status != 0) {
@@ -260,7 +260,7 @@ static WWNativeTranscript infer_pcm(
         result.segments[i].t0 = whisper_full_get_segment_t0(context, i);
         result.segments[i].t1 = whisper_full_get_segment_t1(context, i);
     }
-    result.status = cancelled(cancel_context) ? WW_INFERENCE_CANCELLED : WW_INFERENCE_OK;
+    result.status = canceled(cancel_context) ? WW_INFERENCE_CANCELED : WW_INFERENCE_OK;
 
 release_context:
     whisper_free(context);
@@ -270,23 +270,23 @@ release_context:
 
 WWNativeTranscript ww_whisper_infer_pcm(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    int32_t (*cancelled)(void *), void *cancel_context
+    int32_t (*canceled)(void *), void *cancel_context
 ) {
-    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 0,
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, canceled, cancel_context, 0,
         (WWWhisperConfiguration) { .use_metal = 0, .threads = 2 });
 }
 
 WWNativeTranscript ww_whisper_infer_window(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    int32_t (*cancelled)(void *), void *cancel_context
+    int32_t (*canceled)(void *), void *cancel_context
 ) {
-    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 1,
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, canceled, cancel_context, 1,
         (WWWhisperConfiguration) { .use_metal = 0, .threads = 4 });
 }
 
 WWNativeTranscript ww_whisper_infer_window_configured(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    WWWhisperConfiguration configuration, int32_t (*cancelled)(void *), void *cancel_context
+    WWWhisperConfiguration configuration, int32_t (*canceled)(void *), void *cancel_context
 ) {
-    return infer_pcm(model_bytes, model_size, pcm, sample_count, cancelled, cancel_context, 1, configuration);
+    return infer_pcm(model_bytes, model_size, pcm, sample_count, canceled, cancel_context, 1, configuration);
 }

@@ -4,8 +4,8 @@ import WWSources
 /// Why a decode produced no result. Every failure is typed. No failure publishes partial output or
 /// touches the original (the gateway is read-only).
 public enum DecodeFailure: Error, Sendable, Equatable, Hashable {
-    /// The task was cancelled. Nothing was published and every resource was released.
-    case cancelled
+    /// The task was canceled. Nothing was published and every resource was released.
+    case canceled
     case notFound
     case permissionDenied
     /// A directory, package, symbolic link or other non-regular item.
@@ -20,7 +20,7 @@ public enum DecodeFailure: Error, Sendable, Equatable, Hashable {
     /// Metadata needed to bound the decode (size, modification date, type) was not reported.
     case metadataUnavailable(SourceErrorDescriptor?)
     case emptyFile
-    /// The bytes are not a recognisable audio container, or its header is damaged.
+    /// The bytes are not a recognizable audio container, or its header is damaged.
     case unreadableContainer(status: Int32)
     /// Decodable in principle, but outside the evidenced envelope (`DecodeEnvelope`).
     case unsupported(UnsupportedReason)
@@ -69,7 +69,7 @@ public enum UnsupportedReason: Sendable, Equatable, Hashable, Codable {
     /// Non-integral or non-standard source rate, or a rate not evidenced for this codec.
     case sampleRate(Double)
     case channelCount(Int)
-    /// A packetised lossy stream with no packet table. The encoder delay is unknown, so no exact time
+    /// A packetized lossy stream with no packet table. The encoder delay is unknown, so no exact time
     /// origin can be stated.
     case encoderDelayUnknown
     /// The container's declared audio length can't be checked against the file (for example, a WAV

@@ -582,7 +582,7 @@ struct AlignmentWaveformView: View {
                 Menu("Adaptive review…") {
                     ForEach(options, id: \.self) { option in
                         Button("\(model.speakerName(option.speaker)): \(model.speakerMatchDescription(option, fileLocal: true))") {
-                            model.analyseAdaptively(track, with: option)
+                            model.analyzeAdaptively(track, with: option)
                         }
                     }
                 }

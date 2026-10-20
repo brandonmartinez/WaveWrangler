@@ -1,14 +1,8 @@
-# Manual Squad operations
+# Build and test CI
 
-All active Squad workflows use `workflow_dispatch` only.
-There are no push, issue, pull-request or scheduled automatic triggers.
+`ci.yml` is the ordinary macOS build and test workflow. It is currently
+manual-only (`workflow_dispatch`); it does not deploy, publish releases,
+route issues, or start coding agents.
 
-- Milestone and issue reports are read-only/advisory.
-- Owner routing changes only informational `owner:*` labels.
-- Label sync preserves the current priority/type/gate taxonomy; it creates no `squad` dispatch labels.
-- No workflow assigns a GitHub coding agent or starts work across milestones.
-
-`ci.yml` is not a Squad workflow: it is ordinary read-only build/test CI (pull requests and pushes to `main`) declared as M1 code; see `docs/engineering/README.md`.
-
-Implementation starts through the named milestone kickoff and follows `docs/planning/milestone-runbook.md`.
-Matching installed workflow templates are project-specific; preserve this policy during Squad upgrades.
+Local commands and UI-test host requirements are documented in the
+[engineering guide](../../docs/engineering/README.md).

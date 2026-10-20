@@ -21,18 +21,18 @@ struct SaveRetryClassificationTests {
         (.saveFailed(retainedRevision: 2, kind: .diskFull, message: "full"), true),
         (.saveFailed(retainedRevision: 2, kind: .permissionDenied, message: "denied"), true),
         (.saveFailed(retainedRevision: nil, kind: .other, message: "other"), true),
-        // D10: the user cancelled; never retried behind their back.
-        (.saveFailed(retainedRevision: 2, kind: .cancelled, message: "cancelled"), false),
+        // D10: the user canceled; never retried behind their back.
+        (.saveFailed(retainedRevision: 2, kind: .canceled, message: "canceled"), false),
         // D6: a conflict needs the user's decision; retrying would only fail the base check again.
         (.conflict(onDiskRevision: 4, missing: false), false),
         (.conflict(onDiskRevision: nil, missing: true), false),
         // D5: the candidate may be on disk; the retry first adopts it if it is (ShowDocument).
-        (.acknowledgementUncertain(message: "unconfirmed"), true),
+        (.acknowledgmentUncertain(message: "unconfirmed"), true),
         (.recoveryCheckpoint(at: now), false),
         (.autosaveSkipped, false),
         (.readOnlyNewerFormat(found: 9, supported: 1), false),
         (.recoveredReadOnly(revision: 2), false),
-        (.cancelled, false),
+        (.canceled, false),
     ])
     func retryable(_ state: DocumentSaveState, _ expected: Bool) {
         #expect(state.isAutomaticallyRetryable == expected, "\(state)")

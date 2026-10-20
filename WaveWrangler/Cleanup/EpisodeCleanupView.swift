@@ -212,7 +212,7 @@ struct EpisodeCleanupContent: View {
                     Spacer()
                     Button("Cancel Transcription") {
                         model.cancel()
-                        model.message = "Transcription cancelled. No partial result was saved."
+                        model.message = "Transcription canceled. No partial result was saved."
                     }
                     .accessibilityIdentifier("ww.cleanup.cancel")
                 }

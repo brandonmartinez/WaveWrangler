@@ -3,6 +3,7 @@ import Foundation
 import Testing
 import WWAlignEstimate
 import WWAlignSegment
+import WWTestSupport
 import WWTimeMap
 
 /// m2-freeze-discontinuity-2 consistency (docs/m2/fixtures/m2-freeze-discontinuity-2.json). These checks segment
@@ -93,29 +94,17 @@ struct SegmentFreezeTests {
     /// "100644 <name>\0<20-byte blob ID>" entries. Equals `git rev-parse HEAD:<dir>` for a clean checkout;
     /// any edited or untracked file changes it.
     static func gitTreeID(_ directory: URL) throws -> String {
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-            .sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
-        var body = Data()
-        for name in names {
-            let content = try Data(contentsOf: directory.appendingPathComponent(name))
-            var blob = Data("blob \(content.count)\0".utf8)
-            blob.append(content)
-            body.append(Data("100644 \(name)\0".utf8))
-            body.append(contentsOf: Insecure.SHA1.hash(data: blob))
-        }
-        var tree = Data("tree \(body.count)\0".utf8)
-        tree.append(body)
-        return Insecure.SHA1.hash(data: tree).map { String(format: "%02x", $0) }.joined()
+        try SourceTreeBaseline.gitTreeID(directory)
     }
 
-    /// The segmenter source and this test tree (generator, truth, scoring, gates, harness) are pinned.
-    @Test func segmenterAndHarnessTreesMatchTheFreezeRecord() throws {
-        let trees = try #require(try Self.freeze()["pinnedTrees"] as? [String: String])
+    /// Maintenance pins do not extend the historical holdout's qualification.
+    @Test func segmenterAndHarnessTreesMatchTheMaintenanceBaseline() throws {
+        let trees = try SourceTreeBaseline.currentTrees(for: Self.freezeURL)
         #expect(Set(trees.keys) == ["Sources/WWAlignSegment", "Tests/WWAlignSegmentTests"])
         let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
         for (path, frozen) in trees {
             let actual = try Self.gitTreeID(package.appendingPathComponent(path))
-            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-discontinuity-2 pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
+            #expect(actual == frozen, "\(path) is \(actual), but the source maintenance baseline pins \(frozen)")
         }
     }
 
@@ -257,6 +246,7 @@ struct SegmentHoldoutTests {
 
     @Test(.enabled(if: SegmentHoldoutTests.enabled, "frozen holdout: run once per frozen revision with WW_SEGMENT_HOLDOUT=1"))
     func frozenHoldout() async throws {
+        try SourceTreeBaseline.requireHistoricalTrees(for: SegmentFreezeTests.freezeURL)
         let scores = try await SegmentRunner.runAll(SegmentPlan.cases(master: SegmentPlan.holdoutMasterSeed, counts: SegmentPlan.holdoutCounts))
         print("WW-017 FROZEN HOLDOUT m2-freeze-discontinuity-2 (master seed \(SegmentFreezeTests.hex(SegmentPlan.holdoutMasterSeed)), segmenter \(DiscontinuitySegmenter.identifier), estimator \(AcousticEstimator.identifier))")
         for score in scores { print("WW-017 holdout " + SegmentRunner.line(score)) }

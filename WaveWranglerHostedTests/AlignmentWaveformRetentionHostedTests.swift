@@ -122,7 +122,7 @@ struct AlignmentWaveformRetentionHostedTests {
         let target = try #require(tracks.first { $0.id == f.target })
         f.model.selectWaveform(target)
         try #require(!f.model.selectedSpeakerPairs.isEmpty)
-        f.model.analyse()
+        f.model.analyze()
         try await wait { !f.model.isWorking }
         try #require(f.model.canAcceptProposal, "\(f.model.message); \(String(describing: f.model.lastError)); \(String(describing: f.model.selectedAnalysis?.abstention))")
         let liveBeforePreview = f.document.store.model
@@ -243,7 +243,7 @@ struct AlignmentWaveformRetentionHostedTests {
         cleanup.play()
         cleanup.stopPlayback()
         try await Task.sleep(for: .milliseconds(100))
-        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback, "Cancelling preparation never starts late audio")
+        #expect(!cleanup.isPlaying && !cleanup.isPreparingPlayback, "Canceling preparation never starts late audio")
         #expect(cleanup.episode?.alignment?.acceptedRevision == revision)
         #expect(cleanup.episode?.cleanup?.workingRange?.tracksIn == 2)
         #expect(cleanup.episode?.cleanup?.workingRange?.tracksOut == 4)

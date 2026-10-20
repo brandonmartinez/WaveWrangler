@@ -90,7 +90,7 @@ struct FFT: Sendable {
 
 /// A track resampled to the common proxy rate: low-passed, integer-decimated, then cubic-interpolated onto
 /// the exact proxy grid (sample k at `k / proxyRate` seconds after the track's sample 0). The global mean is
-/// removed only to keep the prefix sums well conditioned; every window statistic is centred on the window's
+/// removed only to keep the prefix sums well conditioned; every window statistic is centered on the window's
 /// own mean, so a DC bias (or the residue of the global mean in a silent span) is never mistaken for signal.
 struct ProxySignal: Sendable {
     let samples: [Double]
@@ -177,19 +177,19 @@ struct ProxySignal: Sendable {
         range.isEmpty ? 0 : (sums[range.upperBound] - sums[range.lowerBound]) / Double(range.count)
     }
 
-    /// Sum over `range` of (sample - centre)^2.
-    func energy(_ range: Range<Int>, about centre: Double) -> Double {
+    /// Sum over `range` of (sample - center)^2.
+    func energy(_ range: Range<Int>, about center: Double) -> Double {
         let e = energy[range.upperBound] - energy[range.lowerBound]
         let s = sums[range.upperBound] - sums[range.lowerBound]
-        return max(0, e - 2 * centre * s + Double(range.count) * centre * centre)
+        return max(0, e - 2 * center * s + Double(range.count) * center * center)
     }
 
     /// Energy about the range's own mean (n x variance).
-    func centredEnergy(_ range: Range<Int>) -> Double { energy(range, about: mean(range)) }
+    func centeredEnergy(_ range: Range<Int>) -> Double { energy(range, about: mean(range)) }
 
     /// Standard deviation over `range`: the RMS of the range with its own mean removed.
-    func centredRMS(_ range: Range<Int>) -> Double {
-        range.isEmpty ? 0 : (centredEnergy(range) / Double(range.count)).squareRoot()
+    func centeredRMS(_ range: Range<Int>) -> Double {
+        range.isEmpty ? 0 : (centeredEnergy(range) / Double(range.count)).squareRoot()
     }
 }
 

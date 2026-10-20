@@ -129,7 +129,7 @@ extension View {
     }
 }
 
-/// Reduce Motion: honour the system setting or the `-WWForceReduceMotion YES` test override (C05).
+/// Reduce Motion: honor the system setting or the `-WWForceReduceMotion YES` test override (C05).
 enum MotionPolicy {
     static var reduceMotion: Bool {
         NSWorkspace.shared.accessibilityDisplayShouldReduceMotion

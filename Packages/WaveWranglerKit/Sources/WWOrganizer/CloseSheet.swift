@@ -37,7 +37,7 @@ extension CloseDecision {
             self = .saveFirst
         case .saving:
             self = .waitForSave
-        case .edited, .cancelled:
+        case .edited, .canceled:
             self = .sheet(CloseSheet(
                 message: "Do you want to save the changes you made to “\(showName)”?",
                 informative: "Your changes will be lost if you don't save them.",

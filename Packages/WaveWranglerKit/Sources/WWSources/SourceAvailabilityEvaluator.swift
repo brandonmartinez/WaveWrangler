@@ -226,7 +226,7 @@ public struct SourceAvailabilityEvaluator: Sendable {
         switch transfer {
         case .requested, .inProgress:
             true
-        case .cancelled, .failed, .offlineOrUnknown:
+        case .canceled, .failed, .offlineOrUnknown:
             residency == .cloudPlaceholder || residency == .downloading
         case .idle, .notRequested, .unknown:
             false

@@ -35,7 +35,7 @@ struct AcceptanceTests {
     func provenanceIsOnlyReferenceOrManual() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "provenance")
         let (referenceEpoch, targetEpoch) = (fixture.epochs[0], fixture.epochs[1])
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let decisions: [(EpochMapDecision, ManualCorrection.Basis?)] = [
             (.acceptProposal(note: "ok"), .acceptedAcousticProposal),
             (.numeric(ppm: 100, offsetMilliseconds: 1250), .numericEntry),
@@ -74,7 +74,7 @@ struct AcceptanceTests {
     func undecidedCarriesProposalAndRejectSticks() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "reject")
         let targetEpoch = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let proposal = try #require(await fixture.states(report)[targetEpoch]?.status.proposal)
 
         let undecided = try await fixture.acceptAndActivate(report, [:])
@@ -105,7 +105,7 @@ struct AcceptanceTests {
     func staleCycleProposalIsNotMapped() async throws {
         let fixture = try await PipelineFixture(CycleTests.groups(), label: "cycle-map-stale")
         let target = fixture.epochs[1]
-        let initial = try await fixture.analyse(preferredReference: "ref")
+        let initial = try await fixture.analyze(preferredReference: "ref")
         let first = try await fixture.acceptAndActivate(initial, [:])
         #expect(Self.provenances(first.map)[target] == nil)
 
@@ -117,7 +117,7 @@ struct AcceptanceTests {
             try fixture.rewrite(name)
             await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id(name), fixture.url(name)))
         }
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.records[target]?.abstention?.abstentionReason == .cycleInconsistent)
         let accepted = try await fixture.acceptAndActivate(report, [:])
         #expect(Self.provenances(accepted.map)[target] == nil)
@@ -129,7 +129,7 @@ struct AcceptanceTests {
     func sequentialCycleAcceptance() async throws {
         let fixture = try await PipelineFixture(CycleTests.groups(), label: "cycle-sequential-accept")
         let (first, second) = (fixture.epochs[1], fixture.epochs[2])
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let acceptedFirst = try await fixture.acceptAndActivate(report, [first: .acceptProposal(note: "first")])
         let firstSegment = try #require(Self.segment(acceptedFirst.map, first))
         #expect(Self.segment(acceptedFirst.map, second) == nil, "reviewing one match never makes another playable")
@@ -145,7 +145,7 @@ struct AcceptanceTests {
     func acceptedCycleProposalAbstains() async throws {
         let fixture = try await PipelineFixture(CycleTests.groups(), label: "cycle-accepted-abstains")
         let first = fixture.epochs[1]
-        let initial = try await fixture.analyse(preferredReference: "ref")
+        let initial = try await fixture.analyze(preferredReference: "ref")
         _ = try await fixture.acceptAndActivate(initial, [first: .acceptProposal()])
         for (name, delay, rate, offset) in [("a", 0.0, 1.0001, 1.25), ("b", 0.02, 0.99995, -0.5)] {
             fixture.content.register(fixture.url(name), .init(
@@ -155,7 +155,7 @@ struct AcceptanceTests {
             try fixture.rewrite(name)
             await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id(name), fixture.url(name)))
         }
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.records[first]?.abstention?.abstentionReason == .cycleInconsistent)
         let accepted = try await fixture.acceptAndActivate(report, [:])
         #expect(Self.segment(accepted.map, first) == nil)
@@ -169,14 +169,14 @@ struct AcceptanceTests {
     func acceptedProposalRequiresPeerEvidence() async throws {
         let fixture = try await PipelineFixture(CycleTests.groups(), label: "accepted-peer-revision")
         let (first, peer) = (fixture.epochs[1], fixture.epochs[2])
-        let initial = try await fixture.analyse(preferredReference: "ref")
+        let initial = try await fixture.analyze(preferredReference: "ref")
         let accepted = try await fixture.acceptAndActivate(initial, [
             first: .acceptProposal(), peer: .unmapped,
         ])
         #expect(Self.provenances(accepted.map)[first] == .manual)
         try fixture.rewrite("b")
         await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id("b"), fixture.url("b")))
-        let refreshed = try await fixture.analyse(preferredReference: "ref")
+        let refreshed = try await fixture.analyze(preferredReference: "ref")
         #expect(refreshed.records[first]?.proposal != nil)
         let replaced = try await fixture.acceptAndActivate(refreshed, [:])
         #expect(Self.provenances(replaced.map)[first] == nil)
@@ -194,7 +194,7 @@ struct AcceptanceTests {
         )
         let second = try fixture.moveToNewEpoch("restart")
         let first = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.records[first]?.proposal != nil)
         #expect(report.records[second]?.proposal != nil)
         _ = try await fixture.acceptAndActivate(report, [first: .acceptProposal()])
@@ -207,7 +207,7 @@ struct AcceptanceTests {
     func extendAfterManualPlacement() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "extend-after-manual")
         let target = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let manual = try await fixture.acceptAndActivate(report, [
             target: .numeric(ppm: 0, offsetMilliseconds: 0)
         ])
@@ -229,7 +229,7 @@ struct AcceptanceTests {
     func priorAnchorsRequireCurrentDependencies() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "anchor-currency")
         let target = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let anchors = [
             AlignmentAnchor(sourceSeconds: 1, alignedSeconds: 2.2501),
             AlignmentAnchor(sourceSeconds: 21, alignedSeconds: 22.2521),
@@ -241,7 +241,7 @@ struct AcceptanceTests {
 
         try fixture.rewrite("tgt")
         await fixture.coordinator.updateSource(try PipelineFixture.registration(fixture.id("tgt"), fixture.url("tgt")))
-        let refreshed = try await fixture.analyse(preferredReference: "ref")
+        let refreshed = try await fixture.analyze(preferredReference: "ref")
         let replaced = try await fixture.acceptAndActivate(refreshed, [:])
         #expect(Self.provenances(replaced.map)[target] == nil)
         #expect(Self.segment(replaced.map, target) != Self.segment(anchored.map, target))
@@ -251,7 +251,7 @@ struct AcceptanceTests {
     func anchorsFromTruthAreExact() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "anchors")
         let targetEpoch = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let truth: (Double) -> Double = { TwoRecorder.rate * $0 + TwoRecorder.offset }
         let anchors = [0.5, 7.25, 13, 23.5].map { AlignmentAnchor(sourceSeconds: $0, alignedSeconds: truth($0)) }
         let fitted = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .anchors(anchors)])
@@ -295,7 +295,7 @@ struct AcceptanceTests {
     func invalidDecisionsAreRefused() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "invalid")
         let (referenceEpoch, targetEpoch) = (fixture.epochs[0], fixture.epochs[1])
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         for (name, decision, expected) in Self.invalidDecisions {
             do {
                 _ = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: decision])
@@ -323,7 +323,7 @@ struct AcceptanceTests {
     func clockApprovedPriorIsRefused() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "clock")
         let targetEpoch = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
 
         // A map written by something else (a future evaluator, or a tampered document) claiming approval.
         let numeric = try await fixture.acceptAndActivate(report, [targetEpoch: .numeric(ppm: 100, offsetMilliseconds: 1250)])
@@ -369,7 +369,7 @@ struct AcceptanceTests {
     func activationAndShutdownRefusals() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(referenceSeconds: 6, targetSeconds: 4), label: "refusals")
         let targetEpoch = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let accepted = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [targetEpoch: .numeric(ppm: 0, offsetMilliseconds: 0)])
         let unsaved = AcceptedAlignment(
             model: fixture.model, revision: accepted.revision, map: accepted.map, sourcesOutsideCoverage: [],
@@ -387,9 +387,9 @@ struct AcceptanceTests {
             _ = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [:])
         }
         await #expect(throws: AlignedAssetRefusal.coordinatorShutDown) { _ = try await fixture.render() }
-        let after = try await fixture.analyse(preferredReference: "ref")
+        let after = try await fixture.analyze(preferredReference: "ref")
         #expect(after.records.isEmpty)
-        #expect(after.probes.values.allSatisfy { $0.outcome == .cancelled })
+        #expect(after.probes.values.allSatisfy { $0.outcome == .canceled })
         #expect(fixture.content.total.opens == opens, "no content is opened after shutdown")
     }
 

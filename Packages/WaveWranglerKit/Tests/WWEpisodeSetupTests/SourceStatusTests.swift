@@ -171,7 +171,7 @@ struct SourceStatusTests {
         let base = SourceStatusSnapshot(location: .known, access: .granted, residency: .local, transfer: .idle, identity: .notChecked)
         var s = base; s.transfer = .failed(reason: "x"); #expect(attention(s))
         s = base; s.transfer = .noConnection; #expect(attention(s))
-        s = base; s.transfer = .cancelled; #expect(!attention(s))
+        s = base; s.transfer = .canceled; #expect(!attention(s))
         s = base; s.residency = .cloudOnly; #expect(!attention(s))
         s = base; s.location = .moved(newFolder: nil); #expect(attention(s))
         s = base; s.identity = .changed(differences: "x", acceptedByUser: true); #expect(!attention(s))
@@ -208,7 +208,7 @@ struct SourceStatusTests {
     }
 
     /// No state differs only by tint: non-normal values carry a symbol or a progress/spinner indicator.
-    @Test func everyNonNormalValueHasShapeNotJustColour() {
+    @Test func everyNonNormalValueHasShapeNotJustColor() {
         let presentations = SourceStatusCatalog.allLocations.map(\.presentation) + SourceStatusCatalog.allAccess.map(\.presentation)
             + SourceStatusCatalog.allResidency.map(\.presentation) + SourceStatusCatalog.allTransfers.map(\.presentation)
             + SourceStatusCatalog.allIdentity.map(\.presentation)

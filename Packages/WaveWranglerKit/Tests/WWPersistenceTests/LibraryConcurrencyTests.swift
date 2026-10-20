@@ -3,7 +3,7 @@ import Testing
 import WWCore
 @testable import WWPersistence
 
-/// Review finding 1: concurrent library operations (user edits, show-save acknowledgements, recents,
+/// Review finding 1: concurrent library operations (user edits, show-save acknowledgments, recents,
 /// queued-edit retry) must never lose an edit or report success for an edit that was overwritten.
 @Suite("Library concurrency (serialized operations)", .serialized)
 struct LibraryConcurrencyTests {

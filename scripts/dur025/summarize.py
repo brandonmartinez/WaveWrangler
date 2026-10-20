@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Summarise a DUR-025 run (scripts/dur025/run.py output, m1-freeze-3/-4) for the evidence document.
+"""Summarize a DUR-025 run (scripts/dur025/run.py output, m1-freeze-3/-4) for the evidence document.
 
 Usage: scripts/dur025/summarize.py .build/dur025/<split>/results.jsonl [.build/dur025/<split>/run-record.json]
 Percentiles are nearest-rank (registry rule). Every case is listed; nothing is dropped. Counted slots are the
@@ -64,7 +64,7 @@ def main():
         if cell in ("show", "library"):
             paths = collections.Counter(json.dumps(r.get("detectionPath"), sort_keys=True) for r in cases if r["verdict"] != "setupNotEstablished")
             print("- detection paths: " + "; ".join(f"{k} ×{v}" for k, v in paths.most_common()))
-            print("- hosts with a local acknowledgement: " + ", ".join(f"{k} ×{v}" for k, v in sorted(collections.Counter(len(r.get("localAcks", [])) for r in cases).items())))
+            print("- hosts with a local acknowledgment: " + ", ".join(f"{k} ×{v}" for k, v in sorted(collections.Counter(len(r.get("localAcks", [])) for r in cases).items())))
         if cell == "show":
             counts = collections.Counter(json.dumps(r.get("versionCounts"), sort_keys=True) for r in cases if r.get("versionCounts"))
             print("- version counts per host: " + "; ".join(f"{k} ×{v}" for k, v in counts.most_common()))

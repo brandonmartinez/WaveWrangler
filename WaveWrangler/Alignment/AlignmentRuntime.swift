@@ -100,19 +100,19 @@ actor AlignmentRuntime {
         )
     }
 
-    func analyse(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> AlignmentAnalysisReport {
+    func analyze(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> AlignmentAnalysisReport {
         let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorization = sources
             .filter { $0.availability == .on }
             .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
-        guard let report = await pipeline.analyse(
+        guard let report = await pipeline.analyze(
             model: model, episode: episodeID, sources: sources, authorizations: authorization
         ) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
         reports[episodeID] = report
         return report
     }
 
-    func analyseSpeaker(
+    func analyzeSpeaker(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         targetEpoch: RecordingEpochID, speaker: SpeakerID,
         referenceSource: SourceID, targetSource: SourceID
@@ -123,7 +123,7 @@ actor AlignmentRuntime {
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
             try await pipeline.activate(model: model, episode: episodeID)
         }
-        let report = try await pipeline.analyseSpeaker(
+        let report = try await pipeline.analyzeSpeaker(
             model: model, episode: episodeID, sources: sources, authorizations: authorization,
             targetEpoch: targetEpoch, speaker: speaker,
             referenceSource: referenceSource, targetSource: targetSource
@@ -143,7 +143,7 @@ actor AlignmentRuntime {
         return report
     }
 
-    func analyseAdaptiveSpeaker(
+    func analyzeAdaptiveSpeaker(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         targetEpoch: RecordingEpochID, pair: SpeakerMatchOption,
         progress: @escaping @Sendable (Double) async -> Void
@@ -154,7 +154,7 @@ actor AlignmentRuntime {
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
             try await pipeline.activate(model: model, episode: episodeID)
         }
-        return try await pipeline.analyseAdaptiveSpeaker(
+        return try await pipeline.analyzeAdaptiveSpeaker(
             model: model, episode: episodeID, sources: sources, authorizations: authorizations,
             targetEpoch: targetEpoch, speaker: pair.speaker,
             referenceSource: pair.reference.source, targetSource: pair.target, progress: progress
@@ -579,7 +579,7 @@ actor AlignmentRuntime {
         }
         switch await job.outcome {
         case .published, .reused: break
-        case .cancelled: throw CancellationError()
+        case .canceled: throw CancellationError()
         case .discardedStale: throw DecodeFailure.sourceIdentityMismatch
         case let .failed(reason): throw SourceAdmissionError(reason: reason)
         }
@@ -1063,7 +1063,7 @@ actor AlignmentRuntime {
                         continue
                     }
                 }
-                // Preserve recognized but untimed text; never spread it across neighbouring words.
+                // Preserve recognized but untimed text; never spread it across neighboring words.
                 words.append(TranscriptWord(text: segment.text))
             }
             completed = Double(window.coreFrames.upperBound - Int64((lane.start * 48_000).rounded())) / 48_000
@@ -1130,7 +1130,7 @@ actor AlignmentRuntime {
     }
 
     /// Resolves only the app's device-local access records. It never opens a source, reads source metadata or
-    /// registers a revision; explicit Analyse/Audition actions perform those content-gateway preparations.
+    /// registers a revision; explicit Analyze/Audition actions perform those content-gateway preparations.
     private func resolveLocations(_ records: [SourceRecord]) async -> [AlignmentSource] {
         var values: [AlignmentSource] = []
         for source in records {

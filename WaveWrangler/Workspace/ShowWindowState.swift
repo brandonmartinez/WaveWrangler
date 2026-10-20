@@ -371,7 +371,7 @@ final class ShowWindowState {
     func showSaveStatus() { saveStatusPopoverShown = true }
 
     /// Incremented to move keyboard focus to the save-status item (e.g. when Save a Copy Elsewhere… finishes or is
-    /// cancelled, accessibility-acceptance T28: "Focus returns to the save-status item").
+    /// canceled, accessibility-acceptance T28: "Focus returns to the save-status item").
     private(set) var saveStatusFocusRequest = 0
 
     func focusSaveStatus() { saveStatusFocusRequest += 1 }
@@ -562,7 +562,7 @@ final class ShowWindowState {
 extension DocumentSaveState {
     fileprivate var announcementIsTerminalFailure: Bool {
         switch self {
-        case .notConfirmed, .locationUnavailable, .diskFull, .failed, .cancelled, .conflict: true
+        case .notConfirmed, .locationUnavailable, .diskFull, .failed, .canceled, .conflict: true
         default: false
         }
     }

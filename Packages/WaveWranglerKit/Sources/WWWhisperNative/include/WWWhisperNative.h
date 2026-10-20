@@ -36,7 +36,7 @@ typedef enum {
     WW_INFERENCE_OK = 0,
     WW_INFERENCE_INVALID_INPUT = 1,
     WW_INFERENCE_LOAD_FAILED = 2,
-    WW_INFERENCE_CANCELLED = 3,
+    WW_INFERENCE_CANCELED = 3,
     WW_INFERENCE_FAILED = 4,
     WW_INFERENCE_BACKEND_UNAVAILABLE = 5,
 } WWInferenceStatus;
@@ -55,7 +55,7 @@ typedef struct {
 
 WWNativeTranscript ww_whisper_infer_pcm(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    int32_t (*cancelled)(void *), void *cancel_context
+    int32_t (*canceled)(void *), void *cancel_context
 );
 void ww_whisper_free_transcript(WWNativeTranscript *transcript);
 
@@ -63,7 +63,7 @@ void ww_whisper_free_transcript(WWNativeTranscript *transcript);
 // Returned word-like segments are approximate engine timestamps, never cut authority.
 WWNativeTranscript ww_whisper_infer_window(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    int32_t (*cancelled)(void *), void *cancel_context
+    int32_t (*canceled)(void *), void *cancel_context
 );
 
 typedef struct {
@@ -74,7 +74,7 @@ typedef struct {
 int32_t ww_whisper_metal_available(void);
 WWNativeTranscript ww_whisper_infer_window_configured(
     void *model_bytes, size_t model_size, const float *pcm, int32_t sample_count,
-    WWWhisperConfiguration configuration, int32_t (*cancelled)(void *), void *cancel_context
+    WWWhisperConfiguration configuration, int32_t (*canceled)(void *), void *cancel_context
 );
 
 #endif

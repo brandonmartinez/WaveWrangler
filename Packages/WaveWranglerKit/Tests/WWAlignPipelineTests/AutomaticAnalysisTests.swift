@@ -51,7 +51,7 @@ struct AutomaticAnalysisTests {
                               primary: ChannelReference(sourceID: fixture.id("ref"), statedChannel: 6),
                               backups: [ChannelReference(sourceID: fixture.id("tgt"), statedChannel: 6)]),
         ]
-        let report = try await fixture.pipeline.analyseSpeaker(
+        let report = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
@@ -145,7 +145,7 @@ struct AutomaticAnalysisTests {
 
     static func run(_ fixture: PipelineFixture) async throws -> AlignmentAnalysisReport {
         let speaker = assign(fixture)
-        return try await fixture.pipeline.analyseSpeaker(
+        return try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
@@ -202,7 +202,7 @@ struct AutomaticAnalysisTests {
                                                   offset: TwoRecorder.offset, start: 6, end: 19)),
             label: "primary-abstention"
         )
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let record = try #require(report.records[fixture.epochs[1]])
         #expect(record.flags.contains("coverageGap"))
         #expect(record.proposal == nil)
@@ -242,7 +242,7 @@ struct AutomaticAnalysisTests {
         }
         let report = try await Self.run(fixture)
         #expect(fired.value)
-        #expect(report.epochFailures[fixture.epochs[1]] == .cancelled)
+        #expect(report.epochFailures[fixture.epochs[1]] == .canceled)
         #expect(report.records.isEmpty)
         await ConcurrencyTests.expectQuiescent(fixture)
     }

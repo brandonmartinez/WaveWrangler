@@ -142,7 +142,7 @@ struct DecodingCursorSeekTests {
         }
         target.install(task)
         gate.release()
-        #expect(await task.value == .cancelled)
+        #expect(await task.value == .canceled)
         #expect(content.record.seeks.count == 1 && content.record.reads == 0 && content.record.closes == 1)
     }
 

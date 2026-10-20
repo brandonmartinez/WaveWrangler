@@ -9,7 +9,7 @@ import WWCore
 //   which is still not clock approval (human acceptance is not oscillator truth). Proposals carry
 //   ``AcousticConsistencyMeasurements``, a type distinct from the ``ClockGateMeasurements`` an approval needs.
 // * There is no public way to construct a ``ClockApproval`` (or an ``IndependentClockReference``): their
-//   initialisers are internal and neither type is publicly `Decodable`. The only public route to an
+//   initializers are internal and neither type is publicly `Decodable`. The only public route to an
 //   existing approval is decoding a persisted ``MapProvenance``, so persistence must decode only from its
 //   own store. A public construction path will exist only once a frozen-holdout-qualified WW-016 evaluator
 //   does, and will require an opaque token that only that evaluator can issue (M2-C4).
@@ -65,7 +65,7 @@ public enum UnsupportedReason: String, Hashable, Sendable, Codable, CaseIterable
 
 // MARK: - Clock approval
 
-/// Provisional WW-016 clock gates (docs/planning/kickoffs/m2.md §4). Not yet frozen-holdout qualified;
+/// Provisional WW-016 clock gates (docs/m2/ww-019-m2-contracts.md). Not yet frozen-holdout qualified;
 /// a later freeze may only tighten them.
 public enum ProvisionalClockGates {
     public static let minimumWindows = 5
@@ -129,14 +129,14 @@ public struct IndependentClockReference: Hashable, Sendable {
 /// (docs/m2/ww-019-m2-contracts.md) an evaluator may only issue `clockApproved` after the frozen WW-016
 /// holdout gate passes, and nothing in WWTimeMap promotes any map to `clockApproved` automatically.
 ///
-/// Not publicly constructible (internal initialiser, encode-only conformance): until a holdout-qualified
+/// Not publicly constructible (internal initializer, encode-only conformance): until a holdout-qualified
 /// WW-016 evaluator exists there is no public construction path, and that path is planned to require an
 /// opaque evaluator token rather than free-standing measurements.
 ///
 /// An approval is bound to the exact epoch and segments it measured (#177): it stores the epoch ID and
 /// a copy of the approved segments, and ``GroupTimeMap`` compilation and ``EpochClockMap`` decoding refuse
 /// a `clockApproved` epoch whose ID or segments differ in any way. Editing a map therefore drops its
-/// approval; it cannot be carried over to different or relabelled segments.
+/// approval; it cannot be carried over to different or relabeled segments.
 public struct ClockApproval: Hashable, Sendable {
     /// Identifier and version of the evaluator that produced the measurements.
     public let evaluator: String

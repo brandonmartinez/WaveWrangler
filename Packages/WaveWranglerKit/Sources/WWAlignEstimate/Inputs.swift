@@ -4,7 +4,7 @@ import WWTimeMap
 
 // WWAlignEstimate (WW-016 / WW-021 part 1): a pure offset/drift PROPOSAL estimator with abstention.
 //
-// Hard rules (docs/m2/ww-019-m2-contracts.md M2-C4, .squad/decisions.md 2026-10-06):
+// Hard rules (docs/m2/ww-019-m2-contracts.md M2-C4):
 // * Input is decoded sample buffers (plain `Float` arrays + rate) supplied by the caller. This module never
 //   opens, reads, hashes or decodes a file and has no file/URL/network API (WWAlignEstimateTests scans it).
 // * Output is a per-epoch PROPOSAL (`acousticConsistentProposal`) or an ABSTENTION. There is no case that
@@ -71,7 +71,7 @@ public struct EstimatorTrack: Sendable {
 }
 
 /// Where to look for the offset (aligned time minus group-clock time), seconds. A capture-metadata seed may
-/// set the centre; it remains a search hint and is carried into the proposal only as a seed.
+/// set the center; it remains a search hint and is carried into the proposal only as a seed.
 public struct SearchRange: Sendable, Equatable {
     public let centerOffsetSeconds: Double
     public let maximumDeviationSeconds: Double
@@ -111,7 +111,7 @@ public struct EstimatorParameters: Sendable, Equatable {
     public internal(set) var windowSeconds: Double = 2
     /// Windows placed evenly across each track's declared overlap.
     public internal(set) var windowCount: Int = 16
-    /// Minimum normalised-correlation peak for an eligible window.
+    /// Minimum normalized-correlation peak for an eligible window.
     public internal(set) var minimumPeakScore: Double = 0.35
     /// A window is ambiguous when its second correlation peak reaches this fraction of the first.
     public internal(set) var ambiguityRatio: Double = 0.8

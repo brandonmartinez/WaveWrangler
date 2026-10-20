@@ -153,7 +153,7 @@ struct EpisodeWindowTests {
         #expect(second.store.model.episode(episode.id)?.title == "Renamed")
     }
 
-    @Test func aCancelledBrowserRequestDoesNotDropAnotherRequestForTheSameShow() async throws {
+    @Test func aCanceledBrowserRequestDoesNotDropAnotherRequestForTheSameShow() async throws {
         let document = document()
         defer { document.close() }
         let model = document.store.model
@@ -164,10 +164,10 @@ struct EpisodeWindowTests {
         await store.load()
         let library = LibraryWindowState(store: store)
         library.entrySelection = [model.show.id]
-        let cancelled = Task { await library.loadSelectedShow() }
-        cancelled.cancel()
+        let canceled = Task { await library.loadSelectedShow() }
+        canceled.cancel()
         let current = Task { await library.loadSelectedShow() }
-        await cancelled.value
+        await canceled.value
         await current.value
         #expect(library.selectedShow === document)
         #expect(library.episodeManagementState?.store === document.store)

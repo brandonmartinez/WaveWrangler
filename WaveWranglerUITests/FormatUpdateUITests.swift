@@ -103,10 +103,10 @@ final class FormatUpdateUITests: XCTestCase {
 
     /// T21 Cancel (Esc): the show closes and the file is untouched.
     func testT21CancelWithEscape() throws {
-        let document = try writeOlder("Cancelled", ShowSchema1Fixtures.placeholderOnly)
+        let document = try writeOlder("Canceled", ShowSchema1Fixtures.placeholderOnly)
         let original = try Data(contentsOf: document)
         try task("T21-cancel") {
-            let window = try openAndExpectPrompt(document, name: "Cancelled", original: original)
+            let window = try openAndExpectPrompt(document, name: "Canceled", original: original)
             app.typeKey(.escape, modifierFlags: [])
             check(Acceptance.waitFor(timeout: 5) { !window.exists }, "Esc closes the show")
             check(app.windows.matching(identifier: "ww.show.window").count == 0, "no show window remains")
@@ -128,7 +128,7 @@ final class FormatUpdateUITests: XCTestCase {
             check(barTexts.contains("Couldn't update this show"), "heading: \(barTexts)")
             check(barTexts.contains { $0.contains("The original is unchanged") }, "says the original is unchanged: \(barTexts)")
             let status = element("ww.show.saveStatus")
-            check(value(status).hasPrefix("Read-only"), "still read-only (not colour alone): \(value(status))")
+            check(value(status).hasPrefix("Read-only"), "still read-only (not color alone): \(value(status))")
             check(window.exists, "the read-only view stays open")
             check((try? Data(contentsOf: document)) == original, "the original file is byte-unchanged")
             let tryAgain = bar.buttons["Try Again"], details = bar.buttons["Show Details"]

@@ -57,16 +57,16 @@ struct ResourceGateTests {
         #expect(await gate.snapshot == ResourceGate.Snapshot(active: 0, activeBytes: 0, peakActive: 0, peakBytes: 0, admitted: 0, waiting: 0))
     }
 
-    @Test("A cancelled waiter leaves the queue without being admitted; the next waiter is still served")
-    func cancelledWaiter() async throws {
+    @Test("A canceled waiter leaves the queue without being admitted; the next waiter is still served")
+    func canceledWaiter() async throws {
         let gate = ResourceGate(permits: 1, budgetBytes: 100)
         try await gate.acquire(bytes: 1)
-        let cancelled = Task { try await gate.acquire(bytes: 1) }
+        let canceled = Task { try await gate.acquire(bytes: 1) }
         try await Self.until(gate) { $0.waiting == 1 }
         let next = Task { try await gate.acquire(bytes: 1) }
         try await Self.until(gate) { $0.waiting == 2 }
-        cancelled.cancel()
-        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        canceled.cancel()
+        await #expect(throws: CancellationError.self) { try await canceled.value }
         try await Self.until(gate) { $0.waiting == 1 }
         #expect(await gate.snapshot.active == 1)
         await gate.release(bytes: 1)

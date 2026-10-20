@@ -7,11 +7,11 @@ import WWSources
 import WWTimeMap
 @testable import WWAlignPipeline
 
-/// Direct tests of the pipeline's defence-in-depth guards. Each one sits behind another check (the plan
+/// Direct tests of the pipeline's defense-in-depth guards. Each one sits behind another check (the plan
 /// calls `check` before `admitted`; the decoder of this build only produces the current format revision;
-/// the decoder, renderer, gate and coordinator also refuse cancelled, shut-down or stale work), so
+/// the decoder, renderer, gate and coordinator also refuse canceled, shut-down or stale work), so
 /// end-to-end tests cannot tell whether the guard itself holds. These pin each guard on its own.
-@Suite("Defence-in-depth guards hold on their own")
+@Suite("Defense-in-depth guards hold on their own")
 struct GuardTests {
     // MARK: Eligibility
 
@@ -97,7 +97,7 @@ struct GuardTests {
     @Test("`build` refuses or withholds a proposal measured on another revision of either source, even if handed it directly", arguments: ["tgt", "ref"])
     func buildRefusesProposalFromAnotherRevision(changed: String) async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "guard-current")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let targetEpoch = fixture.epochs[1]
         let record = try #require(report.records[targetEpoch])
         try #require(record.proposal != nil)
@@ -150,7 +150,7 @@ struct GuardTests {
     @Test("Rendering refuses an accepted map that no longer applies to the episode, before opening anything")
     func renderRefusesInapplicableMap() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "guard-applicable")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         // The person moves the field recorder's file into the reference group after accepting the map.
         let tgt = fixture.id("tgt")
@@ -168,7 +168,7 @@ struct GuardTests {
 
     /// A render job for the accepted map's first group (only its episode and revision matter to the guard).
     static func renderJob(_ fixture: PipelineFixture) async throws -> GroupRenderJob {
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let revision = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.acceptedRevision)
         let map = try fixture.model.timeMap(revision: revision, in: fixture.episodeID)
@@ -264,10 +264,10 @@ struct GuardTests {
         await coordinator.shutdown()
         // The accepted map is unchanged: only the shutdown can refuse here.
         #expect(await coordinator.inputs.acceptedMaps[fixture.episodeID] == job.revision.revision)
-        await #expect(throws: AlignmentWorkFailure.cancelled) { try await AlignedAssetRun.checkCurrent(job, coordinator: coordinator) }
+        await #expect(throws: AlignmentWorkFailure.canceled) { try await AlignedAssetRun.checkCurrent(job, coordinator: coordinator) }
     }
 
-    @Test("Between segments a render stops when its task is cancelled")
+    @Test("Between segments a render stops when its task is canceled")
     func renderStopsOnCancellation() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "guard-cancel")
         let job = try await Self.renderJob(fixture)
@@ -285,7 +285,7 @@ struct GuardTests {
         }
         check.cancel()
         await gate.open()
-        #expect(await check.value == .cancelled)
+        #expect(await check.value == .canceled)
         // Neither the map nor the coordinator changed: only the cancellation can refuse here.
         #expect(await coordinator.inputs.acceptedMaps[fixture.episodeID] == job.revision.revision)
         #expect(await coordinator.isShutdown == false)

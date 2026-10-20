@@ -59,7 +59,7 @@ final class MemorySampler: @unchecked Sendable {
     }
 }
 
-/// WW-021 resource bound (user-directed compute budget, 2026-10-06): analysing an episode of 75-minute,
+/// WW-021 resource bound (user-directed compute budget, 2026-10-06): analyzing an episode of 75-minute,
 /// 14-channel recorder groups stays well under 1 GiB of resident memory. Issue #188's harness peaked at
 /// 20.6 GB because every analysis buffered full-rate sources and ran unbounded; here each source streams
 /// through `AnalysisDecimator` (8 kHz mono) and units are admitted by the shared `ResourceGate`.
@@ -79,7 +79,7 @@ struct PipelineMemoryTests {
         return [group("ref", rate: 1, offset: 0), group("t1", rate: 1.0001, offset: 1.25), group("t2", rate: 0.99995, offset: -2.5)]
     }
 
-    @Test("Analysing three 14-channel 75-minute groups at the default configuration peaks well under 1 GiB")
+    @Test("Analyzing three 14-channel 75-minute groups at the default configuration peaks well under 1 GiB")
     func analysisPeakResident() async throws {
         let configuration = AlignmentPipelineConfiguration()
         #expect(configuration.concurrency == 2)
@@ -89,7 +89,7 @@ struct PipelineMemoryTests {
         let sampler = MemorySampler()
         let clock = ContinuousClock()
         let started = clock.now
-        let report = try await fixture.analyse(preferredReference: "ref-a")
+        let report = try await fixture.analyze(preferredReference: "ref-a")
         let elapsed = clock.now - started
         let peaks = sampler.stop()
         let maxResident = MemorySampler.maxResident()

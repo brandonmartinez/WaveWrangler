@@ -1,8 +1,10 @@
 {
   "schema_version": 1,
+  "retired_at": "2026-10-20",
+  "retirement_reason": "Squad planning retired; all 90 then-open GitHub issues permanently deleted by explicit user request. Counts and issue links in this file are historical.",
   "repository": "brandonmartinez/WaveWrangler",
   "snapshot_at": "2026-10-05T02:17:52.500345+00:00",
-  "operational_authority": "Live GitHub milestones and issues; this index is a publication snapshot, not future live status.",
+  "operational_authority": "None. Historical publication snapshot only; current user-directed refinement governs work.",
   "metadata_setup_complete_at_snapshot": true,
   "metadata_verified_at": "2026-10-05T02:26:53.534622+00:00",
   "full_criteria_and_milestones_verified_at_snapshot": true,

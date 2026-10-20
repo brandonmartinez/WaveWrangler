@@ -66,9 +66,9 @@ public enum EpochMapDecision: Sendable, Hashable {
     /// Explicitly extend the current proposal's rate and offset over the whole epoch: a separate manual
     /// decision, recorded as `manual(.acceptedAcousticProposal)` with a note saying it was extended.
     case extendProposalToEpoch(note: String = "")
-    /// Rate correction in ppm (quantised to 1 ppb) and offset in milliseconds (quantised to 1 ns).
+    /// Rate correction in ppm (quantized to 1 ppb) and offset in milliseconds (quantized to 1 ns).
     case numeric(ppm: Double, offsetMilliseconds: Double, note: String = "")
-    /// At least two anchors; fitted by least squares, quantised like numeric entry.
+    /// At least two anchors; fitted by least squares, quantized like numeric entry.
     case anchors([AlignmentAnchor], note: String = "")
     /// Source-specific anchors preserve the source clock when a recorder group contains multiple files.
     case anchorsForSource(SourceID, [AlignmentAnchor], note: String = "")
@@ -79,7 +79,7 @@ public enum EpochMapDecision: Sendable, Hashable {
 public enum AlignmentAcceptanceError: Error, Sendable, Equatable {
     case episodeNotFound(EpisodeID)
     case noReference
-    /// The reference (or a decided epoch's sources) has no probed facts; analyse it first.
+    /// The reference (or a decided epoch's sources) has no probed facts; analyze it first.
     case referenceFactsUnavailable(SourceID)
     case unknownEpoch(RecordingEpochID)
     /// The reference epoch is the identity by definition; it takes no decision.
@@ -100,7 +100,7 @@ public enum AlignmentAcceptanceError: Error, Sendable, Equatable {
     case history(MapHistoryError)
     case coordinatorShutDown
     /// The analysis (or the accepted map) no longer describes the current sources, format or placements.
-    /// Re-analyse; a stale plan is never accepted or applied.
+    /// Re-analyze; a stale plan is never accepted or applied.
     case analysisStale([AlignmentDependencyChange])
     /// The episode's alignment changed since this acceptance's snapshot (another acceptance was activated,
     /// or the document passed in is not the one last activated). Accept again on the current document.
@@ -415,7 +415,7 @@ enum MapAcceptance {
         return (rate, offset)
     }
 
-    /// Least-squares `aligned = a * source + b` through the anchors, then quantised like numeric entry.
+    /// Least-squares `aligned = a * source + b` through the anchors, then quantized like numeric entry.
     static func fit(_ epoch: RecordingEpochID, anchors: [AlignmentAnchor]) throws(AlignmentAcceptanceError) -> (ExactRational, ExactRational) {
         guard anchors.count >= 2 else { throw .insufficientAnchors(epoch) }
         guard anchors.allSatisfy({ $0.sourceSeconds.isFinite && $0.alignedSeconds.isFinite && $0.sourceSeconds >= 0 }) else {

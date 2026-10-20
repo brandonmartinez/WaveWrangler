@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Testing
+import WWTestSupport
 import WWCore
 import WWTimeMap
 @testable import WWRender
@@ -33,7 +34,7 @@ enum RenderGates {
     static let inactiveDBFS = -80.0
     /// Passband tone phase error against map truth, degrees. Calibrated in this PR: worst calibration
     /// value 2.76e-6 degrees; frozen as max(10 x worst, 0.001 floor) rounded up on a 1-2-5 series. The
-    /// floor keeps Float32 output quantisation from failing the gate; 0.001 degrees at 0.4 cycles per
+    /// floor keeps Float32 output quantization from failing the gate; 0.001 degrees at 0.4 cycles per
     /// output frame is 7e-6 output frames.
     static let phaseToleranceDegrees = 0.001
     /// Resident peak of a render family (WW_TIMING_TESTS pass), bytes.
@@ -484,6 +485,7 @@ struct RenderCalibrationTests {
     /// Frozen holdout: runs once, only with WW_M2_RENDER_HOLDOUT=1, after m2-freeze-render.
     @Test(.enabled(if: RenderFixture.holdoutEnabled))
     func holdoutSplitMeetsEveryFrozenGate() async throws {
+        try SourceTreeBaseline.requireHistoricalTrees(for: RenderFreezeTests.freezeURL)
         let records = try await runSplit("holdout", cases: RenderFixture.holdoutCases)
         for outcome in RenderGateEvaluation.evaluate(records) {
             #expect(outcome.passed, "\(outcome)")

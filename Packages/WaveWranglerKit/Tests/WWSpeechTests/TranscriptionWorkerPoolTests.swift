@@ -18,19 +18,19 @@ struct TranscriptionWorkerPoolTests {
         #expect(snapshot.peakActive == policy.rawValue && snapshot.active == 0 && snapshot.waiting == 0)
     }
 
-    @Test func cancelledWaiterDoesNotRunOrBlockAnotherJob() async throws {
+    @Test func canceledWaiterDoesNotRunOrBlockAnotherJob() async throws {
         let pool = TranscriptionWorkerPool()
         let holder = Task { try await pool.withAdmission { try await Task.sleep(for: .seconds(60)) } }
         defer { holder.cancel() }
         try await wait { await pool.snapshot.active == 1 }
-        let cancelled = Task { try await pool.withAdmission { Issue.record("Cancelled queued work ran") } }
-        defer { cancelled.cancel() }
+        let canceled = Task { try await pool.withAdmission { Issue.record("Canceled queued work ran") } }
+        defer { canceled.cancel() }
         try await wait { await pool.snapshot.waiting == 1 }
         let tail = Task { try await pool.withAdmission { 42 } }
         defer { tail.cancel() }
         try await wait { await pool.snapshot.waiting == 2 }
-        cancelled.cancel()
-        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        canceled.cancel()
+        await #expect(throws: CancellationError.self) { try await canceled.value }
         #expect(await pool.snapshot.waiting == 1)
         holder.cancel()
         await #expect(throws: CancellationError.self) { try await holder.value }

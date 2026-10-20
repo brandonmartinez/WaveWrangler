@@ -189,7 +189,7 @@ enum MainMenu {
         menu.addItem(routed("Episode Info", #selector(CommandRouter.episodeInfo(_:)), .episodeInfo))
         menu.addItem(routed("Rename Episode", #selector(CommandRouter.renameEpisode(_:))))
         menu.addItem(.separator())
-        menu.addItem(routed("Analyze Available Sources", #selector(CommandRouter.analyseAlignment(_:))))
+        menu.addItem(routed("Analyze Available Sources", #selector(CommandRouter.analyzeAlignment(_:))))
         menu.addItem(routed("Accept Proposal as Manual", #selector(CommandRouter.acceptAlignmentProposal(_:))))
         menu.addItem(routed("Reject Proposal", #selector(CommandRouter.rejectAlignmentProposal(_:))))
         menu.addItem(routed("Place Anchor at Playhead", #selector(CommandRouter.placeAlignmentAnchorAtPlayhead(_:))))

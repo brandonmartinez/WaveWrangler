@@ -25,7 +25,7 @@ struct CalibrationTests {
         return scoredCases.flatMap { $0 }.sorted { ($0.stratum.rawValue, $0.caseIndex) < ($1.stratum.rawValue, $1.caseIndex) }
     }
 
-    static func summarise(_ scored: [ScoredEpoch]) -> [Stratum: StratumSummary] {
+    static func summarize(_ scored: [ScoredEpoch]) -> [Stratum: StratumSummary] {
         var summaries: [Stratum: StratumSummary] = [:]
         var casesSeen: Set<String> = []
         for s in scored {
@@ -74,7 +74,7 @@ struct CalibrationTests {
 
     @Test func calibrationAgainstClockTruth() async throws {
         let scored = try await Self.runAll()
-        let summaries = Self.summarise(scored)
+        let summaries = Self.summarize(scored)
         print("WW-016 calibration (master seed 0x\(String(CalibrationPlan.calibrationMasterSeed, radix: 16)), estimator \(AcousticEstimator.identifier))\n" + Self.table(summaries))
         for s in scored { print("  " + Self.line(s)) }
 

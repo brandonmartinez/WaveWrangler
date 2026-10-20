@@ -94,7 +94,7 @@ private struct AlignmentContentHost: NSViewRepresentable {
         init(model: EpisodeAlignmentModel, showInspector: @escaping () -> Void) {
             hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model, showInspector: showInspector))
             hostingView.sizingOptions = []
-            // The hosting view is the single labelled container for the workspace. Labelling it on the
+            // The hosting view is the single labeled container for the workspace. Labeling it on the
             // AppKit side keeps the SwiftUI tree untouched: `accessibilityElement(children: .contain)`
             // on the SwiftUI root absorbed the scroll area's identifier and hid it from assistive
             // clients entirely (#219). `HostedView` itself stays a pass-through so only one group exists.

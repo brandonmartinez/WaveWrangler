@@ -182,7 +182,7 @@ public struct LibrarySidebarRow: Sendable, Equatable, Identifiable {
     public var item: LibrarySidebarItem
     public var title: String
     public var symbolName: String
-    /// Visible count text, e.g. "(3)" (IA-09: text, not a coloured dot).
+    /// Visible count text, e.g. "(3)" (IA-09: text, not a colored dot).
     public var countText: String?
     public var accessibilityLabel: String
     public var accessibilityValue: String
@@ -210,7 +210,7 @@ public struct LibraryEntryRow: Sendable, Equatable, Identifiable {
 
     public var episodesText: String { episodeCount.map(String.init) ?? "—" }
 
-    /// VoiceOver label for the row: name, plus the full state (no colour-only meaning).
+    /// VoiceOver label for the row: name, plus the full state (no color-only meaning).
     public var accessibilityLabel: String {
         var parts = [name]
         if let episodeCount { parts.append(episodeCount == 1 ? "1 episode" : "\(episodeCount) episodes") }

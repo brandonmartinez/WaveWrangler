@@ -17,7 +17,7 @@ import WWSources
 ///   The open and every content read (`ReadOnlyDescriptor.readFully`, through which all AudioFile,
 ///   ExtAudioFile and container-header reads go) also run with this thread's dataless-file
 ///   materialization turned off (`IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES`), so a race can't trigger
-///   a provider download. That policy is defence in depth; it has not been exercised against a real
+///   a provider download. That policy is defense in depth; it has not been exercised against a real
 ///   provider.
 ///
 /// Package access: apps decode through `SourceDecoder`, which adds the scope, preflight, identity and
@@ -484,7 +484,7 @@ private final class SystemDecodingReader: DecodingContentReader {
     }
 
     func seekRawFrame(to frame: Int64) throws(DecodeFailure) {
-        guard !isClosed else { throw .cancelled }
+        guard !isClosed else { throw .canceled }
         guard supportsRandomAccess else { throw .seekUnavailable }
         guard frame >= 0, frame <= facts.readerLengthFrames else { throw .invalidSourceFrame(frame) }
         let status = withoutMaterializingDataless { ExtAudioFileSeek(extFile, frame) }

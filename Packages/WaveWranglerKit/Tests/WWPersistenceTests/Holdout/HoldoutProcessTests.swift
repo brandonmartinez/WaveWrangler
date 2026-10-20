@@ -139,7 +139,7 @@ struct HoldoutProcessTests {
         let result = await runFamily("M1-DUR-029", calibration: 10, holdout: 100,
                                      notes: [
                                          "New-process cycles via wwpersist-probe using real read-write security-scoped document bookmarks in an unsandboxed process (no sandbox extension).",
-                                         "'revoked' is modelled by an unusable bookmark or permission-denied file; sandbox grant revocation and read-only source scopes are not evidenced headlessly.",
+                                         "'revoked' is modeled by an unusable bookmark or permission-denied file; sandbox grant revocation and read-only source scopes are not evidenced headlessly.",
                                      ]) { index, seed in
             var rng = SeededGenerator(seed: seed)
             let variant = ["normal", "staleBookmark", "movedDocument", "revokedBookmark", "revokedPermission", "libraryInUserFolder"][index % 6]

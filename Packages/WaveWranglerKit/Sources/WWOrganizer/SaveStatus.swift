@@ -13,7 +13,7 @@ public enum DocumentSaveState: Sendable, Equatable {
     case edited
     /// D4.
     case saving(cancellable: Bool)
-    /// D5. Write finished but coherence/acknowledgement is uncertain.
+    /// D5. Write finished but coherence/acknowledgment is uncertain.
     case notConfirmed
     /// D6.
     case conflict(changedAt: Date?)
@@ -24,7 +24,7 @@ public enum DocumentSaveState: Sendable, Equatable {
     /// D9. `reason` is plain language, e.g. "WaveWrangler doesn't have permission to save in this folder".
     case failed(reason: String)
     /// D10.
-    case cancelled
+    case canceled
     /// D11.
     case recovered(incompleteSaveAt: Date?, openedVersionAt: Date?)
     /// D12.
@@ -85,7 +85,7 @@ extension DocumentSaveState {
     /// by the presentation but carry no dirty claim on their own.
     public var impliesUnsavedChanges: Bool {
         switch self {
-        case .edited, .saving, .notConfirmed, .conflict, .locationUnavailable, .diskFull, .failed, .cancelled: true
+        case .edited, .saving, .notConfirmed, .conflict, .locationUnavailable, .diskFull, .failed, .canceled: true
         case .checking, .unknown, .saved, .recovered, .readOnlyNewerFormat, .readOnlyDamaged, .updateNeeded, .updatingFormat,
              .updateFailed, .readOnlyLocation, .readOnly: false
         }
@@ -239,7 +239,7 @@ public struct SaveStatusPresentation: Sendable, Equatable {
             tint = .failed
             popover = "Couldn't save: \(reason). Your changes are still open, and the last saved version hasn't been changed." + retry
             actions = [.tryAgain, .saveACopyElsewhere, .details]
-        case .cancelled:
+        case .canceled:
             text = "Not saved"
             symbol = "pencil.circle"
             popover = "Save canceled. Your changes are still open; the last saved version hasn't been changed."

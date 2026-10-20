@@ -515,8 +515,8 @@ final class PipelineFixture: @unchecked Sendable {
     func id(_ name: String) -> SourceID { ids[name]! }
     func url(_ name: String) -> URL { urls[name]! }
 
-    func analyse(preferredReference: String? = nil) async throws -> AlignmentAnalysisReport {
-        try #require(await pipeline.analyse(
+    func analyze(preferredReference: String? = nil) async throws -> AlignmentAnalysisReport {
+        try #require(await pipeline.analyze(
             model: model, episode: episodeID, sources: sources, authorizations: authorizations,
             preferredReference: preferredReference.map(id)
         ))
@@ -564,7 +564,7 @@ final class PipelineFixture: @unchecked Sendable {
 // MARK: - Assertions
 
 extension AlignmentWorkFailure {
-    var isCancelled: Bool { self == .cancelled }
+    var isCanceled: Bool { self == .canceled }
 }
 
 extension EpochAlignmentStatus {

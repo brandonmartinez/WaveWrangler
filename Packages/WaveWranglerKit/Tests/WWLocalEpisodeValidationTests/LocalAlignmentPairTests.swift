@@ -142,7 +142,7 @@ struct LocalAlignmentPairTests {
                 let model = ShowDocumentModel(show: Show(title: "Authorized diagnostic"),
                                               speakers: [speaker], episodes: [episode])
                 if PairEnvironment.adaptive {
-                    let record = try await pipeline.analyseAdaptiveSpeaker(
+                    let record = try await pipeline.analyzeAdaptiveSpeaker(
                         model: model, episode: episode.id, sources: sources, authorizations: authorizations,
                         targetEpoch: epochs[target].id, speaker: speaker.id,
                         referenceSource: records[reference].id, targetSource: records[target].id
@@ -212,7 +212,7 @@ struct LocalAlignmentPairTests {
                     #expect(model.episodes[0].alignment == nil)
                     continue
                 }
-                let report = try await pipeline.analyseSpeaker(
+                let report = try await pipeline.analyzeSpeaker(
                     model: model, episode: episode.id, sources: sources, authorizations: authorizations,
                     targetEpoch: epochs[target].id, speaker: speaker.id, referenceSource: records[reference].id,
                     targetSource: records[target].id
