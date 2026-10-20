@@ -1,3 +1,5 @@
+import AppKit
+import ApplicationServices
 import XCTest
 
 @MainActor
@@ -157,6 +159,27 @@ final class WaveformNavigationUITests: XCTestCase {
         let hittable = element.isHittable
         if !hittable {
             capture(app, name: "Unavailable marker action before coordinate diagnostic")
+            let applications = NSRunningApplication.runningApplications(
+                withBundleIdentifier: "com.brandonmartinez.wavewrangler")
+            if applications.count == 1, let application = applications.first {
+                var hit: AXUIElement?
+                let result = AXUIElementCopyElementAtPosition(
+                    AXUIElementCreateApplication(application.processIdentifier),
+                    Float(element.frame.midX), Float(element.frame.midY), &hit)
+                var details = "hit result=\(result), trusted=\(AXIsProcessTrusted())\n"
+                if let hit {
+                    for attribute in [kAXRoleAttribute, kAXIdentifierAttribute, kAXTitleAttribute,
+                                      kAXDescriptionAttribute, "AXActivationPoint"] {
+                        var value: CFTypeRef?
+                        let status = AXUIElementCopyAttributeValue(hit, attribute as CFString, &value)
+                        details += "\(attribute): \(status), \(String(describing: value))\n"
+                    }
+                }
+                let hitAttachment = XCTAttachment(string: details)
+                hitAttachment.name = "Marker action native accessibility hit"
+                hitAttachment.lifetime = .keepAlways
+                add(hitAttachment)
+            }
             element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
             capture(app, name: "Unavailable marker action after coordinate diagnostic")
             let tree = XCTAttachment(string: app.debugDescription)
