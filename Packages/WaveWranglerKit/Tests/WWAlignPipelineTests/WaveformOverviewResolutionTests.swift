@@ -67,7 +67,9 @@ struct WaveformOverviewResolutionTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("synthetic.wav")
+        let sourceFolder = folder.appendingPathComponent("sources")
+        try FileManager.default.createDirectory(at: sourceFolder, withIntermediateDirectories: true)
+        let url = sourceFolder.appendingPathComponent("synthetic.wav")
         let original = WaveformTestAudio.wave(rate: 16_000,
             samples: (0..<32_000).map { $0.isMultiple(of: 2) ? Int16(8_192) : -8_192 })
         try original.write(to: url)
