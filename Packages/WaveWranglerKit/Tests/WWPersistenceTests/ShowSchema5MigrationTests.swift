@@ -8,11 +8,11 @@ struct ShowSchema5MigrationTests {
     static let golden = Data(#"{"checksum":"sha256:0a67d55f3d1ab15747b4fbddbd34f1b1cc321af7b4b7a6afa5b8688b9ef4694d","format":"com.brandonmartinez.wavewrangler.show","payload":{"episodes":[],"history":{"cursor":0,"entries":[]},"schemaVersion":5,"show":{"id":"00000000-0000-4000-8000-000000000501","notes":"","title":"Schema 5 golden"},"speakers":[]},"publicationID":"00000000-0000-4000-8000-000000000502","revision":8,"schemaVersion":5}"#.utf8)
 
     @Test func requiresConsentAndBacksUpExactSchema5Bytes() throws {
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 5, minimum: 6)) {
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 5, minimum: SchemaVersion.show)) {
             try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Self.golden)
         }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(Self.golden)
-        #expect(upgraded.payload.schemaVersion == 6 && upgraded.revision == 8)
+        #expect(upgraded.payload.schemaVersion == SchemaVersion.show && upgraded.revision == 8)
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: upgraded.payload).isEmpty)
         let rig = Rig(), url = rig.url()
         let key = DocumentKey.show(upgraded.payload.show.id)

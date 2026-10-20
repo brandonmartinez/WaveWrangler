@@ -131,7 +131,8 @@ private struct SourceInspector: View {
             .setupFont(.body)
             .accessibilityLabel("Channel unknown")
             .accessibilityIdentifier("ww.inspector.source.channelUnknown")
-            Text("Not checked against the file").setupFont(.callout)
+            Text(source.observations.channelCount.value.map { "Observed \($0) audio channels" }
+                ?? "Channel count has not been observed").setupFont(.callout)
         }
 
         Picker("Speaker", selection: speakerBinding) {
@@ -146,9 +147,34 @@ private struct SourceInspector: View {
         .accessibilityIdentifier("ww.inspector.source.speaker")
 
         roleRow
+        if let definitions = model.store.model.show.profile?.recorderDefinitions, !definitions.isEmpty {
+            Menu("Apply saved source definition") {
+                ForEach(definitions) { definition in
+                    Section(definition.name) {
+                        ForEach(definition.sources) { saved in
+                            Button(saved.name) {
+                                model.editWorkspace("Apply Source Definition") { document throws(DomainError) in
+                                    try document.applyingSourceDefinition(saved, to: source.id, in: model.episodeID)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            .help("Applies provisional channel and speaker defaults to this recording. Does not copy audio or replace an existing Primary.")
+        }
 
         Divider()
         RecordedFactsView(source: source)
+        Button(source.observations.isComplete ? "Refresh audio details" : "Read audio details") {
+            model.inspectMediaDetails([source.id], explicitlyRequested: true, force: true)
+        }
+        .accessibilityIdentifier("ww.inspector.source.readMediaDetails")
+        if let reason = model.mediaDetailsMessages[source.id] {
+            Label(reason, systemImage: "exclamationmark.triangle")
+                .font(.caption).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("ww.inspector.source.mediaDetailsIssue")
+        }
         Divider()
         AvailabilitySection(model: model, source: source)
 
@@ -225,7 +251,7 @@ private struct SourceInspector: View {
                     .focused($focus, equals: field)
                     .onSubmit(commit)
                     .accessibilityLabel(title)
-                    .accessibilityValue(value.map { title == "Channel" ? "\($0), not checked against the file" : "\($0)" } ?? (title == "Channel" ? "unknown" : "none"))
+                    .accessibilityValue(value.map { title == "Channel" ? "\($0), assigned channel; observed file details are below" : "\($0)" } ?? (title == "Channel" ? "unknown" : "none"))
                     .accessibilityIdentifier(identifier)
                 Stepper(title, onIncrement: { step(1) }, onDecrement: { step(-1) })
                     .labelsHidden()
@@ -317,7 +343,9 @@ private struct RecordedFactsView: View {
             HStack { Text("Duration"); Spacer(); Text(facts.duration.text).foregroundStyle(.primary) }.accessibilityElement(children: .combine)
             HStack { Text("Channels"); Spacer(); Text(facts.channelCount.text).foregroundStyle(.primary) }.accessibilityElement(children: .combine)
             HStack { Text("Sample rate"); Spacer(); Text(facts.sampleRate.text).foregroundStyle(.primary) }.accessibilityElement(children: .combine)
-            Text("WaveWrangler doesn't read audio in this version, so these stay Unknown.")
+            Text(source.observations.isComplete
+                ? "Last observed audio details. Original recordings are never changed."
+                : "Unobserved details stay Unknown. Only local, accessible audio is inspected; opening an episode never requests a download for these details.")
                 .setupFont(.callout)
                 
                 .fixedSize(horizontal: false, vertical: true)
@@ -333,9 +361,16 @@ private struct AvailabilitySection: View {
     var body: some View {
         let status = model.status(of: source.id)
         VStack(alignment: .leading, spacing: 8) {
-            Text("Availability").setupFont(.subheadline, weight: .semibold).accessibilityAddTraits(.isHeader)
-            ForEach(status.dimensions, id: \.dimension) { dimension in
+            Label(status.summary.displayText, systemImage: status.summary.needsAttention ? "exclamationmark.triangle" : "checkmark.shield")
+                .setupFont(.subheadline, weight: .semibold)
+                .accessibilityLabel("Source availability: \(status.summary.accessibilityValue)")
+            ForEach(status.dimensions.filter(\.needsAttention), id: \.dimension) { dimension in
                 DimensionRow(model: model, source: source, presentation: dimension, checkedAt: status.checkedAt[dimension.dimension])
+            }
+            DisclosureGroup("More file-safety details") {
+                ForEach(status.dimensions.filter { !$0.needsAttention }, id: \.dimension) { dimension in
+                    DimensionRow(model: model, source: source, presentation: dimension, checkedAt: status.checkedAt[dimension.dimension])
+                }
             }
             if SetupFixtures.isActive {
                 Text("Simulated provider state").setupFont(.callout)
@@ -447,6 +482,27 @@ private struct GroupInspector: View {
                 .accessibilityLabel("Recorder group name")
                 .accessibilityIdentifier("ww.inspector.group.name")
             Text(count == 1 ? "1 source" : "\(count) sources").setupFont(.body)
+            Picker("Recording origin icon", selection: Binding(
+                get: { model.episode?.recorderGroup(groupID)?.icon ?? .recorder },
+                set: { icon in
+                    model.editWorkspace("Change Recorder Icon") { document throws(DomainError) in
+                        try document.settingRecorderIcon(icon, group: groupID, in: model.episodeID)
+                    }
+                }
+            )) {
+                ForEach(RecorderIcon.allCases, id: \.self) { icon in
+                    Label(icon.rawValue == RecorderIcon.recorder.rawValue ? "Recorder" : String(describing: icon).capitalized,
+                          systemImage: icon.rawValue).tag(icon)
+                }
+            }
+            .accessibilityIdentifier("workspace.recorder.icon")
+            Button("Save recorder and source definitions") {
+                model.editWorkspace("Save Recorder Definition") { document throws(DomainError) in
+                    try document.savingRecorderDefinition(from: groupID, in: model.episodeID)
+                }
+            }
+            .help("Stores reusable speaker, channel and recorder defaults in the show, without copying recordings.")
+            .accessibilityIdentifier("workspace.recorder.saveDefinition")
             Button("New Epoch for Selected Sources") { model.startNewEpoch() }
                 .disabled(count == 0)
                 .help("Start a new epoch when the recorder was stopped and started again, so its clock restarted.")
@@ -458,6 +514,18 @@ private struct GroupInspector: View {
             Text(count == 1 ? "1 source isn't in a recorder group." : "\(count) sources aren't in a recorder group.")
                 .setupFont(.body)
             Button("New Recorder Group…") { model.sheet = .name(NameSheetContext(kind: .newGroup, initial: "")) }
+            if let definitions = model.store.model.show.profile?.recorderDefinitions, !definitions.isEmpty {
+                Menu("Add saved recorder") {
+                    ForEach(definitions) { definition in
+                        Button(definition.name) {
+                            model.editWorkspace("Add Saved Recorder") { document throws(DomainError) in
+                                try document.addingRecorder(from: definition.id, to: model.episodeID)
+                            }
+                        }
+                    }
+                }
+                .accessibilityIdentifier("workspace.recorder.addDefinition")
+            }
         }
         EmptyView()
             .onAppear { nameDraft = model.groupName(groupID) }
@@ -496,6 +564,8 @@ private struct SpeakerInspector: View {
             .accessibilityLabel("Speaker name")
             .accessibilityIdentifier("ww.inspector.speaker.name")
 
+        SpeakerAppearanceEditor(store: model.store, episodeID: model.episodeID, speakerID: speakerID)
+        Divider()
         let choices = model.channelChoices(for: speakerID)
         let assignment = model.episode?.assignment(for: speakerID)
         Picker("Primary", selection: Binding<String>(
@@ -556,6 +626,12 @@ private struct SpeakerInspector: View {
 }
 
 extension EpisodeSetupModel {
+    func editWorkspace(_ name: String, _ operation: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel) {
+        if !store.apply(name, operation) {
+            message = store.lastError.map(Self.describe) ?? "The document is read-only."
+        }
+    }
+
     /// Reveals the original in Finder (never changes it). Needs a location from the engine.
     func revealInFinder(_ sourceID: SourceID) {
         Task { [engine] in

@@ -32,6 +32,13 @@ final class ShowWindowState {
         }
     }
     var inspectorPresented = true
+    var recordingsPresented = false
+    enum WorkspaceInspector: String, CaseIterable {
+        case recording = "Recording"
+        case transcript = "Transcript & review"
+        case episode = "Episode"
+    }
+    var workspaceInspector = WorkspaceInspector.recording
     var sidebarVisibility: NavigationSplitViewVisibility = .all
     var renamingEpisodeID: EpisodeID?
     /// Incremented to ask the episode inspector to focus its Title field (⌘I).
@@ -50,6 +57,14 @@ final class ShowWindowState {
     /// The Alignment workspace currently displayed in this window, for inspector and menu routing.
     var alignmentModel: EpisodeAlignmentModel?
     var cleanupModel: EpisodeCleanupModel?
+    private var listeningStates: [EpisodeID: EpisodeListeningState] = [:]
+
+    func listeningState(for episode: EpisodeID) -> EpisodeListeningState {
+        if let existing = listeningStates[episode] { return existing }
+        let value = EpisodeListeningState()
+        listeningStates[episode] = value
+        return value
+    }
     /// Presentation-only Review selection shared by the linked transcript and inspector panes.
     private let reviewPresentationState = TranscriptReviewState()
     var reviewState: TranscriptReviewState {
@@ -74,6 +89,7 @@ final class ShowWindowState {
         self.store = store
         boundEpisodeID = episodeID
         sidebarSelection = (episodeID ?? store.model.episodes.first?.id).map { .episode($0) }
+        if episodeID != nil { destination = .alignment }
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),

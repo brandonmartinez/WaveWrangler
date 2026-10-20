@@ -97,11 +97,15 @@ continues to use the frozen `WWAlignEstimate`.
 
 ### Bounded visual alignment
 
-The native episode editor keeps measured shared-ruler lanes as its main surface. Its contextual
+The native episode editor opens into the integrated all-source workspace. It shares one transport,
+ruler and listening state with progressive transcript annotations and contextual review. The fixed
+action strip exposes recording management, refresh, transcription and its model/Preferences shortcut.
+Legacy Setup, Alignment and Edit & Cleanup remain in Views and their keyboard commands; Export
+opens the existing unavailable explanation, not an export engine. Its contextual
 Recording inspector owns speaker/channel assignments, group nudges, numeric timing, and picked-point
 anchor actions; timing evidence is expandable. Recording settings buttons select their own source
-and open that inspector. Manage recordings opens Setup for import, recorder grouping, and speaker
-management rather than embedding a second copy of Setup above the timeline. Import
+and open that inspector. The compact plus opens the existing native recording/speaker management
+surface in a sheet rather than switching stages or duplicating source records. Import
 identity is provisional until the user explicitly confirms an unchanged original; the Setup engine
 checks current metadata and captures the decoder-owned raw witness before saving confirmation.
 Relink/Grant Access can also restore a missing device-local record or accept different file details
@@ -118,18 +122,20 @@ requires mono 48 kHz PCM WAVE and 4-30 seconds, verifies the source unchanged, a
 without creating a show; it does not read samples or authorize any other media.
 
 Layout is per-window presentation: separate lanes can be grouped by recorder or assigned speaker,
-while overlay always groups enabled recordings by speaker. Both speaker layouts use the same
+while overlay groups recordings by speaker, including muted tracks. Both speaker layouts use the same
 source-to-speaker projection and retain unknown speakers. Recorder IDs and group-move semantics
-are unchanged; switching layouts preserves track/group visibility and the shared viewport.
+are unchanged; switching layouts preserves independent Solo/Mute, selection, cycle and the shared viewport.
 `AlignmentPipeline.prepareManual` gathers header facts without requiring estimator output; initial
 placement maps only one eligible epoch per non-reference group so recorder restarts with overlapping
 source clocks are not invented as synchronized. The user can place later epochs individually.
 `shiftAcceptedGroup` translates every supported segment of a non-reference group in one revision,
 preserving gaps, unsupported epochs, source spans, Undo, and canonical save verification. Playback
 prepares separate timed source windows on a shared clock; enabled untimed sources remain visible but are
-explicitly excluded, and playback refuses if none is timed. Show/hear toggles change the gains of
-prepared sources without pausing playback or resetting the playhead; muting every track advances
-silently. An unavailable muted source cannot be heard if enabled until playback is restarted, and
+explicitly excluded, and playback refuses if none is timed and audible at preparation.
+Independent S/M controls apply to files, speakers and recorder groups: matching Mute always wins,
+and multiple Solo scopes add their member files together. Group controls never erase member choices
+or change Primary/Backup roles. Live gain changes do not pause or reset playback; muting every track
+while running advances silently. An unavailable muted source cannot be heard if unmuted until playback is restarted, and
 the transport reports why. Each source window still requires the verified map, source witness, and
 exact decoded format to match; a mismatch on an enabled source stops playback rather than
 substituting audio. It may buffer between windows; it does not create an export or promise seamless
@@ -148,16 +154,18 @@ skips above compact icon/slider zoom and lane-height controls beside Fit Timelin
 uses a larger draggable flag and a high-contrast position line through each waveform, and offers evenly
 spaced time ticks: click to seek, drag its visible marker to move the
 playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
-gesture's time anchor. Aligned time may be negative relative to the reference, and verified
+gesture's time anchor. Seeking and panning change presentation state and do not require unrelated
+document edits to be saved; accepted playback and timing edits retain their verification checks.
+Aligned time may be negative relative to the reference, and verified
 negative placements can be sought and played. The marker and all lanes share the same time-to-pixel transform; the ruler
 also exposes its range and adjustable playhead to accessibility clients. Recorder-group headers sit
 beside adjustable-height
 source lanes; a translucent overlay with source selection is available for peak matching. Separate
 lanes and overlay share a ruler and playhead, selected with one segmented control. Overlay panels
-group the enabled recordings by speaker (with an Unknown speaker panel for unassigned sources),
+group the recordings by speaker (with an Unknown speaker panel for unassigned sources),
 while selection, drag, save and Undo/Redo still operate on the entire recorder group across panels.
 Zoom changes the
-visible transform around the current window center with the slider or around the gesture anchor
+visible transform around the playhead with the slider or around the gesture anchor
 on the ruler. **Fit timeline** includes the complete cached overview and five minutes of
 negative pre-roll for initial placement. Spans wider than 30 seconds draw the coarse, witnessed
 overview rather than decoding unbounded exact windows; narrower views request missing measured
@@ -169,15 +177,43 @@ group drag, including an untimed group's first manual placement, retains that vi
 and verified, then loads fresh measured audio. Numeric move and epoch timing remain keyboard-accessible
 alternatives; visual previews never change playback timing. The episode overview is secondary and
 can be expanded for navigation outside the current measured window.
-The pointer shows an open hand only over a selectable waveform in a movable recorder group, and
+Accepted positions are locked by default, with the reference always fixed. Unlock a target before
+automatic alignment or advanced timing corrections; locks also prevent reset and epoch splitting.
+The default Select tool creates an arbitrary temporary marquee. Only the explicit Move recorder tool
+can save a drag as one undoable timing revision. The pointer shows an open hand only over a selectable waveform in an unlocked recorder group in that tool, and
 a closed hand during its drag; the fixed reference and empty lane space do not advertise dragging.
 An untimed drag is accepted only if the selected source and epoch appear as a mapped placement in
 the resulting revision. If an earlier accepted map omitted that source, the manual plan rebuilds
 the map while preserving every other accepted placement and mapping; an ineligible or stale source
 is refused explicitly rather than producing a no-op revision.
-Speaker colors follow sorted stable speaker IDs so distinct speakers receive distinct palette slots
-until the palette wraps; unknown speakers
-remain gray, with names and roles available independently of color.
+Speaker colors are persistent show defaults with optional episode overrides; an ID-stable initial
+palette does not change when another speaker is added. Owned PNG avatars survive image-file removal;
+recorder origins use a separate native icon catalog. Unknown speakers remain gray, and names/roles
+remain available independently of color. Show hosts seed new episodes only. Saved recorder/source
+definitions are show-scoped reusable assignments, not copied recordings; applying them never
+silently replaces an existing Primary.
+
+Selection, enabled cycle locators and persistent revision-bound episode IN/OUT are distinct.
+The anchored marquee toolbar auditions the selected interval or adds half a second of context,
+clamped to media bounds and honoring the current Solo/Mute choices. Cycle repeats separately;
+filler loops do not change it. Explicit Begin editing applies a named optional playback policy once
+per verified accepted revision, with a restore action; the default keeps deliberate listening choices.
+Transcript labels progress from hidden to sentences, phrases, individual words and words with
+start/end timing markers, in one stable row. Zoom and typical timed-word size determine detail;
+silence and the current viewport's word count do not inflate it. Adjacent words never merge back
+into larger units; overlapping recognition clips label space without changing actual word bounds.
+Markers remain approximate recognition boundaries, not editable cut handles.
+Clipping at the viewport edge does not invent an additional word boundary.
+Full copyable text, explained untimed speech, earlier raw transcripts,
+and actionable filler review remain in the inspector. Narrow filler markers become poles or dots
+without merging or retiming events.
+
+Header-only metadata inspection/backfill uses the existing decoder and local matching originals,
+never implicit cloud downloads. Known facts survive unavailable files. Waveform caches remain
+identity/recipe keyed. Processing leaves navigation, playback and appearance changes available;
+actual source/timing/range mutations are job inputs. Publication compares scoped media inputs and
+merges only its result into the live document, preserving unrelated appearance and review edits.
+Changed inputs, competing transcripts or late lock changes refuse stale publication explicitly.
 
 `AlignmentRuntime` resolves the existing identity/availability records, captures an opened-file
 witness and lends only witness-bound WWDecode cursors. Access records and witnesses are rechecked
@@ -538,7 +574,15 @@ additively and update this table.
 | `LibraryEntryObserving` (same file) | `InMemoryLibraryBackend` (per-show “as of last open” details from shows opened this run) | Device-local, rebuildable; open/locate/reveal by show identity. `InMemoryLibraryBackend` also backs UI-test fixtures. |
 | `SourceCommandHandling` (`Commands/SourceCommands.swift`) | Sources UI | File › Import Sources…, Relink Source…, extra Source-menu items, and optional Edit › Delete / Move Up/Down hooks for the Sources/Speakers tables (return a title only while your table has focus). `SourceCommands.handler` defaults to a placeholder that changes nothing. |
 | `AutosavePolicyConnection` (`Settings/AutosavePolicyConnection.swift`) | Persistence `AutosavePolicyController` | The Settings toggle binds to `AutosavePolicyController.shared.isEnabled` (`WWAutosaveEnabled`/`WWAutosaveDelaySeconds`); `isConnected` is true only while that controller is the source of truth. |
-| `SetupSourcesContent.makeView` (`Workspace/SetupContainerView.swift`) | Sources UI | `(ShowDocumentStore, EpisodeID) -> AnyView` hosted in the Setup destination (Sources outline + Speakers table). |
+| `SetupContainerView` (`Workspace/SetupContainerView.swift`) | `EpisodeSetupContent` | Direct, typed construction from the shared document store, episode identity, and environment text scale. Episode identity resets view-local state; no mutable factory registration or placeholder is required. |
+
+`EpisodeAlignmentModel` owns document-facing presentation and asynchronous job admission.
+`AlignmentWaveformCache` owns bounded tile retention, coverage, eviction, and atomic reprojection
+without re-decoding retained bins. `AlignmentAudioPlayback` owns the audio engine, nodes, scheduled
+buffers, gains, and playback clock. The model retains cancellation/generation guards, verified-map
+checks, and the bounded playback producer. `AlignmentSourceAccess` distinguishes an absent
+device-local record from read/refresh failures; failures propagate to the operation's visible error
+state, while cancellation remains cancellation.
 
 Episode windows: `EpisodeWindowController` hosts `ShowWorkspaceView(state:)` with a fixed
 `ShowWindowState.boundEpisodeID`, restored by logical episode ID. Opening the same episode reuses its

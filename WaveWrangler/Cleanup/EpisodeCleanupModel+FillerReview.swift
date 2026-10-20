@@ -97,7 +97,7 @@ extension EpisodeCleanupModel {
         selectedWord = review.word
         updateFillerDrafts()
         if fillerIssue(review) == nil {
-            playhead = review.bounds.alignedStart
+            _ = previewSeek(to: review.bounds.alignedStart)
             if reveal, playhead < windowStart || review.bounds.alignedEnd > windowStart + visibleDuration {
                 setWindow(start: playhead - 0.5, duration: min(5, maximumDuration))
             }

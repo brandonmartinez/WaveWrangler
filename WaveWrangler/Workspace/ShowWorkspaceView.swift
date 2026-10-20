@@ -50,6 +50,21 @@ private struct ShowWindowContent: View {
                 DestinationControl(state: state)
             }
         }
+        .sheet(isPresented: $state.recordingsPresented) {
+            if let episode = state.selectedEpisode {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Recordings & Speakers").font(.headline)
+                        Spacer()
+                        Button("Done") { state.recordingsPresented = false }
+                            .keyboardShortcut(.defaultAction)
+                    }.padding(12)
+                    SetupContainerView(state: state, episode: episode)
+                }
+                .frame(minWidth: 760, idealWidth: 1000, minHeight: 540, idealHeight: 680)
+                .wwAppEnvironment()
+            }
+        }
     }
 
     private var core: some View {
@@ -286,7 +301,7 @@ private struct ShowDetailContent: View {
                         } description: {
                             Text("Organize recordings into recorder groups and confirm their originals in Setup.")
                         } actions: {
-                            Button("Manage recordings…") { state.select(.setup) }
+                            Button("Add recordings…", systemImage: "plus") { state.recordingsPresented = true }
                         }
                     }
                 }

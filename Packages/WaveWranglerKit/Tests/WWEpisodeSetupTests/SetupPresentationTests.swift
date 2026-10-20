@@ -36,7 +36,7 @@ struct SetupPresentationTests {
         #expect(p.sourceRows[0].children?.map(\.name) == ["tr1.wav", "tr2.wav"])
         let tr1 = try #require(p.sourceRows[0].children?.first)
         #expect(tr1.epoch.text == "1")
-        #expect(tr1.channel == CellText("1", accessibilityValue: "1, not checked against the file"))
+        #expect(tr1.channel == CellText("1", accessibilityValue: "1, assigned channel; see observed audio details for the file's channel count"))
         #expect(tr1.speaker.text == "Ana")
         #expect(tr1.role.text == "Primary")
         #expect(tr1.status?.text == "Checking…", "unobserved sources are never guessed")
@@ -65,7 +65,7 @@ struct SetupPresentationTests {
         let tr1 = try #require(p.sourceRows[0].children?.first)
         let children = try #require(tr1.children)
         #expect(children.map(\.speaker.text) == ["Ana", "Guest"])
-        #expect(children[0].channel == CellText("1", accessibilityValue: "1, not checked against the file"))
+        #expect(children[0].channel == CellText("1", accessibilityValue: "1, assigned channel; see observed audio details for the file's channel count"))
         #expect(children[1].channel == .unknown, "the unknown reference is not shown as channel 1")
         #expect(children[1].channel.accessibilityValue == "unknown")
 

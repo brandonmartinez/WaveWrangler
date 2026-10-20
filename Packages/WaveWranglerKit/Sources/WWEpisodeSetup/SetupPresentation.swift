@@ -279,7 +279,7 @@ public struct SetupPresentation: Sendable {
 
     public static func channelText(_ statedChannel: Int?) -> CellText {
         guard let statedChannel else { return .unknown }
-        return CellText("\(statedChannel + 1)", accessibilityValue: "\(statedChannel + 1), not checked against the file")
+        return CellText("\(statedChannel + 1)", accessibilityValue: "\(statedChannel + 1), assigned channel; see observed audio details for the file's channel count")
     }
 
     static func roleText(_ ref: SpeakerChannelReference, source: SourceRecord, assignment: SpeakerAssignment?) -> CellText {

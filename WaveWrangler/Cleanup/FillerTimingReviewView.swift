@@ -2,6 +2,15 @@ import SwiftUI
 import WWCore
 import WWSpeech
 
+enum FillerMarkerDetail {
+    case boundaries, pole, dot
+
+    static func make(width: Double, neighborDistance: Double = .infinity) -> Self {
+        if width < 3 || neighborDistance < 14 { return .dot }
+        return width < 36 ? .pole : .boundaries
+    }
+}
+
 struct FillerTimingOverlay: View {
     @Bindable var model: EpisodeCleanupModel
     let reviews: [FillerTimingReview]
@@ -14,7 +23,8 @@ struct FillerTimingOverlay: View {
                 } else {
                     ForEach(reviews) { review in
                         FillerTimingRegionView(model: model, review: review, size: geometry.size,
-                            start: model.windowStart, duration: model.visibleDuration)
+                            start: model.windowStart, duration: model.visibleDuration,
+                            neighborDistance: nearestDistance(to: review, width: geometry.size.width))
                             .zIndex(model.selectedFillerID == review.id ? 1 : 0)
                     }
                 }
@@ -25,6 +35,12 @@ struct FillerTimingOverlay: View {
         .accessibilityIdentifier("ww.cleanup.fillers.rails")
     }
 
+    private func nearestDistance(to review: FillerTimingReview, width: Double) -> Double {
+        reviews.filter { $0.id != review.id }.map {
+            abs($0.bounds.alignedStart - review.bounds.alignedStart) / model.visibleDuration * width
+        }.min() ?? .infinity
+    }
+
     private func denseOverview(size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
             Canvas { context, _ in
@@ -33,9 +49,7 @@ struct FillerTimingOverlay: View {
                     let hi = min(size.width, (review.bounds.alignedEnd - model.windowStart) / model.visibleDuration * size.width)
                     let color: Color = review.decision == .rejected ? .secondary
                         : review.decision == .reviewed ? .green : .orange
-                    context.fill(Path(CGRect(x: lo, y: 0, width: max(1, hi - lo), height: size.height)),
-                                 with: .color(color.opacity(0.1)))
-                    for x in [lo, hi] {
+                    for x in hi - lo >= 36 ? [lo, hi] : [lo] {
                         var rail = Path()
                         rail.move(to: CGPoint(x: x, y: 0))
                         rail.addLine(to: CGPoint(x: x, y: size.height))
@@ -88,6 +102,7 @@ private struct FillerTimingRegionView: View {
     let size: CGSize
     let start: Double
     let duration: Double
+    var neighborDistance: Double = .infinity
     @State private var dragOrigin: FillerTimingBounds?
     @State private var dragTime: Double?
     @State private var dragEdge: FillerTimingEdge?
@@ -109,11 +124,12 @@ private struct FillerTimingRegionView: View {
     var body: some View {
         let bounds = self.bounds
         let lo = max(0, x(bounds.alignedStart)), hi = min(size.width, x(bounds.alignedEnd))
+        let detail = FillerMarkerDetail.make(width: hi - lo, neighborDistance: neighborDistance)
         let anchor = toolbarEdge.map { edge in
             handleFrame(edge, time: edge == .start ? bounds.alignedStart : bounds.alignedEnd)
         } ?? CGRect(x: lo, y: 0, width: max(1, hi - lo), height: size.height)
         ZStack(alignment: .topLeading) {
-            if hi > lo {
+            if hi > lo, detail == .boundaries {
                 Button {
                     model.selectFiller(review.id, reveal: false)
                     toolbarEdge = nil
@@ -131,7 +147,7 @@ private struct FillerTimingRegionView: View {
                 .accessibilityIdentifier("ww.cleanup.filler.\(review.id)")
             }
             Canvas { context, _ in
-                for time in [bounds.alignedStart, bounds.alignedEnd] {
+                for time in detail == .boundaries ? [bounds.alignedStart, bounds.alignedEnd] : [bounds.alignedStart] {
                     var rail = Path()
                     rail.move(to: CGPoint(x: x(time), y: 0))
                     rail.addLine(to: CGPoint(x: x(time), y: size.height))
@@ -139,8 +155,25 @@ private struct FillerTimingRegionView: View {
                 }
             }
             .allowsHitTesting(false)
-            handle(.start, time: bounds.alignedStart)
-            handle(.end, time: bounds.alignedEnd)
+            if detail == .boundaries {
+                handle(.start, time: bounds.alignedStart)
+                handle(.end, time: bounds.alignedEnd)
+            } else if lo >= 0, lo <= size.width {
+                Button {
+                    model.selectFiller(review.id, reveal: false)
+                    model.state.workspaceInspector = .transcript
+                    model.state.inspectorPresented = true
+                    if detail == .pole { showsToolbar = true }
+                } label: {
+                    Image(systemName: detail == .dot ? "circle.fill" : "text.bubble.fill")
+                        .font(.system(size: detail == .dot ? 5 : 12))
+                        .foregroundStyle(color)
+                        .frame(width: detail == .dot ? 8 : 18, height: 18)
+                }
+                .buttonStyle(.plain).offset(x: lo - (detail == .dot ? 4 : 9))
+                .accessibilityLabel("\(review.word?.text ?? "Manual filler"), \(review.status). Review in inspector or zoom in for timing handles.")
+                .accessibilityIdentifier("ww.cleanup.filler.\(review.id)")
+            }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(name: review.id)
@@ -242,6 +275,8 @@ struct FillerTimingToolbar: View {
                         Button("With context") { model.auditionFiller(review.id) }
                             .help("Listen with up to 0.5 seconds of supported context on each side.")
                             .accessibilityIdentifier("\(accessibilityPrefix).context")
+                    }
+                    HStack {
                         Toggle("Loop", isOn: $model.loopsFillerAudition).toggleStyle(.checkbox)
                             .accessibilityIdentifier("\(accessibilityPrefix).loop")
                         if model.isPlaying || model.isPreparingPlayback {
@@ -307,6 +342,7 @@ struct FillerTimingToolbar: View {
 
 struct FillerTimingReviewSummary: View {
     @Bindable var model: EpisodeCleanupModel
+    @State private var showsSavedReviews = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -318,7 +354,18 @@ struct FillerTimingReviewSummary: View {
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if !model.fillerReviews.isEmpty {
-                DisclosureGroup("Saved reviews and retained history (\(model.fillerReviews.count))") {
+                Button {
+                    showsSavedReviews.toggle()
+                } label: {
+                    Label("Saved reviews and retained history (\(model.fillerReviews.count))",
+                          systemImage: showsSavedReviews ? "chevron.down" : "chevron.right")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(showsSavedReviews ? "Expanded" : "Collapsed")
+                .accessibilityIdentifier("ww.cleanup.fillers.history")
+                if showsSavedReviews {
                     LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(model.fillerReviews) { review in
                             let issue = model.fillerIssue(review)
@@ -334,8 +381,10 @@ struct FillerTimingReviewSummary: View {
                                     if let issue { Text("Inactive: \(issue)").foregroundStyle(.orange) }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("ww.cleanup.filler.review.\(review.id)")
                         }
                     }
                     .font(.caption)

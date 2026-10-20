@@ -16,7 +16,8 @@ public enum SchemaVersion {
     /// 4: human-accepted file-local pitch-preserving timing beside the unchanged recorder maps.
     /// 5: shared episode in/out markers and source-bound local transcripts.
     /// 6: nondestructive filler audible-word timing reviews with immutable detection provenance.
-    public static let show = 6
+    /// 7: portable show profiles, speaker appearance, recorder definitions and episode workspace preferences.
+    public static let show = 7
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.
@@ -68,11 +69,13 @@ public struct Show: Sendable, Equatable, Codable, Identifiable {
     public var id: ShowID
     public var title: String
     public var notes: String
+    public var profile: ShowProfile?
 
-    public init(id: ShowID = ShowID(), title: String, notes: String = "") {
+    public init(id: ShowID = ShowID(), title: String, notes: String = "", profile: ShowProfile? = nil) {
         self.id = id
         self.title = title
         self.notes = notes
+        self.profile = profile
     }
 }
 
@@ -82,10 +85,12 @@ public struct Speaker: Sendable, Equatable, Codable, Identifiable {
     public var id: SpeakerID
     public var name: String
     public var notes: String
+    public var appearance: SpeakerAppearance?
 
-    public init(id: SpeakerID = SpeakerID(), name: String, notes: String = "") {
+    public init(id: SpeakerID = SpeakerID(), name: String, notes: String = "", appearance: SpeakerAppearance? = nil) {
         self.id = id
         self.name = name
         self.notes = notes
+        self.appearance = appearance
     }
 }

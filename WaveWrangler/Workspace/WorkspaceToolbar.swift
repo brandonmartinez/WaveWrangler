@@ -8,45 +8,23 @@ struct DestinationControl: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(ShowDestination.allCases) { destination in
-                let selected = state.destination == destination
-                Button {
-                    state.select(destination)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(destination.title)
-                        if !destination.isAvailableInThisVersion {
-                            Image(systemName: "lock.fill")
-                                .imageScale(.small)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background {
-                        if selected {
-                            RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.25))
-                        }
-                    }
-                    .overlay {
-                        if selected {
-                            RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary, lineWidth: 1)
-                        }
-                    }
-                    .contentShape(Rectangle())
+        HStack(spacing: 8) {
+            Button("Workspace", systemImage: "waveform") { state.select(.alignment) }
+                .accessibilityAddTraits(state.destination == .alignment ? [.isSelected] : [])
+                .accessibilityIdentifier("ww.show.destination.alignment")
+            Menu("Views", systemImage: "rectangle.3.group") {
+                Button("Recordings & Speakers…") { state.recordingsPresented = true }
+                Divider()
+                ForEach(ShowDestination.allCases.filter { $0 != .export }) { destination in
+                    Button("Legacy \(destination.title)") { state.select(destination) }
+                        .accessibilityIdentifier("ww.show.destination.\(destination.rawValue)")
                 }
-                .buttonStyle(.plain)
-                .help("\(destination.title) (⌘\(destination.shortcutDigit)). \(destination.helpText)")
-                .accessibilityLabel(destination.title)
-                .accessibilityValue(destination.unavailableValue ?? "")
-                .accessibilityAddTraits(selected ? [.isSelected] : [])
-                .accessibilityHint("Destination \(ShowDestination.allCases.firstIndex(of: destination)! + 1) of \(ShowDestination.allCases.count)")
-                .accessibilityIdentifier("ww.show.destination.\(destination.rawValue)")
             }
+            Button("Export…", systemImage: "square.and.arrow.up") { state.select(.export) }
+                .help("Export is not available yet. This opens the availability explanation; nothing is exported.")
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Destination")
+        .accessibilityLabel("Workspace and alternative views")
         .accessibilityValue(state.destination.title)
         .accessibilityIdentifier("ww.show.destination")
     }

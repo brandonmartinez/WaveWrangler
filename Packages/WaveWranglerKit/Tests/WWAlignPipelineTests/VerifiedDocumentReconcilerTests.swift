@@ -48,6 +48,33 @@ private actor OpenedPublicationStore {
 
 @Suite("Verified document reconciliation")
 struct VerifiedDocumentReconcilerTests {
+    @Test func sourceResolutionFailureDoesNotPublishAndCanBeRetried() async throws {
+        enum ReadFailure: Error { case unreadableAccess }
+        let reconciler = VerifiedDocumentReconciler()
+        let log = PublicationLog()
+        await #expect(throws: ReadFailure.self) {
+            try await reconciler.reconcile(
+                resolve: { throw ReadFailure.unreadableAccess },
+                publish: { await log.record(1) }
+            )
+        }
+        #expect(await log.values().isEmpty)
+        #expect(try await reconciler.reconcile(resolve: {}, publish: { await log.record(2) }))
+        #expect(await log.values() == [2])
+    }
+
+    @Test func sourceResolutionCancellationIsNotAnAccessFailure() async throws {
+        let reconciler = VerifiedDocumentReconciler()
+        let log = PublicationLog()
+        await #expect(throws: CancellationError.self) {
+            try await reconciler.reconcile(
+                resolve: { throw CancellationError() },
+                publish: { await log.record(1) }
+            )
+        }
+        #expect(await log.values().isEmpty)
+    }
+
     @Test func canceledOpenRetriesTheSamePublication() async throws {
         let episode = EpisodeID()
         let document = ObjectIdentifier(NSObject())

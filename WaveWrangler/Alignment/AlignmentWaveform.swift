@@ -128,8 +128,9 @@ enum AlignmentWaveformProjection {
 
     static func canReuseSamples(from loaded: Episode?, to current: Episode?) -> Bool {
         guard let loaded, let current else { return false }
-        return loaded.id == current.id && loaded.sources == current.sources
-            && loaded.recorderGroups == current.recorderGroups
+        var unchangedTiming = current
+        unchangedTiming.alignment = loaded.alignment
+        return EpisodeMediaInputs(loaded) == EpisodeMediaInputs(unchangedTiming)
     }
 
     static func proposedStrokes(

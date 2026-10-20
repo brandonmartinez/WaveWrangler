@@ -44,7 +44,7 @@ struct AudioTimelineWordLayoutTests {
         #expect(layout.densityRanges.count <= 600)
         #expect(layout.densityRanges.first?.lowerBound == 0)
         #expect(layout.densityRanges.last?.upperBound == 600)
-        #expect(layout.height == 28)
+        #expect(layout.height == 24)
     }
 
     @Test func collisionAvoidanceNeverMovesAWordAwayFromItsTrueAudioPosition() {
@@ -52,13 +52,9 @@ struct AudioTimelineWordLayoutTests {
             word("first", 0, 0.001), word("second", 0.01, 0.011),
             word("third", 0.02, 0.021), word("fourth", 0.03, 0.031),
         ], start: 0, duration: 10, width: 600)
-        #expect(layout.placements.map(\.row).prefix(3) == [0, 1, 2])
-        for (item, expected) in zip(layout.placements, [0, 0.6, 1.2, 1.8]) {
-            #expect(abs(item.x - expected) < 0.000_001)
-            #expect(item.width < 0.061, "A readable label must not fabricate a longer word interval")
-        }
-        #expect(layout.placements.last?.showsLabel == false)
-        #expect(layout.height == 72)
+        #expect(layout.detail == .hidden && layout.placements.isEmpty)
+        #expect(layout.wordCount == 4, "Crowded recognition is hidden, not staggered or moved.")
+        #expect(layout.height == 24)
     }
 
     @Test func invalidGeometryIsNotProjected() {
@@ -68,6 +64,115 @@ struct AudioTimelineWordLayoutTests {
         }
         #expect(AudioTimelineWordLayout.make(words: words, start: .nan, duration: 1, width: 600).placements.isEmpty)
         #expect(AudioTimelineWordLayout.make(words: words, start: 0, duration: 0, width: 600).placements.isEmpty)
+    }
+
+    @Test func progressiveUnitsKeepRealWordsAndStableHeightAtEveryScale() throws {
+        let words = (0..<30).map { word("word\($0)\($0 % 10 == 9 ? "." : "")", Double($0), Double($0) + 0.8) }
+        let layouts = [0.1, 10.0, 30.0, 80.0, 120.0].map { pixelsPerSecond in
+            AudioTimelineWordLayout.make(words: words, start: 0, duration: 30, width: pixelsPerSecond * 30)
+        }
+        #expect(layouts.map(\.detail) == [.hidden, .sentence, .phrase, .word, .timing])
+        #expect(layouts.allSatisfy { $0.height == 24 })
+        for layout in layouts.dropFirst() {
+            #expect(layout.placements.flatMap(\.words) == words)
+            #expect(layout.placements.allSatisfy { $0.row == 0 })
+            for pair in zip(layout.placements, layout.placements.dropFirst()) {
+                #expect(pair.0.x + pair.0.width <= pair.1.x)
+            }
+        }
+        #expect(AudioTimelineWordLayout.abbreviated(["the", "long", "sentence", "ends", "here"], capacity: 15) == "the long … here")
+        #expect(words.map(\.text).joined(separator: " ").contains("word29."))
+    }
+
+    @Test(arguments: [120.0, 240.0])
+    func touchingWordIntervalsStaySeparateAtWordAndMarkerZoom(_ pixelsPerSecond: Double) {
+        let words = (0..<10).map { word("word\($0)", Double($0) / 2, Double($0 + 1) / 2) }
+        let layout = AudioTimelineWordLayout.make(words: words, start: 0, duration: 5,
+                                                width: pixelsPerSecond * 5)
+        #expect(layout.detail == (pixelsPerSecond == 120 ? .word : .timing))
+        #expect(layout.placements.count == words.count,
+                "Collision handling must never merge adjoining words back into a sentence.")
+        #expect(layout.placements.map(\.words) == words.map { [$0] })
+        #expect(layout.placements.map(\.text) == words.map(\.text))
+        #expect(layout.placements.map(\.x) == words.indices.map { Double($0) / 2 * pixelsPerSecond })
+        #expect(layout.placements.allSatisfy { $0.width == pixelsPerSecond / 2 })
+    }
+
+    @Test func sentenceAndPhraseUnitsRemainDistinctWithoutSilenceBetweenWords() {
+        let words = (0..<20).map {
+            word("word\($0)\($0 % 10 == 9 ? "." : "")", Double($0) / 2, Double($0 + 1) / 2)
+        }
+        let sentences = AudioTimelineWordLayout.make(words: words, start: 0, duration: 10, width: 200)
+        let phrases = AudioTimelineWordLayout.make(words: words, start: 0, duration: 10, width: 600)
+        #expect(sentences.detail == .sentence && sentences.placements.map(\.words.count) == [10, 10])
+        #expect(phrases.detail == .phrase && phrases.placements.map(\.words.count) == [5, 5, 5, 5])
+        #expect(sentences.placements.flatMap(\.words) == words)
+        #expect(phrases.placements.flatMap(\.words) == words)
+    }
+
+    @Test func wideZoomHidesSparseSpeechAndPausesDoNotInflateWordDetail() {
+        let words = [word("hello", 2, 2.5), word("again", 500, 500.5)]
+        let wide = AudioTimelineWordLayout.make(words: words, start: 0, duration: 600, width: 600)
+        #expect(wide.detail == .hidden && wide.placements.isEmpty)
+        let all = AudioTimelineWordLayout.make(words: words, start: 0, duration: 600, width: 12_000)
+        let panned = AudioTimelineWordLayout.make(words: words, start: 490, duration: 30, width: 600)
+        #expect(all.detail == .sentence && panned.detail == .sentence,
+                "The same zoom uses speech duration, not silence or the number of visible words.")
+    }
+
+    @Test func overlappingRecognitionClipsLabelsWithoutMergingOrRetimingWords() {
+        let words = [word("first", 0, 1), word("second", 0.75, 1.5)]
+        let layout = AudioTimelineWordLayout.make(words: words, start: 0, duration: 2, width: 600)
+        #expect(layout.detail == .timing)
+        #expect(layout.placements.map(\.words) == words.map { [$0] })
+        #expect(layout.placements.map(\.x) == [0, 225])
+        #expect(layout.placements.map(\.width) == [300, 225])
+        #expect(layout.placements.map(\.labelWidth) == [225, 225])
+        #expect(words[0].alignedEnd == 1 && words[1].alignedStart == 0.75)
+    }
+
+    @Test func markerDetailCollapsesOnlyPresentation() {
+        #expect(FillerMarkerDetail.make(width: 60) == .boundaries)
+        #expect(FillerMarkerDetail.make(width: 20) == .pole)
+        #expect(FillerMarkerDetail.make(width: 2) == .dot)
+        #expect(FillerMarkerDetail.make(width: 20, neighborDistance: 10) == .dot)
+    }
+
+    @Test func boundaryStrokesAppearOnlyAtTheClosestTranscriptDetail() async throws {
+        let words = [word("first", 1, 1.5), word("second", 1.5, 2)]
+        for duration in [5.0, 2.5, 0.5] {
+            let start = duration == 0.5 ? 1.25 : 0
+            let layout = AudioTimelineWordLayout.make(words: words, start: start, duration: duration, width: 600)
+            #expect(layout.detail == (duration == 5 ? .word : .timing))
+            let renderer = ImageRenderer(content: AudioTimelineWords(
+                words: words, start: start, duration: duration, selectedWord: nil,
+                select: { _ in }, zoom: { _ in })
+                .frame(width: 600, height: 72, alignment: .topLeading)
+                .background(Color.white).environment(\.colorScheme, .light))
+            renderer.scale = 1
+            _ = try #require(renderer.cgImage)
+            try await Task.sleep(for: .milliseconds(100))
+            let bitmap = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+            for item in layout.placements {
+                let boundaries = [
+                    (Int(item.x), (item.words.first?.alignedStart ?? start) >= start),
+                    (Int(item.x + item.width) - 1, (item.words.last?.alignedEnd ?? start + duration) <= start + duration),
+                ]
+                for (x, isRealBoundary) in boundaries {
+                    var hasBoundary = false
+                    for y in 4..<18 {
+                        let color = try #require(bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB))
+                        if min(color.redComponent, color.greenComponent, color.blueComponent) < 0.8 {
+                            hasBoundary = true
+                        }
+                    }
+                    #expect(hasBoundary == (layout.detail == .timing && isRealBoundary),
+                            "Draw real recognition boundaries, never artificial markers at viewport edges.")
+                }
+            }
+            Attachment.record(try #require(bitmap.representation(using: .png, properties: [:])),
+                              named: "Transcript \(layout.detail.title) at \(start).png")
+        }
     }
 
     @Test func uncertainCoverageDoesNotMoveOrHideRawWordsAtEitherScale() {

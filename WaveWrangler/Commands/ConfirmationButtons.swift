@@ -10,6 +10,7 @@ import AppKit
 ///
 /// Cancel is always bound to Esc. macOS 27 never lets a button be both destructive and the default:
 /// `hasDestructiveAction` clears its Return key equivalent, and re-setting it is ignored.
+@MainActor
 enum ConfirmationButtons {
     static func configure(confirm: NSButton, cancel: NSButton, destructive: Bool, destructiveIsDefault: Bool) {
         cancel.keyEquivalent = "\u{1b}"

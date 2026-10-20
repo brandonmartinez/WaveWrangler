@@ -526,6 +526,11 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     private func selectTargetEpoch() {
+        let lock = app.buttons.matching(NSPredicate(format: "label == 'Lock position' AND value == 'Locked'")).firstMatch
+        if lock.exists {
+            scrollIntoWindow(lock)
+            lock.click()
+        }
         let state = stateHeading("Proposed — not confirmed")
         XCTAssertTrue(state.waitForExistence(timeout: 5))
         let epochName = app.staticTexts["Guest take"]

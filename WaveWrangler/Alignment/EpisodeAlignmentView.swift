@@ -14,7 +14,10 @@ struct EpisodeAlignmentContent: View {
     var body: some View {
         Group {
             if let model {
-                AlignmentContentHost(model: model, showInspector: { state.inspectorPresented = true })
+                AlignmentContentHost(state: state, model: model, showInspector: {
+                    state.workspaceInspector = .recording
+                    state.inspectorPresented = true
+                })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let startupError {
                 ContentUnavailableView(
@@ -41,23 +44,48 @@ struct EpisodeAlignmentContent: View {
                 )
                 try Task.checkCancellation()
                 guard state.selectedEpisodeID == episodeID, state.destination == .alignment else { return }
-                let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime)
+                let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime,
+                                                  listening: state.listeningState(for: episodeID))
                 model = value
                 state.alignmentModel = value
+                let cleanup = EpisodeCleanupModel(state: state, episodeID: episodeID, runtime: runtime)
+                cleanup.connectWorkspace(to: value)
+                state.cleanupModel = cleanup
                 value.load()
                 value.loadWaveforms()
                 value.ensureWaveformOverview()
+                await cleanup.refresh()
             } catch is CancellationError {
                 return
             } catch {
                 startupError = String(describing: error)
             }
         }
-        .onChange(of: state.store.model.episode(episodeID)) { _, _ in
+        .onChange(of: state.store.model) { prior, current in
             guard let model else { return }
-            model.stopAudition()
+            if !current.hasSameMediaInputs(as: prior, in: episodeID) { model.stopAudition() }
             model.load()
             model.synchronizeWaveforms()
+            state.cleanupModel?.modelDidChange()
+        }
+        .task(id: state.selectedEpisode.map { EpisodeMediaInputs($0, includingWorkingRange: true) }) {
+            await state.cleanupModel?.refresh()
+        }
+        .onChange(of: model?.listening.playback) { _, _ in model?.refreshListeningGains() }
+        .onChange(of: model?.waveformStartSeconds, initial: true) { _, value in
+            if let value { state.cleanupModel?.windowStart = value }
+        }
+        .onChange(of: model?.waveformDurationSeconds, initial: true) { _, value in
+            if let value { state.cleanupModel?.windowDuration = value }
+        }
+        .onChange(of: model?.waveformPlayheadSeconds, initial: true) { _, value in
+            if let value { state.cleanupModel?.playhead = value }
+        }
+        .onChange(of: state.cleanupModel?.selectedFillerID) { _, _ in
+            guard let review = state.cleanupModel?.selectedFiller else { return }
+            state.workspaceInspector = .transcript
+            state.inspectorPresented = true
+            model?.listening.selection = review.bounds.alignedStart...review.bounds.alignedEnd
         }
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
             guard let document = state.store.document,
@@ -70,6 +98,8 @@ struct EpisodeAlignmentContent: View {
             model.ensureWaveformOverview()
         }
         .onDisappear {
+            state.cleanupModel?.cancel()
+            state.cleanupModel = nil
             model?.suspend()
             if let model, state.alignmentModel === model { state.alignmentModel = nil }
         }
@@ -77,22 +107,23 @@ struct EpisodeAlignmentContent: View {
 }
 
 private struct AlignmentContentHost: NSViewRepresentable {
+    let state: ShowWindowState
     let model: EpisodeAlignmentModel
     let showInspector: () -> Void
 
     func makeNSView(context: Context) -> HostedView {
-        HostedView(model: model, showInspector: showInspector)
+        HostedView(state: state, model: model, showInspector: showInspector)
     }
 
     func updateNSView(_ nsView: HostedView, context: Context) {
-        nsView.hostingView.rootView = AlignmentWorkspace(model: model, showInspector: showInspector)
+        nsView.hostingView.rootView = AlignmentWorkspace(state: state, model: model, showInspector: showInspector)
     }
 
     final class HostedView: NSView {
         let hostingView: NSHostingView<AlignmentWorkspace>
 
-        init(model: EpisodeAlignmentModel, showInspector: @escaping () -> Void) {
-            hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model, showInspector: showInspector))
+        init(state: ShowWindowState, model: EpisodeAlignmentModel, showInspector: @escaping () -> Void) {
+            hostingView = NSHostingView(rootView: AlignmentWorkspace(state: state, model: model, showInspector: showInspector))
             hostingView.sizingOptions = []
             // The hosting view is the single labeled container for the workspace. Labeling it on the
             // AppKit side keeps the SwiftUI tree untouched: `accessibilityElement(children: .contain)`
@@ -117,7 +148,8 @@ private struct AlignmentContentHost: NSViewRepresentable {
     }
 }
 
-private struct AlignmentWorkspace: View {
+struct AlignmentWorkspace: View {
+    @Bindable var state: ShowWindowState
     @Bindable var model: EpisodeAlignmentModel
     let showInspector: () -> Void
 
@@ -125,7 +157,11 @@ private struct AlignmentWorkspace: View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                AlignmentWaveformView(model: model, showInspector: showInspector)
+                AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
+                    showTranscript: {
+                        state.workspaceInspector = .transcript
+                        state.inspectorPresented = true
+                    }, showInspector: showInspector)
                 DisclosureGroup("Detailed alignment inspection") {
                 AlignmentOutlineTable(model: model)
                     .id("ww.alignment.groupSection")
@@ -288,6 +324,10 @@ private struct AlignmentWorkspace: View {
             }
             .accessibilityLabel("Alignment workspace scroll area")
             .accessibilityIdentifier("ww.alignment.workspace")
+            .safeAreaInset(edge: .top, spacing: 0) {
+                AudioWorkspaceActions(state: state, alignment: model)
+                    .padding(10).background(.bar)
+            }
             .onAppear {
                 AlignmentKeyHandler.install()
             }
@@ -671,23 +711,18 @@ struct AlignmentInspectorView: View {
             }
             .labelsHidden()
             .accessibilityIdentifier("ww.inspector.alignment.recording")
-            Button("Manage recordings…", action: manageRecordings)
-                .help("Add recordings, edit recorder groups, and manage speakers in Setup.")
+            Button("Recordings & Speakers…", action: manageRecordings)
+                .help("Add recordings, edit recorder groups, and manage speakers.")
                 .accessibilityIdentifier("ww.inspector.alignment.manageRecordings")
             if let track = model.selectedWaveform {
                 Divider()
                 Text(track.groupName).font(.subheadline.weight(.semibold))
                 Text(track.name).font(.caption).foregroundStyle(.secondary)
                 AlignmentTrackAssignmentControls(model: model, track: track)
-                Toggle("Show and hear recording", isOn: Binding(
-                    get: { model.trackEnabled(track.id) },
-                    set: { model.setTrack(track.id, enabled: $0) }
-                ))
-                .help("Only recordings with accepted timing are played.")
-                Toggle("Show recorder group", isOn: Binding(
-                    get: { model.groupEnabled(track.group) },
-                    set: { model.setGroup(track.group, enabled: $0) }
-                ))
+                AudioTimelineListeningButtons(listening: model.listening, scope: .source(track.id), name: track.name,
+                                              changed: { model.refreshListeningGains() })
+                AudioTimelineListeningButtons(listening: model.listening, scope: .recorder(track.group), name: track.groupName,
+                                              changed: { model.refreshListeningGains() })
                 if track.envelope.channelCount > 1 {
                     Picker("Comparison channel", selection: $model.waveformAuditionChannel) {
                         ForEach(0..<track.envelope.channelCount, id: \.self) { channel in

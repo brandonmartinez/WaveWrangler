@@ -144,12 +144,15 @@ struct UITestHooksDebugOnlyTests {
             let source = try UITestHooksDebugOnlyTests.source("Alignment/EpisodeAlignmentModel.swift")
             let calls = source.components(separatedBy: "store.applyReplacement(").dropFirst()
             #expect(
-                calls.count == 6,
-                "split, accept, initial placement, group move, adaptive timing, and reset are whole-model replacements"
+                calls.count == 3,
+                "epoch split and reset retain strict snapshots; ordinary timing changes share one scoped merge"
             )
             for call in calls {
-                #expect(call.prefix(200).contains("expecting: prior,"))
+                #expect(call.prefix(200).contains("expecting: prior,") || call.prefix(200).contains("expecting: live,"))
             }
+            #expect(source.contains("live.hasSameMediaInputs(as: prior, in: episodeID)"))
+            #expect(source.contains("workspace?.positionLocks == prior.episode(episodeID)?.workspace?.positionLocks"))
+            #expect(source.contains("merged.episodes[index].alignment = result.alignment"))
             let store = try UITestHooksDebugOnlyTests.source("Document/ShowDocumentStore.swift")
             #expect(store.contains("SharedModelPublication.decide(live: model, expected: expected) == .publish"))
         }

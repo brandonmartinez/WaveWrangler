@@ -234,6 +234,11 @@ struct AlignmentWaveformTests {
         #expect(AlignmentWaveformProjection.canReuseSamples(from: episode, to: renamed))
         var changed = episode
         changed.sources[0].displayNameHint = "replacement.wav"
+        changed.recorderGroups[0].name = "Renamed origin"
+        changed.recorderGroups[0].icon = .computer
+        #expect(AlignmentWaveformProjection.canReuseSamples(from: episode, to: changed),
+                "A display-name hint is not source identity; renaming must not decode audio again.")
+        changed.sources[0].id = SourceID()
         #expect(!AlignmentWaveformProjection.canReuseSamples(from: episode, to: changed))
         changed = episode
         changed.recorderGroups = []

@@ -110,6 +110,7 @@ extension ShowDocumentModel {
         try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.recorderGroups.firstIndex(where: { $0.id == groupID }) else { throw .recorderGroupNotFound(groupID) }
             episode.recorderGroups.remove(at: index)
+            episode.workspace?.positionLocks.removeAll { $0.group == groupID }
             for sourceIndex in episode.sources.indices where episode.sources[sourceIndex].placement.recorderGroupID == groupID {
                 episode.sources[sourceIndex].placement.recorderGroupID = nil
                 episode.sources[sourceIndex].placement.epochID = nil
@@ -215,12 +216,17 @@ extension ShowDocumentModel {
         var copy = try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.speakerAssignments.firstIndex(where: { $0.speakerID == speakerID }) else { throw .speakerNotFound(speakerID) }
             let removed = episode.speakerAssignments.remove(at: index)
+            episode.speakerAppearanceOverrides?.removeAll { $0.speaker == speakerID }
             let channels = (removed.primary.map { [$0] } ?? []) + removed.backups
             for sourceID in Set(channels.map(\.sourceID)) where episode.references(to: sourceID).isEmpty {
                 Self.setRole(.unassigned, .provisional, of: sourceID, in: &episode)
             }
         }
-        if !copy.episodes.contains(where: { $0.assignment(for: speakerID) != nil }) {
+        let retainedByProfile = copy.show.profile?.hosts.contains(speakerID) == true
+            || copy.show.profile?.recorderDefinitions.contains(where: {
+                $0.sources.contains { $0.assignments.contains { $0.speaker == speakerID } }
+            }) == true
+        if !retainedByProfile, !copy.episodes.contains(where: { $0.assignment(for: speakerID) != nil }) {
             copy.speakers.removeAll { $0.id == speakerID }
         }
         return copy

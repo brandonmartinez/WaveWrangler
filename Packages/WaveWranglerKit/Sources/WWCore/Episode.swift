@@ -24,6 +24,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
     /// map is recorded.
     public var alignment: EpisodeAlignment?
     public var cleanup: EpisodeCleanup?
+    public var speakerAppearanceOverrides: [SpeakerAppearanceOverride]?
+    public var workspace: EpisodeWorkspacePreferences?
 
     public init(
         id: EpisodeID = EpisodeID(),
@@ -37,7 +39,9 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         sources: [SourceRecord] = [],
         speakerAssignments: [SpeakerAssignment] = [],
         alignment: EpisodeAlignment? = nil,
-        cleanup: EpisodeCleanup? = nil
+        cleanup: EpisodeCleanup? = nil,
+        speakerAppearanceOverrides: [SpeakerAppearanceOverride]? = nil,
+        workspace: EpisodeWorkspacePreferences? = nil
     ) {
         self.id = id
         self.title = title
@@ -51,6 +55,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         self.speakerAssignments = speakerAssignments
         self.alignment = alignment
         self.cleanup = cleanup
+        self.speakerAppearanceOverrides = speakerAppearanceOverrides
+        self.workspace = workspace
     }
 
     public func source(_ id: SourceID) -> SourceRecord? {
@@ -77,6 +83,8 @@ public struct RecorderGroup: Sendable, Equatable, Codable, Identifiable {
     /// Absent in older shows; never inferred from a device name or brand.
     public var preferredAlignmentReference: Bool?
     public var epochs: [RecordingEpoch]
+    public var icon: RecorderIcon?
+    public var definitionID: UUID?
 
     public init(
         id: RecorderGroupID = RecorderGroupID(),
@@ -84,7 +92,9 @@ public struct RecorderGroup: Sendable, Equatable, Codable, Identifiable {
         deviceName: String = "",
         clockNote: String = "",
         epochs: [RecordingEpoch] = [],
-        preferredAlignmentReference: Bool? = nil
+        preferredAlignmentReference: Bool? = nil,
+        icon: RecorderIcon? = nil,
+        definitionID: UUID? = nil
     ) {
         self.id = id
         self.name = name
@@ -92,6 +102,8 @@ public struct RecorderGroup: Sendable, Equatable, Codable, Identifiable {
         self.clockNote = clockNote
         self.epochs = epochs
         self.preferredAlignmentReference = preferredAlignmentReference
+        self.icon = icon
+        self.definitionID = definitionID
     }
 }
 

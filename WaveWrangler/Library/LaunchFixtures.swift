@@ -34,6 +34,9 @@ import WWTimeMap
 ///   recording as Host's confirmed Primary and the other recording as a Backup.
 ///   `-WWUITestCleanupPublicSpeech <path>` optionally copies an explicitly supplied public 48 kHz
 ///   mono WAV (4-30 s) into that isolated fixture. Never supply private recordings.
+/// - `-WWUITestTranscriptFixture YES`: seed clearly synthetic timed and untimed text for the
+///   cleanup fixture, bound to its verified source identities; no recognizer or model is used.
+///   `-WWUITestTranscriptZoomFixture YES` uses longer sentences with touching word intervals.
 /// - `-WWUITestMinimumShowWindow YES`: open a synthetic show at the supported 760×440 minimum content size.
 /// - `-WWUITestAppearance aqua|darkAqua|highContrastAqua|highContrastDarkAqua`: app appearance for C04/C07
 ///   checks. The high-contrast names are AppKit's Increase Contrast appearances (labeled "override, not
@@ -163,6 +166,43 @@ enum LaunchFixtures {
                         model = try model.addingEpisode(fixture.episode)
                     }
                     try await SetupEngineProvider.store.save(fixtures.flatMap(\.records))
+                    if defaults.bool(forKey: "WWUITestTranscriptFixture") {
+                        let runtime = try await AlignmentRuntime.make(showID: showID,
+                            accessStore: SetupEngineProvider.store, access: SetupEngineProvider.context)
+                        for episode in model.episodes {
+                            let prepared = try await runtime.prepareCleanup(model: model, episode: episode.id)
+                            guard prepared.plan.isReady, let revision = prepared.plan.alignmentRevision else {
+                                throw FixtureError.invalidTranscriptFixture
+                            }
+                            let transcripts = try prepared.plan.lanes.map { lane in
+                                guard let identity = prepared.identities[lane.primary.sourceID] else {
+                                    throw FixtureError.invalidTranscriptFixture
+                                }
+                                let zoomFixture = defaults.bool(forKey: "WWUITestTranscriptZoomFixture")
+                                let text = zoomFixture
+                                    ? ["Welcome", "to", "this", "synthetic", "episode", "where", "we", "compare", "two", "recordings.",
+                                       "Listen", "for", "the", "shared", "speaker", "and", "review", "each", "word", "marker."]
+                                    : ["Welcome", "to", "this", "synthetic", "episode.",
+                                       "Um,", "let's", "review", "the", "recording."]
+                                var words = text.enumerated().map { index, text in
+                                    let start = zoomFixture ? 0.2 + Double(index) * 0.2 : 0.4 + Double(index) * 0.35
+                                    let end = zoomFixture ? 0.2 + Double(index + 1) * 0.2 : start + 0.25
+                                    return TranscriptWord(text: text,
+                                        sourceStartFrame: Int64(start * Double(lane.sourceRate)),
+                                        sourceEndFrame: Int64(end * Double(lane.sourceRate)),
+                                        alignedStart: start, alignedEnd: end)
+                                }
+                                words.append(TranscriptWord(text: "Untimed synthetic recognition.",
+                                    sourceStartFrame: nil, sourceEndFrame: nil, alignedStart: nil, alignedEnd: nil))
+                                return SpeakerTranscript(speaker: lane.speaker, primary: lane.primary,
+                                    sourceRate: lane.sourceRate, sourceIdentity: identity,
+                                    alignmentRevision: revision, model: "Synthetic UI fixture",
+                                    workingRange: nil, words: words)
+                            }
+                            model = try model.settingCleanup(EpisodeCleanup(transcripts: transcripts).proposingFillers(),
+                                                             in: episode.id)
+                        }
+                    }
                     NewShowCommand.create(at: showURL, model: model)
                 } catch {
                     NSApp.presentError(error)
@@ -186,9 +226,13 @@ enum LaunchFixtures {
 
     private enum FixtureError: LocalizedError {
         case invalidPublicSpeech
+        case invalidTranscriptFixture
 
         var errorDescription: String? {
-            "Public cleanup control must be a 48 kHz mono PCM WAV, 4-30 seconds."
+            switch self {
+            case .invalidPublicSpeech: "Public cleanup control must be a 48 kHz mono PCM WAV, 4-30 seconds."
+            case .invalidTranscriptFixture: "The synthetic transcript requires verified, fully aligned Primaries."
+            }
         }
     }
 

@@ -16,11 +16,7 @@ actor AlignmentRuntime {
         var reconciliationWarning: String?
     }
 
-    struct AuditionClip: Sendable {
-        var sampleRate: Double
-        var samples: [Float]
-        var channelCount: Int = 1
-    }
+    typealias AuditionClip = AlignmentAudioClip
 
     struct DependentCounts: Sendable, Equatable {
         var total: Int
@@ -31,7 +27,9 @@ actor AlignmentRuntime {
     let pipeline: AlignmentPipeline
     private let showID: ShowID
     private let accessStore: any DeviceAccessStore
+    private var sourceAccess: AlignmentSourceAccess { AlignmentSourceAccess(store: accessStore) }
     private let access: SourceAccessContext
+    private let mediaInspector: SourceMediaInspector
     private var sourceByEpoch: [EpisodeID: [RecordingEpochID: AlignmentSource]] = [:]
     private var reports: [EpisodeID: AlignmentAnalysisReport] = [:]
     private var reconciliationFailures: [EpisodeID: String] = [:]
@@ -50,6 +48,7 @@ actor AlignmentRuntime {
         self.showID = showID
         self.accessStore = accessStore
         self.access = access
+        mediaInspector = SourceMediaInspector(accessStore: accessStore, access: access)
         coordinator = DerivedJobCoordinator(store: derived)
         pipeline = AlignmentPipeline(coordinator: coordinator, decoder: SourceDecoder(access: access))
     }
@@ -71,9 +70,10 @@ actor AlignmentRuntime {
         )
     }
 
-    func inspect(model: ShowDocumentModel, episode episodeID: EpisodeID) async -> Prepared {
+    func inspect(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> Prepared {
+        sourceByEpoch[episodeID] = nil
         let records = model.episode(episodeID)?.sources ?? []
-        let sources = await resolveLocations(records)
+        let sources = try await resolveLocations(records)
         let byID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
         var byEpoch: [RecordingEpochID: AlignmentSource] = Dictionary(
             records.compactMap { record in
@@ -88,7 +88,9 @@ actor AlignmentRuntime {
                 guard let source = byID[placement.occurrence.source], source.availability == .on else { continue }
                 for span in placement.spans { byEpoch[span.epoch] = source }
             }
+
         }
+        try Task.checkCancellation()
         sourceByEpoch[episodeID] = byEpoch
         #if DEBUG
         await seedFixtureDependentIfRequested(model: model, episode: episodeID)
@@ -100,8 +102,13 @@ actor AlignmentRuntime {
         )
     }
 
+    func inspectMediaDetails(source: SourceID, permitProvisional: Bool = false) async throws -> SourceObservations {
+        try await mediaInspector.inspect(
+            DeviceAccessKey(showID: showID, sourceID: source), permitProvisional: permitProvisional)
+    }
+
     func analyze(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> AlignmentAnalysisReport {
-        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorization = sources
             .filter { $0.availability == .on }
             .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
@@ -117,7 +124,7 @@ actor AlignmentRuntime {
         targetEpoch: RecordingEpochID, speaker: SpeakerID,
         referenceSource: SourceID, targetSource: SourceID
     ) async throws -> AlignmentAnalysisReport {
-        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorization = sources.filter { $0.availability == .on }
             .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
@@ -133,7 +140,7 @@ actor AlignmentRuntime {
     }
 
     func prepareManual(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> AlignmentAnalysisReport {
-        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorizations = sources.filter { $0.availability == .on }
             .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
         let report = try await pipeline.prepareManual(
@@ -148,7 +155,7 @@ actor AlignmentRuntime {
         targetEpoch: RecordingEpochID, pair: SpeakerMatchOption,
         progress: @escaping @Sendable (Double) async -> Void
     ) async throws -> AdaptiveAnalysisRecord {
-        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorizations = sources.filter { $0.availability == .on }
             .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
@@ -165,7 +172,7 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         group: RecorderGroupID, microseconds: Int64
     ) async throws -> AcceptedAlignment {
-        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         return try await pipeline.shiftAcceptedGroup(
             model: model, episode: episodeID, group: group, microseconds: microseconds
         )
@@ -175,7 +182,7 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID, record: AdaptiveAnalysisRecord,
         includeEstimated: Bool = false
     ) async throws -> AcceptedAlignment {
-        let sources = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorizations = sources.filter { $0.availability == .on }
             .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
         return try await pipeline.acceptAdaptive(model: model, episode: episodeID, record: record,
@@ -185,7 +192,7 @@ actor AlignmentRuntime {
     func removeAdaptive(
         model: ShowDocumentModel, episode episodeID: EpisodeID, source: SourceID
     ) async throws -> AcceptedAlignment {
-        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         return try await pipeline.removeAdaptiveCorrection(model: model, episode: episodeID, source: source)
     }
 
@@ -202,11 +209,11 @@ actor AlignmentRuntime {
             }
         }
         if acceptsProposal, let report = reports[episodeID] {
-            _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+            _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
             return try await pipeline.accept(model: model, episode: episodeID, report: report, decisions: decisions)
         }
         if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
-            _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+            _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
             if let source {
                 guard decisions.count == 1, let epoch = decisions.keys.first,
                       let report = reports[episodeID],
@@ -281,7 +288,7 @@ actor AlignmentRuntime {
         frame: Int64,
         newEpoch: RecordingEpochID
     ) async throws -> AcceptedAlignment {
-        _ = await resolveSources(model.episode(episodeID)?.sources ?? [])
+        _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         return try await pipeline.splitAcceptedOccurrence(
             model: model, episode: episodeID, group: group, source: source,
             epoch: epoch, frame: frame, newEpoch: newEpoch
@@ -302,7 +309,7 @@ actor AlignmentRuntime {
         _ = try await reconciler.reconcile(
             resolve: { [self] in
                 if episode.alignment?.acceptedRevision != nil {
-                    _ = await resolveSources(episode.sources)
+                    _ = try await resolveSources(episode.sources)
                 }
             },
             publish: { [self] in
@@ -339,7 +346,7 @@ actor AlignmentRuntime {
             let published = try await reconciler.reconcile(
                 resolve: { [self] in
                     if episode.alignment?.acceptedRevision != nil {
-                        _ = await resolveSources(episode.sources)
+                        _ = try await resolveSources(episode.sources)
                     }
                 },
                 publish: { [self] in
@@ -433,7 +440,7 @@ actor AlignmentRuntime {
         guard let episode = model.episode(episodeID) else {
             throw AlignmentAcceptanceError.episodeNotFound(episodeID)
         }
-        let sources = await resolveSources(episode.sources)
+        let sources = try await resolveSources(episode.sources)
         var map: AlignedTimelineMap?
         var mapWarning: String?
         if episode.alignment?.acceptedRevision != nil {
@@ -510,7 +517,7 @@ actor AlignmentRuntime {
         guard let episode = model.episode(episodeID) else {
             throw AlignmentAcceptanceError.episodeNotFound(episodeID)
         }
-        let sources = await resolveSources(episode.sources)
+        let sources = try await resolveSources(episode.sources)
         var admissions: [SourceID: WaveformSourceAdmission] = [:]
         for track in retained {
             try Task.checkCancellation()
@@ -652,7 +659,7 @@ actor AlignmentRuntime {
         guard let episode = model.episode(episodeID) else {
             throw AlignmentAcceptanceError.episodeNotFound(episodeID)
         }
-        let sources = await resolveSources(episode.sources)
+        let sources = try await resolveSources(episode.sources)
         try await pipeline.activate(model: model, episode: episodeID)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         guard let referenceGroup = map.groups.first(where: { $0.group == map.reference.group }),
@@ -695,7 +702,7 @@ actor AlignmentRuntime {
         source: SourceID, startSeconds: Double, durationSeconds: Double
     ) async throws -> AuditionClip {
         guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
-        let sources = await resolveSources(episode.sources)
+        let sources = try await resolveSources(episode.sources)
         try await pipeline.activate(model: model, episode: episodeID)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
@@ -779,7 +786,7 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID, requireReady: Bool = true
     ) async throws -> CleanupPreparation {
         guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
-        let sources = await resolveSources(episode.sources)
+        let sources = try await resolveSources(episode.sources)
         try await pipeline.activate(model: model, episode: episodeID)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         let plan = PrimaryCleanupPlan.make(model: model, episode: episodeID, map: map)
@@ -872,7 +879,7 @@ actor AlignmentRuntime {
         guard last > first, last - first <= 30 * 48_000 else {
             throw CleanupFailure(reason: "The preview window must contain between one frame and 30 seconds.")
         }
-        let sources = await resolveSources(episode.sources)
+        let sources = try await resolveSources(episode.sources)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         let count = Int(last - first)
         var channels: [SpeakerID: [Float]] = [:]
@@ -955,7 +962,7 @@ actor AlignmentRuntime {
               let episode = model.episode(episodeID) else {
             throw CleanupFailure(reason: preparation.plan.blockers.joined(separator: "\n"))
         }
-        let sources = await resolveSources(episode.sources)
+        let sources = try await resolveSources(episode.sources)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         let total = preparation.plan.lanes.reduce(0.0) { $0 + $1.end - $1.start }
         let requests = try preparation.plan.lanes.map { lane in
@@ -1090,14 +1097,16 @@ actor AlignmentRuntime {
         return reconciler
     }
 
-    private func resolveSources(_ records: [SourceRecord]) async -> [AlignmentSource] {
+    private func resolveSources(_ records: [SourceRecord]) async throws -> [AlignmentSource] {
         var values: [AlignmentSource] = []
         let evaluator = SourceAvailabilityEvaluator(context: access)
         for source in records {
             let key = DeviceAccessKey(showID: showID, sourceID: source.id)
-            let record = try? await accessStore.record(for: key)
+            let record = try await sourceAccess.record(for: key)
             let evaluation = evaluator.evaluate(key: key, record: record, setting: .on)
-            if let refreshed = evaluation.refreshedRecord { try? await accessStore.save(refreshed) }
+            if let refreshed = evaluation.refreshedRecord {
+                try await sourceAccess.refresh(refreshed)
+            }
             guard let url = evaluation.resolvedURL,
                   evaluation.observation.access == .granted,
                   evaluation.observation.identity == .matchesRecorded,
@@ -1131,11 +1140,11 @@ actor AlignmentRuntime {
 
     /// Resolves only the app's device-local access records. It never opens a source, reads source metadata or
     /// registers a revision; explicit Analyze/Audition actions perform those content-gateway preparations.
-    private func resolveLocations(_ records: [SourceRecord]) async -> [AlignmentSource] {
+    private func resolveLocations(_ records: [SourceRecord]) async throws -> [AlignmentSource] {
         var values: [AlignmentSource] = []
         for source in records {
             let key = DeviceAccessKey(showID: showID, sourceID: source.id)
-            let record = try? await accessStore.record(for: key)
+            let record = try await sourceAccess.record(for: key)
             guard let bookmark = record?.bookmark else {
                 values.append(AlignmentSource(id: source.id, url: URL(fileURLWithPath: "/"), availability: .off))
                 continue

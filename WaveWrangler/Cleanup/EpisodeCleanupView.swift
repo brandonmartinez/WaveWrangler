@@ -32,7 +32,6 @@ struct EpisodeCleanupContent: View {
                 transport
                 navigation
                 markerControls
-                FillerTimingReviewSummary(model: model)
                 VStack(alignment: .leading, spacing: 6) {
                     Button {
                         showsPrecisionRange.toggle()
@@ -86,9 +85,12 @@ struct EpisodeCleanupContent: View {
         }
         .wwFont(.body)
         .onAppear { state.cleanupModel = model }
-        .task(id: state.store.modelGeneration) { await model.refresh(skippingReviewOnlyChange: true) }
+        .task(id: model.episode.map { EpisodeMediaInputs($0, includingWorkingRange: true) }) {
+            await model.refresh(skippingReviewOnlyChange: true)
+        }
+        .onChange(of: model.listening.playback) { _, _ in model.updateGains() }
         .onDisappear {
-            model.cancel()
+            model.cancelTranscription()
             if state.cleanupModel === model { state.cleanupModel = nil }
         }
         .accessibilityIdentifier("ww.cleanup.workspace")
@@ -369,8 +371,8 @@ struct EpisodeCleanupContent: View {
     private var rangeMarkers: [AudioTimelineMarker] {
         let range = model.episode?.cleanup?.workingRange
         return [
-            range?.tracksIn.map { AudioTimelineMarker(id: "in", time: $0, title: "IN", color: .orange) },
-            range?.tracksOut.map { AudioTimelineMarker(id: "out", time: $0, title: "OUT", color: .orange) },
+            range?.tracksIn.map { AudioTimelineMarker(id: "in", time: $0, title: "IN", color: .yellow) },
+            range?.tracksOut.map { AudioTimelineMarker(id: "out", time: $0, title: "OUT", color: .yellow) },
         ].compactMap { $0 }
     }
 
@@ -379,13 +381,8 @@ struct EpisodeCleanupContent: View {
         return AudioTimelineTrackRow(headerWidth: headerWidth) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    Toggle("", isOn: Binding(
-                        get: { !model.mutedSpeakers.contains(lane.speaker) },
-                        set: { model.setSpeaker(lane.speaker, enabled: $0) }
-                    ))
-                    .labelsHidden()
-                    .accessibilityLabel("Hear \(lane.name)")
-                    .accessibilityIdentifier("ww.cleanup.enabled.\(lane.id)")
+                    SpeakerAvatarView(name: lane.name, appearance: state.store.model.speakerAppearance(
+                        lane.speaker, in: model.episodeID) ?? .init(color: .defaultColor(for: lane.speaker)))
                     Text(lane.name).font(.callout.weight(.semibold)).lineLimit(1)
                     if !uncertainIDs.isEmpty {
                         Image(systemName: "exclamationmark.triangle")
@@ -394,6 +391,8 @@ struct EpisodeCleanupContent: View {
                             .help(EpisodeCleanupModel.repetitionReviewExplanation)
                     }
                 }
+                AudioTimelineListeningButtons(listening: model.listening, scope: .speaker(lane.speaker),
+                                              name: lane.name, changed: { model.updateGains() })
                 Text("\(lane.sourceName) · Primary · Channel \((lane.primary.channel.value ?? 0) + 1)")
                     .font(.caption2).foregroundStyle(.secondary).lineLimit(2)
                 HStack {
@@ -418,7 +417,8 @@ struct EpisodeCleanupContent: View {
                     playhead: model.playhead, range: model.episode?.cleanup?.workingRange,
                     selectedRange: model.selectedSpeaker == lane.speaker ? selectedWordRange : nil,
                     regions: lane.regions, normalized: model.normalizeView,
-                    muted: model.mutedSpeakers.contains(lane.speaker), displayScale: displayScale) {
+                    muted: model.mutedSpeakers.contains(lane.speaker), displayScale: displayScale,
+                    color: state.store.model.speakerAppearance(lane.speaker, in: model.episodeID)?.color.swiftUIColor ?? .accentColor) {
                     guard model.canNavigate else { return }
                     model.selectedSpeaker = lane.speaker
                     model.selectedWord = nil
@@ -446,16 +446,6 @@ struct EpisodeCleanupContent: View {
                             .help(EpisodeCleanupModel.repetitionReviewExplanation)
                             .accessibilityIdentifier("ww.cleanup.recognition.warning.\(lane.id)")
                     }
-                    DisclosureGroup("Transcript for visible window") {
-                        Text(visibleWords.map(\.text).joined(separator: " "))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                    if !untimed.isEmpty {
-                        DisclosureGroup("\(untimed.count) untimed segments — overlapping windows may repeat text") {
-                            Text(untimed.map(\.text).joined(separator: " ")).textSelection(.enabled)
-                        }
-                    }
                 } else {
                     Text(model.episode?.cleanup?.transcripts.contains(where: { $0.speaker == lane.speaker }) == true
                         ? "Transcript stale or outside its analyzed range. Verify sources/timing, then transcribe again."
@@ -477,7 +467,8 @@ struct EpisodeCleanupContent: View {
             zoom: { time in
                 model.seek(to: time)
                 model.zoomTimeline(duration: min(5, model.maximumDuration))
-            }, uncertainWordIDs: uncertainIDs)
+            }, uncertainWordIDs: uncertainIDs,
+            selectUnit: { model.select($0, speaker: lane.speaker) })
             .accessibilityIdentifier("ww.cleanup.words.\(lane.id)")
     }
 
@@ -500,16 +491,17 @@ private struct CleanupWaveform: View {
     let normalized: Bool
     let muted: Bool
     let displayScale: Double
+    var color: Color = .accentColor
     let seek: (Double) -> Void
 
     var body: some View {
         GeometryReader { geometry in
             ZStack {
-                Color.primary.opacity(0.025)
+                color.opacity(0.045)
                 AudioTimelineWaveformDrawing(
                     snapshot: snapshot, strokes: strokes, size: geometry.size,
                     start: start, duration: duration,
-                    color: muted ? .secondary : .accentColor, lineWidth: 1,
+                    color: muted ? color.opacity(0.45) : color, lineWidth: 1,
                     gain: AlignmentWaveformProjection.displayGain(for: strokes, normalized: normalized),
                     displayScale: displayScale
                 )
@@ -530,7 +522,7 @@ private struct CleanupWaveform: View {
                     context.stroke(baseline, with: .color(.secondary.opacity(0.25)), lineWidth: 1)
                     for marker in [range?.tracksIn, range?.tracksOut].compactMap({ $0 }) {
                         context.fill(Path(CGRect(x: x(marker), y: 0, width: 2, height: size.height)),
-                                     with: .color(.orange))
+                                     with: .color(.yellow))
                     }
                     if let markIn = range?.tracksIn {
                         context.fill(Path(CGRect(x: 0, y: 0, width: max(0, min(size.width, x(markIn))), height: size.height)),
@@ -580,7 +572,32 @@ struct CleanupInspectorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Speaker & Word").wwFont(.headline)
+            Text("Transcript & Review").wwFont(.headline)
+            Picker("Speaker", selection: $model.selectedSpeaker) {
+                Text("Choose a speaker").tag(Optional<SpeakerID>.none)
+                ForEach(model.episode?.speakerAssignments ?? [], id: \.speakerID) { assignment in
+                    Text(model.state.store.model.speaker(assignment.speakerID)?.name ?? "Speaker")
+                        .tag(Optional(assignment.speakerID))
+                }
+            }
+            if let text = model.listening.selectedTranscriptText {
+                Text(text).textSelection(.enabled)
+            }
+            if model.listening.selection != nil {
+                HStack {
+                    Button("Play selection", systemImage: "play.fill") {
+                        if let range = model.listening.auditionRange(context: 0, within: model.bounds) {
+                            model.play(interval: range, loop: false)
+                        }
+                    }
+                    Button("With context", systemImage: "play.rectangle") {
+                        if let range = model.listening.auditionRange(context: 0.5, within: model.bounds) {
+                            model.play(interval: range, loop: false)
+                        }
+                    }
+                }.controlSize(.small)
+            }
+            FillerTimingReviewSummary(model: model)
             if let review = model.selectedFiller {
                 FillerTimingToolbar(model: model, reviewID: review.id, accessibilityPrefix: "ww.cleanup.filler.inspector")
                 DisclosureGroup("Captured review origin") {
@@ -629,12 +646,54 @@ struct CleanupInspectorView: View {
                     Text("Approximate recognizer timing. Not a supported cut boundary.")
                 }
             } else {
-                Text("Select a word or a speaker's Details button.")
+                Text("Select a transcript phrase, a speaker, or a filler marker to review it.")
             }
             Divider()
-            Text("Full cuts will shorten all lanes together. Speaker-only cuts will preserve everyone else's timing. Neither is enabled by transcription.")
+            transcriptReading
+            Text("Recognition is approximate. Review by listening; no cuts are applied and original recordings remain unchanged.")
         }
         .wwFont(.body)
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private var transcriptReading: some View {
+        let active = model.episode?.cleanup?.transcripts.filter {
+            model.selectedSpeaker == nil || $0.speaker == model.selectedSpeaker
+        } ?? []
+        ForEach(active) { transcript in
+            Text(model.state.store.model.speaker(transcript.speaker)?.name ?? "Speaker").font(.headline)
+            if model.plan?.lanes.first(where: { $0.speaker == transcript.speaker })
+                .flatMap({ model.transcript(for: $0) }) == nil {
+                Label("Retained transcript: source or timing verification is no longer current.",
+                      systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+            }
+            Text(transcript.words.map(\.text).joined(separator: " "))
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityIdentifier("ww.transcript.full.\(transcript.id)")
+            let untimed = transcript.words.filter { $0.alignedStart == nil }
+            if !untimed.isEmpty {
+                DisclosureGroup("Speech without reliable timing (\(untimed.count))") {
+                    Text("This raw recognition cannot be placed on the waveform. It may repeat overlapping recognition windows. Listen to the source, or transcribe again after verifying alignment; the original text is retained.")
+                        .font(.caption)
+                    Text(untimed.map(\.text).joined(separator: " ")).textSelection(.enabled)
+                    Button("Transcribe again") { model.transcribe() }.disabled(!model.canTranscribe)
+                }
+            }
+        }
+        let history = model.episode?.cleanup?.transcriptHistory?.filter {
+            model.selectedSpeaker == nil || $0.speaker == model.selectedSpeaker
+        } ?? []
+        if !history.isEmpty {
+            DisclosureGroup("Earlier transcripts (\(history.count))") {
+                ForEach(history) { transcript in
+                    DisclosureGroup("\(model.state.store.model.speaker(transcript.speaker)?.name ?? "Speaker") · revision \(transcript.alignmentRevision) · \(transcript.model)") {
+                        Text(transcript.words.map(\.text).joined(separator: " ")).textSelection(.enabled)
+                        Text("Historical recognition; not asserted to match current source timing.").font(.caption)
+                    }
+                }
+            }
+        }
     }
 }
