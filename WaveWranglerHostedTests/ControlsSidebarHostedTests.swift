@@ -133,10 +133,20 @@ struct ControlsSidebarHostedTests {
         let detected = try #require(model.fillerReviews.first)
         model.selectFiller(detected.id, reveal: false)
         model.setWindow(start: 1.9, duration: 0.5)
+        try #require(model.selectedFillerID == detected.id && model.canReviewFillers)
         let host = HostedTimelineWindow(width: 744, height: 110,
             content: FillerTimingOverlay(model: model, reviews: [detected]))
         defer { host.close() }
         try await host.settle()
+        try host.capture("Compact marker controls before native input")
+        let views = host.descendants.map {
+            "\(type(of: $0)): frame=\($0.frame), id=\($0.accessibilityIdentifier() ?? ""), label=\($0.accessibilityLabel() ?? "")"
+        }.joined(separator: "\n")
+        Attachment.record(Data("""
+            host=\(host.view.frame), key=\(host.window.isKeyWindow), active=\(NSApp.isActive)
+            children=\(String(describing: host.view.accessibilityChildren()))
+            \(views)
+            """.utf8), named: "compact-marker-native-view-tree.txt")
         func clickControl(_ identifier: String) async throws {
             let control = try #require(accessibilityControl(identifier, in: host.view),
                                        "Missing native review control \(identifier)")

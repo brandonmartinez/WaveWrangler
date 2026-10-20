@@ -228,7 +228,10 @@ struct AlignmentWaveformRetentionHostedTests {
         f.model.loadWaveforms()
         try await wait { f.model.waveformMap == proposedMap && !f.model.isLoadingWaveforms
             && f.model.rows.contains { $0.epochID == target && $0.state.heading.hasPrefix("Proposed") } }
-        f.model.selectWaveform(try #require(f.model.waveformTracks.first { $0.id == f.target }))
+        let track = try #require(f.model.waveformTracks.first { $0.id == f.target })
+        f.model.selectWaveform(track)
+        f.model.setPositionLocked(false, group: track.group)
+        try await wait { f.document.verifiedModel == f.document.store.model }
         ready = true
         return f
     }
