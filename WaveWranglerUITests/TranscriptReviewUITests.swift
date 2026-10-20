@@ -99,7 +99,7 @@ final class TranscriptReviewUITests: XCTestCase {
             NSPredicate(format: "identifier BEGINSWITH 'ww.cleanup.waveform.'")).firstMatch
         XCTAssertTrue(app.buttons["ww.cleanup.filler.manual"].exists, app.debugDescription)
         revealInWorkspace(waveform)
-        waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.5)).click()
         app.buttons["ww.cleanup.filler.manual"].click()
         let region = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND label CONTAINS 'Manual filler'")).firstMatch
@@ -110,11 +110,21 @@ final class TranscriptReviewUITests: XCTestCase {
         let end = app.buttons[identifier + ".end"]
         let originalStart = try XCTUnwrap(Double((start.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
         let originalEnd = try XCTUnwrap(Double((end.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
+        start.click()
+        assertFillerPopoverAnchored(to: start.frame.midX)
+        app.typeKey(.escape, modifierFlags: [])
+        end.click()
+        assertFillerPopoverAnchored(to: end.frame.midX)
+        app.typeKey(.escape, modifierFlags: [])
+        region.click()
+        assertFillerPopoverAnchored(to: region.frame.midX)
+        app.typeKey(.escape, modifierFlags: [])
         let startPoint = start.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         startPoint.click(forDuration: 0.1, thenDragTo: startPoint.withOffset(CGVector(dx: -12, dy: 0)))
         let startField = app.textFields["ww.cleanup.filler.start.seconds"]
         let endField = app.textFields["ww.cleanup.filler.end.seconds"]
         XCTAssertTrue(startField.waitForExistence(timeout: 5), app.debugDescription)
+        assertFillerPopoverAnchored(to: start.frame.midX)
         let movedStart = try XCTUnwrap(Double(startField.value as? String ?? ""))
         XCTAssertLessThan(movedStart, originalStart)
         XCTAssertEqual(Double(endField.value as? String ?? "") ?? -1, originalEnd, accuracy: 0.000001)
@@ -122,6 +132,7 @@ final class TranscriptReviewUITests: XCTestCase {
         let endPoint = end.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         endPoint.click(forDuration: 0.1, thenDragTo: endPoint.withOffset(CGVector(dx: 12, dy: 0)))
         XCTAssertTrue(startField.waitForExistence(timeout: 5))
+        assertFillerPopoverAnchored(to: end.frame.midX)
         XCTAssertEqual(Double(startField.value as? String ?? "") ?? -1, movedStart, accuracy: 0.000001)
         XCTAssertGreaterThan(Double(endField.value as? String ?? "") ?? -1, originalEnd)
         XCTAssertFalse(app.buttons["ww.cleanup.filler.revert"].exists, "Manual intervals never claim detected times")
@@ -174,6 +185,14 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Not a filler"].exists, "The undo result persists across a fresh app launch")
         XCTAssertFalse(app.buttons["ww.cleanup.filler.revert"].exists)
         capture("Saved and reopened manual filler timing review")
+    }
+
+    private func assertFillerPopoverAnchored(to x: CGFloat, file: StaticString = #filePath, line: UInt = #line) {
+        let popover = app.popovers.firstMatch
+        XCTAssertTrue(popover.waitForExistence(timeout: 5), file: file, line: line)
+        XCTAssertTrue(wait { popover.frame.minX <= x + 2 && popover.frame.maxX >= x - 2 },
+                      "The filler popover must point at the clicked handle or visible interval, not the lane origin: \(popover.frame), anchor \(x)",
+                      file: file, line: line)
     }
 
     func testOptedInPublicSpeechTranscribesThroughTheRealEpisodeWorkspace() throws {
