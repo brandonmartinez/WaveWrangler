@@ -124,7 +124,7 @@ final class ControlsSidebarUITests: XCTestCase {
         }
     }
 
-    private func wait(_ predicate: () -> Bool) -> Bool {
+    private func wait(_ predicate: @escaping () -> Bool) -> Bool {
         let condition = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in predicate() }, object: nil)
         return XCTWaiter.wait(for: [condition], timeout: 5) == .completed
     }

@@ -18,6 +18,12 @@ actor AlignmentRuntime {
 
     typealias AuditionClip = AlignmentAudioClip
 
+    struct AuditionSourceFailure: LocalizedError {
+        let source: SourceID
+        let reason: String
+        var errorDescription: String? { reason }
+    }
+
     struct DependentCounts: Sendable, Equatable {
         var total: Int
         var stale: Int
@@ -35,6 +41,7 @@ actor AlignmentRuntime {
     private var reconciliationFailures: [EpisodeID: String] = [:]
     private var openedDocuments = OpenedDocumentPublications()
     private var publicationReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
+    private let auditionPCM = AlignedAuditionPCMCache()
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
     #endif
@@ -701,37 +708,86 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         source: SourceID, startSeconds: Double, durationSeconds: Double
     ) async throws -> AuditionClip {
+        guard startSeconds.isFinite, (-86_400...86_400).contains(startSeconds),
+              durationSeconds.isFinite, durationSeconds > 0,
+              durationSeconds <= AlignedAuditionWindowReader.maximumDurationSeconds else {
+            throw WaveformWindowError.invalidWindow
+        }
+        let rate = Double(AlignedAuditionWindowReader.outputRate)
+        let first = Int64(floor(startSeconds * rate))
+        let frames = first..<(first + Int64(ceil(durationSeconds * rate)))
+        let clips = try await sourceAuditions(
+            model: model, episode: episodeID, sources: [source], outputFrames: frames
+        )
+        guard let clip = clips[source] else { throw WaveformWindowError.invalidSamples }
+        return clip
+    }
+
+    func sourceAuditions(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        sources requested: [SourceID], outputFrames: Range<Int64>
+    ) async throws -> [SourceID: AuditionClip] {
         guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
+        guard !requested.isEmpty, Set(requested).count == requested.count else {
+            throw WaveformWindowError.invalidSamples
+        }
         let sources = try await resolveSources(episode.sources)
         try await pipeline.activate(model: model, episode: episodeID)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
-        if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
-            let admission = try await waveformSource(source, sources: sources)
-            let channels = try await pipeline.adaptiveAudioWindow(model: model, episode: episodeID, source: source,
-                sourceURL: admission.url, matching: admission.witness,
-                startSeconds: startSeconds, durationSeconds: durationSeconds)
-            let channel = episode.statedChannel(of: source) ?? 0
-            guard channels.indices.contains(channel) else { throw WaveformWindowError.invalidSamples }
-            try await reverify(admission)
-            return AuditionClip(sampleRate: 48000, samples: channels[channel])
+        let revision = episode.alignment?.acceptedRevision.map {
+            MapRevisionReference(episode: episodeID, revision: $0)
         }
-        guard let record = episode.source(source),
-              let groupID = record.placement.recorderGroupID,
-              let group = map.groups.first(where: { $0.group == groupID }),
-              group.placements.contains(where: { $0.occurrence.source == source })
-        else { throw WaveformWindowError.mapDoesNotMatchSource }
-        let admission = try await waveformSource(source, sources: sources)
-        let samples = try await AlignedAuditionWindowReader.readWindow(
-            sourceURL: admission.url, source: source,
-            matching: admission.witness, decoder: pipeline.decoder, groupMap: group,
-            decodedChannel: episode.statedChannel(of: source) ?? 0,
-            startSeconds: startSeconds, durationSeconds: durationSeconds
-        )
-        try await reverify(admission)
+        var clips: [SourceID: AuditionClip] = [:]
+        var admissions: [WaveformSourceAdmission] = []
+        for source in requested {
+            try Task.checkCancellation()
+            do {
+                let admission = try await waveformSource(source, sources: sources)
+                let channel = episode.statedChannel(of: source) ?? 0
+                let samples: [Float]
+                if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
+                    let channels = try await pipeline.adaptiveAudioWindow(
+                        model: model, episode: episodeID, source: source,
+                        sourceURL: admission.url, matching: admission.witness, outputFrames: outputFrames
+                    )
+                    guard channels.indices.contains(channel) else { throw WaveformWindowError.invalidSamples }
+                    samples = channels[channel]
+                } else {
+                    guard let record = episode.source(source),
+                          let groupID = record.placement.recorderGroupID,
+                          let group = map.groups.first(where: { $0.group == groupID }),
+                          group.placements.contains(where: { $0.occurrence.source == source })
+                    else { throw WaveformWindowError.mapDoesNotMatchSource }
+                    samples = try await AlignedAuditionWindowReader.readWindow(
+                        sourceURL: admission.url, source: source, matching: admission.witness,
+                        decoder: pipeline.decoder, groupMap: group, decodedChannel: channel,
+                        outputFrames: outputFrames, cache: auditionPCM, revision: revision
+                    )
+                }
+                clips[source] = AuditionClip(
+                    sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples
+                )
+                admissions.append(admission)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                throw AuditionSourceFailure(
+                    source: source, reason: error is LocalizedError ? error.localizedDescription : String(describing: error)
+                )
+            }
+        }
+        for admission in admissions {
+            do { try await reverify(admission) }
+            catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                throw AuditionSourceFailure(
+                    source: admission.key.sourceID,
+                    reason: error is LocalizedError ? error.localizedDescription : String(describing: error)
+                )
+            }
+        }
         _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
-        return AuditionClip(
-            sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples
-        )
+        try Task.checkCancellation()
+        return clips
     }
 
     func dependentCounts(episode episodeID: EpisodeID) async -> DependentCounts {
