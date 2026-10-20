@@ -1452,7 +1452,7 @@ final class EpisodeAlignmentModel {
                             warmTransportSource(
                                 source, model: snapshot, generation: generation,
                                 frames: schedule.nextFrame..<min(
-                                    schedule.endFrame, schedule.nextFrame + Int64(rate * AlignedAuditionWindowReader.maximumDurationSeconds)
+                                    schedule.endFrame, schedule.nextFrame + AlignedAuditionSchedule.initialFrames
                                 )
                             )
                         }

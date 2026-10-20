@@ -203,7 +203,7 @@ final class VisualAlignmentUITests: XCTestCase {
         place.click()
         XCTAssertTrue(waitForMapRevision(1, in: app))
         unlockTarget(in: app)
-        let tool = app.buttons["alignment.waveforms.tool"]
+        let tool = app.menuButtons["alignment.waveforms.tool"]
         scrollTo(tool, in: app)
         tool.click()
         app.menuItems["Move recorder"].click()

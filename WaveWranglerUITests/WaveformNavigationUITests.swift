@@ -51,6 +51,15 @@ final class WaveformNavigationUITests: XCTestCase {
         reveal(track, in: app)
         let recordingSidebar = app.buttons["ww.sidebar.recording"]
         if recordingSidebar.value as? String == "Shown" { recordingSidebar.click() }
+        let playhead = app.textFields["alignment.waveforms.playhead"]
+        reveal(playhead, in: app)
+        playhead.click()
+        playhead.typeKey("a", modifierFlags: .command)
+        playhead.typeText("2.25")
+        playhead.typeKey(.return, modifierFlags: [])
+        let zoom = app.sliders["alignment.waveforms.zoom"]
+        reveal(zoom, in: app)
+        zoom.adjust(toNormalizedSliderPosition: 1)
         let markers = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND identifier ENDSWITH '.start'"))
         XCTAssertTrue(wait { markers.count == 2 }, app.debugDescription)
@@ -60,7 +69,6 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(app.buttons["ww.sidebar.transcript"].value as? String, "Hidden",
                        "Compact marker review must not open a sidebar and resize the timeline")
         app.typeKey(.escape, modifierFlags: [])
-        let playhead = app.textFields["alignment.waveforms.playhead"]
         reveal(playhead, in: app)
         playhead.click()
         playhead.typeKey("a", modifierFlags: .command)

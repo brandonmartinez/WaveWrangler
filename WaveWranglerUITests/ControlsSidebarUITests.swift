@@ -16,9 +16,9 @@ final class ControlsSidebarUITests: XCTestCase {
         let region = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND label CONTAINS 'Um,'")).firstMatch
         XCTAssertTrue(region.waitForExistence(timeout: 20), app.debugDescription)
-        app.buttons["alignment.waveforms.commandTool"].click()
+        app.menuButtons["alignment.waveforms.commandTool"].click()
         app.menuItems["Reject"].click()
-        let primary = app.buttons["alignment.waveforms.tool"]
+        let primary = app.menuButtons["alignment.waveforms.tool"]
         XCTAssertEqual(primary.value as? String, "Pointer")
         reveal(region, in: app)
         XCUIElement.perform(withKeyModifiers: .command) { region.click() }
@@ -71,17 +71,17 @@ final class ControlsSidebarUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews["ww.inspector.alignment.details"].exists)
         alignment.click()
         XCTAssertEqual(alignment.value as? String, "Hidden")
-        XCTAssertFalse(app.outlines["ww.alignment.groups"].exists)
+        XCTAssertTrue(wait { !app.outlines["ww.alignment.groups"].exists })
         episode.click()
         XCTAssertTrue(app.textFields["ww.inspector.episode.title"].waitForExistence(timeout: 5))
         transcript.click()
         XCTAssertTrue(app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH 'ww.transcript.full.'")).firstMatch.waitForExistence(timeout: 5))
         XCTAssertEqual(episode.value as? String, "Hidden")
-        let primary = app.buttons["alignment.waveforms.tool"]
+        let primary = app.menuButtons["alignment.waveforms.tool"]
         reveal(primary, in: app)
         XCTAssertTrue(primary.isHittable)
-        XCTAssertTrue(app.buttons["alignment.waveforms.commandTool"].isHittable)
+        XCTAssertTrue(app.menuButtons["alignment.waveforms.commandTool"].isHittable)
         let preset = app.buttons["ww.listening.preset.soloPrimaries"]
         XCTAssertTrue(preset.isHittable)
         XCTAssertTrue(app.buttons["ww.audioWorkspace.add"].isHittable)

@@ -100,8 +100,8 @@ continues to use the frozen `WWAlignEstimate`.
 Aligned transport prepares one second of the initially audible tracks, then fills
 contiguous half-second output-frame windows with at most 3.5 seconds queued ahead.
 All tracks use the same exact output ranges and shared host clock. Muted tracks do
-not render before audible startup. One optional source at a time warms up to five
-seconds in the background; only an enabled source with a freshly reverified window
+not render before audible startup. One optional source at a time warms up to one
+second in the background; only an enabled source with a freshly reverified window
 can join a future transport boundary. Pending or unavailable sources are reported
 without restarting the other tracks. A missed producer deadline stops playback
 with an explicit error instead of treating an underrun as successful listening.

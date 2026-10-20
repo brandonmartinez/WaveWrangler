@@ -28,6 +28,8 @@ struct TimelineToolControls: View {
                 if command { Image(systemName: "command") }
                 Image(systemName: selection.wrappedValue.symbol)
             }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(title)
         }
         .menuStyle(.borderlessButton)
         .fixedSize()

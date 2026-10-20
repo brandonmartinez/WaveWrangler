@@ -64,6 +64,7 @@ struct WaveformNavigationHostedTests {
             try document.settingCleanup(EpisodeCleanup(transcripts: [transcript]).proposingFillers(),
                                         in: f.model.episodeID)
         })
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try await wait { f.document.verifiedModel == f.document.store.model }
         f.model.waveformStartSeconds = 18
         f.model.waveformDurationSeconds = 5
