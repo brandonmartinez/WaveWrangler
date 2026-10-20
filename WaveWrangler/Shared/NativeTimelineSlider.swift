@@ -43,6 +43,9 @@ struct NativeTimelineSlider: View {
             slider.doubleValue = value
             slider.isEnabled = context.environment.isEnabled
             slider.editingChanged = editingChanged
+            slider.setAccessibilityElement(true)
+            slider.setAccessibilityRole(.slider)
+            slider.setAccessibilityChildren([])
             slider.setAccessibilityLabel(title)
             slider.setAccessibilityIdentifier(identifier)
         }
@@ -72,14 +75,6 @@ struct NativeTimelineSlider: View {
                     editingChanged?(false)
                 }
                 super.mouseDown(with: event)
-            }
-
-            override func accessibilityChildren() -> [Any]? {
-                let children = super.accessibilityChildren()
-                for case let child as any NSAccessibilityProtocol in children ?? [] {
-                    child.setAccessibilityLabel(accessibilityLabel())
-                }
-                return children
             }
         }
     }

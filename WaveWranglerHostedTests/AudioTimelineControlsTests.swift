@@ -8,7 +8,7 @@ import WWCore
 @MainActor
 @Suite("Shared timeline control layout and owned-window interaction", .serialized)
 struct AudioTimelineControlsTests {
-    @Test func nativeSliderPreservesValueEditingCallbacksAndDescribedThumb() async throws {
+    @Test func nativeSliderPreservesRoleValueAndEditingCallbacks() async throws {
         var value = 0.25
         var editing: [Bool] = []
         let host = HostedTimelineWindow(width: 220, height: 30,
@@ -22,9 +22,7 @@ struct AudioTimelineControlsTests {
         #expect(slider.accessibilityLabel() == "Synthetic zoom")
         #expect(slider.accessibilityIdentifier() == "test.timeline.zoom")
         #expect(slider.minValue == 0 && slider.maxValue == 1)
-        for case let child as any NSAccessibilityProtocol in slider.accessibilityChildren() ?? [] {
-            #expect(child.accessibilityLabel() == "Synthetic zoom")
-        }
+        #expect(slider.accessibilityChildren()?.isEmpty == true)
         slider.doubleValue = 0.75
         #expect(slider.sendAction(slider.action, to: slider.target))
         #expect(value == 0.75 && editing == [true, false])
