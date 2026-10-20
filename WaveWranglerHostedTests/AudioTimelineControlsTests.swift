@@ -340,7 +340,7 @@ final class HostedTimelineWindow<Content: View> {
             guard !node.isHiddenOrHasHiddenAncestor else { return }
             if node !== view, node.subviews.isEmpty {
                 let frame = view.convert(node.bounds, from: node)
-                if (12...50).contains(frame.height), (0.5...300).contains(frame.width),
+                if (10...50).contains(frame.height), (0.5...300).contains(frame.width),
                     view.bounds.contains(frame), !frames.contains(frame)
                 {
                     frames.append(frame)
