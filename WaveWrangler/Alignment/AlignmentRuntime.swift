@@ -203,6 +203,14 @@ actor AlignmentRuntime {
         return try await pipeline.removeAdaptiveCorrection(model: model, episode: episodeID, source: source)
     }
 
+    func reviewSavedProposal(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        decisions: [RecordingEpochID: EpochMapDecision]
+    ) async throws -> AcceptedAlignment {
+        _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
+        return try await pipeline.reviseAcceptedMap(model: model, episode: episodeID, decisions: decisions)
+    }
+
     func accept(
         model: ShowDocumentModel,
         episode episodeID: EpisodeID,

@@ -131,6 +131,34 @@ struct ControlsSidebarHostedTests {
         })
         model.proposeFillers()
         let detected = try #require(model.fillerReviews.first)
+        model.selectFiller(detected.id, reveal: false)
+        model.setWindow(start: 1.9, duration: 0.5)
+        let host = HostedTimelineWindow(width: 744, height: 110,
+            content: FillerTimingOverlay(model: model, reviews: [detected]))
+        defer { host.close() }
+        try await host.settle()
+        func clickControl(_ identifier: String) async throws {
+            let control = try #require(accessibilityControl(identifier, in: host.view),
+                                       "Missing native review control \(identifier)")
+            let screenFrame = control.accessibilityFrame()
+            let frame = host.view.convert(host.window.convertFromScreen(screenFrame), from: nil)
+            let point = CGPoint(x: frame.midX, y: frame.midY)
+            Attachment.record(Data("""
+                \(identifier): screen=\(screenFrame), local=\(frame)
+                hit=\(String(describing: host.view.hitTest(point)))
+                native control frames=\(host.controlFrames)
+                """.utf8), named: "\(identifier)-hit.txt")
+            try await host.click(point)
+        }
+        try await clickControl("ww.cleanup.filler.loop")
+        #expect(model.loopsFillerAudition)
+        try await clickControl("ww.cleanup.filler.loop")
+        #expect(!model.loopsFillerAudition)
+        try await clickControl("ww.cleanup.filler.reject")
+        #expect(model.selectedFiller?.decision == .rejected)
+        try await clickControl("ww.cleanup.filler.clearReview")
+        #expect(model.selectedFiller?.decision == .pending)
+        try host.capture("Native compact marker action hit testing")
         let original = f.document.store.model
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         let undo = try #require(f.document.undoManager)
@@ -184,6 +212,16 @@ struct ControlsSidebarHostedTests {
         try #require(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
             characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55))
+    }
+
+    private func accessibilityControl(_ identifier: String, in root: any NSAccessibilityProtocol)
+        -> (any NSAccessibilityProtocol)? {
+        if root.accessibilityIdentifier() == identifier { return root }
+        for child in root.accessibilityChildren() ?? [] {
+            if let child = child as? any NSAccessibilityProtocol,
+               let found = accessibilityControl(identifier, in: child) { return found }
+        }
+        return nil
     }
 
     private func wait(_ condition: () -> Bool) async throws {

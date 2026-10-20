@@ -259,13 +259,21 @@ final class EpisodeAlignmentModel {
     }
 
     var canAcceptProposal: Bool {
-        guard !isWorking, selectedAnalysis?.proposal != nil,
-              (!hasAcceptedRevision || waveformMap != nil),
+        guard !isWorking, let row = selectedRow,
               let episode = document?.store.model.episode(episodeID)
         else { return false }
-        return analyzedInputs == EpisodeMediaInputs(episode)
-            && selectedRow?.groupID != acceptedMap?.reference.group
-            && selectedRow.map { !episode.positionIsLocked($0.groupID) } == true
+        guard row.groupID != acceptedMap?.reference.group,
+              !episode.positionIsLocked(row.groupID) else { return false }
+        if let analysis = selectedAnalysis {
+            return analysis.proposal != nil && analyzedInputs == EpisodeMediaInputs(episode)
+                && (!hasAcceptedRevision || waveformMap != nil)
+        }
+        guard let document, timingIsVerified(document.store.model),
+              !waveformNeedsRefreshAfterSave, let acceptedMap, acceptedMap == waveformMap,
+              let mapping = acceptedMap.groups.first(where: { $0.group == row.groupID })?
+                .epochs.first(where: { $0.epoch == row.epochID })?.mapping else { return false }
+        if case .mapped(_, .acousticConsistentProposal) = mapping { return true }
+        return false
     }
 
     var proposalNeedsExtension: Bool {
@@ -2242,7 +2250,8 @@ final class EpisodeAlignmentModel {
                 && $0.alignedSeconds.isFinite }) else { return nil }
             return AlignmentAnchorNote.encode(markers, source: record.target.source)
         } ?? ""
-        accept(actionName: UndoActionName.acceptProposal, decisions: [epoch: .acceptProposal(note: note)])
+        accept(actionName: UndoActionName.acceptProposal, decisions: [epoch: .acceptProposal(note: note)],
+               reviewingSavedProposal: selectedAnalysis == nil)
     }
 
     func extendProposalToEpoch() {
@@ -2492,6 +2501,7 @@ final class EpisodeAlignmentModel {
     private func accept(
         actionName: String,
         decisions: [RecordingEpochID: EpochMapDecision],
+        reviewingSavedProposal: Bool = false,
         onAccepted: @escaping @MainActor () -> Void = {}
     ) {
         guard let document, !isWorking else { return }
@@ -2518,7 +2528,13 @@ final class EpisodeAlignmentModel {
                    }) {
                     _ = try await runtime.prepareManual(model: prior, episode: episodeID)
                 }
-                let accepted = try await runtime.accept(model: prior, episode: episodeID, decisions: decisions)
+                let accepted: AcceptedAlignment
+                if reviewingSavedProposal {
+                    accepted = try await runtime.reviewSavedProposal(
+                        model: prior, episode: episodeID, decisions: decisions)
+                } else {
+                    accepted = try await runtime.accept(model: prior, episode: episodeID, decisions: decisions)
+                }
                 let applied = publishAlignment(accepted, expecting: prior, actionName: actionName)
                 if applied {
                     acceptedMap = accepted.map

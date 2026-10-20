@@ -418,8 +418,8 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         case #selector(analyzeAlignment(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.isWorking == false
         case #selector(acceptAlignmentProposal(_:)), #selector(rejectAlignmentProposal(_:)):
-            return show?.destination == .alignment
-                && show?.alignmentModel?.selectedRow?.state.heading.hasPrefix("Proposed") == true
+            return show?.destination == .alignment && show?.canEdit == true
+                && show?.alignmentModel?.canAcceptProposal == true
         case #selector(editAlignmentTiming(_:)), #selector(placeAlignmentAnchors(_:)):
             return show?.destination == .alignment && show?.alignmentModel?.canCorrect == true
         case #selector(placeAlignmentAnchorAtPlayhead(_:)):

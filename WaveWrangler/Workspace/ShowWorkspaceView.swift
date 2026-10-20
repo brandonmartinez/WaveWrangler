@@ -304,7 +304,7 @@ private struct ShowDetailContent: View {
                             Label {
                                 Text("Add recordings to begin").foregroundStyle(.primary)
                             } icon: {
-                                Image(systemName: "waveform").foregroundStyle(.secondary)
+                                Image(systemName: "waveform").foregroundStyle(.primary)
                             }
                         } description: {
                             Text("Organize recordings into recorder groups and confirm their originals in Setup.")

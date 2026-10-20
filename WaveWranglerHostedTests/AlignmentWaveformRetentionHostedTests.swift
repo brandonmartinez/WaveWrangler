@@ -4,8 +4,10 @@ import Testing
 import WWAlignPipeline
 import WWCore
 import WWDecode
+import WWDerived
 import WWPersistence
 import WWSources
+import WWTimeMap
 @testable import WaveWrangler
 
 @MainActor
@@ -186,6 +188,108 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(f.model.lastError != nil)
         #expect(f.document.store.model.episodes[0].alignment?.acceptedRevision == nil)
         #expect(f.model.waveformMap == nil)
+    }
+
+    private func savedProposalFixture() async throws -> Fixture {
+        let f = try await fixture(durationSeconds: 12)
+        var ready = false
+        defer { if !ready { f.close() } }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.model.waveformMap != nil
+            && f.document.verifiedModel == f.document.store.model && !f.model.isLoadingWaveforms }
+        let prior = f.document.store.model
+        let episode = try #require(prior.episode(f.model.episodeID))
+        let revision = try #require(episode.alignment?.acceptedRevision)
+        let version = try #require(episode.alignment?.map(revision: revision))
+        let map = try prior.timeMap(revision: revision, in: episode.id)
+        let target = try #require(episode.source(f.target)?.placement.epochID)
+        let proposal = try AcousticConsistencyProposal(estimator: "Synthetic saved proposal", evidenceScore: 7,
+            measurements: AcousticConsistencyMeasurements(windowCount: 7, overlapSpanFraction: 0.86,
+                eligibleWindowFraction: 0.86, acousticResidualP95Milliseconds: 3.1,
+                acousticResidualMaxMilliseconds: 4.4))
+        let groups = try map.groups.map { group in
+            let epochs = group.epochs.map { epoch in
+                guard epoch.epoch == target, case let .mapped(segments, _) = epoch.mapping else { return epoch }
+                return EpochClockMap(epoch: target, mapping: .mapped(
+                    segments: segments, provenance: .acousticConsistentProposal(proposal)))
+            }
+            return try GroupTimeMap(group: group.group, reference: group.reference,
+                                    epochs: epochs, placements: group.placements)
+        }
+        let proposedMap = try AlignedTimelineMap(reference: map.reference, groups: groups)
+        let recorded = try prior.recordingMap(proposedMap, in: episode.id,
+            inputs: version.inputs.sources, recipe: version.inputs.recipe, derivedFrom: revision)
+        let saved = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episode.id)
+        try #require(f.document.store.applyReplacement("Seed synthetic saved proposal", expecting: prior, model: saved) { _ in
+            f.model.load()
+        })
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        f.model.load()
+        f.model.loadWaveforms()
+        try await wait { f.model.waveformMap == proposedMap && !f.model.isLoadingWaveforms
+            && f.model.rows.contains { $0.epochID == target && $0.state.heading.hasPrefix("Proposed") } }
+        f.model.selectWaveform(try #require(f.model.waveformTracks.first { $0.id == f.target }))
+        ready = true
+        return f
+    }
+
+    @Test(arguments: [false, true])
+    func savedProposalReviewPublishesAndSupportsUndoRedo(reject: Bool) async throws {
+        let f = try await savedProposalFixture()
+        defer { f.close() }
+        let prior = f.document.store.model
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        let epoch = try #require(f.model.selection)
+        try #require(f.model.selectedAnalysis == nil && f.model.canAcceptProposal)
+        if reject { f.model.rejectProposal() } else { f.model.acceptProposal() }
+        try await wait { !f.model.isWorking }
+        try #require(f.model.lastError == nil, "\(String(describing: f.model.lastError))")
+        try #require(f.document.store.model != prior)
+        try await wait { f.document.verifiedModel == f.document.store.model }
+        let changed = f.document.store.model
+        let revision = try #require(changed.episode(f.model.episodeID)?.alignment?.acceptedRevision)
+        let map = try changed.timeMap(revision: revision, in: f.model.episodeID)
+        let mapping = try #require(map.groups.flatMap(\.epochs).first { $0.epoch == epoch }?.mapping)
+        if reject {
+            #expect(mapping == .unsupported(.notAttempted))
+        } else if case let .mapped(_, .manual(correction)) = mapping {
+            #expect(correction.basis == .acceptedAcousticProposal)
+        } else {
+            Issue.record("Saved proposal must become a manual accepted-acoustic-proposal decision.")
+        }
+        let undo = try #require(f.document.undoManager)
+        undo.undo()
+        try await wait { f.document.verifiedModel == prior }
+        undo.redo()
+        try await wait { f.document.verifiedModel == changed }
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
+    }
+
+    @Test func changedOriginalCannotPublishSavedProposalReview() async throws {
+        let f = try await savedProposalFixture()
+        defer { f.close() }
+        let prior = f.document.store.model
+        try #require(f.model.canAcceptProposal)
+        try Self.wave(target: true, durationSeconds: 13).write(to: f.files[1], options: .atomic)
+        f.model.acceptProposal()
+        try await wait { !f.model.isWorking }
+        #expect(f.model.lastError != nil)
+        #expect(f.document.store.model == prior)
+    }
+
+    @Test func savedProposalReviewRespectsPositionLocksAndTheReference() async throws {
+        let f = try await savedProposalFixture()
+        defer { f.close() }
+        let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
+        let reference = try #require(f.model.waveformTracks.first { $0.id != f.target })
+        f.model.selectWaveform(reference)
+        #expect(!f.model.canAcceptProposal)
+        f.model.selectWaveform(target)
+        try #require(f.model.canAcceptProposal)
+        f.model.setPositionLocked(true, group: target.group)
+        #expect(!f.model.canAcceptProposal)
+        f.model.setPositionLocked(false, group: target.group)
+        #expect(f.model.canAcceptProposal)
     }
 
     @Test func cleanupPlaysBothPrimariesAcrossChunksAndMarkersWithoutStoppingForZoom() async throws {
