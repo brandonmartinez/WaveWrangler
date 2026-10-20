@@ -130,6 +130,7 @@ struct AudioTimelineNavigation: View {
             ) { Text("Horizontal zoom") }
             .frame(minWidth: 90, maxWidth: 220)
             .disabled(!canNavigate)
+            .accessibilityLabel("Horizontal zoom")
             .accessibilityIdentifier("\(prefix).zoom")
             Image(systemName: "plus.magnifyingglass")
             Text(AlignmentPresentation.formatTime(duration))
@@ -151,6 +152,7 @@ struct AudioTimelineNavigation: View {
             Slider(value: $laneHeight, in: 64...220) { Text("Track height") }
                 .frame(minWidth: 70, maxWidth: 130)
                 .disabled(!canNavigate)
+                .accessibilityLabel("Track height")
                 .accessibilityIdentifier("\(prefix).laneHeight")
         }
     }

@@ -154,7 +154,17 @@ final class WaveformNavigationUITests: XCTestCase {
             if element.isHittable, scroll.frame.contains(element.frame) { return }
             scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY > scroll.frame.midY ? -100 : 100)
         }
-        XCTAssertTrue(element.isHittable, element.debugDescription)
+        let hittable = element.isHittable
+        if !hittable {
+            capture(app, name: "Unavailable marker action before coordinate diagnostic")
+            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+            capture(app, name: "Unavailable marker action after coordinate diagnostic")
+            let tree = XCTAttachment(string: app.debugDescription)
+            tree.name = "Marker action coordinate diagnostic"
+            tree.lifetime = .keepAlways
+            add(tree)
+        }
+        XCTAssertTrue(hittable, element.debugDescription)
     }
 
     private func wait(_ condition: () -> Bool) -> Bool {
