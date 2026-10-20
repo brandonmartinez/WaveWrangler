@@ -435,11 +435,26 @@ struct EpisodeCleanupModelTests {
         for distance in [12.0, 30.0, 60.0, 24.0] {
             let dx = direction * distance
             try await host.mouse([(.leftMouseDragged, CGPoint(x: point.x + dx, y: point.y))])
-            let moved = try handle(endEdge)
-            #expect(abs(moved.midX - original.midX - dx) < 1,
+            let frames = host.controlFrames
+            #expect(frames.contains { abs($0.midX - original.midX - dx) < 1 && $0.minY == original.minY },
                     "The boundary must follow each pointer move, including reversing, while held down")
             #expect(model.selectedFillerID == review.id, "Dragging must begin before mouse up")
-            #expect(try handle(!endEdge) == stationary, "The other boundary must not move")
+            #expect(frames.contains(stationary), "The other boundary must not move")
+            let bitmap = try #require(host.view.bitmapImageRepForCachingDisplay(in: host.view.bounds))
+            host.view.cacheDisplay(in: host.view.bounds, to: bitmap)
+            let scale = Double(bitmap.pixelsWide) / host.view.bounds.width
+            let railX = Int(((original.midX + dx) * scale).rounded())
+            var railPixels = 0
+            for x in (railX - 1)...(railX + 1) {
+                for y in Int(20 * scale)..<Int(76 * scale) {
+                    if let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                       color.alphaComponent > 0.7, color.redComponent > 0.7,
+                       color.greenComponent > 0.2, color.blueComponent < 0.3 {
+                        railPixels += 1
+                    }
+                }
+            }
+            #expect(railPixels > 10, "The dotted rail must redraw at the preview position before release")
             #expect(model.state.store.model == snapshot, "A preview is not a saved timing edit")
             #expect(model.state.store.modelGeneration == generation)
         }
