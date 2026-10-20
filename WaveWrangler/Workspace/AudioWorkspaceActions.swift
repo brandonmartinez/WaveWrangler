@@ -4,6 +4,7 @@ import WWCore
 struct AudioWorkspaceActions: View {
     @Bindable var state: ShowWindowState
     @Bindable var alignment: EpisodeAlignmentModel
+    @State private var listeningPresetError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -13,6 +14,12 @@ struct AudioWorkspaceActions: View {
             }
             if alignment.isWorking {
                 ProgressView(alignment.message).controlSize(.small)
+            }
+            if let error = alignment.lastError {
+                Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+            }
+            if let listeningPresetError {
+                Label(listeningPresetError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
             }
             if let cleanup = state.cleanupModel {
                 if cleanup.isBusy {
@@ -39,14 +46,23 @@ struct AudioWorkspaceActions: View {
 
     private var recordingActions: some View {
         HStack {
+            Text("Listen now").font(.caption).foregroundStyle(.secondary)
+            listeningPreset(.muteNonPrimaries, title: "Mute backups", symbol: "speaker.slash")
+            listeningPreset(.soloPrimaries, title: "Primaries", symbol: "person.fill")
+            listeningPreset(.soloBackups, title: "Backups", symbol: "person.2")
+            if alignment.listening.previousPlayback != nil {
+                Button("Restore listening choices", systemImage: "arrow.uturn.backward") {
+                    alignment.restoreListeningChoices()
+                }
+                .labelStyle(.iconOnly)
+                .help("Restore the captured listening choices. Begin editing can establish a new restore point.")
+                .accessibilityIdentifier("ww.listening.restore")
+            }
+            Divider().frame(height: 20)
             Button("Add recordings or speakers", systemImage: "plus") { state.recordingsPresented = true }
                 .labelStyle(.iconOnly).accessibilityIdentifier("ww.audioWorkspace.add")
-            Button("Transcript & review", systemImage: "text.bubble") {
-                state.workspaceInspector = .transcript
-                state.inspectorPresented = true
-            }
             if let cleanup = state.cleanupModel {
-                Menu("Episode boundaries") {
+                Menu("Episode boundaries", systemImage: "arrow.left.and.right") {
                     Button("IN at playhead") {
                         cleanup.saveRange(inValue: alignment.waveformPlayheadSeconds,
                                           outValue: cleanup.episode?.cleanup?.workingRange?.tracksOut)
@@ -57,10 +73,37 @@ struct AudioWorkspaceActions: View {
                     }
                     Button("Reset IN/OUT") { cleanup.saveRange(inValue: nil, outValue: nil) }
                 }
+                .labelStyle(.iconOnly)
                 .disabled(cleanup.isBusy || alignment.isWorking || !state.canEdit)
                 .help("Persistent episode working boundaries; independent from temporary selection and cycle.")
             }
         }
+    }
+
+    private func listeningPreset(_ policy: EditingPlaybackPolicy, title: String, symbol: String) -> some View {
+        let episode = state.selectedEpisode
+        let active = episode.map { alignment.listening.listeningPresetIsActive(policy, in: $0) } ?? false
+        return Button {
+            guard let episode else { return }
+            do {
+                try alignment.listening.applyListeningPreset(policy, in: episode)
+                listeningPresetError = nil
+                alignment.refreshListeningGains()
+            } catch {
+                listeningPresetError = String(describing: error)
+            }
+        } label: {
+            Label(title, systemImage: symbol)
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.bordered)
+        .tint(active ? .accentColor : .secondary)
+        .disabled(episode.map { !alignment.listening.playback.canApply(policy, in: $0) } ?? true)
+        .help("\(policy.title). Listen now only; preserves explicit Mute choices and does not change the saved After alignment policy.")
+        .accessibilityLabel("Listen now: \(title)")
+        .accessibilityValue(active ? "On" : "Off")
+        .accessibilityAddTraits(active ? [.isSelected] : [])
+        .accessibilityIdentifier("ww.listening.preset.\(policy.rawValue)")
     }
 
     @ViewBuilder

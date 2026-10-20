@@ -30,7 +30,7 @@ private struct ShowWindowContent: View {
                     if state.inspectorPresented {
                         Divider()
                         InspectorContainer(state: state)
-                            .frame(width: 190)
+                            .frame(width: state.compactInspectorWidth)
                     }
                 }
             } else {
@@ -82,12 +82,16 @@ private struct ShowWindowContent: View {
                 }
                 .accessibilityIdentifier("ww.show.library")
                 SaveStatusItem(state: state)
-                Button {
-                    state.toggleInspector()
-                } label: {
-                    Label(state.inspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                if state.destination == .alignment, state.selectedEpisode != nil {
+                    WorkspaceInspectorToggles(state: state)
+                } else {
+                    Button {
+                        state.toggleInspector()
+                    } label: {
+                        Label(state.inspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                    }
+                    .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
                 }
-                .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
             }
         }
         // The NSWindow owns the complete 760×440 minimum. A content-driven minimum here is only for

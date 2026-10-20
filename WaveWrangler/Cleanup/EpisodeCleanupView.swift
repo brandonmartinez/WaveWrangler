@@ -599,7 +599,10 @@ struct CleanupInspectorView: View {
             }
             FillerTimingReviewSummary(model: model)
             if let review = model.selectedFiller {
-                FillerTimingToolbar(model: model, reviewID: review.id, accessibilityPrefix: "ww.cleanup.filler.inspector")
+                Text("\(review.word?.text ?? "Manual filler") · \(review.status)")
+                    .font(.callout.weight(.semibold))
+                Text("Review with the marker toolbar; drag its audible-word handles to adjust. No audio or transcript is deleted.")
+                    .font(.caption).foregroundStyle(.secondary)
                 DisclosureGroup("Captured review origin") {
                     Text(review.origin == .detected ? "Automatically detected" : "Manually proposed")
                     Text("Source: \(review.primary.sourceID.description)")

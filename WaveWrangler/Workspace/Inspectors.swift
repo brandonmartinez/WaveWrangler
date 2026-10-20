@@ -8,7 +8,13 @@ struct InspectorContainer: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
-        InspectorScrollContent(state: state)
+        if state.destination == .alignment, state.workspaceInspector == .alignment,
+           let model = state.alignmentModel {
+            AlignmentDetailInspector(model: model)
+                .wwFont(.body)
+        } else {
+            InspectorScrollContent(state: state)
+        }
     }
 }
 
@@ -22,14 +28,11 @@ private struct InspectorScrollContent: View {
                     ShowInfoInspector(state: state)
                 } else if state.destination == .alignment, let model = state.alignmentModel {
                     VStack(alignment: .leading, spacing: 12) {
-                        Picker("Inspect", selection: $state.workspaceInspector) {
-                            ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { item in
-                                Text(item.rawValue).tag(item)
-                            }
-                        }
                         switch state.workspaceInspector {
                         case .recording:
                             AlignmentInspectorView(model: model, manageRecordings: { state.recordingsPresented = true })
+                        case .alignment:
+                            Text("Preparing alignment inspection…")
                         case .transcript:
                             if let cleanup = state.cleanupModel { CleanupInspectorView(model: cleanup) }
                         case .episode:

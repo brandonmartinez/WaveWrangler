@@ -35,10 +35,40 @@ final class ShowWindowState {
     var recordingsPresented = false
     enum WorkspaceInspector: String, CaseIterable {
         case recording = "Recording"
+        case alignment = "Alignment"
         case transcript = "Transcript & review"
         case episode = "Episode"
+
+        var symbol: String {
+            switch self {
+            case .recording: "slider.horizontal.3"
+            case .alignment: "waveform.path"
+            case .transcript: "text.bubble"
+            case .episode: "info.circle"
+            }
+        }
+
+        var identifier: String {
+            switch self {
+            case .recording: "recording"
+            case .alignment: "alignment"
+            case .transcript: "transcript"
+            case .episode: "episode"
+            }
+        }
     }
     var workspaceInspector = WorkspaceInspector.recording
+
+    func toggleWorkspaceInspector(_ activity: WorkspaceInspector) {
+        if inspectorPresented, workspaceInspector == activity {
+            inspectorPresented = false
+        } else {
+            workspaceInspector = activity
+            inspectorPresented = true
+        }
+    }
+
+    var compactInspectorWidth: CGFloat { destination == .alignment ? 300 : 190 }
     var sidebarVisibility: NavigationSplitViewVisibility = .all
     var renamingEpisodeID: EpisodeID?
     /// Incremented to ask the episode inspector to focus its Title field (⌘I).

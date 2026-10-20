@@ -154,20 +154,65 @@ struct AlignmentWorkspace: View {
     let showInspector: () -> Void
 
     var body: some View {
+        ScrollView {
+            AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
+                showTranscript: {
+                    state.workspaceInspector = .transcript
+                    state.inspectorPresented = true
+                }, showInspector: showInspector)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+        }
+        .accessibilityLabel("Alignment workspace scroll area")
+        .accessibilityIdentifier("ww.alignment.workspace")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            AudioWorkspaceActions(state: state, alignment: model)
+                .padding(10).background(.bar)
+        }
+        .onAppear { AlignmentKeyHandler.install() }
+        .onChange(of: model.requestedAnchorFocus) { _, anchor in
+            if anchor != nil { revealAlignmentInspector() }
+        }
+        .onChange(of: model.requestedEpochFocus) { _, epoch in
+            if epoch != nil { revealAlignmentInspector() }
+        }
+        .sheet(item: $model.editorRequest) { request in
+            switch request {
+            case .numeric:
+                NumericTimingSheet(model: model)
+            case .anchors:
+                AnchorTimingSheet(model: model)
+            case let .anchor(anchorID):
+                EditAnchorSheet(model: model, anchorID: anchorID)
+            }
+        }
+    }
+
+    private func revealAlignmentInspector() {
+        state.workspaceInspector = .alignment
+        state.inspectorPresented = true
+    }
+}
+
+struct AlignmentDetailInspector: View {
+    @Bindable var model: EpisodeAlignmentModel
+
+    var body: some View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
-                    showTranscript: {
-                        state.workspaceInspector = .transcript
-                        state.inspectorPresented = true
-                    }, showInspector: showInspector)
-                DisclosureGroup("Detailed alignment inspection") {
-                AlignmentOutlineTable(model: model)
-                    .id("ww.alignment.groupSection")
-                    .frame(minHeight: 180, idealHeight: 240)
+                Text("Alignment").font(.headline).accessibilityAddTraits(.isHeader)
+                Text("Recorder groups, epochs, timing, and anchors. Scroll tables horizontally for all columns.")
+                    .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                ScrollView(.horizontal) {
+                    AlignmentOutlineTable(model: model)
+                        .frame(width: 820, height: 240)
+                }
+                .id("ww.alignment.groupSection")
 
                 GroupBox("Anchors for \(model.selectedRow?.epochLabel ?? "selected epoch")") {
+                    ScrollView(.horizontal) {
                     Table(model.selectedAnchors, selection: $model.anchorSelection) {
                         TableColumn("Source time") { anchor in
                             Text(AlignmentPresentation.formatTime(anchor.sourceSeconds))
@@ -191,8 +236,9 @@ struct AlignmentWorkspace: View {
                         }
                         .width(ideal: 130)
                     }
-                    .frame(minHeight: 90, idealHeight: 120, maxHeight: 160)
+                    .frame(width: 440, height: 120)
                     .accessibilityIdentifier("ww.alignment.anchors")
+                    }
                 }
                 .id("ww.alignment.anchorSection")
 
@@ -297,7 +343,6 @@ struct AlignmentWorkspace: View {
                     .accessibilityIdentifier("ww.alignment.region")
                 }
                 }
-                .padding(.leading, 24)
 
                 Text(model.message)
                     .font(.callout)
@@ -320,36 +365,19 @@ struct AlignmentWorkspace: View {
                 }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
+                .padding(14)
             }
-            .accessibilityLabel("Alignment workspace scroll area")
-            .accessibilityIdentifier("ww.alignment.workspace")
-            .safeAreaInset(edge: .top, spacing: 0) {
-                AudioWorkspaceActions(state: state, alignment: model)
-                    .padding(10).background(.bar)
-            }
-            .onAppear {
-                AlignmentKeyHandler.install()
-            }
-            .onChange(of: model.requestedAnchorFocus) { _, anchor in
+            .accessibilityLabel("Alignment inspector")
+            .accessibilityIdentifier("ww.inspector.alignment.details")
+            .onChange(of: model.requestedAnchorFocus, initial: true) { _, anchor in
                 guard let anchor else { return }
                 scrollProxy.scrollTo("ww.alignment.anchorSection", anchor: .center)
                 AlignmentAnchorFocus.focus(anchor: anchor, model: model, in: NSApp.keyWindow)
             }
-            .onChange(of: model.requestedEpochFocus) { _, epoch in
+            .onChange(of: model.requestedEpochFocus, initial: true) { _, epoch in
                 guard let epoch else { return }
                 scrollProxy.scrollTo("ww.alignment.groupSection", anchor: .top)
                 AlignmentEpochFocus.focus(epoch: epoch, model: model, in: NSApp.keyWindow)
-            }
-            .sheet(item: $model.editorRequest) { request in
-                switch request {
-                case .numeric:
-                    NumericTimingSheet(model: model)
-                case .anchors:
-                    AnchorTimingSheet(model: model)
-                case let .anchor(anchorID):
-                    EditAnchorSheet(model: model, anchorID: anchorID)
-                }
             }
         }
     }

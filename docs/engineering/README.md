@@ -103,7 +103,10 @@ action strip exposes recording management, refresh, transcription and its model/
 Legacy Setup, Alignment and Edit & Cleanup remain in Views and their keyboard commands; Export
 opens the existing unavailable explanation, not an export engine. Its contextual
 Recording inspector owns speaker/channel assignments, group nudges, numeric timing, and picked-point
-anchor actions; timing evidence is expandable. Recording settings buttons select their own source
+anchor actions; timing evidence is expandable. Grouped top-bar buttons toggle one Recording,
+Alignment, Transcript & review, or Episode sidebar at a time. The Alignment sidebar owns the
+epoch/anchor tables, detailed timing actions, and status previously shown below the tracks;
+its tables scroll horizontally in narrow windows. Recording settings buttons select their own source
 and open that inspector. The compact plus opens the existing native recording/speaker management
 surface in a sheet rather than switching stages or duplicating source records. Import
 identity is provisional until the user explicitly confirms an unchanged original; the Setup engine
@@ -111,6 +114,22 @@ checks current metadata and captures the decoder-owned raw witness before saving
 Relink/Grant Access can also restore a missing device-local record or accept different file details
 only after the user acknowledges the comparison; the chosen local file is rechecked around read-only
 raw-witness capture before its new confirmed baseline is saved. It never silently substitutes a file.
+
+The compact primary and Command-click tool menus contain only Pointer, Move recorder, Reviewed,
+and Reject. Command temporarily selects the second tool; release or window deactivation restores
+the primary. Review tools target existing filler regions through the same undoable model actions;
+they never cut or erase audio. Move recorder retains position locks and reference protection.
+The single marker toolbar is centered on the visible selected interval and clamped to its track.
+It retains audition/context/loop access and adds Reviewed, Reject, Clear review, and Revert to
+detected. Clear review resets only the decision; it keeps adjusted bounds, detection, audio, and text.
+Numeric marker fields and the duplicate marker popover are removed; graphical handles and their
+keyboard/VoiceOver adjustments remain.
+
+Above the tracks, Listen now presets sit beside Add. Their active state reflects current listening
+choices, and Restore listening choices returns to the pre-preset choices. These session-only
+presets preserve explicit Mutes, do not change roles or saved policy, and do not count as Begin
+editing. The separate After alignment menu still saves the policy applied only by the explicit
+Begin editing action, once per accepted revision.
 
 The decoding-boundary scan distinguishes in-memory nominal conversion from source decoding:
 only `WWDecode/PCMResampling.swift` and `WWSpeech/LocalWhisper.swift` may name

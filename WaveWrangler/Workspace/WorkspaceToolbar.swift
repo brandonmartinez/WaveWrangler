@@ -1,6 +1,34 @@
 import SwiftUI
 import WWOrganizer
 
+struct WorkspaceInspectorToggles: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { activity in
+                let active = state.inspectorPresented && state.workspaceInspector == activity
+                Button {
+                    state.toggleWorkspaceInspector(activity)
+                } label: {
+                    Image(systemName: activity.symbol)
+                        .frame(width: 24, height: 24)
+                        .background(active ? Color.accentColor.opacity(0.2) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(activity.rawValue) sidebar")
+                .accessibilityValue(active ? "Shown" : "Hidden")
+                .accessibilityAddTraits(active ? [.isSelected] : [])
+                .accessibilityIdentifier("ww.sidebar.\(activity.identifier)")
+                .help("\(active ? "Hide" : "Show") \(activity.rawValue) sidebar")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Sidebar activities")
+    }
+}
+
 /// Destination control (IA §4.2). Segments are separate accessibility elements with stable identifiers
 /// so later destinations are focusable and announce "Not available in this version" (IA-12). Selecting
 /// one never moves keyboard focus (IA-13).

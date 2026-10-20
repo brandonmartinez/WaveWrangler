@@ -120,6 +120,10 @@ struct AlignmentWaveformView: View {
         }
         .accessibilityIdentifier("alignment.waveforms")
         .onChange(of: layout) { _, _ in clearHandCursor() }
+        .onChange(of: model.listening.effectiveTool) { _, _ in
+            if dragSession != nil { cancelGroupDrag() }
+            clearHandCursor()
+        }
         .onDisappear { clearHandCursor() }
     }
 
@@ -192,16 +196,7 @@ struct AlignmentWaveformView: View {
 
     private var timelineTools: some View {
         HStack {
-            Picker("Timeline tool", selection: Binding(
-                get: { model.listening.tool }, set: { model.listening.tool = $0 }
-            )) {
-                ForEach(EpisodeListeningState.Tool.allCases, id: \.self) { tool in
-                    Text(tool.rawValue).tag(tool)
-                }
-            }
-            .fixedSize()
-            .accessibilityIdentifier("alignment.waveforms.tool")
-            .help("Select drags a temporary interval. Move recorder requires deliberate position unlocking and is saved as one undoable timing revision.")
+            TimelineToolControls(listening: model.listening)
             Button("Cycle", systemImage: "repeat") {
                 if model.listening.cycleRange == nil {
                     model.listening.cycleRange = model.listening.selection
@@ -217,7 +212,7 @@ struct AlignmentWaveformView: View {
 
     private var editingPlaybackControls: some View {
         HStack {
-            Menu("Editing playback policy") {
+            Menu("After alignment") {
                 Picker("After alignment", selection: Binding(
                     get: { model.editingPlaybackPolicy },
                     set: { model.setEditingPlaybackPolicy($0) }
@@ -227,14 +222,10 @@ struct AlignmentWaveformView: View {
                     }
                 }
             }
-            .help("Optional, applied once per accepted revision only when you explicitly begin editing.")
+            .help("Saved editing playback policy. Applied once per accepted revision only when you explicitly begin editing; Listen now presets do not change it.")
+            .accessibilityIdentifier("ww.listening.savedPolicy")
             Button("Begin editing", systemImage: "pencil") { model.beginEditing() }
                 .disabled(!model.hasAcceptedRevision || model.isWorking)
-            if model.listening.previousPlayback != nil {
-                Button("Restore listening choices", systemImage: "arrow.uturn.backward") {
-                    model.restoreListeningChoices()
-                }
-            }
         }
     }
 
@@ -411,6 +402,7 @@ struct AlignmentWaveformView: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { point in
+                    guard model.listening.effectiveTool.reviewDecision == nil else { return }
                     let time = model.waveformStartSeconds
                         + Double(point.x / geometry.size.width) * model.waveformDurationSeconds
                     if let track = tracks.first(where: { $0.id == model.selectedWaveformSource }),
@@ -422,7 +414,7 @@ struct AlignmentWaveformView: View {
                 .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
                     .onChanged { drag in
                         guard let track = tracks.first(where: { $0.id == model.selectedWaveformSource })
-                            ?? (model.listening.tool == .select ? tracks.first : nil) else { return }
+                            ?? (model.listening.effectiveTool == .select ? tracks.first : nil) else { return }
                         dragGroup(
                             track, strokes: dragSession == nil ? model.waveformInteractionStrokes(for: track.id) : [],
                             drag: drag, geometry: geometry
@@ -441,7 +433,19 @@ struct AlignmentWaveformView: View {
             }
             .frame(height: max(160, CGFloat(tracks.count * 30 + 40)))
             .clipped()
-            .overlay { selectionOverlay }
+            .overlay {
+                if let cleanup {
+                    ForEach(cleanup.plan?.lanes.filter { lane in tracks.contains { $0.id == lane.primary.sourceID } } ?? []) { lane in
+                        FillerTimingOverlay(model: cleanup, reviews: cleanup.visibleFillers(for: lane))
+                    }
+                }
+            }
+            .overlay {
+                if cleanup?.selectedFiller == nil,
+                   tracks.contains(where: { $0.id == (model.selectedWaveformSource ?? visibleTracks.first?.id) }) {
+                    selectionOverlay
+                }
+            }
             .overlay(alignment: .topLeading) {
                 if tracks.contains(where: { $0.group == dragSession?.group }) { dragPreview }
             }
@@ -547,6 +551,7 @@ struct AlignmentWaveformView: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture { point in
+                        guard model.listening.effectiveTool.reviewDecision == nil else { return }
                         pick(track, strokes: model.waveformInteractionStrokes(for: track.id), time: model.waveformStartSeconds
                              + Double(point.x / geometry.size.width) * model.waveformDurationSeconds)
                     }
@@ -576,7 +581,12 @@ struct AlignmentWaveformView: View {
                         }
                     }
                 }
-                .overlay { selectionOverlay }
+                .overlay {
+                    if cleanup?.selectedFiller == nil,
+                       track.id == (model.selectedWaveformSource ?? visibleTracks.first?.id) {
+                        selectionOverlay
+                    }
+                }
                 .overlay(alignment: .topLeading) {
                     if dragSession?.group == track.group { dragPreview }
                 }
@@ -612,7 +622,7 @@ struct AlignmentWaveformView: View {
     private var selectionOverlay: some View {
         AudioTimelineSelectionOverlay(listening: model.listening,
             start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
-            play: { model.playSelection(context: $0) })
+            play: { model.playSelection(context: $0) }, cleanup: cleanup)
     }
 
     @ViewBuilder
@@ -982,7 +992,8 @@ struct AlignmentWaveformView: View {
         _ track: AlignmentWaveformTrack, strokes: [AlignmentWaveformStroke],
         drag: DragGesture.Value, geometry: GeometryProxy
     ) {
-        if model.listening.tool == .select {
+        if model.listening.effectiveTool == .select {
+            cleanup?.selectedFillerID = nil
             let origin = geometry.frame(in: .global).minX
             let width = max(1, geometry.size.width)
             model.listening.select(
@@ -991,6 +1002,7 @@ struct AlignmentWaveformView: View {
                 within: model.waveformViewingBounds)
             return
         }
+        guard model.listening.effectiveTool == .move else { return }
         if dragSession == nil {
             let width = geometry.size.width
             guard width > 0, !model.isWorking, !model.isLoadingWaveforms,
@@ -1045,7 +1057,7 @@ struct AlignmentWaveformView: View {
     }
 
     private func canGrab(_ track: AlignmentWaveformTrack, at x: CGFloat, width: CGFloat) -> Bool {
-        guard width > 0, model.listening.tool == .move else { return false }
+        guard width > 0, model.listening.effectiveTool == .move else { return false }
         let time = model.waveformStartSeconds + Double(x / width) * model.waveformDurationSeconds
         guard let stroke = AlignmentWaveformProjection.selectedStroke(
             at: time, strokes: model.waveformInteractionStrokes(for: track.id),
