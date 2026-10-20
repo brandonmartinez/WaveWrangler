@@ -1,6 +1,7 @@
 import Foundation
 import WWCore
 import WWDecode
+import WWDerived
 import WWRender
 import WWSources
 import WWTimeMap
@@ -31,7 +32,8 @@ public enum AlignedAuditionWindowReader {
     public static func readWindow(
         sourceURL: URL, source: SourceID, matching witness: RawSourceIdentity,
         decoder: SourceDecoder, groupMap: GroupTimeMap, decodedChannel: Int,
-        outputFrames: Range<Int64>
+        outputFrames: Range<Int64>, cache: AlignedAuditionPCMCache? = nil,
+        revision: MapRevisionReference? = nil
     ) async throws -> [Float] {
         guard (-86_400 * Int64(outputRate)...86_400 * Int64(outputRate)).contains(outputFrames.lowerBound),
               outputFrames.upperBound > outputFrames.lowerBound,
@@ -41,7 +43,7 @@ public enum AlignedAuditionWindowReader {
         let count = outputFrames.upperBound - outputFrames.lowerBound
         let startSeconds = Double(outputFrames.lowerBound) / Double(outputRate)
         let durationSeconds = Double(count) / Double(outputRate)
-        return try await decoder.withWitnessBoundDecodingCursor(
+        let result = try await decoder.withWitnessBoundDecodingCursor(
             sourceURL, source: source, matching: witness
         ) { cursor in
             guard placement.occurrence.nominalRate.framesPerSecond == cursor.interpretation.sourceSampleRate,
@@ -49,6 +51,14 @@ public enum AlignedAuditionWindowReader {
             else { throw WaveformWindowError.mapDoesNotMatchSource }
             guard decodedChannel >= 0, decodedChannel < cursor.interpretation.channelCount else {
                 throw SampleStreamFailure.invalidChannel(decodedChannel)
+            }
+            let key = AlignedAuditionPCMCache.Key(
+                witness: witness, interpretation: cursor.interpretation, map: groupMap,
+                revision: revision, channel: decodedChannel, frames: outputFrames
+            )
+            if let samples = await cache?.samples(for: key) {
+                try await cursor.verifyUnchanged()
+                return (samples: samples, key: key, cached: true)
             }
             let ranges = try WaveformViewport.frameRanges(
                 source: source, rate: cursor.interpretation.sourceSampleRate,
@@ -80,7 +90,10 @@ public enum AlignedAuditionWindowReader {
             guard rendered.product.count == 1, rendered.product[0].count == Int(count) else {
                 throw RenderFailure.providerShapeMismatch(placement.occurrence.id)
             }
-            return rendered.product[0]
+            return (samples: rendered.product[0], key: key, cached: false)
         }
+        try Task.checkCancellation()
+        if !result.cached { await cache?.insert(result.samples, for: result.key) }
+        return result.samples
     }
 }

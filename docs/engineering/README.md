@@ -95,6 +95,68 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
 The selected-speaker path additionally depends on `WWAutoAlign`; general multi-recorder cycle analysis
 continues to use the frozen `WWAlignEstimate`.
 
+### Listening startup and replay
+
+Aligned transport prepares one second of the initially audible tracks, then fills
+contiguous half-second output-frame windows with at most 3.5 seconds queued ahead.
+All tracks use the same exact output ranges and shared host clock. Muted tracks do
+not render before audible startup. One optional source at a time warms up to five
+seconds in the background; only an enabled source with a freshly reverified window
+can join a future transport boundary. Pending or unavailable sources are reported
+without restarting the other tracks. A missed producer deadline stops playback
+with an explicit error instead of treating an underrun as successful listening.
+
+Source resolution and accepted-map activation are batched once per window, not
+once per track. The runtime's ordinary audition cache is process-local, limited to
+16 MiB of PCM and 64 entries, and keyed by exact raw witness, complete decoded
+format, group map, accepted episode/revision, channel, output frames and render
+recipe/version. Contained windows can reuse the same samples. Every hit still opens
+the witnessed decoder, validates the measured format/channel against the placement,
+and checks source identity; the runtime also rechecks device access and the accepted
+map before returning audio. No cached PCM grants authorization or substitutes for a
+changed recording. Adaptive corrections retain their independently verified
+five-second tile path; a cold adaptive tile can still dominate preparation.
+
+The immutable default sinc prototype is shared between renders and never built for
+identity-only plans; samples, render recipes and historical DSP qualification are
+unchanged. Stop clears scheduled audio but retains the compatible paused transport
+graph, reducing repeated engine/node setup. Each restart still has the existing
+100 ms scheduling lead: these changes do **not** promise gapless cycles or measured
+physical audio latency.
+
+The opt-in synthetic listening benchmark exercises generated 48 kHz PCM, identity
+and +100 ppm maps, two audible tracks, multiple windows and three cycles. Its useful
+local acceptance is cold first-window preparation below 1.5 seconds, faster than
+preparing the former five-second window, subsequent windows before the synthetic
+scheduled deadline, exact repeated samples, and bounded cache storage. It measures
+witnessed PCM production, not full app admission, device start or acoustic latency.
+On 2026-10-20, same-host generated-PCM measurements were:
+
+| Build / two-track maps | Former 5 s window policy | Cold 1 s first window | Cached first window (cycles 2-3) | Cold 500 ms fill |
+| --- | ---: | ---: | ---: | ---: |
+| Debug / identity + drift | 2,457 ms | 487 ms | 0.57-1.34 ms | 242-247 ms |
+| Debug / two drift | 4,733 ms | 948 ms | 0.77-1.03 ms | 472-483 ms |
+| Release / identity + drift | 108 ms | 22.5 ms | 0.51-0.87 ms | 12.0-12.8 ms |
+| Release / two drift | 247 ms | 43.6 ms | 0.61-0.90 ms | 22.8-25.9 ms |
+
+These are observations, not a p95 guarantee; each case has one cold cycle and two
+cached cycles. The five-second comparison uses the former window policy on the
+current renderer. Separately, the pre-change Debug renderer-only baseline measured
+88.8-89.8 ms for five-second identity, 18.1 ms for 500 ms identity and 249-253 ms for
+500 ms drift; after kernel reuse those measured 77.4-78.6, 7.80-7.89 and 237-241 ms.
+Each two-track case retained 1,536,000 PCM bytes, with 14 misses and 28 witnessed
+hits across three four-second cycles. Concurrent background warming, full app
+admission, and native output still require VM qualification; more simultaneous
+drifting tracks are not covered by this two-track acceptance.
+
+Run with the normal package scratch directory and bounded workers:
+
+```sh
+WW_LISTENING_BENCHMARK=1 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 \
+swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm \
+  --jobs 2 --no-parallel --filter 'AlignedAuditionStartupTests|ListeningRenderStartupTests'
+```
+
 ### Bounded visual alignment
 
 The native episode editor opens into the integrated all-source workspace. It shares one transport,

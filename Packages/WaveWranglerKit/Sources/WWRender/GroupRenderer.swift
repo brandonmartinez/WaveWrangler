@@ -82,7 +82,11 @@ public enum GroupRenderer {
     ) async throws(RenderFailure) -> RenderResult<Sink.Product> {
         try checkCancellation()
         let plan = try RenderPlan.make(request)
-        let kernel = KaiserSincKernel(request.recipe.kernel)
+        let needsKernel = plan.occurrences.contains { $0.runs.contains { !$0.isIdentity } }
+        let kernel: KaiserSincKernel? = needsKernel
+            ? (request.recipe.kernel == RenderRecipe.m2Candidate.kernel
+                ? .m2Candidate : KaiserSincKernel(request.recipe.kernel))
+            : nil
         try checkCancellation()
 
         var sink: Sink
@@ -118,14 +122,14 @@ private struct SampleWindow {
 
 private struct RenderEngine {
     let plan: RenderPlan
-    let kernel: KaiserSincKernel
+    let kernel: KaiserSincKernel?
     let chunkFrames: Int
     let channelCount: Int
     var windows: [SampleWindow]
     var weights: [Double]
     var report = RenderReport(chunks: 0, providerRequests: 0, providerFrames: 0, peakWindowFrames: 0, peakWorkingSetBytes: 0)
 
-    init(plan: RenderPlan, kernel: KaiserSincKernel, chunkFrames: Int, channelCount: Int) {
+    init(plan: RenderPlan, kernel: KaiserSincKernel?, chunkFrames: Int, channelCount: Int) {
         self.plan = plan
         self.kernel = kernel
         self.chunkFrames = chunkFrames
@@ -167,7 +171,7 @@ private struct RenderEngine {
                     try await ensureWindow(index, occurrence, needLo ..< needHi, provider: provider)
                     for run in runs[groupStart ..< groupEnd] {
                         let frameRange = Swift.max(run.outputStart, chunkStart) ..< Swift.min(run.outputEnd, chunkEnd)
-                        render(run, occurrence, window: windows[index], frames: frameRange, chunkStart: chunkStart, chunkFrames: frames, into: &output)
+                        try render(run, occurrence, window: windows[index], frames: frameRange, chunkStart: chunkStart, chunkFrames: frames, into: &output)
                     }
                     groupStart = groupEnd
                 }
@@ -228,7 +232,7 @@ private struct RenderEngine {
         windows[index] = window
     }
 
-    private mutating func render(_ run: PlannedSourceRun, _ occurrence: PlannedOccurrence, window: SampleWindow, frames: Range<Int64>, chunkStart: Int64, chunkFrames: Int, into output: inout [Float]) {
+    private mutating func render(_ run: PlannedSourceRun, _ occurrence: PlannedOccurrence, window: SampleWindow, frames: Range<Int64>, chunkStart: Int64, chunkFrames: Int, into output: inout [Float]) throws(RenderFailure) {
         let windowStart = window.start
         let windowEnd = window.end
         if run.isIdentity {
@@ -241,6 +245,7 @@ private struct RenderEngine {
             }
             return
         }
+        guard let kernel else { throw .invalidRecipe("An interpolated run requires its planned kernel.") }
         let halfTaps = run.halfTaps
         var lastRemainder: Int128 = -1
         for k in frames {

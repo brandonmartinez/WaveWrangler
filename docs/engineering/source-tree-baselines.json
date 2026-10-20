@@ -2,7 +2,7 @@
   "version": 1,
   "date": "2026-10-20",
   "basedOn": "792aa6687ab0b7a196d41fe13e54f7dd9e048392",
-  "reason": "American English source maintenance and shared source-integrity checks; not new DSP qualification. Historical holdouts refuse changed historical trees.",
+  "reason": "American English source maintenance, shared source-integrity checks, and sample-preserving listening kernel reuse; not new DSP qualification. Historical holdouts refuse changed historical trees.",
   "records": {
     "m2-freeze-estimator-2": {
       "historicalRecord": "docs/m2/fixtures/m2-freeze-estimator-2.json",
@@ -24,8 +24,8 @@
       "historicalRecord": "docs/m2/fixtures/m2-freeze-render.json",
       "historicalRecordSHA256": "7b9cb3fb28177b2d5cf085395b48fc331f21b7297916d17c7d964cf9e684762c",
       "currentTrees": {
-        "Sources/WWRender": "c4fb11093898ce15e56ebb7209537fe818c92c79",
-        "Tests/WWRenderTests": "87977dcc73247da0a74aeed52a0f169a271caffd"
+        "Sources/WWRender": "9de7878720f99808a11f16d55d0928cf3061cc0c",
+        "Tests/WWRenderTests": "f45827e1228900de7f64f96fed430d42481df88d"
       }
     },
     "m2-freeze-timemap": {

@@ -33,30 +33,80 @@ struct AlignmentPlaybackClock {
     }
 }
 
+enum AlignmentTransportFailure: LocalizedError {
+    case bufferDeadline
+    case discontinuousWindow
+
+    var errorDescription: String? {
+        switch self {
+        case .bufferDeadline:
+            "Verified audio could not be prepared before the scheduled buffer ran out"
+        case .discontinuousWindow:
+            "The next audio window does not continue the shared transport clock"
+        }
+    }
+}
+
+struct AlignmentTransportSources {
+    private(set) var starts: [SourceID: Double] = [:]
+    var prepared: Set<SourceID> { Set(starts.keys) }
+
+    mutating func schedule(_ sources: Set<SourceID>, startingAt seconds: Double) {
+        for source in sources where starts[source] == nil { starts[source] = seconds }
+    }
+
+    func pending(at seconds: Double) -> Set<SourceID> {
+        Set(starts.filter { $0.value > seconds }.keys)
+    }
+}
+
 @MainActor
 final class AlignmentAudioPlayback {
     private let engine = AVAudioEngine()
     private var players: [SourceID: AVAudioPlayerNode] = [:]
     private var source: AVAudioSourceNode?
     private var transportSampleRate: Double?
+    private var transportHostTime: UInt64?
+    private var bufferDeadlineTask: Task<Void, Never>?
+    private var sourceJoinTasks: [SourceID: Task<Void, Never>] = [:]
+    private var transportSources = AlignmentTransportSources()
     private(set) var clock: AlignmentPlaybackClock?
 
-    var preparedSources: Set<SourceID> { Set(players.keys) }
+    var preparedSources: Set<SourceID> { transportSources.prepared }
+    var pendingSources: Set<SourceID> {
+        guard let clock else { return [] }
+        let playhead = clock.playhead()
+        return transportSources.pending(at: playhead)
+    }
 
     func stop() {
-        engine.stop()
+        bufferDeadlineTask?.cancel()
+        bufferDeadlineTask = nil
+        for task in sourceJoinTasks.values { task.cancel() }
+        sourceJoinTasks.removeAll()
+        for player in players.values {
+            player.volume = 0
+            player.stop()
+        }
+        engine.pause()
+        if let source, engine.attachedNodes.contains(source) { engine.detach(source) }
+        source = nil
+        clock = nil
+        transportHostTime = nil
+        transportSources = AlignmentTransportSources()
+    }
+
+    private func clearPlayers() {
         for player in players.values where engine.attachedNodes.contains(player) {
             engine.detach(player)
         }
         players.removeAll()
-        if let source, engine.attachedNodes.contains(source) { engine.detach(source) }
-        source = nil
-        clock = nil
         transportSampleRate = nil
     }
 
     func play(_ clip: AlignmentAudioClip, startSeconds: Double) throws {
         stop()
+        clearPlayers()
         let format = try clip.makeFormat()
         let cursor = AlignmentAudioSampleCursor(samples: clip.samples, channelCount: clip.channelCount)
         let node = cursor.makeSourceNode(format: format)
@@ -88,16 +138,49 @@ final class AlignmentAudioPlayback {
         return representative
     }
 
-    func enqueue(_ clips: [SourceID: AlignmentAudioClip], startSeconds: Double, first: Bool) throws {
+    static func validateAppend(
+        to clock: AlignmentPlaybackClock, startSeconds: Double, now: Date = Date()
+    ) throws {
+        guard startSeconds.isFinite,
+              abs(startSeconds - clock.startSeconds - clock.duration) < 0.5 / 48_000 else {
+            throw AlignmentTransportFailure.discontinuousWindow
+        }
+        guard now < clock.startedAt.addingTimeInterval(clock.duration - 0.02) else {
+            throw AlignmentTransportFailure.bufferDeadline
+        }
+    }
+
+    func enqueue(
+        _ clips: [SourceID: AlignmentAudioClip], startSeconds: Double, first: Bool,
+        availableSources: Set<SourceID>, final: Bool,
+        onSourcesJoined: @escaping @MainActor () -> Void,
+        onBufferDeadline: @escaping @MainActor () -> Void
+    ) throws {
         let representative = try Self.validateTransport(clips)
         let format = try representative.makeFormat()
+        var buffers: [SourceID: AVAudioPCMBuffer] = [:]
+        for (source, clip) in clips {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(clip.samples.count)),
+                  let samples = buffer.floatChannelData?.pointee else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            buffer.frameLength = AVAudioFrameCount(clip.samples.count)
+            clip.samples.withUnsafeBufferPointer { values in
+                if let base = values.baseAddress { samples.update(from: base, count: values.count) }
+            }
+            buffers[source] = buffer
+        }
         if first {
             stop()
-            for source in clips.keys {
-                let player = AVAudioPlayerNode()
-                players[source] = player
-                engine.attach(player)
-                engine.connect(player, to: engine.mainMixerNode, format: format)
+            if Set(players.keys) != availableSources || transportSampleRate != representative.sampleRate {
+                clearPlayers()
+                for source in availableSources {
+                    let player = AVAudioPlayerNode()
+                    player.volume = 0
+                    players[source] = player
+                    engine.attach(player)
+                    engine.connect(player, to: engine.mainMixerNode, format: format)
+                }
             }
             do {
                 try engine.start()
@@ -106,37 +189,61 @@ final class AlignmentAudioPlayback {
                 throw error
             }
             transportSampleRate = representative.sampleRate
+        } else {
+            guard let clock else { throw WaveformWindowError.invalidSamples }
+            try Self.validateAppend(to: clock, startSeconds: startSeconds)
         }
-        guard Set(clips.keys).isSubset(of: preparedSources),
+        guard Set(clips.keys).isSubset(of: Set(players.keys)),
+              preparedSources.isSubset(of: Set(clips.keys)),
               transportSampleRate == representative.sampleRate, first || clock != nil else {
             throw WaveformWindowError.invalidSamples
         }
-        for (source, clip) in clips {
-            guard let player = players[source],
-                  let buffer = AVAudioPCMBuffer(
-                      pcmFormat: format, frameCapacity: AVAudioFrameCount(clip.samples.count)
-                  ),
-                  let samples = buffer.floatChannelData?.pointee
-            else { throw CocoaError(.fileReadCorruptFile) }
-            buffer.frameLength = AVAudioFrameCount(clip.samples.count)
-            clip.samples.withUnsafeBufferPointer { values in
-                if let base = values.baseAddress { samples.update(from: base, count: values.count) }
-            }
-            player.scheduleBuffer(buffer)
-        }
         if first {
             let lead = 0.1
-            let start = AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead))
+            transportHostTime = mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)
             clock = AlignmentPlaybackClock(
                 startSeconds: startSeconds, duration: representative.duration,
                 startedAt: Date().addingTimeInterval(lead)
             )
-            for player in players.values { player.play(at: start) }
         } else if let prior = clock {
             clock = AlignmentPlaybackClock(
                 startSeconds: prior.startSeconds, duration: prior.duration + representative.duration,
                 startedAt: prior.startedAt
             )
+        }
+        guard let clock, let transportHostTime else { throw WaveformWindowError.invalidSamples }
+        let hostTime = transportHostTime + AVAudioTime.hostTime(forSeconds: max(0, startSeconds - clock.startSeconds))
+        let start = AVAudioTime(hostTime: hostTime)
+        for (source, buffer) in buffers {
+            guard let player = players[source] else { throw WaveformWindowError.invalidSamples }
+            if !transportSources.prepared.contains(source) {
+                player.scheduleBuffer(buffer)
+                player.play(at: start)
+                if !first {
+                    let remaining = max(0, clock.startedAt.addingTimeInterval(startSeconds - clock.startSeconds).timeIntervalSinceNow)
+                    sourceJoinTasks[source] = Task {
+                        do { try await Task.sleep(for: .seconds(remaining)) }
+                        catch { return }
+                        guard !Task.isCancelled else { return }
+                        onSourcesJoined()
+                    }
+                }
+            } else {
+                player.scheduleBuffer(buffer)
+            }
+        }
+        transportSources.schedule(Set(clips.keys), startingAt: startSeconds)
+        bufferDeadlineTask?.cancel()
+        bufferDeadlineTask = nil
+        if !final {
+            let remaining = max(0, clock.startedAt.addingTimeInterval(clock.duration - 0.02).timeIntervalSinceNow)
+            bufferDeadlineTask = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(remaining)) }
+                catch { return }
+                guard let self, !Task.isCancelled, self.clock != nil else { return }
+                onBufferDeadline()
+                stop()
+            }
         }
     }
 }
