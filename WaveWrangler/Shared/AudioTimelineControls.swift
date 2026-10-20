@@ -473,14 +473,16 @@ struct AudioTimelineWaveformDrawing: View, Equatable {
     }
 
     var body: some View {
+        let gradient = LinearGradient(
+            colors: [color.mix(with: .white, by: 0.16), color, color.mix(with: .black, by: 0.16)],
+            startPoint: .top, endPoint: .bottom)
         ZStack {
-            path(mapped: true).stroke(
-                LinearGradient(colors: [color.mix(with: .white, by: 0.16), color,
-                                        color.mix(with: .black, by: 0.16)],
-                               startPoint: .top, endPoint: .bottom),
-                style: StrokeStyle(
-                    lineWidth: lineWidth, dash: ghost ? [4, 3] : []
-                ))
+            if ghost {
+                path(mapped: true).stroke(
+                    gradient, style: StrokeStyle(lineWidth: lineWidth, dash: [4, 3]))
+            } else {
+                path(mapped: true).fill(gradient)
+            }
             path(mapped: false).stroke(
                 Color.orange, style: StrokeStyle(lineWidth: lineWidth, dash: [3, 2]))
         }
@@ -495,12 +497,16 @@ struct AudioTimelineWaveformDrawing: View, Equatable {
                 draftEpoch: draftEpoch, ratePPM: draftRatePPM,
                 offsetMilliseconds: draftOffsetMilliseconds
             ) where column.mapped == mapped {
-                path.move(
-                    to: CGPoint(
-                        x: column.x, y: size.height * (0.5 - Double(column.high) * gain * 0.45)))
-                path.addLine(
-                    to: CGPoint(
-                        x: column.x, y: size.height * (0.5 - Double(column.low) * gain * 0.45)))
+                let top = size.height * (0.5 - Double(column.high) * gain * 0.45)
+                let bottom = size.height * (0.5 - Double(column.low) * gain * 0.45)
+                if mapped && !ghost {
+                    path.addRect(CGRect(
+                        x: column.x - 0.5 / displayScale, y: top,
+                        width: 1 / displayScale, height: max(1 / displayScale, bottom - top)))
+                } else {
+                    path.move(to: CGPoint(x: column.x, y: top))
+                    path.addLine(to: CGPoint(x: column.x, y: bottom))
+                }
             }
         }
     }

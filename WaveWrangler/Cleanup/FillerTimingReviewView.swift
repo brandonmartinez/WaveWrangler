@@ -212,7 +212,7 @@ private struct FillerTimingRegionView: View {
                     if dragOrigin == nil {
                         dragOrigin = review.bounds
                         dragEdge = edge
-                        model.selectFiller(review.id, reveal: false)
+                        model.selectFiller(review.id, reveal: false, movePlayhead: false)
                     }
                     if let dragOrigin {
                         let origin = edge == .start ? dragOrigin.alignedStart : dragOrigin.alignedEnd

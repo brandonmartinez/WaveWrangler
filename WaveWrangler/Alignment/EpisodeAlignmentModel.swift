@@ -1282,6 +1282,31 @@ final class EpisodeAlignmentModel {
         return true
     }
 
+    @discardableResult
+    func previewWaveformViewport(start: Double, duration: Double) -> Bool {
+        guard duration.isFinite, (0.5...maximumWaveformDuration).contains(duration) else {
+            waveformMessage = "Choose a finite timeline duration between 0.5 seconds and the episode span."
+            return false
+        }
+        guard previewWaveformWindow(start: start) else { return false }
+        waveformDurationSeconds = duration
+        if duration <= 30 { scheduleScrubTile() }
+        return true
+    }
+
+    @discardableResult
+    func zoomWaveformViewport(magnification: Double, anchor: Double) -> Bool {
+        guard let result = AlignmentWaveformProjection.rulerZoom(
+            start: waveformStartSeconds, duration: waveformDurationSeconds, anchor: anchor,
+            magnification: magnification, bounds: waveformViewingBounds,
+            maximumDuration: maximumWaveformDuration
+        ) else {
+            waveformMessage = "Choose a finite zoom and an anchor within the visible timeline."
+            return false
+        }
+        return previewWaveformViewport(start: result.start, duration: result.duration)
+    }
+
     func suspend() {
         cancelAdaptiveAnalysis()
         cancelWaveforms()

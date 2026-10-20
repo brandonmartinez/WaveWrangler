@@ -270,6 +270,25 @@ enum AlignmentWaveformProjection {
         let mapped: Bool
     }
 
+    enum ScrollAction: Equatable {
+        case pan(Double)
+        case zoom(Double)
+        case resize(Double)
+    }
+
+    static func scrollAction(
+        deltaX: Double, deltaY: Double, option: Bool, precise: Bool
+    ) -> ScrollAction? {
+        guard deltaX.isFinite, deltaY.isFinite else { return nil }
+        let scale = precise ? 1.0 : 10.0
+        if abs(deltaX) > abs(deltaY) {
+            return option ? .zoom(exp(max(-2, min(2, deltaX * scale * 0.01))))
+                : .pan(deltaX * scale)
+        }
+        if option, deltaY != 0 { return .resize(deltaY * scale) }
+        return nil
+    }
+
     static func displayColumns(
         strokes: [AlignmentWaveformStroke], start: Double, duration: Double,
         width: Double, pixelsPerPoint: Double,
@@ -277,20 +296,37 @@ enum AlignmentWaveformProjection {
     ) -> [DisplayColumn] {
         guard start.isFinite, duration.isFinite, duration > 0,
               width.isFinite, width > 0, pixelsPerPoint.isFinite, pixelsPerPoint > 0 else { return [] }
+        let pixelWidth = width * pixelsPerPoint
+        guard pixelWidth.isFinite, pixelWidth > 0, pixelWidth < Double(Int.max / 4) else { return [] }
         var columns: [Int: (low: Float, high: Float, mapped: Bool)] = [:]
         for stroke in strokes {
-            let time = stroke.epoch == draftEpoch
-                ? stroke.groupSeconds * (1 + ratePPM / 1_000_000) + offsetMilliseconds / 1_000
-                : stroke.displaySeconds
-            let pixel = (time - start) / duration * width * pixelsPerPoint
-            guard pixel.isFinite, pixel >= 0, pixel < width * pixelsPerPoint else { continue }
-            let column = Int(pixel.rounded(.down))
-            // Keep mapped and unplaced audio separate even if they share a screen column.
-            let key = column * 2 + (stroke.mapped ? 0 : 1)
-            if let prior = columns[key] {
-                columns[key] = (min(prior.low, stroke.low), max(prior.high, stroke.high), stroke.mapped)
+            let first: Double
+            let last: Double
+            if stroke.epoch == draftEpoch {
+                let rate = 1 + ratePPM / 1_000_000
+                first = stroke.groupRange.lowerBound * rate + offsetMilliseconds / 1_000
+                last = stroke.groupRange.upperBound * rate + offsetMilliseconds / 1_000
             } else {
-                columns[key] = (stroke.low, stroke.high, stroke.mapped)
+                first = stroke.displayRange.lowerBound
+                last = stroke.displayRange.upperBound
+            }
+            let lower = (first - start) / duration * pixelWidth
+            let upper = (last - start) / duration * pixelWidth
+            guard lower.isFinite, upper.isFinite, upper >= lower,
+                  upper >= 0, lower < pixelWidth,
+                  stroke.low.isFinite, stroke.high.isFinite, stroke.low <= stroke.high else { continue }
+            let firstColumn = Int(max(0, lower).rounded(.down))
+            let lastColumn = min(Int(ceil(pixelWidth)) - 1,
+                max(firstColumn, Int(min(pixelWidth, upper).rounded(.up)) - 1))
+            // A measured bin covers its entire span, not just its midpoint. Merge extrema only
+            // where spans share a pixel; never interpolate across an uncovered source/timing gap.
+            for column in firstColumn...lastColumn {
+                let key = column * 2 + (stroke.mapped ? 0 : 1)
+                if let prior = columns[key] {
+                    columns[key] = (min(prior.low, stroke.low), max(prior.high, stroke.high), stroke.mapped)
+                } else {
+                    columns[key] = (stroke.low, stroke.high, stroke.mapped)
+                }
             }
         }
         return columns.keys.sorted().compactMap { key in
