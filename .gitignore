@@ -30,6 +30,7 @@ DerivedData/
 *.xcresult
 xcuserdata/
 *.xcuserstate
+/WaveWrangler.xcodeproj/project.xcworkspace/contents.xcworkspacedata
 .swiftpm/
 Packages/WaveWranglerKit/.build/
 
