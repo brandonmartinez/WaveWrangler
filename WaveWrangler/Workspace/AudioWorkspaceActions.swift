@@ -63,12 +63,23 @@ struct AudioWorkspaceActions: View {
             Button("Add recordings or speakers", systemImage: "plus") { state.recordingsPresented = true }
                 .labelStyle(.iconOnly).accessibilityIdentifier("ww.audioWorkspace.add")
             if let cleanup = state.cleanupModel {
-                EpisodeBoundaryMenu(model: cleanup, alignment: alignment,
-                    isEnabled: !cleanup.isBusy && !alignment.isWorking && state.canEdit)
-                    .frame(width: 44, height: 24)
-                    .help("Persistent episode working boundaries; independent from temporary selection and cycle.")
+                NativeActionMenu(label: "Episode boundaries", symbol: "arrow.left.and.right",
+                    identifier: "ww.audioWorkspace.boundaries",
+                    isEnabled: !cleanup.isBusy && !alignment.isWorking && state.canEdit,
+                    actions: [
+                        .init(title: "IN at playhead") {
+                            cleanup.saveRange(inValue: alignment.waveformPlayheadSeconds,
+                                outValue: cleanup.episode?.cleanup?.workingRange?.tracksOut)
+                        },
+                        .init(title: "OUT at playhead") {
+                            cleanup.saveRange(inValue: cleanup.episode?.cleanup?.workingRange?.tracksIn,
+                                outValue: alignment.waveformPlayheadSeconds)
+                        },
+                        .init(title: "Reset IN/OUT") { cleanup.saveRange(inValue: nil, outValue: nil) },
+                    ])
+                .frame(width: 44, height: 24)
+                .help("Persistent episode working boundaries; independent from temporary selection and cycle.")
             }
-
         }
     }
 
@@ -114,71 +125,6 @@ struct AudioWorkspaceActions: View {
                     SettingsWindowController.show(pane: .transcription)
                 }.labelStyle(.iconOnly)
             }
-        }
-    }
-}
-
-@MainActor
-private struct EpisodeBoundaryMenu: NSViewRepresentable {
-    let model: EpisodeCleanupModel
-    let alignment: EpisodeAlignmentModel
-    let isEnabled: Bool
-
-    func makeCoordinator() -> Coordinator { Coordinator(model: model, alignment: alignment) }
-
-    func makeNSView(context: Context) -> NSPopUpButton {
-        let button = NSPopUpButton(frame: .zero, pullsDown: true)
-        button.controlSize = .small
-        button.imagePosition = .imageOnly
-        button.bezelStyle = .rounded
-        let menu = NSMenu()
-        let heading = NSMenuItem(title: "Episode boundaries", action: nil, keyEquivalent: "")
-        heading.image = NSImage(systemSymbolName: "arrow.left.and.right", accessibilityDescription: nil)
-        menu.addItem(heading)
-        for (title, action) in [
-            ("IN at playhead", #selector(Coordinator.markIn(_:))),
-            ("OUT at playhead", #selector(Coordinator.markOut(_:))),
-            ("Reset IN/OUT", #selector(Coordinator.reset(_:))),
-        ] {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-            item.target = context.coordinator
-            menu.addItem(item)
-        }
-        button.menu = menu
-        button.isEnabled = isEnabled
-        button.setAccessibilityLabel("Episode boundaries")
-        button.setAccessibilityIdentifier("ww.audioWorkspace.boundaries")
-        return button
-    }
-
-    func updateNSView(_ button: NSPopUpButton, context: Context) {
-        context.coordinator.model = model
-        context.coordinator.alignment = alignment
-        button.isEnabled = isEnabled
-    }
-
-    @MainActor
-    final class Coordinator: NSObject {
-        var model: EpisodeCleanupModel
-        var alignment: EpisodeAlignmentModel
-
-        init(model: EpisodeCleanupModel, alignment: EpisodeAlignmentModel) {
-            self.model = model
-            self.alignment = alignment
-        }
-
-        @objc func markIn(_ sender: NSMenuItem) {
-            model.saveRange(inValue: alignment.waveformPlayheadSeconds,
-                            outValue: model.episode?.cleanup?.workingRange?.tracksOut)
-        }
-
-        @objc func markOut(_ sender: NSMenuItem) {
-            model.saveRange(inValue: model.episode?.cleanup?.workingRange?.tracksIn,
-                            outValue: alignment.waveformPlayheadSeconds)
-        }
-
-        @objc func reset(_ sender: NSMenuItem) {
-            model.saveRange(inValue: nil, outValue: nil)
         }
     }
 }

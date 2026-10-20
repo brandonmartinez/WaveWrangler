@@ -231,6 +231,7 @@ struct AlignmentWaveformRetentionHostedTests {
         let track = try #require(f.model.waveformTracks.first { $0.id == f.target })
         f.model.selectWaveform(track)
         f.model.setPositionLocked(false, group: track.group)
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try await wait { f.document.verifiedModel == f.document.store.model }
         ready = true
         return f

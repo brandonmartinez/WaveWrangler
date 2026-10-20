@@ -90,24 +90,23 @@ struct AudioTimelineSelectionOverlay: View {
                 let hi = min(geometry.size.width, (range.upperBound - start) / duration * geometry.size.width)
                 if hi > lo {
                     let toolbarWidth = min(geometry.size.width, cleanup?.selectedFiller == nil ? 148 : 330)
+                    let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= 320
+                    let layout = horizontal
+                        ? AnyLayout(HStackLayout(spacing: 6))
+                        : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                     Rectangle().fill(Color.accentColor.opacity(0.16))
                         .frame(width: hi - lo, height: geometry.size.height)
                         .offset(x: lo)
                         .allowsHitTesting(false)
-                    ViewThatFits(in: .horizontal) {
-                        HStack(spacing: 6) {
-                            auditionButtons(range)
-                            if let cleanup, let review = cleanup.selectedFiller {
+                    layout {
+                        auditionButtons(range)
+                        if let cleanup, let review = cleanup.selectedFiller {
+                            if horizontal {
                                 Divider().frame(height: 22)
-                                FillerTimingToolbar(model: cleanup, reviewID: review.id)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 4) {
-                            auditionButtons(range)
-                            if let cleanup, let review = cleanup.selectedFiller {
+                            } else {
                                 Divider()
-                                FillerTimingToolbar(model: cleanup, reviewID: review.id)
                             }
+                            FillerTimingToolbar(model: cleanup, reviewID: review.id)
                         }
                     }
                     .buttonStyle(.bordered).controlSize(.mini)

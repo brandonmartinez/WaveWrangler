@@ -7,6 +7,34 @@ import WWCore
 @MainActor
 @Suite("Logic-style tools, listening presets, and sidebar activities", .serialized)
 struct ControlsSidebarHostedTests {
+    @Test func nativeToolMenusPublishSelectionAndRefreshTheirCheckedActions() async throws {
+        let listening = EpisodeListeningState()
+        let host = HostedTimelineWindow(width: 160, height: 40, content: TimelineToolControls(listening: listening))
+        defer { host.close() }
+        try await host.settle()
+        let buttons = host.descendants.compactMap { $0 as? NativeActionMenu.Button }
+        let primary = try #require(buttons.first { $0.accessibilityIdentifier() == "alignment.waveforms.tool" })
+        let command = try #require(buttons.first { $0.accessibilityIdentifier() == "alignment.waveforms.commandTool" })
+        #expect(primary.accessibilityLabel() == "Primary tool")
+        #expect(command.accessibilityLabel() == "Command-click tool")
+        #expect(primary.accessibilityValue() as? String == "Pointer")
+        for (button, title) in [(primary, "Reviewed"), (command, "Reject")] {
+            let menu = try #require(button.menu)
+            let index = menu.indexOfItem(withTitle: title)
+            try #require(index > 0)
+            menu.performActionForItem(at: index)
+            try await host.settle()
+            #expect(button.accessibilityValue() as? String == title)
+            let refreshed = try #require(button.menu)
+            #expect(refreshed.items.filter { $0.state == .on }.map(\.title) == [title])
+        }
+        #expect(listening.tool == .reviewed && listening.commandTool == .reject)
+        listening.tool = .move
+        try await host.settle()
+        #expect(primary.accessibilityValue() as? String == EpisodeListeningState.Tool.move.rawValue)
+        #expect(listening.commandTool == .reject)
+    }
+
     @Test func nativeCommandFlagsTemporarilySelectSecondaryToolAndResetOnRemoval() throws {
         let listening = EpisodeListeningState()
         let monitor = TimelineToolModifierMonitor.MonitorView(listening: listening)
@@ -137,6 +165,7 @@ struct ControlsSidebarHostedTests {
         let host = HostedTimelineWindow(width: 744, height: 110,
             content: FillerTimingOverlay(model: model, reviews: [detected]))
         defer { host.close() }
+        host.window.makeKeyAndOrderFront(nil)
         try await host.settle()
         try host.capture("Compact marker controls before native input")
         let views = host.descendants.map {
@@ -147,26 +176,27 @@ struct ControlsSidebarHostedTests {
             children=\(String(describing: host.view.accessibilityChildren()))
             \(views)
             """.utf8), named: "compact-marker-native-view-tree.txt")
-        func clickControl(_ identifier: String) async throws {
-            let control = try #require(accessibilityControl(identifier, in: host.view),
-                                       "Missing native review control \(identifier)")
-            let screenFrame = control.accessibilityFrame()
-            let frame = host.view.convert(host.window.convertFromScreen(screenFrame), from: nil)
+        func clickControl(_ identifier: String, index: Int, audition: Bool) async throws {
+            let frames = host.controlFrames.filter {
+                audition ? $0.height < 15 && $0.width < 30 : (19...21).contains($0.height) && $0.width >= 31
+            }.sorted { $0.minX < $1.minX }
+            try #require(frames.count == 4, "\(identifier): expected four visible native controls, got \(frames)")
+            let frame = frames[index]
             let point = CGPoint(x: frame.midX, y: frame.midY)
             Attachment.record(Data("""
-                \(identifier): screen=\(screenFrame), local=\(frame)
+                \(identifier): local=\(frame)
                 hit=\(String(describing: host.view.hitTest(point)))
                 native control frames=\(host.controlFrames)
                 """.utf8), named: "\(identifier)-hit.txt")
             try await host.click(point)
         }
-        try await clickControl("ww.cleanup.filler.loop")
+        try await clickControl("ww.cleanup.filler.loop", index: 2, audition: true)
         #expect(model.loopsFillerAudition)
-        try await clickControl("ww.cleanup.filler.loop")
+        try await clickControl("ww.cleanup.filler.loop", index: 2, audition: true)
         #expect(!model.loopsFillerAudition)
-        try await clickControl("ww.cleanup.filler.reject")
+        try await clickControl("ww.cleanup.filler.reject", index: 1, audition: false)
         #expect(model.selectedFiller?.decision == .rejected)
-        try await clickControl("ww.cleanup.filler.clearReview")
+        try await clickControl("ww.cleanup.filler.clearReview", index: 2, audition: false)
         #expect(model.selectedFiller?.decision == .pending)
         try host.capture("Native compact marker action hit testing")
         let original = f.document.store.model
@@ -222,16 +252,6 @@ struct ControlsSidebarHostedTests {
         try #require(NSEvent.keyEvent(with: .flagsChanged, location: .zero, modifierFlags: modifiers,
             timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: 0, context: nil,
             characters: "", charactersIgnoringModifiers: "", isARepeat: false, keyCode: 55))
-    }
-
-    private func accessibilityControl(_ identifier: String, in root: any NSAccessibilityProtocol)
-        -> (any NSAccessibilityProtocol)? {
-        if root.accessibilityIdentifier() == identifier { return root }
-        for child in root.accessibilityChildren() ?? [] {
-            if let child = child as? any NSAccessibilityProtocol,
-               let found = accessibilityControl(identifier, in: child) { return found }
-        }
-        return nil
     }
 
     private func wait(_ condition: () -> Bool) async throws {

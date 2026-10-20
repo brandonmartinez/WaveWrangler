@@ -17,28 +17,18 @@ struct TimelineToolControls: View {
     }
 
     private func selector(_ title: String, selection: Binding<EpisodeListeningState.Tool>, command: Bool) -> some View {
-        Menu {
-            Picker(title, selection: selection) {
-                ForEach(EpisodeListeningState.Tool.allCases, id: \.self) { tool in
-                    Label(tool.rawValue, systemImage: tool.symbol).tag(tool)
+        NativeActionMenu(label: title, symbol: selection.wrappedValue.symbol,
+            identifier: command ? "alignment.waveforms.commandTool" : "alignment.waveforms.tool",
+            value: selection.wrappedValue.rawValue, prefix: command ? "⌘" : nil,
+            actions: EpisodeListeningState.Tool.allCases.map { tool in
+                .init(title: tool.rawValue, symbol: tool.symbol, isSelected: tool == selection.wrappedValue) {
+                    selection.wrappedValue = tool
                 }
-            }
-        } label: {
-            HStack(spacing: 3) {
-                if command { Image(systemName: "command") }
-                Image(systemName: selection.wrappedValue.symbol)
-            }
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel(title)
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .padding(4)
+            })
+        .frame(width: command ? 58 : 44, height: 24)
+        .padding(2)
         .background((listening.commandHeld == command ? Color.accentColor : .clear).opacity(0.15),
                     in: RoundedRectangle(cornerRadius: 5))
-        .accessibilityLabel(title)
-        .accessibilityValue(selection.wrappedValue.rawValue)
-        .accessibilityIdentifier(command ? "alignment.waveforms.commandTool" : "alignment.waveforms.tool")
         .help(command
               ? "Hold Command to use \(selection.wrappedValue.rawValue); release to restore the primary tool."
               : "Pointer selects intervals. Move recorder respects position locks. Reviewed and Reject act only on existing filler regions.")
