@@ -45,7 +45,7 @@ struct NativeActionMenu: NSViewRepresentable {
         button.imagePosition = symbol == nil ? .noImage : prefix == nil ? .imageOnly : .imageLeading
         button.menu = menu
         button.selectionValue = value
-        button.isEnabled = isEnabled
+        button.isEnabled = isEnabled && context.environment.isEnabled
         button.setAccessibilityLabel(label)
         button.setAccessibilityIdentifier(identifier)
     }

@@ -33,6 +33,14 @@ struct ControlsSidebarHostedTests {
         try await host.settle()
         #expect(primary.accessibilityValue() as? String == EpisodeListeningState.Tool.move.rawValue)
         #expect(listening.commandTool == .reject)
+
+        let disabledHost = HostedTimelineWindow(width: 160, height: 40,
+            content: TimelineToolControls(listening: listening).disabled(true))
+        defer { disabledHost.close() }
+        try await disabledHost.settle()
+        let disabledButtons = disabledHost.descendants.compactMap { $0 as? NativeActionMenu.Button }
+        try #require(disabledButtons.count == 2)
+        #expect(disabledButtons.allSatisfy { !$0.isEnabled })
     }
 
     @Test func nativeCommandFlagsTemporarilySelectSecondaryToolAndResetOnRemoval() throws {

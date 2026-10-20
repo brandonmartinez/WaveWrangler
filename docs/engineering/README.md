@@ -146,9 +146,13 @@ current renderer. Separately, the pre-change Debug renderer-only baseline measur
 88.8-89.8 ms for five-second identity, 18.1 ms for 500 ms identity and 249-253 ms for
 500 ms drift; after kernel reuse those measured 77.4-78.6, 7.80-7.89 and 237-241 ms.
 Each two-track case retained 1,536,000 PCM bytes, with 14 misses and 28 witnessed
-hits across three four-second cycles. Concurrent background warming, full app
-admission, and native output still require VM qualification; more simultaneous
-drifting tracks are not covered by this two-track acceptance.
+hits across three four-second cycles. Serial macOS VM hosted regressions also
+exercise three real model playback cycles, synchronous Stop, live unmute/Solo
+without restarting the shared clock, and the actual producer-deadline callback
+with synthetic recordings. Those are functional checks, not measurements of full
+app admission, physical output startup, or gapless cycles. More simultaneous
+drifting tracks and cold adaptive tiles are not covered by this two-track timing
+acceptance.
 
 Run with the normal package scratch directory and bounded workers:
 
