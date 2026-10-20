@@ -61,6 +61,21 @@ struct ControlsSidebarHostedTests {
         #expect(listening.playback == current, "An unavailable preset cannot silently change listening.")
     }
 
+    @Test func modifierMonitorRebindsWithoutRetainingAnotherEpisodesCommandState() throws {
+        let first = EpisodeListeningState()
+        let second = EpisodeListeningState()
+        let monitor = TimelineToolModifierMonitor.MonitorView(listening: first)
+        defer { monitor.stop() }
+        monitor.process(try flags(.command))
+        #expect(first.commandHeld)
+        monitor.updateListening(second)
+        #expect(!first.commandHeld && !second.commandHeld)
+        monitor.process(try flags(.command))
+        #expect(second.commandHeld && !first.commandHeld)
+        monitor.stop()
+        #expect(!second.commandHeld)
+    }
+
     @Test func sidebarTogglesShareOneInspectorAndPreserveItsActivityWhenHidden() {
         let episode = Episode(title: "Synthetic")
         let state = ShowWindowState(store: .init(model: .init(show: Show(title: "Synthetic"),

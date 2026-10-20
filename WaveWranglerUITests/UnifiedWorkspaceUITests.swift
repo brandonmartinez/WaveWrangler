@@ -106,11 +106,9 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         app.activate()
         let ruler = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
         XCTAssertTrue(ruler.waitForExistence(timeout: 20), app.debugDescription)
-        app.buttons["Transcript & review"].firstMatch.click()
-        let inspect = app.scrollViews["ww.inspector"].popUpButtons.firstMatch
-        XCTAssertTrue(inspect.waitForExistence(timeout: 5), app.debugDescription)
-        inspect.click()
-        app.menuItems["Episode"].click()
+        let episodeSidebar = app.buttons["ww.sidebar.episode"]
+        XCTAssertTrue(episodeSidebar.waitForExistence(timeout: 5), app.debugDescription)
+        episodeSidebar.click()
         let notes = app.textViews["ww.inspector.episode.notes"]
         XCTAssertTrue(notes.waitForExistence(timeout: 5), app.debugDescription)
         notes.click()
@@ -249,7 +247,8 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         XCTAssertEqual(cycleStart.frame.midX, beforeStart, accuracy: 0.5, "Cycle dragging does not pan the timeline.")
         XCTAssertEqual(cycleStart.value as? String, beforeStartTime)
         XCTAssertEqual(playhead.value as? String, beforePlayhead, "Cycle dragging does not scrub the playhead.")
-        app.buttons["Transcript & review"].firstMatch.click()
+        let transcriptSidebar = app.buttons["ww.sidebar.transcript"]
+        if transcriptSidebar.value as? String != "Shown" { transcriptSidebar.click() }
         XCTAssertTrue(app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH 'ww.transcript.full.'")).firstMatch.waitForExistence(timeout: 5),
                       app.debugDescription)
@@ -264,15 +263,15 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             XCTAssertTrue(review.waitForExistence(timeout: 5), app.debugDescription)
             reveal(review, in: app, scrollID: "ww.inspector")
             review.click()
-            let context = app.buttons["ww.cleanup.filler.inspector.context"]
+            let context = app.buttons["Play with context"].firstMatch
             XCTAssertTrue(context.waitForExistence(timeout: 5), app.debugDescription)
-            let loop = app.descendants(matching: .any)["ww.cleanup.filler.inspector.loop"]
-            reveal(loop, in: app, scrollID: "ww.inspector")
+            let loop = app.buttons["ww.cleanup.filler.loop"]
+            reveal(loop, in: app)
             loop.click()
             context.click()
-            let stopReview = app.buttons["ww.cleanup.filler.inspector.stop"]
+            let stopReview = app.buttons["ww.cleanup.filler.stop"]
             XCTAssertTrue(stopReview.waitForExistence(timeout: 5), app.debugDescription)
-            reveal(stopReview, in: app, scrollID: "ww.inspector")
+            reveal(stopReview, in: app)
             XCTAssertTrue(stopReview.isHittable, app.debugDescription)
             stopReview.click()
             XCTAssertTrue(wait {

@@ -47,11 +47,11 @@ struct TimelineToolModifierMonitor: NSViewRepresentable {
     let listening: EpisodeListeningState
 
     func makeNSView(context: Context) -> MonitorView { MonitorView(listening: listening) }
-    func updateNSView(_ nsView: MonitorView, context: Context) {}
+    func updateNSView(_ nsView: MonitorView, context: Context) { nsView.updateListening(listening) }
     static func dismantleNSView(_ nsView: MonitorView, coordinator: ()) { nsView.stop() }
 
     final class MonitorView: NSView {
-        let listening: EpisodeListeningState
+        private(set) var listening: EpisodeListeningState
         private var monitor: Any?
         private var resignObserver: NSObjectProtocol?
 
@@ -83,6 +83,14 @@ struct TimelineToolModifierMonitor: NSViewRepresentable {
 
         func process(_ event: NSEvent) {
             listening.updateCommandModifier(event.modifierFlags.contains(.command))
+        }
+
+        func updateListening(_ value: EpisodeListeningState) {
+            guard listening !== value else { return }
+            listening.updateCommandModifier(false)
+            listening = value
+            listening.updateCommandModifier(window?.isKeyWindow == true && window?.attachedSheet == nil
+                && NSEvent.modifierFlags.contains(.command))
         }
 
         func stop() {

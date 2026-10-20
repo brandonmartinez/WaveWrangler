@@ -88,7 +88,9 @@ struct FillerTimingOverlay: View {
             .accessibilityAction {
                 if let first = reviews.first {
                     model.activateFillerMarker(first.id)
-                    model.zoomTimeline(duration: min(5, model.maximumDuration))
+                    if model.listening.effectiveTool.reviewDecision == nil {
+                        model.zoomTimeline(duration: min(5, model.maximumDuration))
+                    }
                 }
             }
         }
@@ -218,7 +220,7 @@ private struct FillerTimingRegionView: View {
                     }
                 }
                 .onEnded { value in
-                    if let dragOrigin {
+                    if model.listening.effectiveTool == .select, let dragOrigin {
                         let origin = edge == .start ? dragOrigin.alignedStart : dragOrigin.alignedEnd
                         let time = origin + value.translation.width / max(1, size.width) * duration
                         model.setFillerBounds(review.id,
