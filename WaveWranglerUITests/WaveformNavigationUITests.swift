@@ -49,12 +49,16 @@ final class WaveformNavigationUITests: XCTestCase {
         let track = tracks(in: app).firstMatch
         XCTAssertTrue(track.waitForExistence(timeout: 20), app.debugDescription)
         reveal(track, in: app)
+        let recordingSidebar = app.buttons["ww.sidebar.recording"]
+        if recordingSidebar.value as? String == "Shown" { recordingSidebar.click() }
         let markers = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND identifier ENDSWITH '.start'"))
         XCTAssertTrue(wait { markers.count == 2 }, app.debugDescription)
         let previous = markers.element(boundBy: 0)
         let previousRegionID = String(previous.identifier.dropLast(".start".count))
         previous.click()
+        XCTAssertEqual(app.buttons["ww.sidebar.transcript"].value as? String, "Hidden",
+                       "Compact marker review must not open a sidebar and resize the timeline")
         app.typeKey(.escape, modifierFlags: [])
         let playhead = app.textFields["alignment.waveforms.playhead"]
         reveal(playhead, in: app)
@@ -77,6 +81,8 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(try viewport(in: app).start, oldViewport.start, accuracy: 0.002)
         XCTAssertEqual(try viewport(in: app).duration, oldViewport.duration, accuracy: 0.002)
         XCTAssertEqual(playhead.value as? String, oldPlayhead, "A boundary edit is not a seek")
+        XCTAssertEqual(app.buttons["ww.sidebar.transcript"].value as? String, "Hidden",
+                       "Boundary edits preserve the user's sidebar visibility")
         let changedValue = edited.value as? String
         let editedRegion = app.buttons[String(id.dropLast(".start".count))]
         let previousRegion = app.buttons[previousRegionID]

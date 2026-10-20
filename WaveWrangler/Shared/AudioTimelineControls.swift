@@ -473,30 +473,30 @@ struct AudioTimelineWaveformDrawing: View, Equatable {
     }
 
     var body: some View {
+        let columns = AlignmentWaveformProjection.displayColumns(
+            strokes: strokes, start: start, duration: duration,
+            width: size.width, pixelsPerPoint: displayScale,
+            draftEpoch: draftEpoch, ratePPM: draftRatePPM,
+            offsetMilliseconds: draftOffsetMilliseconds)
         let gradient = LinearGradient(
             colors: [color.mix(with: .white, by: 0.16), color, color.mix(with: .black, by: 0.16)],
             startPoint: .top, endPoint: .bottom)
         ZStack {
             if ghost {
-                path(mapped: true).stroke(
+                path(columns: columns, mapped: true).stroke(
                     gradient, style: StrokeStyle(lineWidth: lineWidth, dash: [4, 3]))
             } else {
-                path(mapped: true).fill(gradient)
+                path(columns: columns, mapped: true).fill(gradient)
             }
-            path(mapped: false).stroke(
+            path(columns: columns, mapped: false).stroke(
                 Color.orange, style: StrokeStyle(lineWidth: lineWidth, dash: [3, 2]))
         }
         .frame(width: size.width, height: size.height)
     }
 
-    private func path(mapped: Bool) -> Path {
+    private func path(columns: [AlignmentWaveformProjection.DisplayColumn], mapped: Bool) -> Path {
         Path { path in
-            for column in AlignmentWaveformProjection.displayColumns(
-                strokes: strokes, start: start, duration: duration,
-                width: size.width, pixelsPerPoint: displayScale,
-                draftEpoch: draftEpoch, ratePPM: draftRatePPM,
-                offsetMilliseconds: draftOffsetMilliseconds
-            ) where column.mapped == mapped {
+            for column in columns where column.mapped == mapped {
                 let top = size.height * (0.5 - Double(column.high) * gain * 0.45)
                 let bottom = size.height * (0.5 - Double(column.low) * gain * 0.45)
                 if mapped && !ghost {

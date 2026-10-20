@@ -83,8 +83,6 @@ struct EpisodeAlignmentContent: View {
         }
         .onChange(of: state.cleanupModel?.selectedFillerID) { _, _ in
             guard let review = state.cleanupModel?.selectedFiller else { return }
-            state.workspaceInspector = .transcript
-            state.inspectorPresented = true
             model?.listening.selection = review.bounds.alignedStart...review.bounds.alignedEnd
         }
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
