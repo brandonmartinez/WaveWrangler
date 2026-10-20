@@ -39,7 +39,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         let window = app.windows["ww.show.window"]
         XCTAssertEqual(window.frame.width, 760, accuracy: 2)
         XCTAssertEqual(window.frame.height, 492, accuracy: 2)
-        let group = app.staticTexts["Studio recorder"]
+        let group = app.outlines["ww.alignment.groups"].staticTexts["Studio recorder"]
         XCTAssertTrue(group.waitForExistence(timeout: 5))
         scrollIntoWindow(group)
         group.click()
@@ -175,13 +175,19 @@ final class AlignmentInspectionUITests: XCTestCase {
     func testTM206AcceptProposalCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Accept Proposal as Manual")
-        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForText("Set by you", in: epochState("Guest take")),
+            "The selected saved proposal must become manual. \(alignmentCorrectionDiagnostics)"
+        )
     }
 
     func testTM207RejectProposalCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Reject Proposal")
-        XCTAssertTrue(stateHeading("Timing not set — not attempted").waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForText("Timing not set — not attempted", in: epochState("Guest take")),
+            "Reject must change Guest take, not match the already-unmapped restart epoch. \(alignmentCorrectionDiagnostics)"
+        )
     }
 
     func testTM208StartNewEpochCommandExists() {
@@ -239,8 +245,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Accept Proposal as Manual")
         XCTAssertTrue(
             waitForStaleDependents(in: notice, previousTotal: total, timeout: 15),
-            "Expected an affected dependent to become stale, got \(text(of: notice))"
+            "Expected an affected dependent to become stale, got \(text(of: notice)). \(alignmentCorrectionDiagnostics)"
         )
+        XCTAssertTrue(waitForText("Set by you", in: epochState("Guest take")))
+        XCTAssertTrue(waitForSelectedEpoch("Guest take"), "Reading the dependent notice must not change epoch selection")
     }
 
     func testTM212NoRecorderGroupBlockedPanel() throws {
@@ -254,14 +262,17 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.activate()
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["Add recordings to begin"].waitForExistence(timeout: 5))
-        let goToSetup = app.buttons["Manage recordings…"]
-        XCTAssertTrue(goToSetup.exists)
+        let addRecordings = app.windows["ww.show.window"].buttons["Add recordings…"]
+        XCTAssertTrue(addRecordings.exists)
         guard UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 else {
             throw XCTSkip("Tab-only recovery requires system Full Keyboard Access")
         }
-        XCTAssertTrue(tabToFocus(goToSetup))
+        XCTAssertTrue(tabToFocus(addRecordings))
         app.typeKey(.space, modifierFlags: [])
-        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
+        let recordings = app.sheets.firstMatch
+        XCTAssertTrue(recordings.waitForExistence(timeout: 5), "Blocked recovery must open Recordings & Speakers")
+        XCTAssertTrue(recordings.staticTexts["Recordings & Speakers"].exists)
+        XCTAssertTrue(recordings.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
     }
 
     func testAlignmentWindowSmokeAndResize() throws {
@@ -439,7 +450,9 @@ final class AlignmentInspectionUITests: XCTestCase {
 
     private func chooseEpisodeMenu(_ item: String) {
         app.menuBars.menuBarItems["Episode"].click()
-        app.menuItems[item].click()
+        let command = app.menuItems[item]
+        XCTAssertTrue(command.isEnabled, "\(item) must be available for the selected epoch")
+        command.click()
     }
 
     /// Selects an anchor row by clicking inside the row itself. An identifier-targeted `.click()` on a
@@ -586,7 +599,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         showSidebar("alignment")
         let state = stateHeading("Proposed — not confirmed")
         XCTAssertTrue(state.waitForExistence(timeout: 5))
-        let epochName = app.staticTexts["Guest take"]
+        let epochName = app.outlines["ww.alignment.groups"].staticTexts["Guest take"]
         scrollIntoWindow(epochName)
         epochName.click()
         XCTAssertTrue(waitForSelectedEpoch("Guest take"))
@@ -596,9 +609,23 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     private func stateHeading(_ heading: String) -> XCUIElement {
-        app.staticTexts.matching(NSPredicate(
+        app.outlines["ww.alignment.groups"].staticTexts.matching(NSPredicate(
             format: "label BEGINSWITH %@ OR value BEGINSWITH %@", heading, heading
         )).firstMatch
+    }
+
+    private func epochState(_ name: String) -> XCUIElement {
+        app.outlines["ww.alignment.groups"].descendants(matching: .outlineRow)
+            .containing(.staticText, identifier: name).firstMatch.staticTexts.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "ww.alignment.epoch.", ".state"
+            )).firstMatch
+    }
+
+    private var alignmentCorrectionDiagnostics: String {
+        let error = app.descendants(matching: .any)["alignment.error"]
+        return "State: \(text(of: epochState("Guest take"))); "
+            + "status: \(text(of: app.staticTexts["alignment.status"])); "
+            + "error: \(error.exists ? text(of: error) : "none")."
     }
 
     private func replace(_ field: XCUIElement, with text: String) {

@@ -104,8 +104,8 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(speakerOverlays.allElementsBoundByIndex.contains { $0.label.contains("Guest") })
         layoutOption("By recorder", in: app).click()
         XCTAssertTrue(app.buttons["alignment.waveforms.fitTimeline"].exists)
-        XCTAssertTrue(app.buttons["Mute Studio"].exists)
-        XCTAssertTrue(app.buttons["Mute Remote"].exists)
+        XCTAssertTrue(app.scrollViews["ww.alignment.workspace"].buttons["Mute Studio"].exists)
+        XCTAssertTrue(app.scrollViews["ww.alignment.workspace"].buttons["Mute Remote"].exists)
         let place = app.buttons["alignment.waveforms.placeInitial"]
         scrollTo(place, in: app)
         XCTAssertTrue(place.isEnabled)
@@ -139,7 +139,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 1") })
         app.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(waitUntil { (revision.value as? String ?? revision.label).contains("Map revision 2") })
-        let remoteToggle = app.buttons["Mute Remote"]
+        let remoteToggle = app.scrollViews["ww.alignment.workspace"].buttons["Mute Remote"]
         scrollTo(remoteToggle, in: app)
         remoteToggle.click()
         XCTAssertTrue(waitUntil { tracks.count == 2 && (remoteToggle.value as? String) == "On" })
@@ -484,12 +484,7 @@ final class VisualAlignmentUITests: XCTestCase {
             "alignment.waveforms.select.", "synthetic-remote.wav"
         )).firstMatch
         target.click()
-        let advanced = app.disclosureTriangles["Advanced timing"]
-        scrollTo(advanced, in: app, sidebar: "recording")
-        if String(describing: advanced.value ?? "") == "0" {
-            advanced.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-                .withOffset(CGVector(dx: 27, dy: 0)).click()
-        }
+        showAdvancedTiming(in: app)
         let offset = app.textFields["alignment.waveforms.offset"]
         scrollTo(offset, in: app, sidebar: "recording")
         if !offset.isHittable { attachDisplay(app, name: "Advanced timing after disclosure activation") }
@@ -559,6 +554,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let basis = app.staticTexts["ww.inspector.alignment.basis"]
         scrollTo(basis, in: app, sidebar: "recording")
         XCTAssertTrue((basis.value as? String ?? "").contains("Fitted from"))
+        showAdvancedTiming(in: app)
         scrollTo(offset, in: app, sidebar: "recording")
         XCTAssertEqual(Double(offset.value as? String ?? ""), -180)
         scrollTo(target, in: app)
@@ -587,8 +583,16 @@ final class VisualAlignmentUITests: XCTestCase {
         )
         XCTAssertTrue(waitUntil { tracks.count == 2 })
         let oldIDs = Set(tracks.allElementsBoundByIndex.map(\.identifier))
+        scrollTo(load, in: app)
         load.click()
-        XCTAssertEqual(load.label, "Cancel audio loading", "Close the episode while the actual decoded result is awaiting publication")
+        XCTAssertTrue(waitUntil { load.label == "Cancel" }, "The delayed decode must expose real cancellation")
+        XCTAssertTrue(load.isEnabled)
+        load.click()
+        XCTAssertTrue(waitUntil { load.label == "Refresh audio" }, "Cancel must end the in-flight waveform load")
+        XCTAssertEqual(tracks.count, 0, "Canceled refresh must not expose a partially decoded result")
+        load.click()
+        XCTAssertTrue(waitUntil { load.label == "Cancel" },
+                      "Switch episodes while the actual decoded result is awaiting publication")
         EpisodeLibraryNavigation.openEpisode(containing: "Synthetic Episode 2", in: app, destination: "2")
         XCTAssertTrue(waitUntil { app.windows["ww.show.window"].title.contains("Synthetic Episode 2") })
         XCTAssertTrue(waitUntil { load.exists && load.label == "Refresh audio" && tracks.count == 2 })
@@ -697,6 +701,19 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(app.scrollViews[root].waitForExistence(timeout: 5), app.debugDescription)
     }
 
+    private func showAdvancedTiming(in app: XCUIApplication) {
+        showSidebar("recording", in: app)
+        let advanced = app.scrollViews["ww.inspector"].disclosureTriangles["Advanced timing"]
+        scrollTo(advanced, in: app, sidebar: "recording")
+        if String(describing: advanced.value ?? "") == "0" {
+            advanced.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                .withOffset(CGVector(dx: 27, dy: 0)).click()
+        }
+        XCTAssertTrue(waitUntil { String(describing: advanced.value ?? "") == "1" })
+        XCTAssertTrue(app.scrollViews["ww.inspector"].textFields["alignment.waveforms.offset"].exists,
+                      "Reopening an activity recreates its disclosure state; reveal timing before reading it")
+    }
+
     private func chooseImportFolder(_ folder: URL, in app: XCUIApplication) {
         let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
         XCTAssertTrue(waitUntil {
@@ -786,12 +803,8 @@ final class VisualAlignmentUITests: XCTestCase {
 
     private func scrollTo(_ element: XCUIElement, in app: XCUIApplication, sidebar: String? = nil) {
         if let sidebar { showSidebar(sidebar, in: app) }
-        let roots = ["ww.inspector.alignment.details", "ww.inspector"].map { app.scrollViews[$0] }
-        let key = element.exists ? (element.identifier.isEmpty ? element.label : element.identifier) : ""
-        let scroll = roots.first { root in
-            root.exists && !key.isEmpty && root.descendants(matching: element.elementType)
-                .matching(identifier: key).firstMatch.exists
-        } ?? sidebar.map { app.scrollViews[$0 == "alignment" ? "ww.inspector.alignment.details" : "ww.inspector"] }
+        // Listening controls intentionally share identifiers across the canvas and Recording activity.
+        let scroll = sidebar.map { app.scrollViews[$0 == "alignment" ? "ww.inspector.alignment.details" : "ww.inspector"] }
             ?? app.scrollViews["ww.alignment.workspace"]
         XCTAssertTrue(scroll.waitForExistence(timeout: 5))
         if !element.exists {
