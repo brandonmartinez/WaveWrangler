@@ -301,9 +301,14 @@ private struct ShowDetailContent: View {
                             .id(episode.id)
                     } else {
                         ContentUnavailableView {
-                            Label("Add recordings to begin", systemImage: "waveform")
+                            Label {
+                                Text("Add recordings to begin").foregroundStyle(.primary)
+                            } icon: {
+                                Image(systemName: "waveform").foregroundStyle(.secondary)
+                            }
                         } description: {
                             Text("Organize recordings into recorder groups and confirm their originals in Setup.")
+                                .foregroundStyle(.primary)
                         } actions: {
                             Button("Add recordings…", systemImage: "plus") { state.recordingsPresented = true }
                         }

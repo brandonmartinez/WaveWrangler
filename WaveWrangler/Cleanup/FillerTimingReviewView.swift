@@ -28,11 +28,12 @@ struct FillerTimingOverlay: View {
                             .zIndex(model.selectedFillerID == review.id ? 1 : 0)
                     }
                 }
+            }
+            .overlay {
                 if let review = model.selectedFiller, reviews.contains(where: { $0.id == review.id }) {
                     AudioTimelineSelectionOverlay(listening: model.listening,
                         start: model.windowStart, duration: model.visibleDuration,
                         play: { model.auditionFiller(review.id, context: $0) }, cleanup: model)
-                        .zIndex(2)
                 }
             }
         }

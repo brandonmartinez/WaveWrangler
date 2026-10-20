@@ -62,7 +62,7 @@ struct AudioWorkspaceActions: View {
             Button("Add recordings or speakers", systemImage: "plus") { state.recordingsPresented = true }
                 .labelStyle(.iconOnly).accessibilityIdentifier("ww.audioWorkspace.add")
             if let cleanup = state.cleanupModel {
-                Menu("Episode boundaries", systemImage: "arrow.left.and.right") {
+                Menu {
                     Button("IN at playhead") {
                         cleanup.saveRange(inValue: alignment.waveformPlayheadSeconds,
                                           outValue: cleanup.episode?.cleanup?.workingRange?.tracksOut)
@@ -72,8 +72,15 @@ struct AudioWorkspaceActions: View {
                                           outValue: alignment.waveformPlayheadSeconds)
                     }
                     Button("Reset IN/OUT") { cleanup.saveRange(inValue: nil, outValue: nil) }
+                } label: {
+                    Image(systemName: "arrow.left.and.right")
+                        .accessibilityElement(children: .ignore)
+                        .accessibilityLabel("Episode boundaries")
                 }
-                .labelStyle(.iconOnly)
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("Episode boundaries")
+                .accessibilityIdentifier("ww.audioWorkspace.boundaries")
                 .disabled(cleanup.isBusy || alignment.isWorking || !state.canEdit)
                 .help("Persistent episode working boundaries; independent from temporary selection and cycle.")
             }
