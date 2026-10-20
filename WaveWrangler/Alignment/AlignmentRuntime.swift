@@ -550,7 +550,8 @@ actor AlignmentRuntime {
             throw DecodeFailure.sourceIdentityMismatch
         }
         let channelSuffix = decodedChannel.map { ".channel.\($0)" } ?? ""
-        let asset = AssetSpec(kind: "ww.waveform.overview\(channelSuffix)", revision: 2)
+        let asset = AssetSpec(
+            kind: "ww.waveform.overview\(channelSuffix)", revision: WaveformWindowReader.overviewRecipeRevision)
         let source = admission.key.sourceID
         let groupMap = map?.groups.first(where: {
             $0.group == group && $0.placements.contains(where: { $0.occurrence.source == source })
@@ -568,13 +569,13 @@ actor AlignmentRuntime {
         )
         let slot = DerivedSlot("ww.waveform.overview.\(episode.id).\(source)\(channelSuffix)")
         await coordinator.setAssetRevision(asset)
-        let decoder = pipeline.decoder
+        let pipeline = pipeline
         let accessStore = accessStore
         let sourceCount = max(1, sourceCount)
         let job = await coordinator.submit(slot, key: key) {
-            let envelope = try await WaveformWindowReader.readOverview(
+            return try await pipeline.waveformOverviewPayload(
                 sourceURL: admission.url, source: source,
-                matching: admission.witness, decoder: decoder, groupMap: groupMap, sourceCorrection: correction,
+                matching: admission.witness, groupMap: groupMap, sourceCorrection: correction,
                 decodedChannel: decodedChannel
             ) { fraction in
                 guard try await accessStore.record(for: admission.key) == admission.record else {
@@ -582,7 +583,6 @@ actor AlignmentRuntime {
                 }
                 try await progress((Double(sourceIndex) + fraction) / Double(sourceCount))
             }
-            return try JSONEncoder().encode(envelope)
         }
         switch await job.outcome {
         case .published, .reused: break
@@ -593,7 +593,7 @@ actor AlignmentRuntime {
         guard let payload = await coordinator.readyPayload(for: slot, matching: key),
               let envelope = try? JSONDecoder().decode(WaveformEnvelope.self, from: payload),
               envelope.source == source, envelope.sampleRate > 0, envelope.channelCount > 0,
-              envelope.totalFrames >= 0, envelope.bins.count <= WaveformWindowReader.maximumBins,
+              envelope.totalFrames >= 0, envelope.bins.count <= WaveformWindowReader.maximumOverviewBins,
               envelope.bins.allSatisfy({
                   $0.firstFrame >= 0 && $0.firstFrame < $0.endFrame
                       && $0.endFrame <= envelope.totalFrames

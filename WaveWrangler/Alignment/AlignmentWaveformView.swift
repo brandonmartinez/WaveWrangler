@@ -118,6 +118,25 @@ struct AlignmentWaveformView: View {
             }
             .padding(4)
         }
+        .background {
+            AudioTimelineScrollSurface(headerWidth: headerWidth + 24) { action, anchor, width in
+                guard dragSession == nil, model.pendingWaveformMove == nil else { return false }
+                switch action {
+                case .pan(let delta):
+                    guard let start = AlignmentWaveformProjection.rulerPanStart(
+                        from: model.waveformStartSeconds, translation: delta, width: width,
+                        duration: model.waveformDurationSeconds, bounds: model.waveformViewingBounds
+                    ) else { return false }
+                    return model.previewWaveformViewport(
+                        start: start, duration: model.waveformDurationSeconds)
+                case .zoom(let magnification):
+                    return model.zoomWaveformViewport(magnification: magnification, anchor: anchor)
+                case .resize(let delta):
+                    laneHeight = min(220, max(64, laneHeight + delta))
+                    return true
+                }
+            }
+        }
         .accessibilityIdentifier("alignment.waveforms")
         .onChange(of: layout) { _, _ in clearHandCursor() }
         .onDisappear { clearHandCursor() }
@@ -258,12 +277,8 @@ struct AlignmentWaveformView: View {
         AudioTimelineNavigation(
             prefix: "alignment.waveforms", maximumDuration: model.maximumWaveformDuration,
             duration: Binding(get: { model.waveformDurationSeconds }, set: { duration in
-                let center = model.waveformPlayheadSeconds
-                model.waveformDurationSeconds = duration
-                model.waveformStartSeconds = min(
-                    model.waveformViewingBounds.upperBound - duration,
-                    max(model.waveformViewingBounds.lowerBound, center - duration / 2)
-                )
+                _ = model.zoomWaveformViewport(
+                    magnification: model.waveformDurationSeconds / duration, anchor: 0.5)
             }), laneHeight: $laneHeight, showsLaneHeight: layout != .overlay,
             isLoading: model.isLoadingWaveforms,
             canNavigate: model.pendingWaveformMove == nil,
@@ -439,7 +454,7 @@ struct AlignmentWaveformView: View {
                     }
                 }
             }
-            .frame(height: max(160, CGFloat(tracks.count * 30 + 40)))
+            .frame(height: max(laneHeight + 50, CGFloat(tracks.count * 30 + 40)))
             .clipped()
             .overlay { selectionOverlay }
             .overlay(alignment: .topLeading) {

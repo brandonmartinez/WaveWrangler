@@ -512,14 +512,20 @@ final class EpisodeCleanupModel {
     }
 
     @discardableResult
-    func previewSeek(to time: Double) -> Bool {
+    func previewSeek(to time: Double, revealing: Bool = true) -> Bool {
         guard time.isFinite, abs(time) <= 86_400 else {
             error = "Enter finite aligned seconds within the supported timeline."
             return false
         }
         stopPlayback()
         playhead = min(bounds.upperBound, max(bounds.lowerBound, time))
-        workspaceAlignment?.seekEnabledTracks(to: playhead)
+        if let workspaceAlignment {
+            if revealing {
+                workspaceAlignment.seekEnabledTracks(to: playhead)
+            } else {
+                return workspaceAlignment.previewWaveformPlayhead(to: playhead)
+            }
+        }
         return true
     }
 

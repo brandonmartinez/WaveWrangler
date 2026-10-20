@@ -143,7 +143,13 @@ transport. "Timing not set — not attempted" describes the epoch's clock state,
 not the recording's file format; manual numeric timing or anchors do not require an estimator run.
 
 `WaveformWindowReader` produces at most 2,048 extrema bins per recording for a viewport of at most
-30 aligned seconds. Untimed recordings begin as dashed source-origin previews at aligned zero,
+30 aligned seconds. Its existing witnessed full-source overview targets 20 ms extrema bins,
+retains at least the former resolution for short sources, and caps each source at 65,536 bins.
+Overview cache recipe 3 invalidates the older 2,048-bin whole-source results. The existing pipeline
+resource gate admits 16 MiB plus the configured bounded decode chunks for the overview's transient
+extrema/encoding work; decoding remains
+streamed and range/channel/witness checked. The cap can coarsen detail for very long sources;
+only pauses resolvable in the measured bins and viewport can be shown. Untimed recordings begin as dashed source-origin previews at aligned zero,
 including when another group has accepted timing; they cannot play through the shared transport
 until a manual placement is accepted and verified. `WaveformViewport` inverts each supported affine segment into the correct source
 frame windows, clips to occurrence spans, and never reads gap frames into an envelope. Unsupported
@@ -154,8 +160,11 @@ skips above compact icon/slider zoom and lane-height controls beside Fit Timelin
 uses a larger draggable flag and a high-contrast position line through each waveform, and offers evenly
 spaced time ticks: click to seek, drag its visible marker to move the
 playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
-gesture's time anchor. Seeking and panning change presentation state and do not require unrelated
-document edits to be saved; accepted playback and timing edits retain their verification checks.
+gesture's time anchor. Horizontal scrolling over the waveform workspace pans time; Option-horizontal
+scrolling zooms around the pointer and Option-vertical scrolling resizes the lanes. Ordinary vertical
+scrolling is passed through unchanged to the workspace scroll view. Seeking and panning change
+presentation state and do not require unrelated document edits to be saved; accepted playback
+and timing edits retain their verification checks.
 Aligned time may be negative relative to the reference, and verified
 negative placements can be sought and played. The marker and all lanes share the same time-to-pixel transform; the ruler
 also exposes its range and adjustable playhead to accessibility clients. Recorder-group headers sit
@@ -165,14 +174,18 @@ lanes and overlay share a ruler and playhead, selected with one segmented contro
 group the recordings by speaker (with an Unknown speaker panel for unassigned sources),
 while selection, drag, save and Undo/Redo still operate on the entire recorder group across panels.
 Zoom changes the
-visible transform around the playhead with the slider or around the gesture anchor
+visible transform around the current viewport center with the slider or around the gesture anchor
 on the ruler. **Fit timeline** includes the complete cached overview and five minutes of
 negative pre-roll for initial placement. Spans wider than 30 seconds draw the coarse, witnessed
 overview rather than decoding unbounded exact windows; narrower views request missing measured
 tiles on release. During panning the last measured tile or coarse overview stays visible without
 issuing a decode for every drag update. Each slice is clipped in its own tile coordinates before translation to the
-visible window. Peaks falling within one device-pixel column are merged into a min/max display
-envelope (mapped and unplaced audio separately) to avoid overlapping fractional strokes. A released
+visible window. Every cached bin covers its measured time span rather than a lone midpoint stick.
+Peaks falling within one device-pixel column are merged into a min/max display envelope (mapped
+and unplaced audio separately); mapped columns form a filled silhouette preserving relative
+amplitude and quiet intervals without bridging uncovered source/timing gaps. No image cache or
+source resampling is added. Marker-boundary edits retain the edited marker, zoom and viewport;
+explicit history navigation reveals an offscreen marker with only the necessary pan. A released
 group drag, including an untimed group's first manual placement, retains that visual position while the replacement map is saved
 and verified, then loads fresh measured audio. Numeric move and epoch timing remain keyboard-accessible
 alternatives; visual previews never change playback timing. The episode overview is secondary and

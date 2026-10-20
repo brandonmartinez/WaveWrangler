@@ -60,6 +60,9 @@ public enum WaveformWindowError: Error, LocalizedError, Sendable, Equatable {
 public enum WaveformWindowReader {
     public static let maximumDurationSeconds = 30.0
     public static let maximumBins = 2_048
+    public static let maximumOverviewBins = 65_536
+    public static let overviewRecipeRevision = 3
+    static let overviewWorkingSetBytes = 16 << 20
     public static let maximumDecodedPrefixSeconds: Int64 = 600
     public static let maximumOverviewSourceSeconds: Int64 = 86_400
 
@@ -116,7 +119,7 @@ public enum WaveformWindowReader {
                 source: source, rate: rate, totalFrames: total, groupMap: groupMap, sourceCorrection: sourceCorrection
             )
             let coveredFrames = ranges.reduce(Int64(0)) { $0 + ($1.upperBound - $1.lowerBound) }
-            let availableBins = maximumBins - ranges.count
+            let availableBins = overviewBinBudget(coveredFrames: coveredFrames, rate: rate) - ranges.count
             var builders = ranges.map { range in
                 let count = range.upperBound - range.lowerBound
                 let budget = 1 + Int(Int128(availableBins) * Int128(count) / Int128(max(1, coveredFrames)))
@@ -142,6 +145,12 @@ public enum WaveformWindowReader {
                 totalFrames: total, bins: builders.flatMap(\.bins)
             )
         }
+    }
+
+    static func overviewBinBudget(coveredFrames: Int64, rate: Int) -> Int {
+        // 20 ms detail until the hard cap; short sources retain at least the previous resolution.
+        Int(min(Int128(maximumOverviewBins), max(Int128(maximumBins),
+            (Int128(coveredFrames) * 50 + Int128(rate) - 1) / Int128(rate))))
     }
 
     @concurrent
@@ -200,6 +209,28 @@ public enum WaveformWindowReader {
                 channelCount: cursor.interpretation.channelCount,
                 totalFrames: total, bins: builders.flatMap(\.bins)
             )
+        }
+    }
+}
+
+extension AlignmentPipeline {
+    /// Uses the shared analysis admission budget for the bounded extrema, payload and decode working set.
+    public func waveformOverviewPayload(
+        sourceURL: URL, source: SourceID, matching witness: RawSourceIdentity,
+        groupMap: GroupTimeMap? = nil, sourceCorrection: SourceTimingCorrection? = nil,
+        decodedChannel: Int? = nil,
+        progress: @escaping @Sendable (Double) async throws -> Void = { _ in }
+    ) async throws -> Data {
+        let channels = DecodeEnvelope.entries.flatMap(\.channelCounts).max() ?? 0
+        let decodeBytes = decoder.configuration.chunkFrames * channels * MemoryLayout<Float>.stride * 2
+        return try await gate.withAdmission(
+            bytes: WaveformWindowReader.overviewWorkingSetBytes + decodeBytes
+        ) { [decoder] in
+            let envelope = try await WaveformWindowReader.readOverview(
+                sourceURL: sourceURL, source: source, matching: witness, decoder: decoder,
+                groupMap: groupMap, sourceCorrection: sourceCorrection,
+                decodedChannel: decodedChannel, progress: progress)
+            return try JSONEncoder().encode(envelope)
         }
     }
 }

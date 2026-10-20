@@ -91,7 +91,9 @@ struct WaveformEnvelopeTests {
         let envelope = try await WaveformWindowReader.readOverview(
             sourceURL: url, source: source, matching: witness, decoder: decoder
         )
-        #expect(envelope.bins.count <= WaveformWindowReader.maximumBins)
+        #expect(envelope.bins.count <= WaveformWindowReader.maximumOverviewBins)
+        #expect(envelope.bins.count > WaveformWindowReader.maximumBins,
+                "The witnessed whole-source read must use the higher-resolution overview budget")
         #expect(envelope.bins.first?.firstFrame == 0)
         #expect(envelope.bins.last?.endFrame == Int64(frames))
         #expect(envelope.bins.first?.maximum == 0.75)
@@ -151,7 +153,7 @@ struct WaveformEnvelopeTests {
                 ), groupMap: shiftedMap
             )
         }
-        #expect(covered.bins.count <= WaveformWindowReader.maximumBins)
+        #expect(covered.bins.count <= WaveformWindowReader.maximumOverviewBins)
         #expect(covered.bins.allSatisfy { $0.endFrame <= 32_000 || $0.firstFrame >= Int64(frames - 32_000) })
         #expect(!covered.bins.contains { $0.minimum == -0.5 })
         #expect(covered.bins.first?.maximum == 0.75 && covered.bins.last?.maximum == 0.25)
