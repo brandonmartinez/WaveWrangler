@@ -1448,11 +1448,13 @@ final class EpisodeAlignmentModel {
                             !preparedSources.contains($0) && transportUnavailable[$0] == nil
                                 && (!warmedSources.contains($0) || enabledSources.contains($0))
                         }
-                        if let source = remaining.first(where: { enabledSources.contains($0) }) ?? remaining.first {
+                        let warmStart = schedule.nextFrame + AlignedAuditionSchedule.followingFrames
+                        if let source = remaining.first(where: { enabledSources.contains($0) }) ?? remaining.first,
+                           warmStart < schedule.endFrame {
                             warmTransportSource(
                                 source, model: snapshot, generation: generation,
-                                frames: schedule.nextFrame..<min(
-                                    schedule.endFrame, schedule.nextFrame + AlignedAuditionSchedule.initialFrames
+                                frames: warmStart..<min(
+                                    schedule.endFrame, warmStart + AlignedAuditionSchedule.initialFrames
                                 )
                             )
                         }

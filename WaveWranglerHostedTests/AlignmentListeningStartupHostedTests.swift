@@ -61,6 +61,8 @@ struct AlignmentListeningStartupHostedTests {
             fixture.model.isAuditioning && fixture.model.waveformPlayheadSeconds > 0.2
         }
         var prior = fixture.model.waveformPlayheadSeconds
+        var progress = ["Unmuting at \(prior): \(fixture.model.auditionLabel)"]
+        defer { Attachment.record(progress.joined(separator: "\n"), named: "Live unmute shared-clock progress.txt") }
         fixture.model.setTrack(fixture.target, enabled: true)
         #expect(fixture.model.isAuditioning)
         #expect(fixture.model.auditionLabel.contains("preparing"))
@@ -69,9 +71,13 @@ struct AlignmentListeningStartupHostedTests {
               ContinuousClock.now < deadline {
             #expect(fixture.model.isAuditioning, Comment(rawValue: fixture.model.auditionLabel))
             #expect(fixture.model.waveformPlayheadSeconds >= prior)
+            if fixture.model.waveformPlayheadSeconds != prior {
+                progress.append("\(fixture.model.waveformPlayheadSeconds): \(fixture.model.auditionLabel)")
+            }
             prior = fixture.model.waveformPlayheadSeconds
             try await Task.sleep(for: .milliseconds(10))
         }
+        progress.append("Join check at \(fixture.model.waveformPlayheadSeconds): \(fixture.model.auditionLabel)")
         try #require(fixture.model.auditionLabel.contains("Playing 2 timed"), Comment(rawValue: fixture.model.auditionLabel))
         fixture.model.setSoloed(true, scope: .source(fixture.target))
         #expect(fixture.model.auditionLabel.contains("Playing 1 timed"))

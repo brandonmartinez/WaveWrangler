@@ -174,7 +174,8 @@ private struct FillerTimingRegionView: View {
                         .frame(width: detail == .dot ? 8 : 18, height: 18)
                 }
                 .buttonStyle(.plain).offset(x: lo - (detail == .dot ? 4 : 9))
-                .accessibilityLabel("\(review.word?.text ?? "Manual filler"), \(review.status). Review in inspector or zoom in for timing handles.")
+                .accessibilityLabel("\(review.word?.text ?? "Manual filler"), \(review.status). Select to review; zoom in for timing handles.")
+                .accessibilityValue(String(format: "%.6f to %.6f aligned seconds", bounds.alignedStart, bounds.alignedEnd))
                 .accessibilityIdentifier("ww.cleanup.filler.\(review.id)")
             }
         }

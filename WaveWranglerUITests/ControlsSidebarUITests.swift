@@ -34,7 +34,16 @@ final class ControlsSidebarUITests: XCTestCase {
         let toolbar = actions.firstMatch
         XCTAssertGreaterThanOrEqual(toolbar.frame.minX, rails.frame.minX - 1)
         XCTAssertLessThanOrEqual(toolbar.frame.maxX, rails.frame.maxX + 1)
-        let center = min(max(rails.frame.minX + toolbar.frame.width / 2, region.frame.midX),
+        let interval = (region.value as? String ?? "").split(separator: " ").compactMap { Double($0) }
+        let ruler = app.staticTexts["alignment.waveforms.ruler"]
+        let visible = (ruler.value as? String ?? ruler.label).split(separator: " ").compactMap { Double($0) }
+        XCTAssertEqual(interval.count, 2)
+        XCTAssertEqual(visible.count, 2)
+        let midpoint = (try XCTUnwrap(interval.first) + XCTUnwrap(interval.last)) / 2
+        let visibleStart = try XCTUnwrap(visible.first)
+        let duration = try XCTUnwrap(visible.last) - visibleStart
+        let intervalCenter = rails.frame.minX + (midpoint - visibleStart) / duration * rails.frame.width
+        let center = min(max(rails.frame.minX + toolbar.frame.width / 2, intervalCenter),
                          rails.frame.maxX - toolbar.frame.width / 2)
         XCTAssertEqual(toolbar.frame.midX, center, accuracy: 2)
         app.buttons["ww.cleanup.filler.clearReview"].click()

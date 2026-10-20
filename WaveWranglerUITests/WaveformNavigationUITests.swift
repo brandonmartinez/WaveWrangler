@@ -94,9 +94,11 @@ final class WaveformNavigationUITests: XCTestCase {
         let changedValue = edited.value as? String
         let editedRegion = app.buttons[String(id.dropLast(".start".count))]
         let previousRegion = app.buttons[previousRegionID]
-        app.buttons["ww.cleanup.filler.reject"].click()
+        let reject = app.buttons["ww.cleanup.filler.reject"]
+        reveal(reject, in: app)
+        reject.click()
         XCTAssertTrue(wait { editedRegion.label.contains("Not a filler") },
-                      "Compact review actions must follow the actively edited marker, not the stale selection")
+                      "Compact review actions must follow the actively edited marker, not the stale selection\n\(app.debugDescription)")
         XCTAssertFalse(previousRegion.label.contains("Not a filler"))
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(wait { !editedRegion.label.contains("Not a filler") })

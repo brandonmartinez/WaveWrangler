@@ -101,7 +101,8 @@ Aligned transport prepares one second of the initially audible tracks, then fill
 contiguous half-second output-frame windows with at most 3.5 seconds queued ahead.
 All tracks use the same exact output ranges and shared host clock. Muted tracks do
 not render before audible startup. One optional source at a time warms up to one
-second in the background; only an enabled source with a freshly reverified window
+second in the background, targeting a later producer window rather than racing the
+immediately next request; only an enabled source with a freshly reverified window
 can join a future transport boundary. Pending or unavailable sources are reported
 without restarting the other tracks. A missed producer deadline stops playback
 with an explicit error instead of treating an underrun as successful listening.
