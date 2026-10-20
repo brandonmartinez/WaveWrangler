@@ -22,12 +22,17 @@ struct AudioTimelineControlsTests {
         #expect(slider.accessibilityLabel() == "Synthetic zoom")
         #expect(slider.accessibilityIdentifier() == "test.timeline.zoom")
         #expect(slider.minValue == 0 && slider.maxValue == 1)
+        #expect(slider.accessibilityValue() as? Double == 0.25)
+        #expect(slider.accessibilityMinValue() as? Double == 0)
+        #expect(slider.accessibilityMaxValue() as? Double == 1)
         #expect(slider.accessibilityChildren()?.isEmpty == true)
         slider.doubleValue = 0.75
         #expect(slider.sendAction(slider.action, to: slider.target))
         #expect(value == 0.75 && editing == [true, false])
         #expect(slider.accessibilityPerformDecrement())
         #expect(value < 0.75 && editing == [true, false, true, false])
+        slider.setAccessibilityValue(NSNumber(value: 0.9))
+        #expect(value == 0.9 && editing == [true, false, true, false, true, false])
     }
 
     @Test(arguments: [320.0, 420.0, 720.0])

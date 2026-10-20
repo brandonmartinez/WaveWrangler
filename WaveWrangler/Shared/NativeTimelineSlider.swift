@@ -67,6 +67,32 @@ struct NativeTimelineSlider: View {
             var editingChanged: ((Bool) -> Void)?
             private(set) var isTracking = false
 
+            override func accessibilityValue() -> Any? { doubleValue }
+            override func accessibilityMinValue() -> Any? { minValue }
+            override func accessibilityMaxValue() -> Any? { maxValue }
+
+            override func setAccessibilityValue(_ value: Any?) {
+                guard let number = value as? NSNumber, number.doubleValue.isFinite else {
+                    super.setAccessibilityValue(value)
+                    return
+                }
+                _ = changeAccessibleValue(to: number.doubleValue)
+            }
+
+            override func accessibilityPerformIncrement() -> Bool {
+                changeAccessibleValue(to: doubleValue + (maxValue - minValue) / 10)
+            }
+
+            override func accessibilityPerformDecrement() -> Bool {
+                changeAccessibleValue(to: doubleValue - (maxValue - minValue) / 10)
+            }
+
+            private func changeAccessibleValue(to value: Double) -> Bool {
+                guard isEnabled else { return false }
+                doubleValue = min(maxValue, max(minValue, value))
+                return sendAction(action, to: target)
+            }
+
             override func mouseDown(with event: NSEvent) {
                 isTracking = true
                 editingChanged?(true)
