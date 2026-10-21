@@ -116,7 +116,7 @@ struct AudioTimelineNavigation: View {
     private var zoomControls: some View {
         HStack(spacing: 5) {
             Image(systemName: "minus.magnifyingglass")
-            Slider(
+            NativeTimelineSlider(
                 value: Binding(
                     get: {
                         AlignmentWaveformProjection.zoomLevel(
@@ -126,12 +126,11 @@ struct AudioTimelineNavigation: View {
                         if let value = AlignmentWaveformProjection.zoomDuration(
                             for: $0, maximum: maximumDuration) { duration = value }
                     }
-                ), in: 0...1, onEditingChanged: zoomEditing
-            ) { Text("Horizontal zoom") }
-            .frame(minWidth: 90, maxWidth: 220)
+                ), range: 0...1, label: "Horizontal zoom", identifier: "\(prefix).zoom",
+                onEditingChanged: zoomEditing
+            )
+            .frame(minWidth: 90, idealWidth: 120, maxWidth: 220)
             .disabled(!canNavigate)
-            .accessibilityLabel("Horizontal zoom")
-            .accessibilityIdentifier("\(prefix).zoom")
             Image(systemName: "plus.magnifyingglass")
             Text(AlignmentPresentation.formatTime(duration))
                 .font(.caption).monospacedDigit().frame(minWidth: 54)
@@ -149,11 +148,11 @@ struct AudioTimelineNavigation: View {
     private var heightControls: some View {
         HStack(spacing: 5) {
             Image(systemName: "waveform")
-            Slider(value: $laneHeight, in: 64...220) { Text("Track height") }
-                .frame(minWidth: 70, maxWidth: 130)
+            NativeTimelineSlider(
+                value: $laneHeight, range: 64...220,
+                label: "Track height", identifier: "\(prefix).laneHeight")
+                .frame(minWidth: 70, idealWidth: 90, maxWidth: 130)
                 .disabled(!canNavigate)
-                .accessibilityLabel("Track height")
-                .accessibilityIdentifier("\(prefix).laneHeight")
         }
     }
 
@@ -285,17 +284,17 @@ struct AudioTimelineRuler: View {
                             Rectangle().fill(Color.primary).frame(width: 1.5)
                         }
                         .frame(width: 20, height: 44)
-                        .offset(x: x - 10)
-                        .accessibilityElement()
-                        .accessibilityLabel("Aligned playhead")
-                        .accessibilityValue(AlignmentPresentation.formatTime(playhead))
-                        .accessibilityAdjustableAction { direction in
-                            guard canNavigate else { return }
-                            let increment = max(0.1, duration / 20)
-                            let step = direction == .increment ? increment : -increment
-                            seek(playhead + step)
+                        .accessibilityRepresentation {
+                            Stepper(
+                                "Aligned playhead",
+                                onIncrement: { adjustPlayhead(.increment) },
+                                onDecrement: { adjustPlayhead(.decrement) }
+                            )
+                            .accessibilityValue(AlignmentPresentation.formatTime(playhead))
+                            .accessibilityIdentifier("\(prefix).ruler.playhead")
+                            .disabled(!canNavigate)
                         }
-                        .accessibilityIdentifier("\(prefix).ruler.playhead")
+                        .offset(x: x - 10)
                         .allowsHitTesting(false)
                     }
                 }
@@ -396,6 +395,12 @@ struct AudioTimelineRuler: View {
         .help(
             "Click to seek, drag the playhead to scrub, drag cycle locators to set the loop, drag empty ruler space to pan, or pinch to zoom. Audio tracks are not moved."
         )
+    }
+
+    func adjustPlayhead(_ direction: AccessibilityAdjustmentDirection) {
+        guard canNavigate else { return }
+        let step = max(0.1, duration / 20) * (direction == .increment ? 1 : -1)
+        seek(playhead + step)
     }
 
     private func seek(_ time: Double) {

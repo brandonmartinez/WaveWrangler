@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 
 @MainActor
@@ -715,13 +716,27 @@ final class VisualAlignmentUITests: XCTestCase {
     }
 
     private func chooseImportFolder(_ folder: URL, in app: XCUIApplication) {
-        let service = XCUIApplication(bundleIdentifier: "com.apple.appkit.xpc.openAndSavePanelService")
-        XCTAssertTrue(waitUntil {
-            service.state != .notRunning || app.windows["open-panel"].exists
-                || app.sheets.firstMatch.exists || app.dialogs.firstMatch.exists
-        }, "The sandboxed import panel must appear")
+        let identifier = "com.apple.appkit.xpc.openAndSavePanelService"
+        var service: XCUIApplication?
+        var panelHost: XCUIApplication?
+        guard waitUntil({
+            // A cold guest registers this service only after its first native panel opens.
+            if service == nil, NSWorkspace.shared.urlForApplication(withBundleIdentifier: identifier) != nil {
+                service = XCUIApplication(bundleIdentifier: identifier)
+            }
+            if let service, service.state != .notRunning {
+                panelHost = service
+                return true
+            }
+            if app.windows["open-panel"].exists || app.sheets.firstMatch.exists || app.dialogs.firstMatch.exists {
+                panelHost = app
+                return true
+            }
+            return false
+        }), let target = panelHost else {
+            return XCTFail("The sandboxed import panel must appear before addressing its host")
+        }
         Thread.sleep(forTimeInterval: 2)
-        let target = service.state == .notRunning ? app : service
         target.typeKey("g", modifierFlags: [.command, .shift])
         Thread.sleep(forTimeInterval: 1)
         target.typeText(folder.path)

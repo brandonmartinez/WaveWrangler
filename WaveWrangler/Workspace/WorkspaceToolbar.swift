@@ -40,14 +40,9 @@ struct DestinationControl: View {
             Button("Workspace", systemImage: "waveform") { state.select(.alignment) }
                 .accessibilityAddTraits(state.destination == .alignment ? [.isSelected] : [])
                 .accessibilityIdentifier("ww.show.destination.alignment")
-            Menu("Views", systemImage: "rectangle.3.group") {
-                Button("Recordings & Speakers…") { state.recordingsPresented = true }
-                Divider()
-                ForEach(ShowDestination.allCases.filter { $0 != .export }) { destination in
-                    Button("Legacy \(destination.title)") { state.select(destination) }
-                        .accessibilityIdentifier("ww.show.destination.\(destination.rawValue)")
-                }
-            }
+            NativeActionMenu(
+                label: "Views", symbol: "rectangle.3.group",
+                identifier: "ww.show.views", actions: viewActions)
             Button("Export…", systemImage: "square.and.arrow.up") { state.select(.export) }
                 .help("Export is not available yet. This opens the availability explanation; nothing is exported.")
         }
@@ -55,6 +50,17 @@ struct DestinationControl: View {
         .accessibilityLabel("Workspace and alternative views")
         .accessibilityValue(state.destination.title)
         .accessibilityIdentifier("ww.show.destination")
+    }
+
+    private var viewActions: [NativeActionMenu.Action] {
+        [.init(title: "Recordings & Speakers…", identifier: "ww.show.views.recordings") {
+            state.recordingsPresented = true
+        }] + ShowDestination.allCases.filter { $0 != .export }.enumerated().map { index, destination in
+            .init(
+                title: "Legacy \(destination.title)",
+                identifier: "ww.show.destination.\(destination.rawValue)", separatorBefore: index == 0
+            ) { state.select(destination) }
+        }
     }
 }
 

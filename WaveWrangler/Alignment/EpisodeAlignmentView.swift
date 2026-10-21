@@ -235,16 +235,13 @@ struct AlignmentDetailInspector: View {
                         .width(ideal: 130)
                     }
                     .frame(width: 440, height: 120)
+                    .accessibilityLabel("Alignment anchors")
                     .accessibilityIdentifier("ww.alignment.anchors")
                     }
                 }
                 .id("ww.alignment.anchorSection")
 
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)],
-                    alignment: .leading,
-                    spacing: 8
-                ) {
+                VStack(alignment: .leading, spacing: 8) {
                     Button("Accept measured interval") { model.acceptProposal() }
                         .disabled(!model.canAcceptProposal)
                         .help("Accept only the measured audio interval; unmeasured frames stay unplaced.")
@@ -286,13 +283,12 @@ struct AlignmentDetailInspector: View {
                               : "Select an anchor inside an accepted map's recorded span, not at either end.")
                         .accessibilityIdentifier("alignment.startNewEpoch")
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Alignment timing actions")
+                .accessibilityIdentifier("ww.alignment.actions")
 
                 GroupBox("Audition") {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 150, maximum: 240), alignment: .leading)],
-                        alignment: .leading,
-                        spacing: 8
-                    ) {
+                    VStack(alignment: .leading, spacing: 8) {
                         LabeledContent("Start") {
                             TextField("Start", value: $model.auditionStartSeconds, format: .number.precision(.fractionLength(3)))
                                 .frame(width: 100)
@@ -312,6 +308,9 @@ struct AlignmentDetailInspector: View {
                         .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped epoch with an available source.")
                         .accessibilityIdentifier("ww.alignment.audition.play")
                     }
+                    .frame(maxWidth: 240, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Audition settings")
                 }
                 .accessibilityIdentifier("ww.alignment.audition")
 

@@ -336,6 +336,16 @@ final class AlignmentInspectionUITests: XCTestCase {
                 outlineCellFrames.append(frame)
             }
         }
+        // Audit the workspace, not a native tooltip left open by the scrolling setup.
+        app.menuBars.firstMatch.hover()
+        let helpTag = app.descendants(matching: .helpTag).firstMatch
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [
+                XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: helpTag),
+            ], timeout: 5),
+            .completed,
+            "The workspace audit must start without a transient hover tooltip"
+        )
         var layoutContainerFindings = 0
         var inspectorColumnFindings = 0
         var actionRowFindings = 0

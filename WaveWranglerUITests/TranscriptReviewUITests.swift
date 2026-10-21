@@ -108,7 +108,8 @@ final class TranscriptReviewUITests: XCTestCase {
         let identifier = region.identifier
         let zoom = app.sliders["ww.cleanup.zoom"]
         revealInWorkspace(zoom)
-        zoom.adjust(toNormalizedSliderPosition: 1)
+        zoom.dragHorizontalSliderToMaximum()
+        XCTAssertEqual(try XCTUnwrap(zoom.value as? NSNumber).doubleValue, 1, accuracy: 0.000001)
         revealInWorkspace(region)
         let start = app.buttons[identifier + ".start"]
         let end = app.buttons[identifier + ".end"]
@@ -181,7 +182,8 @@ final class TranscriptReviewUITests: XCTestCase {
         revealInWorkspace(reopened)
         reopened.click()
         revealInWorkspace(zoom)
-        zoom.adjust(toNormalizedSliderPosition: 1)
+        zoom.dragHorizontalSliderToMaximum()
+        XCTAssertEqual(try XCTUnwrap(zoom.value as? NSNumber).doubleValue, 1, accuracy: 0.000001)
         revealInWorkspace(reopened)
         XCTAssertTrue(start.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(try handleTime(start), movedStart, accuracy: 0.000002)

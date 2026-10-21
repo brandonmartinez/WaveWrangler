@@ -2,6 +2,52 @@ import XCTest
 
 @MainActor
 final class WaveformNavigationUITests: XCTestCase {
+    func testTimelineSlidersExposeNativeValuesAndReceiveKeyboardInput() throws {
+        let app = launch("Native timeline sliders")
+        defer { app.terminate() }
+        XCTAssertTrue(tracks(in: app).firstMatch.waitForExistence(timeout: 20))
+        let playhead = app.textFields["alignment.waveforms.playhead"].value as? String
+        for identifier in ["alignment.waveforms.zoom", "alignment.waveforms.laneHeight"] {
+            let slider = app.sliders[identifier]
+            reveal(slider, in: app)
+            XCTAssertTrue(slider.isEnabled && slider.isHittable)
+            let thumb = slider.descendants(matching: .valueIndicator).firstMatch
+            XCTAssertTrue(thumb.exists)
+            if let value = thumb.value as? NSNumber {
+                XCTAssertTrue(value.doubleValue.isFinite)
+            } else {
+                XCTAssertFalse(try XCTUnwrap(thumb.value as? String).isEmpty)
+            }
+            slider.adjust(toNormalizedSliderPosition: 0.6)
+            XCTAssertEqual(slider.normalizedSliderPosition, 0.6, accuracy: 0.03)
+            slider.click()
+            let before = slider.normalizedSliderPosition
+            slider.typeKey(.rightArrow, modifierFlags: [])
+            XCTAssertGreaterThan(slider.normalizedSliderPosition, before)
+            slider.dragHorizontalSliderToMaximum()
+            let maximum = identifier == "alignment.waveforms.zoom" ? 1.0 : 220.0
+            XCTAssertEqual(try XCTUnwrap(slider.value as? NSNumber).doubleValue, maximum, accuracy: 0.000001)
+            XCTAssertEqual(app.textFields["alignment.waveforms.playhead"].value as? String, playhead)
+        }
+        let visible = try viewport(in: app)
+        let position = app.textFields["alignment.waveforms.playhead"]
+        reveal(position, in: app)
+        position.click()
+        position.typeKey("a", modifierFlags: .command)
+        position.typeText("\(visible.start + visible.duration / 2)")
+        position.typeKey(.return, modifierFlags: [])
+        let handle = app.steppers["alignment.waveforms.ruler.playhead"]
+        XCTAssertTrue(handle.waitForExistence(timeout: 5),
+                      "The visible playhead remains an actual adjustable accessibility control: \(app.debugDescription)")
+        XCTAssertEqual(handle.label, "Aligned playhead")
+        XCTAssertEqual(handle.frame.width, 20, accuracy: 1)
+        XCTAssertEqual(handle.frame.height, 44, accuracy: 1)
+        XCTAssertTrue(app.windows["ww.show.window"].frame.contains(handle.frame))
+        let surface = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
+        XCTAssertEqual(handle.frame.midX, surface.frame.midX, accuracy: 2,
+                       "The accessibility frame must follow the visible playhead, not remain at the ruler origin")
+    }
+
     func testNativeScrollAxesPanZoomResizeAndKeepVerticalScrolling() throws {
         let app = launch("Native scroll", minimum: true)
         defer { app.terminate() }
@@ -59,7 +105,19 @@ final class WaveformNavigationUITests: XCTestCase {
         playhead.typeKey(.return, modifierFlags: [])
         let zoom = app.sliders["alignment.waveforms.zoom"]
         reveal(zoom, in: app)
-        zoom.adjust(toNormalizedSliderPosition: 1)
+        zoom.dragHorizontalSliderToMaximum()
+        XCTAssertEqual(try XCTUnwrap(zoom.value as? NSNumber).doubleValue, 1, accuracy: 0.000001)
+        // Zoom preserves the viewport center; pan both starts into view before testing an edit.
+        let zoomedWindow = try viewport(in: app)
+        let centeredStart = 2.25 - zoomedWindow.duration / 2
+        let ruler = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
+        let pan = ruler.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.8))
+        pan.click(forDuration: 0.1, thenDragTo: pan.withOffset(CGVector(
+            dx: (zoomedWindow.start - centeredStart) / zoomedWindow.duration * ruler.frame.width,
+            dy: 0)))
+        XCTAssertEqual(try viewport(in: app).start, centeredStart, accuracy: 0.002)
+        XCTAssertEqual(try viewport(in: app).duration, zoomedWindow.duration, accuracy: 0.002)
+        XCTAssertEqual(playhead.value as? String, "2.250", "Setup pans without seeking or changing zoom")
         let markers = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND identifier ENDSWITH '.start'"))
         XCTAssertTrue(wait { markers.count == 2 }, app.debugDescription)

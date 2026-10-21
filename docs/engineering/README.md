@@ -246,7 +246,11 @@ frame windows, clips to occurrence spans, and never reads gap frames into an env
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.
 The alignment workspace puts a compact transport with a centered editable live playhead and five-second
-skips above compact icon/slider zoom and lane-height controls beside Fit Timeline. The adaptive ruler
+skips above compact icon/slider zoom and lane-height controls beside Fit Timeline.
+Zoom and lane-height use the shared `NativeTimelineSlider`: real AppKit sliders retain
+numeric thumb values, keyboard adjustment, inherited disabled state and continuous
+bindings. Zoom refreshes measured detail when editing ends, not on every drag sample.
+The adaptive ruler
 uses a larger draggable flag and a high-contrast position line through each waveform, and offers evenly
 spaced time ticks: click to seek, drag its visible marker to move the
 playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
@@ -257,7 +261,13 @@ presentation state and do not require unrelated document edits to be saved; acce
 and timing edits retain their verification checks.
 Aligned time may be negative relative to the reference, and verified
 negative placements can be sought and played. The marker and all lanes share the same time-to-pixel transform; the ruler
-also exposes its range and adjustable playhead to accessibility clients. Recorder-group headers sit
+also exposes its range and a Stepper representation of the visible playhead to accessibility clients.
+Its nudges use the existing bounded seek and playback-resume path. Alignment inspectors keep timing
+actions and audition settings in labeled single-column groups with independently accessible controls.
+The empty alignment workspace reuses the Library's `CenteredScrollView`, scaled text styles,
+and a native text foreground so the recovery instructions and Add recordings action can scroll
+when space is constrained.
+Recorder-group headers sit
 beside adjustable-height
 source lanes; a translucent overlay with source selection is available for peak matching. Separate
 lanes and overlay share a ruler and playhead, selected with one segmented control. Overlay panels
@@ -546,6 +556,15 @@ host** and must not be run on the user's desktop outside an approved window.
 Do not fall back to the Mac mini when a VM is unavailable. Physical-device
 performance, audio hardware, and unsupported virtualized GPU behavior need a
 concrete hardware-specific reason and separate approval.
+
+**Current refinement qualification discrepancy (Xcode 27.0, macOS 27.0):**
+the unchanged `AlignmentInspectionUITests.testBlockedRecoveryContrastAudit` passes on the
+Retina VM (1024x768 logical, 2x) but fails on the second VM at 1920x1200, 1x, for the
+recording-recovery description, including with sampled black-on-white pixels. Seven isolated
+SwiftUI and native `NSTextField` text comparisons pass on that same 1x VM, so the cause remains
+unresolved and is not established as a framework-wide defect. Delivery of this refinement was
+explicitly approved against the passing Retina gate with this discrepancy documented.
+Audit criteria and waivers are unchanged; this is not a general exemption from 1x testing.
 
 Per-PR GUI selection and the reviewed conditional flake-quarantine policy (currently only the
 #218 broad synthetic Library contrast test) are documented in [GUI flake quarantine](gui-flake-quarantine.md).

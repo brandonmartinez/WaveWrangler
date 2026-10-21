@@ -7,6 +7,8 @@ struct NativeActionMenu: NSViewRepresentable {
         let title: String
         var symbol: String? = nil
         var isSelected = false
+        var identifier: String? = nil
+        var separatorBefore = false
         let perform: @MainActor () -> Void
     }
 
@@ -32,12 +34,14 @@ struct NativeActionMenu: NSViewRepresentable {
         heading.image = symbol.flatMap { NSImage(systemSymbolName: $0, accessibilityDescription: nil) }
         menu.addItem(heading)
         for action in actions {
+            if action.separatorBefore { menu.addItem(.separator()) }
             let target = ActionTarget(action.perform)
             let item = NSMenuItem(title: action.title, action: #selector(ActionTarget.invokeMenuAction(_:)), keyEquivalent: "")
             if let symbol = action.symbol {
                 item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
             }
             item.state = action.isSelected ? .on : .off
+            if let identifier = action.identifier { item.setAccessibilityIdentifier(identifier) }
             item.target = target
             item.representedObject = target
             menu.addItem(item)

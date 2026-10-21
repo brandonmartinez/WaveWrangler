@@ -367,7 +367,7 @@ struct AlignmentWaveformView: View {
                             .fontWeight(model.selectedWaveformSource == track.id ? .semibold : .regular)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel("\(track.groupName), \(track.name), \(identity.label)")
+                        .accessibilityLabel("Select \(track.groupName) recording: \(track.name), \(identity.label)")
                         .accessibilityIdentifier("alignment.waveforms.select.\(track.id)")
                         listeningButtons(.source(track.id), name: track.name)
                         inlineMatchControls(for: track)
@@ -512,6 +512,7 @@ struct AlignmentWaveformView: View {
                         .buttonStyle(.plain)
                         .font(.callout.weight(model.selectedWaveformSource == track.id ? .semibold : .regular))
                         .lineLimit(2)
+                        .accessibilityLabel("Select \(track.groupName) recording: \(track.name), \(identity.label)")
                         .accessibilityIdentifier("alignment.waveforms.select.\(track.id)")
                 }
                 if layout == .speaker {

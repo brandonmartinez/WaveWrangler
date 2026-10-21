@@ -53,6 +53,86 @@ struct AudioTimelineControlsTests {
         #expect(image.height <= 180)
     }
 
+    @Test func nativeSliderUpdatesBindingsBoundsAndEditingCallbacks() async throws {
+        var firstValue = 0.25
+        var firstEdits: [Bool] = []
+        let host = HostedTimelineWindow(
+            width: 320, height: 60,
+            content: NativeTimelineSlider(
+                value: Binding(get: { firstValue }, set: { firstValue = $0 }),
+                range: 0...1, label: "Horizontal zoom", identifier: "test.zoom",
+                onEditingChanged: { firstEdits.append($0) }))
+        defer { host.close() }
+        try await host.settle()
+        let slider = try #require(
+            host.descendants.compactMap { $0 as? NativeTimelineSlider.Slider }.first)
+        #expect(slider.cell is NSSliderCell)
+        #expect(slider.accessibilityLabel() == "Horizontal zoom")
+        #expect(slider.accessibilityIdentifier() == "test.zoom")
+        #expect(slider.doubleValue == 0.25 && slider.minValue == 0 && slider.maxValue == 1)
+        slider.doubleValue = 0.75
+        #expect(slider.sendAction(slider.action, to: slider.target))
+        #expect(firstValue == 0.75 && firstEdits == [true, false])
+
+        var secondValue = 96.0
+        var secondEdits: [Bool] = []
+        host.view.rootView = NativeTimelineSlider(
+            value: Binding(get: { secondValue }, set: { secondValue = $0 }),
+            range: 64...220, label: "Track height", identifier: "test.height",
+            onEditingChanged: { secondEdits.append($0) })
+        try await host.settle()
+        #expect(host.descendants.contains { $0 === slider })
+        #expect(slider.accessibilityLabel() == "Track height")
+        #expect(slider.accessibilityIdentifier() == "test.height")
+        #expect(slider.doubleValue == 96 && slider.minValue == 64 && slider.maxValue == 220)
+        slider.doubleValue = 144
+        #expect(slider.sendAction(slider.action, to: slider.target))
+        #expect(secondValue == 144 && secondEdits == [true, false])
+        #expect(firstValue == 0.75 && firstEdits == [true, false])
+    }
+
+    @Test func nativeSliderRespectsItsDisabledParent() async throws {
+        let host = HostedTimelineWindow(
+            width: 320, height: 60,
+            content: NativeTimelineSlider(
+                value: .constant(0.5), range: 0...1,
+                label: "Horizontal zoom", identifier: "test.disabledZoom")
+                .disabled(true))
+        defer { host.close() }
+        try await host.settle()
+        let slider = try #require(host.descendants.compactMap { $0 as? NSSlider }.first)
+        #expect(!slider.isEnabled && !slider.acceptsFirstResponder)
+        #expect(slider.accessibilityLabel() == "Horizontal zoom")
+        #expect(slider.doubleValue == 0.5)
+    }
+
+    @Test func rulerAccessibilityNudgesRetainBoundedSeekAndResume() {
+        var sought: [Double] = []
+        var resumes = 0
+        var previewAllowed = true
+        func ruler(canNavigate: Bool) -> AudioTimelineRuler {
+            AudioTimelineRuler(
+                prefix: "test.timeline", headerWidth: 180, start: 0, duration: 40,
+                playhead: 5, bounds: 0...40, seekBounds: 0...6, maximumDuration: 40,
+                isPlaying: true, canNavigate: canNavigate,
+                previewSeek: { sought.append($0); return previewAllowed },
+                resumePlayback: { resumes += 1 }, previewPan: { _ in },
+                setWindow: { _, _ in }, commitWindow: {})
+        }
+        let enabled = ruler(canNavigate: true)
+        enabled.adjustPlayhead(.increment)
+        #expect(sought == [6] && resumes == 1)
+        enabled.adjustPlayhead(.decrement)
+        #expect(sought == [6, 3] && resumes == 2)
+        previewAllowed = false
+        enabled.adjustPlayhead(.increment)
+        #expect(sought == [6, 3, 6] && resumes == 2, "A refused seek does not resume playback")
+        let disabled = ruler(canNavigate: false)
+        disabled.adjustPlayhead(.increment)
+        disabled.adjustPlayhead(.decrement)
+        #expect(sought == [6, 3, 6] && resumes == 2)
+    }
+
     @Test func transportButtonsReceiveMouseInputWithoutActivatingTheDesktop() async throws {
         var calls = [0, 0, 0, 0]
         var sought: Double?

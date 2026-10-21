@@ -300,17 +300,24 @@ private struct ShowDetailContent: View {
                         EpisodeAlignmentContent(state: state, episodeID: episode.id)
                             .id(episode.id)
                     } else {
-                        ContentUnavailableView {
-                            Label {
-                                Text("Add recordings to begin").foregroundStyle(.primary)
-                            } icon: {
-                                Image(systemName: "waveform").foregroundStyle(.primary)
+                        CenteredScrollView {
+                            VStack(spacing: 12) {
+                                Image(systemName: "waveform")
+                                    .wwFont(.largeTitle)
+                                    .accessibilityHidden(true)
+                                Text("Add recordings to begin")
+                                    .wwFont(.title2)
+                                    .accessibilityAddTraits(.isHeader)
+                                Text("Organize recordings into recorder groups and confirm their originals in Setup.")
+                                    .wwFont(.body)
+                                    .foregroundStyle(Color(nsColor: .textColor))
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: 360)
+                                Button("Add recordings…", systemImage: "plus") {
+                                    state.recordingsPresented = true
+                                }
                             }
-                        } description: {
-                            Text("Organize recordings into recorder groups and confirm their originals in Setup.")
-                                .foregroundStyle(.primary)
-                        } actions: {
-                            Button("Add recordings…", systemImage: "plus") { state.recordingsPresented = true }
                         }
                     }
                 }

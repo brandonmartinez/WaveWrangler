@@ -7,6 +7,33 @@ import WWCore
 @MainActor
 @Suite("Logic-style tools, listening presets, and sidebar activities", .serialized)
 struct ControlsSidebarHostedTests {
+    @Test func nativeViewsMenuRetainsCommandsIdentifiersAndSectionBoundary() async throws {
+        let store = ShowDocumentStore(model: .init(
+            show: Show(title: "Synthetic"), episodes: [Episode(title: "Synthetic")]))
+        let state = ShowWindowState(store: store)
+        state.select(.alignment)
+        let host = HostedTimelineWindow(
+            width: 320, height: 44, content: DestinationControl(state: state))
+        defer { host.close() }
+        try await host.settle()
+        let button = try #require(host.descendants.compactMap { $0 as? NativeActionMenu.Button }
+            .first { $0.accessibilityIdentifier() == "ww.show.views" })
+        #expect(button.accessibilityLabel() == "Views")
+        let menu = try #require(button.menu)
+        let setup = menu.indexOfItem(withTitle: "Legacy Setup")
+        try #require(setup > 1)
+        #expect(menu.item(at: setup)?.accessibilityIdentifier() == "ww.show.destination.setup")
+        #expect(menu.item(at: setup - 1)?.isSeparatorItem == true)
+        menu.performActionForItem(at: setup)
+        #expect(state.destination == .setup)
+        let refreshed = try #require(button.menu)
+        let recordings = refreshed.indexOfItem(withTitle: "Recordings & Speakers…")
+        try #require(recordings > 0)
+        #expect(refreshed.item(at: recordings)?.accessibilityIdentifier() == "ww.show.views.recordings")
+        refreshed.performActionForItem(at: recordings)
+        #expect(state.recordingsPresented)
+    }
+
     @Test func nativeToolMenusPublishSelectionAndRefreshTheirCheckedActions() async throws {
         let listening = EpisodeListeningState()
         let host = HostedTimelineWindow(width: 160, height: 40, content: TimelineToolControls(listening: listening))
