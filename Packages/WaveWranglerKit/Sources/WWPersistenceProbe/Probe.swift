@@ -48,13 +48,14 @@ func seconds(_ duration: Duration) -> Double {
     Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
 }
 
+// Result discriminators are persisted in evidence records; preserve their original spelling.
 func describe(_ error: PublicationError) -> [String: Any] {
     switch error {
     case let .conflict(conflict):
         return ["result": "conflict", "onDiskRevision": conflict.onDisk?.revision ?? -1, "preservedCandidate": conflict.preservedCandidate?.path ?? ""]
     case let .failed(stage, kind, detail): return ["result": "failed", "stage": stage.rawValue, "kind": kind.rawValue, "detail": detail]
     case .canceled: return ["result": "cancelled"]
-    case let .acknowledgmentUncertain(detail): return ["result": "acknowledgmentUncertain", "detail": detail]
+    case let .acknowledgmentUncertain(detail): return ["result": "acknowledgementUncertain", "detail": detail]
     case let .readOnly(reason): return ["result": "readOnly", "detail": reason]
     case let .invalidCandidate(error): return ["result": "invalidCandidate", "detail": "\(error)"]
     }
