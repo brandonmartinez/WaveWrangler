@@ -41,7 +41,7 @@ struct SyntheticCommonEditPCMTests {
         #expect(output[2].allSatisfy { $0 == 0 })
     }
 
-    @Test func priorAdjacentermovalIsAppliedOnceAndOverlapsRefuse() throws {
+    @Test func priorAdjacentRemovalIsAppliedOnceAndOverlapsRefuse() throws {
         let fixture = try PCMFixture()
         let adjacent = try CommonEpisodeEditMap(
             alignment: fixture.base.alignment, alignmentRevision: fixture.base.alignmentRevision,

@@ -231,7 +231,7 @@ struct PendingLibraryEditsTests {
         }, "queued edits kept as a backup copy")
     }
 
-    @Test func queuedRecentermovalIsCarried() async throws {
+    @Test func queuedRecentRemovalIsCarried() async throws {
         let offline = try await OfflineRig()
         try offline.goOffline()
         let store = offline.rig.store()
