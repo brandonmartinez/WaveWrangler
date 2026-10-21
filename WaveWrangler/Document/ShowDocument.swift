@@ -64,7 +64,7 @@ final class ShowDocument: NSDocument {
     #if DEBUG
     /// Debug-only fault injection at the C3 boundaries (native holdout runner); `nil` in normal use.
     static var debugPublicationHooks: (any PublicationHooks)?
-    /// Debug-only replacement for the shared library acknowledgement (native holdout runner).
+    /// Debug-only replacement for the shared library acknowledgment (native holdout runner).
     static var debugLibraryAcknowledger: (@MainActor (ShowID, String, PublicationStamp) async -> Void)?
     /// Debug-only fault injection for the format update (#159, `-WWUITestFailFormatUpdate`); `nil` in normal use.
     static var debugFormatUpdateHooks: (any PublicationHooks)?
@@ -76,7 +76,7 @@ final class ShowDocument: NSDocument {
     /// The pending automatic retry after a failed save (ST-11). While it's pending, the failure state stays visible
     /// (edits and edit checkpoints don't flip it back to "Edited") and no other automatic attempt is made.
     private var saveRetry: DispatchWorkItem?
-    /// D5: the exact bytes of a publication whose acknowledgement is uncertain. Its retry first checks whether these
+    /// D5: the exact bytes of a publication whose acknowledgment is uncertain. Its retry first checks whether these
     /// bytes are on disk and, if so, adopts them (verified by decoding) instead of republishing against a stale base.
     private var uncertainCandidate: Data?
     /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
@@ -373,16 +373,16 @@ final class ShowDocument: NSDocument {
             if let publicationError = error as? PublicationError {
                 status.set(DocumentSaveState.from(publicationError, retainedRevision: publication?.revision))
             } else if (error as NSError).domain == NSCocoaErrorDomain, (error as NSError).code == NSUserCancelledError {
-                status.set(gate.isEnabled ? .cancelled : .autosaveSkipped)
+                status.set(gate.isEnabled ? .canceled : .autosaveSkipped)
             } else if let candidateBytes, (try? Data(contentsOf: url)) == candidateBytes {
                 // The candidate is on disk although the save reported an error: never "failed, retained".
-                status.set(.acknowledgementUncertain(message: error.localizedDescription))
+                status.set(.acknowledgmentUncertain(message: error.localizedDescription))
             } else {
                 status.set(.saveFailed(retainedRevision: publication?.revision, kind: WriteFailureKind(classifying: error), message: error.localizedDescription))
             }
             // C2b: a failed or uncertain automatic publication still leaves an edit checkpoint (ON only).
             if saveOperation == .autosaveInPlaceOperation || saveOperation == .autosaveElsewhereOperation { writeEditCheckpoint() }
-            if case .acknowledgementUncertain = status.saveStatus.state { uncertainCandidate = candidateBytes }
+            if case .acknowledgmentUncertain = status.saveStatus.state { uncertainCandidate = candidateBytes }
             // ST-11: with autosave ON, a failed save is retried automatically (at most every `saveRetryInterval`).
             if gate.isEnabled, isDocumentEdited, status.saveStatus.state.isAutomaticallyRetryable { scheduleSaveRetry() }
         }
@@ -456,7 +456,7 @@ final class ShowDocument: NSDocument {
         }
     }
 
-    /// Re-arms a retry suspended by the copy flow (cancelled or failed copy), after a fresh interval.
+    /// Re-arms a retry suspended by the copy flow (canceled or failed copy), after a fresh interval.
     private func endCopyFlow(copySaved: Bool) {
         if copyRetryGate.end(copySaved: copySaved), gate.isEnabled, isDocumentEdited { scheduleSaveRetry() }
     }
@@ -500,7 +500,7 @@ final class ShowDocument: NSDocument {
 
     override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
         // T23 D7–D9: closing while the last save failed asks how to keep the changes (never AppKit's plain review,
-        // and never closes silently). Every other state keeps AppKit's behaviour.
+        // and never closes silently). Every other state keeps AppKit's behavior.
         guard isDocumentEdited, let window = windowForSheet, let sheet = failedSaveCloseSheet() else {
             super.canClose(withDelegate: delegate, shouldClose: shouldCloseSelector, contextInfo: contextInfo)
             return
@@ -563,7 +563,7 @@ final class ShowDocument: NSDocument {
         guard gate.isEnabled, isDocumentEdited, fileURL != nil else { return }
         // D5: if the uncertain publication did land, adopt it rather than republishing against the old base (which
         // would fail the base check and report a false conflict).
-        if case .acknowledgementUncertain = status.saveStatus.state, adoptUncertainPublication() { return }
+        if case .acknowledgmentUncertain = status.saveStatus.state, adoptUncertainPublication() { return }
         autosave(withImplicitCancellability: false) { _ in }
     }
 
@@ -618,7 +618,7 @@ final class ShowDocument: NSDocument {
             let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, hooks: hooks)
             lastReceipt = try publisher.publish(
                 encoded: candidate, key: pendingCandidateKey ?? documentKey, to: url, target: target, retainPrior: inPlace,
-                isCancelled: { false },
+                isCanceled: { false },
                 step: .external { _, _ in
                     // Stock safe-save; it calls `data(ofType:)`, which returns exactly the candidate bytes.
                     try super.writeSafely(to: url, ofType: typeName, for: saveOperation)

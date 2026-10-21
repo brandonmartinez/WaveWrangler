@@ -8,6 +8,15 @@ import Testing
 struct KernelTests {
     static let kernel = KaiserSincKernel(RenderRecipe.m2Candidate.kernel)
 
+    @Test func sharedCandidateKeepsTheExactPrototypeWithoutRebuildingItsStorage() {
+        let first = KaiserSincKernel.m2Candidate
+        let second = KaiserSincKernel.m2Candidate
+        #expect(first.table == Self.kernel.table)
+        first.table.withUnsafeBufferPointer { a in
+            second.table.withUnsafeBufferPointer { b in #expect(a.baseAddress == b.baseAddress) }
+        }
+    }
+
     /// Continuous-time frequency response of the prototype (f in cycles per lower-rate sample), by a
     /// dense Riemann sum over the even prototype.
     static func response(_ f: Double, step: Int = 8) -> Double {

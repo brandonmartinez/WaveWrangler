@@ -45,7 +45,7 @@ struct AutosavePolicyTests {
         try await Task.sleep(for: .milliseconds(1400))
         #expect(ran.count == 0)
         // An automatic save entry arriving while OFF is skipped without writing and is not success-shaped.
-        guard case .failure(.cancelled) = await session.save(automatic: true) else { Issue.record("automatic save ran"); return }
+        guard case .failure(.canceled) = await session.save(automatic: true) else { Issue.record("automatic save ran"); return }
         #expect(await session.isDirty)
         #expect(await session.status.state == .autosaveSkipped)
         #expect(await !session.status.state.isVerifiedOnDisk)

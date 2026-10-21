@@ -67,7 +67,7 @@ extension ShowDocumentModel {
     /// The first embedded map written with a newer time-map schema than this build reads, if any. The show coder
     /// checks this before the checksum and before validation, so such a show is refused as unknown-newer (C5:
     /// `refusedNewerFormat`, no recovery fallback), never as damaged. A time-map schema bump also requires a show
-    /// schema bump, so this is a second line of defence behind the envelope's `schemaVersion` check.
+    /// schema bump, so this is a second line of defense behind the envelope's `schemaVersion` check.
     public func newerEmbeddedTimeMapSchema() -> (found: Int, supported: Int)? {
         for episode in episodes {
             for version in episode.alignment?.maps ?? [] {

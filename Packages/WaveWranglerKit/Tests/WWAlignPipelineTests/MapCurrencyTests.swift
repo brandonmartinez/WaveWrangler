@@ -17,7 +17,7 @@ struct MapCurrencyTests {
     @Test("Repeating an activation keeps the exact ready identity continuously available", arguments: [false, true])
     func repeatedActivationDoesNotRepublishIdentity(persisted: Bool) async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "repeat-activation")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let accepted = try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let opens = fixture.content.total.opens
         if persisted {
@@ -45,7 +45,7 @@ struct MapCurrencyTests {
     func twoAcceptsFromOneSnapshot() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "two-accepts")
         let target = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let base = fixture.model
         let pipeline = fixture.pipeline
         let episode = fixture.episodeID
@@ -87,7 +87,7 @@ struct MapCurrencyTests {
     func sameRevisionDifferentMapNeverReusesAssets() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "same-revision")
         let target = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let base = fixture.model
         let first = try await fixture.acceptAndActivate(report, [target: ConcurrencyTests.truth])
         let firstRender = try await fixture.render()
@@ -122,7 +122,7 @@ struct MapCurrencyTests {
     func persistedUndoRedoRestoresIdentityAndDependents() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "undo-redo")
         let target = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let first = try await fixture.acceptAndActivate(
             report,
             [target: ConcurrencyTests.truth]
@@ -174,7 +174,7 @@ struct MapCurrencyTests {
     func activateRefusesForgedContent() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(referenceSeconds: 6, targetSeconds: 4), label: "forged-content")
         let episodeID = fixture.episodeID
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let accepted = try await fixture.pipeline.accept(model: fixture.model, episode: episodeID, report: report, decisions: [fixture.epochs[1]: .numeric(ppm: 0, offsetMilliseconds: 0)])
         let version = try #require(accepted.model.episode(episodeID)?.alignment?.map(revision: accepted.revision.revision))
         // The identity of another version (same map, another recipe) under the same revision number.
@@ -208,7 +208,7 @@ struct MapCurrencyTests {
     func movedWithinGroupAfterAnalysis() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "moved-analysis")
         let tgt = fixture.id("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let moved = try fixture.moveToNewEpoch("tgt")
         for decisions in [[fixture.epochs[1]: ConcurrencyTests.truth], [:]] {
             let changes = await Self.acceptChanges(fixture, report, decisions)
@@ -223,7 +223,7 @@ struct MapCurrencyTests {
     func movedWithinGroupAfterAcceptance() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "moved-render")
         let tgt = fixture.id("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let accepted = try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let persisted = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.map(revision: accepted.revision.revision))
         #expect(MapDependencies.persistedDigest(persisted) != nil, "the dependencies are persisted with the map")
@@ -238,7 +238,7 @@ struct MapCurrencyTests {
     func sourceRevisionChangeAfterAcceptance() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "revision-change")
         let tgt = fixture.id("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let accepted = try await fixture.pipeline.accept(model: fixture.model, episode: fixture.episodeID, report: report, decisions: [fixture.epochs[1]: ConcurrencyTests.truth])
         fixture.model = accepted.model
         try fixture.rewrite("tgt")
@@ -251,7 +251,7 @@ struct MapCurrencyTests {
     func sourceRevisionChangeAfterActivation() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "revision-render")
         let tgt = fixture.id("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         try fixture.rewrite("tgt")
         await fixture.coordinator.updateSource(try PipelineFixture.registration(tgt, fixture.url("tgt")))
@@ -263,7 +263,7 @@ struct MapCurrencyTests {
     @Test("A map revision without this module's dependency record is never rendered")
     func mapWithoutDependenciesIsNotRendered() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "no-deps")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let accepted = try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let inputs = try #require(fixture.model.episode(fixture.episodeID)?.alignment?.acceptedMap?.inputs)
         let (recorded, revision) = try fixture.model.recordingMap(accepted.map, in: fixture.episodeID, inputs: inputs.sources, recipe: nil, derivedFrom: accepted.revision.revision)
@@ -293,7 +293,7 @@ struct MapCurrencyTests {
     /// The two-recorder report with both sources re-described as `seconds` long and the target's proposal
     /// replaced by `segment` (rate 1, offset +0.25 s unless given).
     static func longReport(_ fixture: PipelineFixture, seconds: Int64, segment: AffineClockSegment) async throws -> (AlignmentAnalysisReport, [SourceID: SourceFacts], [RecordingEpochID: EpochAnalysisRecord]) {
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         var facts = report.facts
         for name in ["ref", "tgt"] {
             let id = fixture.id(name)
@@ -311,7 +311,7 @@ struct MapCurrencyTests {
 
     static let quarter: ExactRational = (try? ExactRational(1, 4)) ?? .zero
 
-    @Test("A centred 10-minute proposal on a 75-minute source maps only its interval; the rest stays outsideCoverage both ways")
+    @Test("A centered 10-minute proposal on a 75-minute source maps only its interval; the rest stays outsideCoverage both ways")
     func proposalCoverageIsNotExtended() async throws {
         let fixture = try await PipelineFixture(TwoRecorder.groups(), label: "coverage")
         let target = fixture.epochs[1]
@@ -432,7 +432,7 @@ struct MapCurrencyTests {
     @Test("shutdown() cancels a render still waiting for admission: it returns without the gate ever being released")
     func shutdownCancelsQueuedRender() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "shutdown-queued")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let gate = fixture.pipeline.gate
         let budget = await gate.budgetBytes
@@ -448,7 +448,7 @@ struct MapCurrencyTests {
         }
         let deadline = ContinuousClock.now + .seconds(10)
         while !returned.value, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(5)) }
-        #expect(returned.value, "shutdown cancelled the queued render instead of waiting for admission")
+        #expect(returned.value, "shutdown canceled the queued render instead of waiting for admission")
         await gate.release(bytes: budget)
         await shutdown.value
         let rendered = try await render.value
@@ -468,7 +468,7 @@ struct MapCurrencyTests {
             await release.wait()
         }
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), hooks: hooks, label: "shutdown-readers")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
         let render = Task { try await fixture.render() }
         await reached.wait()

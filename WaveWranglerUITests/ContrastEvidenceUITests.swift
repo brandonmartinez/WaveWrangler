@@ -4,7 +4,7 @@ import XCTest
 
 /// Evidence for #59 (C04/C07) and C06: measures text/background contrast ratios from screenshots of the
 /// elements the `.contrast` audit flags, in light, dark and both Increase Contrast appearances, and saves
-/// saturation-0 screenshots for colour-independence review. Synthetic F-LIB100 library only.
+/// saturation-0 screenshots for color-independence review. Synthetic F-LIB100 library only.
 ///
 /// The appearance comes from `-WWUITestAppearance` (AppKit's own high-contrast appearances: an override,
 /// not the system setting). The system-setting run is the same test with Increase Contrast turned on in
@@ -354,7 +354,7 @@ final class ContrastEvidenceUITests: XCTestCase {
     /// C04/C05 with the **system** settings (Mac mini slot, user-granted temporary Increase Contrast, Reduce Motion
     /// and larger text). Runs only when `WW_EXPECT_SYSTEM_VISUAL` is `on` (the slot script sets the settings, records
     /// the originals and restores them) and fails if the system didn't actually report them, so a result is never
-    /// labelled "system" without the setting being in effect. No appearance or motion overrides are passed.
+    /// labeled "system" without the setting being in effect. No appearance or motion overrides are passed.
     func testSystemVisualSettings() throws {
         guard Acceptance.environment["WW_EXPECT_SYSTEM_VISUAL"] == "on" else {
             throw XCTSkip("system visual settings not set by the slot script (WW_EXPECT_SYSTEM_VISUAL != on)")
@@ -489,7 +489,7 @@ final class ContrastEvidenceUITests: XCTestCase {
     }
 }
 
-/// WCAG 2 contrast from rendered pixels: background = the most common colour. Reports the highest-contrast
+/// WCAG 2 contrast from rendered pixels: background = the most common color. Reports the highest-contrast
 /// pixel ("ratio", an upper bound) and glyph statistics over pixels ≥ 1.5:1 against the background
 /// (count, median, 75th percentile), which separate legible text from blurred or clipped text.
 enum ContrastMeter {
@@ -522,7 +522,7 @@ enum ContrastMeter {
     }
 
     /// Measures antialiased light text against an emphasized selection fill. The fill comes from the selected
-    /// row, not from the most frequent colour in the status crop: a clipped dark strip must not become the
+    /// row, not from the most frequent color in the status crop: a clipped dark strip must not become the
     /// background, and blue selection pixels must not be counted as glyphs.
     static func measureTextOnSelection(_ image: NSImage, selectionImage: NSImage) -> [String: Any]? {
         guard let pixels = rgba(image), let selectionPixels = rgba(selectionImage) else { return nil }
@@ -583,7 +583,7 @@ enum ContrastMeter {
     }
 
     /// Non-text contrast of an accent fill: crops the window screenshot to `element` expanded by 4 pt,
-    /// takes the crop perimeter's most common colour as the surroundings and the most common saturated blue as the fill.
+    /// takes the crop perimeter's most common color as the surroundings and the most common saturated blue as the fill.
     static func accentFill(_ image: NSImage, windowFrame: CGRect, element: CGRect) -> [String: Any]? {
         guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil), windowFrame.width > 0 else { return nil }
         let scale = CGFloat(cg.width) / windowFrame.width
@@ -593,8 +593,8 @@ enum ContrastMeter {
         guard !rect.isEmpty, let cropped = cg.cropping(to: rect) else { return nil }
         let crop = NSImage(cgImage: cropped, size: NSSize(width: rect.width, height: rect.height))
         guard let pixels = rgba(crop) else { return nil }
-        // Surroundings = most common colour on the crop's 2-pixel perimeter (a small control's fill can be the
-        // majority colour of the crop itself).
+        // Surroundings = most common color on the crop's 2-pixel perimeter (a small control's fill can be the
+        // majority color of the crop itself).
         let w = Int(rect.width), h = Int(rect.height)
         var edge: [UInt32: Int] = [:], blue: [UInt32: Int] = [:]
         for (i, p) in pixels.enumerated() {

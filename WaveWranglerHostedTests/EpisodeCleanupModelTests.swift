@@ -468,7 +468,7 @@ struct EpisodeCleanupModelTests {
         #expect(model.episode?.alignment == snapshot.episodes[0].alignment)
     }
 
-    @Test func cancellingReviewClearsReactiveRefreshSkip() async throws {
+    @Test func cancelingReviewClearsReactiveRefreshSkip() async throws {
         let model = try fillerFixture()
         defer { model.cancel() }
         model.proposeFillers()

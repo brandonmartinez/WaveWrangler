@@ -49,7 +49,7 @@ struct AbstentionTests {
         let fixture = try await PipelineFixture(scenario.groups, configuration: scenario.configuration, label: "abstain")
         let (ref, tgt) = (fixture.id("ref"), fixture.id("tgt"))
         let targetEpoch = fixture.epochs[1]
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
 
         // Stored as a derived result under the full key, with its evidence.

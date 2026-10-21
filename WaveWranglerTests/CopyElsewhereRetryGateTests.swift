@@ -1,7 +1,7 @@
 import Testing
 
 /// #197 review: while Save a Copy Elsewhere… runs, the original is never saved automatically; a suspended automatic
-/// retry is re-armed (with a fresh interval) only when the copy is cancelled or fails.
+/// retry is re-armed (with a fresh interval) only when the copy is canceled or fails.
 @Suite("Save a Copy Elsewhere: automatic retry gate")
 struct CopyElsewhereRetryGateTests {
     @Test func pendingRetryIsSuspendedDuringTheCopyAndReArmedOnCancel() {
@@ -10,7 +10,7 @@ struct CopyElsewhereRetryGateTests {
         gate.begin(retryPending: true)
         #expect(!gate.allowsAutomaticSave, "no automatic save of the original while the panel is open")
         let rearm1 = gate.end(copySaved: false)
-        #expect(rearm1, "cancelled: the retry is re-armed")
+        #expect(rearm1, "canceled: the retry is re-armed")
         #expect(gate.allowsAutomaticSave)
         let rearm2 = gate.end(copySaved: false)
         #expect(!rearm2, "ending twice re-arms nothing")

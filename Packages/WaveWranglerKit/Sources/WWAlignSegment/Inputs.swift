@@ -9,7 +9,7 @@ import WWTimeMap
 // Hard rules (docs/m2/ww-019-m2-contracts.md M2-C3/M2-C4, issue #11):
 // * Never fit one smooth map across a jump. A recorder group's occurrence is measured densely with the frozen
 //   WW-016 estimator (`AcousticEstimator`, public API only), split where one affine line no longer explains
-//   the window offsets, and every frame that cannot be localised to the gate's tolerance is UNSUPPORTED
+//   the window offsets, and every frame that cannot be localized to the gate's tolerance is UNSUPPORTED
 //   (manual), never guessed. Each discontinuity becomes an epoch restart in the WWTimeMap placement.
 // * Supported regions carry the frozen estimator's own `acousticConsistentProposal` for exactly that region.
 //   Nothing here can construct a clock approval: audio measures where sound arrived, not when a clock ticked.
@@ -73,7 +73,7 @@ public struct SegmentationRequest: Sendable {
 /// variants are stamped `DiscontinuitySegmenter.customIdentifier`, never the frozen identifier.
 public struct SegmenterParameters: Sendable, Equatable {
     /// Length of each dense-pass tile handed to the estimator, seconds. With the estimator's 16 windows of
-    /// 2 s, an 8 s tile places a window centre every 0.4 s.
+    /// 2 s, an 8 s tile places a window center every 0.4 s.
     public internal(set) var tileSeconds: Double = 8
     /// Extra samples either side of a tile or region slice (inside its declared span) so the estimator's
     /// proxy filter settles before the first window, seconds.
@@ -81,7 +81,7 @@ public struct SegmenterParameters: Sendable, Equatable {
     /// Every window of a supported segment lies within this distance of one affine line, milliseconds.
     public internal(set) var splitToleranceMilliseconds: Double = 0.5
     /// A boundary whose line jump exceeds this multiple of the split tolerance is an offset step;
-    /// otherwise it is a slope (rate) change, localised by the lines' intersection.
+    /// otherwise it is a slope (rate) change, localized by the lines' intersection.
     public internal(set) var stepToleranceFactor: Double = 2
     /// Fewer consistent windows than this cannot form a segment (they are unresolved evidence).
     public internal(set) var minimumSegmentWindows: Int = 5

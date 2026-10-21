@@ -5,8 +5,8 @@ import WWCore
 import WWEpisodeSetup
 import WWOrganizer
 
-/// Connects the Setup content to the Workspace and Commands seams: the `SetupSourcesContent` factory,
-/// `SourceCommandHandling` (File › Import Sources…, Source menu, Relink Source…, Edit › Delete/Move) and
+/// Connects Setup to `SourceCommandHandling` (File › Import Sources…, Source menu,
+/// Relink Source…, Edit › Delete/Move) and
 /// the Setup items of the Episode and View menus. Called once at launch.
 @MainActor
 enum EpisodeSetupIntegration {
@@ -15,9 +15,6 @@ enum EpisodeSetupIntegration {
     static func install() {
         guard !installed else { return }
         installed = true
-        SetupSourcesContent.makeView = { store, episodeID in
-            AnyView(SetupHostView(store: store, episodeID: episodeID))
-        }
         SourceCommands.handler = SetupSourceCommandHandler.shared
         SetupMenus.installIfNeeded()
         SetupReturnKey.install()
@@ -138,18 +135,6 @@ enum SetupReturnKey {
     }
 }
 
-/// Hosts the Setup content with the app's in-app text size (CMD-20).
-private struct SetupHostView: View {
-    let store: ShowDocumentStore
-    let episodeID: EpisodeID
-    @Environment(\.wwTextSize) private var textSize
-
-    var body: some View {
-        EpisodeSetupContent(store: store, episodeID: episodeID, textScale: CGFloat(textSize.scale))
-            .id(episodeID)
-    }
-}
-
 /// "Download sources automatically" (Settings › Sources), read live from the app's settings.
 @MainActor
 final class AppSettingsDownloadPreference: @MainActor SourceDownloadPreference {
@@ -162,32 +147,40 @@ final class AppSettingsDownloadPreference: @MainActor SourceDownloadPreference {
 }
 
 /// `SourceCommandHandling` for the Commands lane's router. Acts on the Setup content in the command's
-/// window; when Setup isn't shown, it switches the window to Setup first (never acting invisibly).
+/// window; the integrated workspace opens recording management without changing its destination.
 @MainActor
 final class SetupSourceCommandHandler: SourceCommandHandling {
     static let shared = SetupSourceCommandHandler()
 
     private func controller(_ window: NSWindow?, _ episode: EpisodeID) -> EpisodeSetupViewController? {
-        guard let controller = EpisodeSetupViewController.controller(for: window ?? NSApp.keyWindow),
+        let window = window ?? NSApp.keyWindow
+        guard let controller = EpisodeSetupViewController.controller(for: window?.attachedSheet ?? window),
               controller.model.episodeID == episode else { return nil }
         return controller
     }
 
-    /// Shows Setup in `window`, then runs `body` once the Setup content is on screen.
+    /// Runs once the existing Setup surface is visible, either in its legacy destination or a sheet.
     private func withSetup(_ window: NSWindow?, _ episode: EpisodeID, _ body: @escaping (EpisodeSetupViewController) -> Void) {
         if let controller = controller(window, episode) {
             body(controller)
             return
         }
-        ShowWindowRegistry.state(for: window ?? NSApp.keyWindow)?.select(.setup)
+        let target = window ?? NSApp.keyWindow
+        guard let state = ShowWindowRegistry.state(for: target?.sheetParent ?? target) else { return }
+        if state.destination == .alignment { state.recordingsPresented = true }
+        else { state.select(.setup) }
         Task { @MainActor in
-            for _ in 0..<20 {
+            for _ in 0..<100 {
+                guard state.selectedEpisodeID == episode,
+                      state.destination == .setup || state.recordingsPresented else { return }
                 if let controller = self.controller(window, episode) {
                     body(controller)
                     return
                 }
                 try? await Task.sleep(for: .milliseconds(50))
             }
+            NSApp.presentError(NSError(domain: "WaveWrangler.RecordingManagement", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Recording management did not become ready. Close the sheet and try importing again."]))
         }
     }
 

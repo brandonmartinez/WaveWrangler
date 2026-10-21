@@ -1,6 +1,6 @@
 # Bounded automatic speaker alignment
 
-`AlignmentPipeline.analyseSpeaker` uses the native **`ww-auto-align/4` acoustic candidate**.
+`AlignmentPipeline.analyzeSpeaker` uses the native **`ww-auto-align/4` acoustic candidate**.
 It proposes an offset and relative rate for review; it does not apply timing, prove continuity between
 every sample, or approve a recorder clock. Acceptance is still an explicit, undoable
 `manual(.acceptedAcousticProposal)` decision for the target recorder group, not just one speaker channel.
@@ -193,7 +193,7 @@ three build jobs, one test worker, no app build/launch or shared build paths.
 These are actual `AutomaticAnalysis.run` warm rematches: admission, fingerprint cache reads, fresh
 coarse search, revision-checked sparse system decoding/decimation, all fine attempts, fit and record
 encoding/decoding. They are **not kernel-only or experimental estimator replays**. The opt-in harness
-first asserts full record equality against `analyseSpeaker`, and separately measures its final-record
+first asserts full record equality against `analyzeSpeaker`, and separately measures its final-record
 cache (about 1-3 ms); outer coordinator publication/UI latency is excluded from rematch timing.
 Each WAVE uses deterministic seed-990, 2 kHz interpolated scene data on an 8 kHz base grid;
 target gain is 0.7 and other channels are unrelated noise. This reuses development controls from the
@@ -258,7 +258,7 @@ reason; no success-shaped map is returned.
 
 ## Source-local adaptive alignment
 
-`AlignmentPipeline.analyseAdaptiveSpeaker` adds a separately versioned **`ww-adaptive-align/14`**
+`AlignmentPipeline.analyzeAdaptiveSpeaker` adds a separately versioned **`ww-adaptive-align/14`**
 path. It does not change the affine estimator, frozen time-map/render contracts, or
 `EpochMapDecision`. A software/network recording can share strong speech matches
 while its delay changes locally; that is not automatically recorder drift or a physical restart.

@@ -20,7 +20,7 @@ struct CycleTests {
     @Test("Three recorders close a measured cycle, persist peer revisions and support proposals")
     func consistent() async throws {
         let fixture = try await PipelineFixture(Self.groups(), label: "cycle-consistent")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
         for epoch in fixture.epochs.dropFirst() {
             let record = try #require(report.records[epoch])
@@ -44,7 +44,7 @@ struct CycleTests {
             second: .dualScene(seed: seed, secondSeed: 771, rate: 0.99995, offset: -0.5, secondDelay: 0.02)
         )
         let fixture = try await PipelineFixture(groups, label: "cycle-conflict")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
         for epoch in fixture.epochs.dropFirst() {
             let record = try #require(report.records[epoch])
@@ -72,7 +72,7 @@ struct CycleTests {
         let fixture = try await PipelineFixture(
             Self.groups(second: .scene(seed: 13)), label: "cycle-weak"
         )
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
         let first = try #require(report.records[fixture.epochs[1]])
         #expect(first.cycleTriangles == 0)
@@ -87,7 +87,7 @@ struct CycleTests {
     func missingPeerProbe() async throws {
         let fixture = try await PipelineFixture(Self.groups(), label: "cycle-missing-probe")
         try fixture.rewrite("b")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let missing = fixture.id("b")
         #expect(report.sourceFailures[missing] == .sourceChangedSinceRegistration)
         #expect(report.records[fixture.epochs[1]] == nil)
@@ -111,7 +111,7 @@ struct CycleTests {
         let fixture = try await PipelineFixture(groups, label: "two-recorder-failed-sibling")
         let healthy = try fixture.moveToNewEpoch("restart")
         try fixture.rewrite("tgt")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.sourceFailures[fixture.id("tgt")] == .sourceChangedSinceRegistration)
         #expect(report.epochFailures[healthy] == nil)
         #expect(report.records[healthy]?.proposal != nil)
@@ -126,7 +126,7 @@ struct CycleTests {
             SourceSpec(name: "c", seconds: 24, signal: .scene(seed: TwoRecorder.seed, rate: 1.00002, offset: 0.3))
         ]))
         let fixture = try await PipelineFixture(specs, label: "cycle-peer-cache")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
         #expect(fixture.content.total.opens == 12, "4 probes + 3 reference decodes + 3 targets + 2 one-time peer excerpts")
         #expect(fixture.content.record(fixture.url("a")).opens == 2, "first target provides its own peer excerpt")
@@ -142,7 +142,7 @@ struct CycleTests {
         groups[1].sources.append(SourceSpec(name: "a-restart", seconds: 24, signal: .scene(seed: TwoRecorder.seed, rate: 1.0001, offset: 1.65)))
         let fixture = try await PipelineFixture(groups, label: "cycle-restart")
         let newEpoch = try fixture.moveToNewEpoch("a-restart")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
         let original = try #require(report.records[fixture.epochs[1]])
         let restarted = try #require(report.records[newEpoch])
@@ -160,7 +160,7 @@ struct CycleTests {
             Self.groups(first: .gap(seed: TwoRecorder.seed, rate: 1.0001, offset: 1.25, start: 10, end: 15)),
             label: "cycle-gap"
         )
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
         let epoch = fixture.epochs[1]
         let record = try #require(report.records[epoch])
@@ -199,7 +199,7 @@ struct CycleTests {
                            signal: .sharedSilence(seed: seed, rate: 1.0001, offset: 1.25, start: 9, end: 16))
             ]),
         ], label: "cycle-shared-silence")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         #expect(report.epochFailures.isEmpty)
         let targetEpoch = fixture.epochs[1]
         let record = try #require(report.records[targetEpoch])

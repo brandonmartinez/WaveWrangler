@@ -104,7 +104,7 @@ struct LibraryDestinationProblemTests {
         #expect(failed.values == [.copying, nil], "a failed copy is never reported as checking")
     }
 
-    @Test func permissionErrorsAreRecognisedThroughUnderlyingErrors() {
+    @Test func permissionErrorsAreRecognizedThroughUnderlyingErrors() {
         #expect(LibraryStore.isPermissionError(CocoaError(.fileReadNoPermission)))
         #expect(LibraryStore.isPermissionError(NSError(domain: NSPOSIXErrorDomain, code: Int(EACCES))))
         let wrapped = NSError(domain: "Coordination", code: 1, userInfo: [NSUnderlyingErrorKey: NSError(domain: NSPOSIXErrorDomain, code: Int(EPERM))])

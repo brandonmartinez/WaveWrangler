@@ -17,7 +17,7 @@ enum SyntheticCommonEditPCMError: Error, Equatable {
     case invalidInput
     case invalidFade
     case resourceLimit
-    case cancelled
+    case canceled
     case structuralPreflight(CommonEditAttestationRefusal)
 }
 
@@ -172,7 +172,7 @@ enum SyntheticCommonEditPCMRenderer {
     static func render(
         _ plan: SyntheticCommonEditPCMPlan, input: SyntheticAlignedPCM, chunkFrames: Int
     ) throws(SyntheticCommonEditPCMError) -> SyntheticCommonEditPCMResult {
-        guard !Task.isCancelled else { throw .cancelled }
+        guard !Task.isCancelled else { throw .canceled }
         let count = plan.base.alignedFrameCount
         let laneCount = plan.mapping.lanes.count
         guard chunkFrames > 0, chunkFrames <= Int(CommonEditPreflight.maximumInspectedFrames),
@@ -201,7 +201,7 @@ enum SyntheticCommonEditPCMRenderer {
         var chunks: [SyntheticPCMChunk] = []
         var outputFrame: Int64 = 0
         while outputFrame < map.outputFrameCount {
-            guard !Task.isCancelled else { throw .cancelled }
+            guard !Task.isCancelled else { throw .canceled }
             let frames = Int(min(Int64(chunkFrames), map.outputFrameCount - outputFrame))
             var output = [Float](repeating: 0, count: frames * laneCount)
             for offset in 0..<frames {
@@ -245,7 +245,7 @@ enum SyntheticCommonEditPCMRenderer {
             ))
             outputFrame += Int64(frames)
         }
-        guard !Task.isCancelled else { throw .cancelled }
+        guard !Task.isCancelled else { throw .canceled }
         return SyntheticCommonEditPCMResult(plan: plan, chunks: chunks)
     }
 }

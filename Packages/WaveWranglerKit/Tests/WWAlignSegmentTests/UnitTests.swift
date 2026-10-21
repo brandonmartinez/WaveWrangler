@@ -53,7 +53,7 @@ struct SegmenterUnitTests {
     }
 
     @Test func islandBetweenAJumpIsNeverBridged() {
-        // Outliers at the jump (windows straddling it measure neither side): the neighbours must stay apart.
+        // Outliers at the jump (windows straddling it measure neither side): the neighbors must stay apart.
         let p = Self.points(60) { i, u in
             switch i {
             case 29: 0.103

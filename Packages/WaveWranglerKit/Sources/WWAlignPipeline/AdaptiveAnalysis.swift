@@ -77,7 +77,7 @@ public struct AdaptiveAnalysisRecord: Sendable, Equatable, Codable {
 extension AlignmentPipeline {
     /// Measures only the selected file against an eligible, already timed speaker reference. The
     /// result is kept separate from group-clock analyses and never approves or moves another source.
-    public func analyseAdaptiveSpeaker(
+    public func analyzeAdaptiveSpeaker(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         sources: [AlignmentSource], authorizations: [ContentWorkAuthorization],
         targetEpoch: RecordingEpochID, speaker: SpeakerID, referenceSource: SourceID, targetSource: SourceID,
@@ -85,7 +85,7 @@ extension AlignmentPipeline {
     ) async throws -> AdaptiveAnalysisRecord {
         try Task.checkCancellation()
         await progress(0)
-        let initial = try await analyseSpeaker(
+        let initial = try await analyzeSpeaker(
             model: model, episode: episodeID, sources: sources, authorizations: authorizations,
             targetEpoch: targetEpoch, speaker: speaker, referenceSource: referenceSource, targetSource: targetSource
         )

@@ -18,7 +18,7 @@ private struct NoiseProvider: RenderSampleProvider {
     }
 }
 
-/// Discards every chunk, keeping only a count and a checksum (so the work cannot be optimised away).
+/// Discards every chunk, keeping only a count and a checksum (so the work cannot be optimized away).
 private struct DiscardingSink: RenderOutputSink {
     var frames = 0
     var checksum: Double = 0

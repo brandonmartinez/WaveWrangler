@@ -10,7 +10,7 @@ struct WindowObservation: Sendable {
     var offsetSeconds: Double?
 }
 
-/// Normalised cross-correlation of one target window against a bounded reference search region.
+/// Normalized cross-correlation of one target window against a bounded reference search region.
 ///
 /// Both real signals go through ONE complex FFT (target in the real part, reference region in the
 /// imaginary part); one inverse FFT then returns the cross-correlation (real part) and the target's
@@ -37,21 +37,21 @@ struct WindowCorrelator {
     /// - Parameters:
     ///   - targetStart: proxy index of the window's first sample in `target`.
     ///   - targetClockStart / referenceClockStart: clock time of proxy index 0 of each signal, seconds.
-    ///   - predictedOffset: centre of the search, reference time minus target time, seconds.
+    ///   - predictedOffset: center of the search, reference time minus target time, seconds.
     ///   - deviation: half-width of the search, seconds.
     mutating func observe(target: ProxySignal, targetStart: Int, targetClockStart: Double, reference: ProxySignal, referenceClockStart: Double, predictedOffset: Double, deviation: Double) -> WindowObservation {
         let nw = windowLength
         let rate = parameters.proxyRate
         let floorEnergy = parameters.silenceRMS * parameters.silenceRMS * Double(nw)
         let windowStartTime = targetClockStart + Double(targetStart) / rate
-        let centreIndex = (windowStartTime + predictedOffset - referenceClockStart) * rate
+        let centerIndex = (windowStartTime + predictedOffset - referenceClockStart) * rate
         let span = (deviation * rate).rounded(.up)
-        guard centreIndex.isFinite, abs(centreIndex) < 1e12 else { return WindowObservation(status: .noReference) }
-        let lo = max(0, Int((centreIndex - span).rounded(.down)))
-        let hi = min(reference.samples.count, Int((centreIndex + span).rounded(.up)) + nw + 1)
+        guard centerIndex.isFinite, abs(centerIndex) < 1e12 else { return WindowObservation(status: .noReference) }
+        let lo = max(0, Int((centerIndex - span).rounded(.down)))
+        let hi = min(reference.samples.count, Int((centerIndex + span).rounded(.up)) + nw + 1)
         guard hi - lo >= nw + 2 else { return WindowObservation(status: .noReference) }
         let targetRange = targetStart..<(targetStart + nw)
-        if target.centredRMS(targetRange) < parameters.silenceRMS || reference.centredRMS(lo..<hi) < parameters.silenceRMS {
+        if target.centeredRMS(targetRange) < parameters.silenceRMS || reference.centeredRMS(lo..<hi) < parameters.silenceRMS {
             return WindowObservation(status: .silent)
         }
 
@@ -60,8 +60,8 @@ struct WindowCorrelator {
         let transform = fft(size)
         var re = [Double](repeating: 0, count: size)
         var im = [Double](repeating: 0, count: size)
-        // Pearson correlation: centring the target alone makes the numerator invariant to the reference's
-        // local mean (sum of x' is zero), and the denominators below use centred energies.
+        // Pearson correlation: centering the target alone makes the numerator invariant to the reference's
+        // local mean (sum of x' is zero), and the denominators below use centered energies.
         let targetMean = target.mean(targetRange)
         for n in 0..<nw { re[n] = target.samples[targetStart + n] - targetMean }
         for n in 0..<m { im[n] = reference.samples[lo + n] }
@@ -81,11 +81,11 @@ struct WindowCorrelator {
         }
         transform.transform(&outRe, &outIm, inverse: true)
 
-        let targetEnergy = target.centredEnergy(targetRange)
+        let targetEnergy = target.centeredEnergy(targetRange)
         let lagCount = m - nw + 1
         var ncc = [Double](repeating: 0, count: lagCount)
         for lag in 0..<lagCount {
-            let ey = reference.centredEnergy((lo + lag)..<(lo + lag + nw))
+            let ey = reference.centeredEnergy((lo + lag)..<(lo + lag + nw))
             ncc[lag] = ey < floorEnergy ? 0 : outRe[lag] / (targetEnergy * ey).squareRoot()
         }
         var best = 0

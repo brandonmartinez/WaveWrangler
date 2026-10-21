@@ -5,7 +5,7 @@ import WWCore
 /// scan never opens, previews, hashes or downloads files — IA-14).
 public struct ImportCandidate: Identifiable, Hashable, Sendable {
     public enum Kind: Hashable, Sendable {
-        /// `typeFromNameOnly`: recognised only by its extension ("Type from file name").
+        /// `typeFromNameOnly`: recognized only by its extension ("Type from file name").
         case recording(typeFromNameOnly: Bool)
         case notRecording
         case hidden

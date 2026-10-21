@@ -100,10 +100,10 @@ struct ChunkPump {
 
 private final class CursorCancellation: @unchecked Sendable {
     private let lock = NSLock()
-    private var cancelled = false
+    private var canceled = false
 
-    func cancel() { lock.withLock { cancelled = true } }
-    var isCancelled: Bool { lock.withLock { cancelled } }
+    func cancel() { lock.withLock { canceled = true } }
+    var isCanceled: Bool { lock.withLock { canceled } }
 }
 
 /// Owns the non-Sendable reader and pump on a serial Dispatch queue. Synchronous AudioToolbox and file
@@ -152,13 +152,13 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         let result: Result<CursorWorker, DecodeFailure> = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async {
-                    guard !cancellation.isCancelled else {
-                        continuation.resume(returning: .failure(.cancelled))
+                    guard !cancellation.isCanceled else {
+                        continuation.resume(returning: .failure(.canceled))
                         return
                     }
                     do throws(DecodeFailure) {
                         let before = try decoder.preflight(url)
-                        guard !cancellation.isCancelled else { throw .cancelled }
+                        guard !cancellation.isCanceled else { throw .canceled }
                         let reader: any DecodingContentReader
                         if let witness {
                             guard let gateway = decoder.content as? SystemSourceContentIO else {
@@ -176,7 +176,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
                                 source: source,
                                 fingerprint: before.fingerprint
                             )
-                            guard !cancellation.isCancelled else { throw .cancelled }
+                            guard !cancellation.isCanceled else { throw .canceled }
                             let pump = ChunkPump(
                                 reader: reader,
                                 interpretation: interpretation,
@@ -210,8 +210,8 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         let result: Result<StepResult, DecodeFailure> = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async { [self] in
-                    guard !closed, !cancellation.isCancelled else {
-                        continuation.resume(returning: .failure(.cancelled))
+                    guard !closed, !cancellation.isCanceled else {
+                        continuation.resume(returning: .failure(.canceled))
                         return
                     }
                     do throws(DecodeFailure) {
@@ -238,8 +238,8 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         let result: Result<Void, DecodeFailure> = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async { [self] in
-                    guard !closed, !cancellation.isCancelled else {
-                        continuation.resume(returning: .failure(.cancelled))
+                    guard !closed, !cancellation.isCanceled else {
+                        continuation.resume(returning: .failure(.canceled))
                         return
                     }
                     do throws(DecodeFailure) {
@@ -263,8 +263,8 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         let result: Result<Void, DecodeFailure> = await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 queue.async { [self] in
-                    guard !closed, !cancellation.isCancelled else {
-                        continuation.resume(returning: .failure(.cancelled))
+                    guard !closed, !cancellation.isCanceled else {
+                        continuation.resume(returning: .failure(.canceled))
                         return
                     }
                     do throws(DecodeFailure) {
@@ -297,7 +297,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
 /// A pull-style view of one open, verified decode, for consumers that need frames on demand (streamed
 /// rendering, bounded analysis) instead of a push sink. It exists only inside
 /// `SourceDecoder.withDecodingCursor`, which owns the security scope, the read-only open and the final
-/// staleness check; once that call returns, the cursor is closed and every call throws `.cancelled`.
+/// staleness check; once that call returns, the cursor is closed and every call throws `.canceled`.
 ///
 /// Chunks come back in source order, priming and remainder already removed, exactly as `decode` would
 /// publish them. Cancellation of the calling task is checked before and after every read. The body may
@@ -417,7 +417,7 @@ public actor DecodingCursor {
     }
 
     private func checkUsable() throws(DecodeFailure) {
-        if closed { throw .cancelled }
+        if closed { throw .canceled }
         if let failure { throw failure }
     }
 }

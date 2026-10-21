@@ -21,7 +21,7 @@ import WWCore
 // * Lag sign: see ``CorrelationLag``. Positive lag L (target frames) means the same event occurs L frames
 //   LATER in the target than in the reference; with equal origins and a = 1 the aligning offset is
 //   b = -L/F.
-// * Rounding: arithmetic is exact. The only rounding is quantising an exact source position to a frame
+// * Rounding: arithmetic is exact. The only rounding is quantizing an exact source position to a frame
 //   index, HALF-UP (`floor(x + 1/2)`), so a returned frame is always within 1/2 frame of the exact inverse.
 
 /// Bounds of the supported parameter envelope. Parameters outside them are refused with a typed error.

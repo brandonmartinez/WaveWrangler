@@ -1,4 +1,14 @@
-# Headless XCUITest VM hosts
+# Preferred macOS UI-test hosts
+
+**Current policy (2026-10-20):** use the VMs for functional UI tests,
+accessibility automation, and ordinary regression work. Do not use the Mac
+mini as a fallback when a VM is unavailable: report the readiness blocker.
+A physical-host run needs an explicit requirement that virtualization cannot
+meaningfully verify, such as physical audio-device behavior, unsupported GPU
+features, or representative hardware performance. Explain the limitation and
+obtain approval for the specific host and run. VM timings may be compared with
+other runs on the same VM configuration, but do not establish physical-device
+performance or a supported-hardware claim.
 
 WaveWrangler has two provisioned functional GUI-test VM hosts on Macatron:
 `ww-ui-1` and `ww-ui-2`. They run macOS 27 under Tart
@@ -12,8 +22,8 @@ The guests are based on Cirrus Labs'
 `sha256:b78a521145ebef24e9916c0b3999e165bb12b587d11524c5fa3ba4fe7bf79bb9`
 (macOS 27.0). Each has a local copy of the development Mac's exact Xcode
 27.0 build 27A266a, SSH with a dedicated VM-only key, auto-login, sleep
-and lock disabled, and the same `~/ww-uitest-runs/gui-lock` lease helper
-used on the mini. The image's auto-login is already configured for its guest
+and lock disabled, and the `~/ww-uitest-runs/gui-lock` lease helper.
+The image's auto-login is already configured for its guest
 admin account (`sysadminctl -autologin status` confirms it, and
 `/etc/kcpassword` exists); its stored password is never read or copied.
 Guest loginwindow has `DisableScreenLockImmediate` enabled. Each guest's
@@ -28,18 +38,10 @@ Tart's [personal-workstation license](https://tart.run/licensing/)
 is royalty-free; Apple's [macOS license](https://www.apple.com/legal/sla/docs/macOSGoldenGate.pdf)
 limits this Mac to two additional macOS virtualized instances.
 
-**M3/M4 operating exception (Brandon, 2026-10-09 15:50 EDT):** The two
-currently running guests may remain owned by the persistent main-checkout
-relay session for **synthetic functional GUI tests only**; the relay will not
-be archived during M3/M4. This supersedes the session-independent lifetime
-requirement below for these two existing processes during that scope, not
-the #415 reboot-between-leases validation. Use each guest's existing
-`gui-lock` with fresh readiness checks and post-run cleanup, and check for
-leftover test processes between leases. Do not stop or restart either guest;
-coordinate that with the relay. If the relay session or either guest stops,
-do not assume the exception establishes a replacement host: re-establish
-readiness and ownership before dispatching further tests. The physical
-Mac mini remains the required host for performance and physical GUI gates.
+The old M3/M4 relay-session lifetime exception is retired. Do not assume that
+the guests are still running or owned by an earlier session. Recheck readiness
+and process ownership before use; coordinate any restart with the current
+owner rather than stopping an active test.
 
 After a host reboot, start each guest in its **own** detached,
 session-independent background process. The VM service must not be owned by
@@ -97,11 +99,22 @@ SWIFT
 accepted, `ssh ww-ui-N 'xcodebuild -checkFirstLaunchStatus'` exits 0, the
 console is unlocked, and the guest's first functional smoke-test `.xcresult`
 shows Passed. A configured VM without these checks is not an available GUI
-host; use the mini instead.
+host. Resolve readiness or report a blocker; do not fall back to a physical host.
 
-Follow the [GUI lease pipeline](../../.squad/skills/gui-lock-mac-mini/SKILL.md):
-build-for-testing on the development Mac from a clean, committed and pushed
-SHA (`-jobs 4`, isolated DerivedData); copy signed Products atomically to
+Direct public Accessibility API diagnostics require a separate Accessibility grant
+for the UI-test runner inside the guest. Working XCTest automation does not imply
+`AXIsProcessTrusted()`: verify trust before interpreting a failed public AX query.
+Obtain operator approval and enable the grant in the guest's System Settings;
+do not edit the protected TCC database, disable system protection, or change host
+permissions. Ad-hoc rebuilds can change the runner's signing identity, so recheck
+trust when reusing a grant. This diagnostic permission is not a prerequisite for
+ordinary XCTest automation.
+
+Follow the [GUI lease pipeline](gui-testing.md):
+build-for-testing on the development Mac (`-jobs 4`, isolated DerivedData);
+record the source SHA and any uncommitted changes. Dirty-tree runs are
+development feedback, not exact-commit qualification; do not commit or push
+just to obtain a test label. Copy signed Products atomically to
 a per-run guest directory; verify `rsync -c` and both code signatures.
 On the guest, use one `gui-lock run` lease for one
 `xcodebuild test-without-building` invocation, then retrieve its
@@ -116,10 +129,12 @@ failure. Restore the detached host service before retrying. Reclaim a lease
 only through the `gui-lock` helper when its recorded PID is stale or dead;
 never unlink the lock guard.
 
-**VM timings are not valid for performance gates.** Run
-`ResponsivenessUITests` and other performance measurements on the Mac mini,
-which remains the default physical GUI host. Keep the guests within their
-eight-vCPU combined budget and avoid competing heavy builds on the host.
+**VM timings are not physical-device performance qualification.** Functional
+responsiveness regressions may run in a VM with the configuration recorded;
+an absolute hardware performance gate needs a separately approved,
+representative physical host, not an automatic Mac mini run. Keep the guests
+within their eight-vCPU combined budget and avoid competing heavy builds on
+the host.
 
 ## Initial functional smoke (2026-10-08)
 

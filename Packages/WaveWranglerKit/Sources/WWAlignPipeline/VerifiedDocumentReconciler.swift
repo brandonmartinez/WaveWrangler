@@ -50,12 +50,12 @@ public actor VerifiedDocumentReconciler {
 
     @discardableResult
     public func reconcile(
-        resolve: @escaping @Sendable () async -> Void,
+        resolve: @escaping @Sendable () async throws -> Void,
         publish: @escaping @Sendable () async throws -> Void
     ) async throws -> Bool {
         generation &+= 1
         let current = generation
-        await resolve()
+        try await resolve()
         try Task.checkCancellation()
         guard generation == current else { return false }
         let previous = publication

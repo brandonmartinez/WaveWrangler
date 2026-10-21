@@ -120,16 +120,16 @@ struct WitnessBoundPCMWindowTests {
         }
     }
 
-    @Test func cancelledRequestCannotIssuePCM() async throws {
+    @Test func canceledRequestCannotIssuePCM() async throws {
         let fixture = try Fixture()
         defer { try? fixture.remove() }
         let witness = try await fixture.witness()
-        let cancelled = Task {
+        let canceled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await WitnessBoundPCMWindowReader(access: fixture.access).readWindow(
                 fixture.primary, source: fixture.source, matching: witness, channel: 0, startFrame: 0
             )
         }
-        await #expect(throws: DecodeFailure.cancelled) { try await cancelled.value }
+        await #expect(throws: DecodeFailure.canceled) { try await canceled.value }
     }
 }

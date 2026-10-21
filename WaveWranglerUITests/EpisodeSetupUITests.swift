@@ -376,7 +376,7 @@ final class EpisodeSetupUITests: XCTestCase {
         Date(timeIntervalSince1970: 1_790_000_000).formatted(date: .omitted, time: .shortened)
     }
 
-    func testT11RelinkRequiresAcknowledgementWhenDetailsDiffer() {
+    func testT11RelinkRequiresAcknowledgmentWhenDetailsDiffer() {
         importFixture()
         select("intro.wav")
         let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier ENDSWITH '.status' AND value BEGINSWITH 'Not found'")).firstMatch
@@ -386,11 +386,11 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertTrue(sheet.waitForExistence(timeout: 3))
         let confirm = element("ww.relink.confirm")
         XCTAssertEqual(confirm.label, "Use This File Anyway")
-        XCTAssertFalse(confirm.isEnabled, "needs the acknowledgement checkbox")
+        XCTAssertFalse(confirm.isEnabled, "needs the acknowledgment checkbox")
         let acknowledge = element("ww.relink.acknowledge")
         acknowledge.click()
         if !confirm.isEnabled { attachState("relink after acknowledge") }
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier == 'ww.relink.confirm' AND enabled == true")).firstMatch.waitForExistence(timeout: 3), "acknowledgement enables Use This File Anyway (checkbox value \(acknowledge.value ?? "nil"))")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier == 'ww.relink.confirm' AND enabled == true")).firstMatch.waitForExistence(timeout: 3), "acknowledgment enables Use This File Anyway (checkbox value \(acknowledge.value ?? "nil"))")
         confirm.click()
         app.menuBars.menuBarItems["Edit"].click()
         XCTAssertTrue(app.menuItems["Undo Relink “intro.wav”"].waitForExistence(timeout: 3))
@@ -552,7 +552,7 @@ final class EpisodeSetupUITests: XCTestCase {
             XCTAssertEqual(focused.identifier, "ww.inspector.source.group", "first editable field (Recorder group)")
         } else {
             XCTAssertFalse(focused.waitForExistence(timeout: 1), "no focusable field: focus stays in the table")
-            // Behavioural check (AX focus flags on outlines are unreliable): ↓ still moves the Sources
+            // Behavioral check (AX focus flags on outlines are unreliable): ↓ still moves the Sources
             // selection, so the details follow the next row.
             let name = element("ww.inspector.source.name")
             func shown() -> String { "\(name.label)|\(name.value as? String ?? "")" }
@@ -619,7 +619,7 @@ final class EpisodeSetupUITests: XCTestCase {
         let confirmation = app.sheets.firstMatch
         XCTAssertTrue(confirmation.buttons["Keep Downloading"].waitForExistence(timeout: 2), "cancel asks when progress may be lost")
         confirmation.buttons["Cancel Download"].click()
-        if !waitForValue("ww.inspector.transfer", beginsWith: "Download cancelled") {
+        if !waitForValue("ww.inspector.transfer", beginsWith: "Download canceled") {
             attachState("after Cancel Download")
             XCTFail("transfer reads \(value("ww.inspector.transfer") ?? "nil")")
         }

@@ -20,20 +20,15 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.launch()
         app.activate()
         app.typeKey("2", modifierFlags: .command)
-        let details = app.disclosureTriangles["Detailed alignment inspection"]
-        if details.waitForExistence(timeout: 5), String(describing: details.value ?? "") == "0" {
-            scrollIntoWindow(details)
-            details.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-                .withOffset(CGVector(dx: 27, dy: 0)).click()
-        }
+        showSidebar("alignment")
         let expanded = app.outlines["ww.alignment.groups"].waitForExistence(timeout: 5)
         if !expanded {
             let hierarchy = XCTAttachment(string: app.debugDescription)
-            hierarchy.name = "Detailed inspection after disclosure activation"
+            hierarchy.name = "Detailed inspection after Alignment sidebar activation"
             hierarchy.lifetime = .keepAlways
             add(hierarchy)
             let screenshot = XCTAttachment(screenshot: app.screenshot())
-            screenshot.name = "Detailed inspection disclosure activation"
+            screenshot.name = "Alignment sidebar activation"
             screenshot.lifetime = .keepAlways
             add(screenshot)
         }
@@ -44,7 +39,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         let window = app.windows["ww.show.window"]
         XCTAssertEqual(window.frame.width, 760, accuracy: 2)
         XCTAssertEqual(window.frame.height, 492, accuracy: 2)
-        let group = app.staticTexts["Studio recorder"]
+        let group = app.outlines["ww.alignment.groups"].staticTexts["Studio recorder"]
         XCTAssertTrue(group.waitForExistence(timeout: 5))
         scrollIntoWindow(group)
         group.click()
@@ -52,7 +47,9 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.typeKey(.rightArrow, modifierFlags: [])
         XCTAssertTrue(stateHeading("Reference").waitForExistence(timeout: 2))
         selectTargetEpoch()
+        showTimingEvidence()
         XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
+        showSidebar("alignment")
         for identifier in [
             "alignment.waveforms.load", "alignment.acceptProposal", "alignment.rejectProposal",
             "alignment.editNumeric", "alignment.placeAnchors", "alignment.placeAnchorAtPlayhead",
@@ -178,13 +175,19 @@ final class AlignmentInspectionUITests: XCTestCase {
     func testTM206AcceptProposalCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Accept Proposal as Manual")
-        XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForText("Set by you", in: epochState("Guest take")),
+            "The selected saved proposal must become manual. \(alignmentCorrectionDiagnostics)"
+        )
     }
 
     func testTM207RejectProposalCommandExists() {
         selectTargetEpoch()
         chooseEpisodeMenu("Reject Proposal")
-        XCTAssertTrue(stateHeading("Timing not set — not attempted").waitForExistence(timeout: 5))
+        XCTAssertTrue(
+            waitForText("Timing not set — not attempted", in: epochState("Guest take")),
+            "Reject must change Guest take, not match the already-unmapped restart epoch. \(alignmentCorrectionDiagnostics)"
+        )
     }
 
     func testTM208StartNewEpochCommandExists() {
@@ -223,7 +226,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(waitForText("Audition stopped at", in: app.staticTexts["alignment.auditionStatus"]))
     }
 
-    func testTM210BlockedStateAndRemedyAreLabelled() {
+    func testTM210BlockedStateAndRemedyAreLabeled() {
         selectTargetEpoch()
         replace(app.textFields["ww.alignment.audition.range.start"], with: "2.5")
         let heading = app.staticTexts["ww.alignment.region.heading"]
@@ -242,8 +245,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         chooseEpisodeMenu("Accept Proposal as Manual")
         XCTAssertTrue(
             waitForStaleDependents(in: notice, previousTotal: total, timeout: 15),
-            "Expected an affected dependent to become stale, got \(text(of: notice))"
+            "Expected an affected dependent to become stale, got \(text(of: notice)). \(alignmentCorrectionDiagnostics)"
         )
+        XCTAssertTrue(waitForText("Set by you", in: epochState("Guest take")))
+        XCTAssertTrue(waitForSelectedEpoch("Guest take"), "Reading the dependent notice must not change epoch selection")
     }
 
     func testTM212NoRecorderGroupBlockedPanel() throws {
@@ -257,14 +262,17 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.activate()
         app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["Add recordings to begin"].waitForExistence(timeout: 5))
-        let goToSetup = app.buttons["Manage recordings…"]
-        XCTAssertTrue(goToSetup.exists)
+        let addRecordings = app.windows["ww.show.window"].buttons["Add recordings…"]
+        XCTAssertTrue(addRecordings.exists)
         guard UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 else {
             throw XCTSkip("Tab-only recovery requires system Full Keyboard Access")
         }
-        XCTAssertTrue(tabToFocus(goToSetup))
+        XCTAssertTrue(tabToFocus(addRecordings))
         app.typeKey(.space, modifierFlags: [])
-        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
+        let recordings = app.sheets.firstMatch
+        XCTAssertTrue(recordings.waitForExistence(timeout: 5), "Blocked recovery must open Recordings & Speakers")
+        XCTAssertTrue(recordings.staticTexts["Recordings & Speakers"].exists)
+        XCTAssertTrue(recordings.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
     }
 
     func testAlignmentWindowSmokeAndResize() throws {
@@ -278,25 +286,33 @@ final class AlignmentInspectionUITests: XCTestCase {
         let workspaceRoot = app.descendants(matching: .any)["ww.alignment.workspaceRoot"]
         XCTAssertTrue(workspaceRoot.waitForExistence(timeout: 2))
         XCTAssertEqual(workspaceRoot.label, "Alignment workspace")
-        for identifier in [
-            "ww.alignment.workspace", "ww.alignment.groups", "ww.alignment.anchors", "alignment.waveforms.load",
-            "alignment.editAnchor", "alignment.startNewEpoch"
-        ] {
+        for identifier in ["ww.alignment.workspace", "alignment.waveforms.load"] {
             scrollIntoWindow(workspaceRoot.descendants(matching: .any)[identifier])
             XCTAssertTrue(
                 workspaceRoot.descendants(matching: .any)[identifier].exists,
                 "\(identifier) must stay exposed inside the Alignment workspace group"
             )
         }
-        let inspector = app.descendants(matching: .any)["ww.inspector"]
-        XCTAssertEqual(inspector.label, "Inspector")
+        showSidebar("alignment")
+        let inspector = app.scrollViews["ww.inspector.alignment.details"]
+        XCTAssertTrue(inspector.waitForExistence(timeout: 5))
+        XCTAssertEqual(inspector.label, "Alignment inspector")
+        for identifier in [
+            "ww.alignment.groups", "ww.alignment.anchors", "alignment.editAnchor", "alignment.startNewEpoch",
+        ] {
+            let element = inspector.descendants(matching: .any)[identifier]
+            scrollIntoWindow(element, named: identifier)
+            XCTAssertTrue(element.exists, "\(identifier) must stay exposed inside the Alignment sidebar")
+            XCTAssertFalse(workspaceRoot.descendants(matching: .any)[identifier].exists,
+                           "Detailed inspection must not be duplicated on the track canvas")
+        }
         // Resolve every container the audit may waive *before* the audit runs, so each waiver is pinned to
         // one element's exact frame and to the identified children it exposes, rather than to any group of
         // roughly the right shape (#219 review).
         let inspectorColumn = resolveInspectorColumn(
             around: inspector, excluding: [contentInspector.frame]
         )
-        let actionRows = resolveActionRows(in: workspaceRoot)
+        let actionRows = resolveActionRows(in: inspector)
         let touchBar = app.descendants(matching: .touchBar).firstMatch
         let inactiveTouchBarFrame: CGRect? = touchBar.exists && !touchBar.isEnabled
             && touchBar.descendants(matching: .any).count == 0 ? touchBar.frame : nil
@@ -320,6 +336,16 @@ final class AlignmentInspectionUITests: XCTestCase {
                 outlineCellFrames.append(frame)
             }
         }
+        // Audit the workspace, not a native tooltip left open by the scrolling setup.
+        app.menuBars.firstMatch.hover()
+        let helpTag = app.descendants(matching: .helpTag).firstMatch
+        XCTAssertEqual(
+            XCTWaiter.wait(for: [
+                XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: helpTag),
+            ], timeout: 5),
+            .completed,
+            "The workspace audit must start without a transient hover tooltip"
+        )
         var layoutContainerFindings = 0
         var inspectorColumnFindings = 0
         var actionRowFindings = 0
@@ -339,17 +365,16 @@ final class AlignmentInspectionUITests: XCTestCase {
                   element.elementType == .group || element.elementType == .other
             else { return self.reportUnwaived(issue) }
             let isContent = self.approximatelyEqual(element.frame, contentInspector.frame)
-            // SwiftUI owns the inspector column's chrome around our labelled Inspector scroll area, so no
-            // modifier reaches it. It is waived only as the one container resolved above: the same exact
-            // frame (width and height) and still exposing the labelled `ww.inspector` scroll area.
-            let exposedInspector = element.descendants(matching: .any)["ww.inspector"].exists
-                ? ["ww.inspector"] : []
+            // SwiftUI owns the inspector column's chrome around our labeled Inspector scroll area, so no
+            // modifier reaches it. Match the exact frame and the active activity's labeled scroll area.
+            let exposedInspector = element.descendants(matching: .any)[inspector.identifier].exists
+                ? [inspector.identifier] : []
             let isInspectorColumn = inspector.exists
                 && inspectorColumn?.matches(element, exposing: exposedInspector) == true
             // AppKit builds the container around an outline's disclosure-column cell itself, and no
-            // SwiftUI description reaches it: labelling the cell content, combining its children and
+            // SwiftUI description reaches it: labeling the cell content, combining its children and
             // the value-keypath shorthand all leave this one container undescribed (#219). It is waived
-            // only while its own labelled text child is still exposed to assistive technology.
+            // only while its own labeled text child is still exposed to assistive technology.
             // The action buttons' own grid rows are undescribed layout containers: declaring one a
             // containing element drops its buttons from the tree in a narrow window (#219). Each is waived
             // only as a row resolved above: the same exact frame, exposing exactly the same alignment
@@ -371,19 +396,19 @@ final class AlignmentInspectionUITests: XCTestCase {
                 actionRowFindings += 1
                 print(
                     "AUDIT WAIVED [alignment-action-row] \(issue.compactDescription) \(element.frame) — " +
-                    "layout row holding only labelled alignment buttons"
+                    "layout row holding only labeled alignment buttons"
                 )
             } else if isOutlineCell {
                 outlineCellFindings += 1
                 print(
                     "AUDIT WAIVED [alignment-outline-cell] \(issue.compactDescription) — " +
-                    "AppKit-owned outline cell container; its labelled text child remains exposed"
+                    "AppKit-owned outline cell container; its labeled text child remains exposed"
                 )
             } else if isInspectorColumn && !isContent {
                 inspectorColumnFindings += 1
                 print(
                     "AUDIT WAIVED [show-inspector-column] \(issue.compactDescription) \(element.frame) — " +
-                    "SwiftUI-owned inspector column; the labelled Inspector scroll area remains exposed"
+                    "SwiftUI-owned inspector column; the labeled Inspector scroll area remains exposed"
                 )
             } else {
                 layoutContainerFindings += 1
@@ -395,7 +420,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             return true
         }
         // The show's split layout nests two containers over the whole content area, and the episode
-        // sidebar adds a third; each is waived only by matching one of those labelled frames exactly.
+        // sidebar adds a third; each is waived only by matching one of those labeled frames exactly.
         XCTAssertLessThanOrEqual(layoutContainerFindings, 3)
         XCTAssertLessThanOrEqual(inspectorColumnFindings, 1)
         XCTAssertLessThanOrEqual(actionRowFindings, 2)
@@ -435,12 +460,14 @@ final class AlignmentInspectionUITests: XCTestCase {
 
     private func chooseEpisodeMenu(_ item: String) {
         app.menuBars.menuBarItems["Episode"].click()
-        app.menuItems[item].click()
+        let command = app.menuItems[item]
+        XCTAssertTrue(command.isEnabled, "\(item) must be available for the selected epoch")
+        command.click()
     }
 
     /// Selects an anchor row by clicking inside the row itself. An identifier-targeted `.click()` on a
     /// cell cannot resolve a hit point inside the clipped native ScrollView (#219), so the row's own
-    /// normalized coordinate is used and the selection is asserted before any command runs.
+    /// visible intersection is used and the selection is asserted before any command runs.
     private func selectAnchorRow(
         _ index: Int,
         file: StaticString = #filePath,
@@ -454,7 +481,11 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(row.waitForExistence(timeout: 2), file: file, line: line)
         scrollIntoWindow(row, file: file, line: line)
         XCTAssertGreaterThan(row.frame.width, 0, file: file, line: line)
-        row.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        let visible = row.frame.intersection(table.frame)
+            .intersection(app.scrollViews["ww.inspector.alignment.details"].frame)
+        XCTAssertFalse(visible.isEmpty, "The selected row must intersect the sidebar viewport", file: file, line: line)
+        row.coordinate(withNormalizedOffset: .zero)
+            .withOffset(CGVector(dx: visible.midX - row.frame.minX, dy: visible.midY - row.frame.minY)).click()
         XCTAssertTrue(
             waitForAnchorRowSelected(index),
             "Anchor \(index) must be selected before the command",
@@ -463,38 +494,82 @@ final class AlignmentInspectionUITests: XCTestCase {
         )
     }
 
-    /// Scrolls the Alignment workspace until the element's centre sits inside the show window.
-    /// Scroll-wheel deltas are used rather than swipes: a 5000 px/s swipe overshoots the section and the
-    /// correction swipes oscillate without ever settling (#219).
+    /// Scrolls the owning activity, including the nested horizontal table viewport.
     private func scrollIntoWindow(
         _ element: XCUIElement,
+        named name: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
+        let scroll = scrollRoot(for: element, named: name)
         let window = app.windows["ww.show.window"]
+        if !element.exists { scrollWorkspaceToTop(in: scroll) }
         for _ in 0..<40 {
             guard element.exists else {
                 scroll.scroll(byDeltaX: 0, deltaY: -80)
                 continue
             }
-            let centre = CGPoint(x: element.frame.midX, y: element.frame.midY)
-            if window.frame.insetBy(dx: 0, dy: 24).contains(centre) { return }
-            if scroll.frame.minY <= centre.y, centre.y <= scroll.frame.maxY,
-               let outline = app.outlines.allElementsBoundByIndex.first(where: {
-                   $0.descendants(matching: .any).matching(identifier: element.identifier).count > 0
-               }) {
-                outline.scroll(byDeltaX: centre.x > scroll.frame.midX ? -80 : 80, deltaY: 0)
+            let viewport = scroll.frame.intersection(window.frame.insetBy(dx: 0, dy: 24))
+            let center = CGPoint(x: element.frame.midX, y: element.frame.midY)
+            let wideContainer = [.outline, .outlineRow, .table, .scrollView].contains(element.elementType)
+            if viewport.contains(center) || (wideContainer && viewport.intersects(element.frame)) { return }
+            if viewport.minY <= center.y, center.y <= viewport.maxY {
+                horizontalScroll(for: element, in: scroll)
+                    .scroll(byDeltaX: center.x > viewport.midX ? -80 : 80, deltaY: 0)
                 continue
             }
-            scroll.scroll(byDeltaX: 0, deltaY: centre.y > window.frame.midY ? -40 : 40)
+            scroll.scroll(byDeltaX: 0, deltaY: center.y > viewport.midY ? -60 : 60)
         }
+        XCTAssertTrue(element.exists, "\(name ?? "Alignment control") exists after scrolling", file: file, line: line)
+        guard element.exists else { return }
         XCTAssertTrue(
-            window.frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY)),
-            "\(element.identifier) is inside the window after scrolling",
+            scroll.frame.intersection(window.frame).contains(CGPoint(x: element.frame.midX, y: element.frame.midY)),
+            "\(name ?? element.identifier) is inside its owning viewport after scrolling",
             file: file,
             line: line
         )
+    }
+
+    private func horizontalScroll(for element: XCUIElement, in root: XCUIElement) -> XCUIElement {
+        let key = element.identifier.isEmpty ? element.label : element.identifier
+        return root.descendants(matching: .scrollView).allElementsBoundByIndex
+            .filter { $0.descendants(matching: .any).matching(identifier: key).firstMatch.exists }
+            .min { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height } ?? root
+    }
+
+    private func scrollRoot(for element: XCUIElement, named name: String? = nil) -> XCUIElement {
+        let identifier = name ?? (element.exists ? element.identifier : "")
+        if identifier.hasPrefix("alignment.waveforms.") || identifier == "ww.alignment.workspace"
+            || (element.exists && element.label == "Lock position") {
+            return app.scrollViews["ww.alignment.workspace"]
+        }
+        if identifier == "Timing evidence"
+            || (identifier.hasPrefix("ww.inspector.alignment.") && identifier != "ww.inspector.alignment.details") {
+            showSidebar("recording")
+            return app.scrollViews["ww.inspector"]
+        }
+        showSidebar("alignment")
+        return app.scrollViews["ww.inspector.alignment.details"]
+    }
+
+    private func showSidebar(_ activity: String) {
+        let toggle = app.buttons["ww.sidebar.\(activity)"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 5), "The \(activity) activity toggle must be exposed")
+        if toggle.value as? String != "Shown" { toggle.click() }
+        XCTAssertTrue(waitForValue("Shown", in: toggle), "The \(activity) sidebar must be active")
+        let root = activity == "alignment" ? "ww.inspector.alignment.details" : "ww.inspector"
+        XCTAssertTrue(app.scrollViews[root].waitForExistence(timeout: 5))
+    }
+
+    private func showTimingEvidence() {
+        showSidebar("recording")
+        let evidence = app.disclosureTriangles["Timing evidence"]
+        scrollIntoWindow(evidence, named: "Timing evidence")
+        if String(describing: evidence.value ?? "") == "0" {
+            evidence.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
+                .withOffset(CGVector(dx: 27, dy: 0)).click()
+        }
+        makeReachable(app.staticTexts["ww.inspector.alignment.evidence"])
     }
 
     /// Anchor rows are numbered by position, so a row is located by the source time it reports.
@@ -526,23 +601,41 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     private func selectTargetEpoch() {
+        let lock = app.buttons.matching(NSPredicate(format: "label == 'Lock position' AND value == 'Locked'")).firstMatch
+        if lock.exists {
+            scrollIntoWindow(lock)
+            lock.click()
+        }
+        showSidebar("alignment")
         let state = stateHeading("Proposed — not confirmed")
         XCTAssertTrue(state.waitForExistence(timeout: 5))
-        let epochName = app.staticTexts["Guest take"]
+        let epochName = app.outlines["ww.alignment.groups"].staticTexts["Guest take"]
         scrollIntoWindow(epochName)
         epochName.click()
-        let evidence = app.disclosureTriangles["Timing evidence"]
-        if evidence.exists, String(describing: evidence.value ?? "") == "0" {
-            evidence.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5))
-                .withOffset(CGVector(dx: 27, dy: 0)).click()
-        }
+        XCTAssertTrue(waitForSelectedEpoch("Guest take"))
+        showTimingEvidence()
         XCTAssertTrue(app.staticTexts["ww.inspector.alignment.evidence"].waitForExistence(timeout: 2))
+        showSidebar("alignment")
     }
 
     private func stateHeading(_ heading: String) -> XCUIElement {
-        app.staticTexts.matching(NSPredicate(
+        app.outlines["ww.alignment.groups"].staticTexts.matching(NSPredicate(
             format: "label BEGINSWITH %@ OR value BEGINSWITH %@", heading, heading
         )).firstMatch
+    }
+
+    private func epochState(_ name: String) -> XCUIElement {
+        app.outlines["ww.alignment.groups"].descendants(matching: .outlineRow)
+            .containing(.staticText, identifier: name).firstMatch.staticTexts.matching(NSPredicate(
+                format: "identifier BEGINSWITH %@ AND identifier ENDSWITH %@", "ww.alignment.epoch.", ".state"
+            )).firstMatch
+    }
+
+    private var alignmentCorrectionDiagnostics: String {
+        let error = app.descendants(matching: .any)["alignment.error"]
+        return "State: \(text(of: epochState("Guest take"))); "
+            + "status: \(text(of: app.staticTexts["alignment.status"])); "
+            + "error: \(error.exists ? text(of: error) : "none")."
     }
 
     private func replace(_ field: XCUIElement, with text: String) {
@@ -603,7 +696,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         return false
     }
 
-    /// Scrolls the workspace until `element` is on screen, naming it even when it never appears.
+    /// Disabled controls must be visible; enabled controls must also remain hittable.
     private func makeReachable(
         _ element: XCUIElement,
         named name: String? = nil,
@@ -611,37 +704,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         line: UInt = #line
     ) {
         let identifier = name ?? (element.exists ? element.identifier : "control")
-        let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
-        // A disabled control is never hittable, so only an enabled control has to be hittable here.
-        func onScreen() -> Bool {
-            element.exists
-                && scroll.frame.intersects(element.frame)
-                && (element.isHittable || !element.isEnabled)
-        }
-        if onScreen() {
-            return
-        }
-        if element.exists {
-            for _ in 0..<16 where !onScreen() {
-                if element.frame.midY < scroll.frame.minY {
-                    scroll.swipeDown()
-                } else {
-                    scroll.swipeUp()
-                }
-            }
-        }
-        if !onScreen() {
-            // The action grid is lazy: once it is scrolled past, its buttons leave the tree, so a blind
-            // search can never find them again. Start from the top and walk down in viewport-sized steps.
-            scrollWorkspaceToTop()
-            let probe = app.descendants(matching: .any)["alignment.waveforms.transport.back"]
-            let probeBefore = probe.frame.midY
-            scroll.scroll(byDeltaX: 0, deltaY: -100)
-            let down: CGFloat = probe.frame.midY <= probeBefore ? -100 : 100
-            for _ in 0..<24 where !onScreen() {
-                scroll.scroll(byDeltaX: 0, deltaY: down)
-            }
-        }
+        scrollIntoWindow(element, named: name, file: file, line: line)
         XCTAssertTrue(element.exists, "\(identifier) exists after scrolling", file: file, line: line)
         if element.isEnabled {
             XCTAssertTrue(
@@ -703,7 +766,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         return rows
     }
 
-    /// SwiftUI's own inspector column: the smallest container that wraps the labelled `ww.inspector` scroll
+    /// SwiftUI's own inspector column: the smallest container that wraps the active activity's scroll
     /// area without being the content or sidebar region. Resolved to exactly one element, or none.
     private func resolveInspectorColumn(
         around inspector: XCUIElement,
@@ -723,7 +786,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             if let current = best, current.width * current.height <= frame.width * frame.height { continue }
             best = frame
         }
-        return best.map { WaivableContainer(frame: $0, exposedIdentifiers: ["ww.inspector"]) }
+        return best.map { WaivableContainer(frame: $0, exposedIdentifiers: [inspector.identifier]) }
     }
 
     private func approximatelyEqual(_ lhs: CGRect, _ rhs: CGRect) -> Bool {
@@ -733,19 +796,15 @@ final class AlignmentInspectionUITests: XCTestCase {
             && abs(lhs.height - rhs.height) <= 2
     }
 
-    /// Returns the workspace to the top so a lazily built control is always met on the way down.
-    private func scrollWorkspaceToTop() {
-        let scroll = app.descendants(matching: .any)["ww.alignment.workspace"]
-        let top = app.descendants(matching: .any)["alignment.waveforms.transport.back"]
+    /// Starts the owning scroll area at its own header, not at the canvas transport.
+    private func scrollWorkspaceToTop(in scroll: XCUIElement) {
+        let identifier = scroll.identifier
+        let top = identifier == "ww.alignment.workspace"
+            ? scroll.descendants(matching: .any)["alignment.waveforms.transport.back"]
+            : scroll.staticTexts[identifier == "ww.inspector.alignment.details" ? "Alignment" : "Recording"].firstMatch
         for _ in 0..<20 {
-            guard top.exists else { return }
-            let frame = top.frame
-            if scroll.frame.contains(CGPoint(x: frame.midX, y: frame.midY)) { return }
-            if frame.midY < scroll.frame.minY {
-                scroll.swipeDown()
-            } else {
-                scroll.swipeUp()
-            }
+            if top.exists, scroll.frame.contains(CGPoint(x: top.frame.midX, y: top.frame.midY)) { return }
+            scroll.scroll(byDeltaX: 0, deltaY: 200)
         }
     }
 

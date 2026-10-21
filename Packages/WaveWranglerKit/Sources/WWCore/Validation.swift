@@ -15,6 +15,7 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         /// A structurally inconsistent `EpisodeAlignment` (revision order, accepted/derived references, map bytes).
         case invalidAlignment
         case invalidCleanup
+        case invalidWorkspace
     }
 
     public var code: Code
@@ -32,6 +33,7 @@ extension ShowDocumentModel {
     /// Checks referential and semantic integrity of the whole value.
     public func validationIssues(expectedSchemaVersion: Int = SchemaVersion.show) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
+        issues += workspaceValidationIssues(expectedSchemaVersion: expectedSchemaVersion)
         if schemaVersion != expectedSchemaVersion {
             issues.append(.init(.schemaVersionMismatch, "payload \(schemaVersion) != expected \(expectedSchemaVersion)"))
         }

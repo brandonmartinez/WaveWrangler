@@ -37,7 +37,7 @@ struct GateEvaluationTests {
         #expect(!GateEvaluation(inputs: [approvedPositive]).passed)
         let gate = GateEvaluation(inputs: [Self.positive(), Self.negative(.variableDelay, proposed: true, kind: .clockApproved)])
         #expect(gate.clockApprovedEpochs == ["variableDelay"])
-        #expect(gate.acousticDelayMislabelled == ["variableDelay"])
+        #expect(gate.acousticDelayMislabeled == ["variableDelay"])
         #expect(!gate.passed)
     }
 

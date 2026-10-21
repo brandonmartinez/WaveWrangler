@@ -89,7 +89,7 @@ extension EpisodeCleanupModel {
         saveFillerCleanup(proposed, action: "Find filler timing candidates")
     }
 
-    func selectFiller(_ id: UUID, reveal: Bool = true) {
+    func selectFiller(_ id: UUID, reveal: Bool = true, movePlayhead: Bool = true) {
         guard let review = fillerReviews.first(where: { $0.id == id }) else { return }
         stopPlayback()
         selectedFillerID = id
@@ -97,9 +97,12 @@ extension EpisodeCleanupModel {
         selectedWord = review.word
         updateFillerDrafts()
         if fillerIssue(review) == nil {
-            playhead = review.bounds.alignedStart
-            if reveal, playhead < windowStart || review.bounds.alignedEnd > windowStart + visibleDuration {
-                setWindow(start: playhead - 0.5, duration: min(5, maximumDuration))
+            if movePlayhead { _ = previewSeek(to: review.bounds.alignedStart, revealing: false) }
+            if reveal, review.bounds.alignedStart < windowStart {
+                setWindow(start: review.bounds.alignedStart, duration: visibleDuration)
+            } else if reveal, review.bounds.alignedEnd > windowStart + visibleDuration {
+                setWindow(start: min(review.bounds.alignedStart,
+                    review.bounds.alignedEnd - visibleDuration), duration: visibleDuration)
             }
         }
     }
@@ -135,7 +138,6 @@ extension EpisodeCleanupModel {
 
     func nudgeFiller(_ id: UUID, edge: FillerTimingEdge, seconds: Double) {
         guard let review = editableFiller(id) else { return }
-        if selectedFillerID != id { selectFiller(id, reveal: false) }
         setFillerBounds(id, start: review.bounds.alignedStart + (edge == .start ? seconds : 0),
                        end: review.bounds.alignedEnd + (edge == .end ? seconds : 0))
     }
@@ -232,8 +234,12 @@ extension EpisodeCleanupModel {
     private func changeFiller(_ id: UUID, action: String, _ edit: (inout FillerTimingReview) -> Void) {
         guard var cleanup = episode?.cleanup, let index = cleanup.fillerReviews?.firstIndex(where: { $0.id == id }) else { return }
         edit(&cleanup.fillerReviews![index])
-        saveFillerCleanup(cleanup, action: action)
-        updateFillerDrafts()
+        if saveFillerCleanup(cleanup, action: action) {
+            selectFiller(id, reveal: false, movePlayhead: false)
+            if let review = selectedFiller {
+                listening.selection = review.bounds.alignedStart...review.bounds.alignedEnd
+            }
+        }
     }
 
     @discardableResult

@@ -115,11 +115,11 @@ struct ClockApprovalBindingTests {
         editedSegments["segments"] = otherSegments
         #expect(throws: TimeMapError.clockApprovalBindingMismatch(epoch)) { try decodeEpoch(editedSegments) }
 
-        // Epoch ID relabelled, approval kept.
-        var relabelled = object
+        // Epoch ID relabeled, approval kept.
+        var relabeled = object
         let newID = RecordingEpochID()
-        relabelled["epoch"] = newID.rawValue.uuidString
-        #expect(throws: TimeMapError.clockApprovalBindingMismatch(newID)) { try decodeEpoch(relabelled) }
+        relabeled["epoch"] = newID.rawValue.uuidString
+        #expect(throws: TimeMapError.clockApprovalBindingMismatch(newID)) { try decodeEpoch(relabeled) }
 
         // Approval's own binding edited.
         func editApproval(_ key: String, _ value: Any) -> [String: Any] {
@@ -132,7 +132,7 @@ struct ClockApprovalBindingTests {
             return root
         }
         #expect(throws: TimeMapError.clockApprovalBindingMismatch(epoch)) { try decodeEpoch(editApproval("segments", otherSegments)) }
-        #expect(throws: TimeMapError.clockApprovalBindingMismatch(epoch)) { try decodeEpoch(editApproval("epoch", relabelled["epoch"]!)) }
+        #expect(throws: TimeMapError.clockApprovalBindingMismatch(epoch)) { try decodeEpoch(editApproval("epoch", relabeled["epoch"]!)) }
         #expect(throws: TimeMapError.emptyEpochMap(epoch)) { try decodeEpoch(editApproval("segments", [Any]())) }
 
         // An approval without a binding (the pre-#177 shape) cannot be decoded.

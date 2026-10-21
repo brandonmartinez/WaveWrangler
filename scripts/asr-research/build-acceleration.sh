@@ -15,7 +15,7 @@ source, candidate = map(Path, sys.argv[1:])
 metal = (candidate / "ggml-metal.metal").read_text()
 (candidate / "runtime/ggml-metal.metal").write_text(
     metal.replace('#include "ggml-common.h"', (source / "ggml-common.h").read_text()))
-# No unsupported ANE API: permit CPU+ANE for this separately labelled experiment.
+# No unsupported ANE API: permit CPU+ANE for this separately labeled experiment.
 encoder = (candidate / "coreml/whisper-encoder.mm").read_text()
 (candidate / "coreml/encoder-cpu-ane.mm").write_text(
     encoder.replace("config.computeUnits = MLComputeUnitsAll;",

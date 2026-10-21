@@ -243,7 +243,7 @@ struct TranscriptionSettingsTests {
         #expect(settings.isBusy && settings.isVerifying)
         settings.cancelDownload()
         try await wait { !settings.isBusy }
-        #expect(settings.error == nil && settings.status.hasPrefix("Download cancelled"))
+        #expect(settings.error == nil && settings.status.hasPrefix("Download canceled"))
         #expect(try FileManager.default.contentsOfDirectory(atPath: directory.path).isEmpty)
         #expect(await pool.snapshot.reservedBytes == 10)
         holder.cancel()
@@ -260,7 +260,7 @@ struct TranscriptionSettingsTests {
         })
         settings.cancelDownload()
         try await wait { !settings.isBusy }
-        #expect(settings.status.hasPrefix("Download cancelled"))
+        #expect(settings.status.hasPrefix("Download canceled"))
         #expect(settings.available.isEmpty && settings.error == nil)
         settings.download(fetch: { _, target, _ in
             try Data([1]).write(to: target)
@@ -290,13 +290,13 @@ struct TranscriptionSettingsTests {
         #expect(!FileManager.default.fileExists(atPath: directory.appendingPathComponent("refused").path))
     }
 
-    @Test func cancellingAnActualSessionTaskEndsAnIncompleteTransfer() async throws {
+    @Test func cancelingAnActualSessionTaskEndsAnIncompleteTransfer() async throws {
         let (_, _, directory) = try fixture()
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [IncompleteModelProtocol.self]
-        let target = directory.appendingPathComponent("cancelled")
+        let target = directory.appendingPathComponent("canceled")
         let progress = Progress(totalUnitCount: 131_072)
         let task = Task {
             try await TranscriptionSettings.fetch(.baseEnglish, to: target,

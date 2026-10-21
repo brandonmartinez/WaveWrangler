@@ -879,7 +879,7 @@ struct ForbiddenAPITests {
     /// `2`) could make the descriptor writable; the gateway also checks `fcntl(F_GETFL)` at run time.
     static let readOnlyOpenFlags: Set<String> = ["O_RDONLY", "O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK"]
 
-    /// Writing, creating, truncating, renaming, metadata-changing or materialising APIs: forbidden in
+    /// Writing, creating, truncating, renaming, metadata-changing or materializing APIs: forbidden in
     /// WWDecode with no exception.
     static let decodeMutationTokens = [
         "AudioFileCreate", "AudioFileInitialize", "AudioFileWrite", "AudioFileOptimize", "AudioFileSetUserData",
@@ -1399,7 +1399,7 @@ struct ReviewRegressionTests {
         #expect(SourceAvailabilityEvaluator.transferStillApplies(.inProgress(fractionCompleted: .unknown), residency: .cloudPlaceholder))
         #expect(SourceAvailabilityEvaluator.transferStillApplies(.offlineOrUnknown(error), residency: .cloudPlaceholder))
         #expect(!SourceAvailabilityEvaluator.transferStillApplies(.offlineOrUnknown(error), residency: .local))
-        #expect(!SourceAvailabilityEvaluator.transferStillApplies(.cancelled, residency: .local))
+        #expect(!SourceAvailabilityEvaluator.transferStillApplies(.canceled, residency: .local))
     }
 }
 
@@ -1426,7 +1426,7 @@ struct StallFollowUpTests {
         let resume: [SimulatedCloudItem.Step] = progressResumes ? [.progress(0.4), .progress(0.8)] : []
         let (tree, file, io, controller, key) = try setUp(script: Array(repeating: .stall, count: 20) + resume + [.complete])
         _ = tree
-        let collector = await eventCollector(controller, key: key) { $0 == .idle || $0.isFailed || $0 == .cancelled }
+        let collector = await eventCollector(controller, key: key) { $0 == .idle || $0.isFailed || $0 == .canceled }
         #expect(await controller.makeAvailable(key, at: file) == .requested)
         let states = await collector.value
         let stallIndex = try #require(states.firstIndex { $0.isOfflineOrUnknown })
@@ -1451,20 +1451,20 @@ struct StallFollowUpTests {
         // cancel returns only after the observer finished: no open scope, no further polls.
         #expect(controller.context.ledger.snapshot.openScopes == 0)
         #expect(io.leakedScopes == 0)
-        #expect(await controller.state(of: key) == .cancelled)
+        #expect(await controller.state(of: key) == .canceled)
         #expect(await controller.activeCount == 0)
-        #expect(await controller.waitUntilSettled(key) == .cancelled)
+        #expect(await controller.waitUntilSettled(key) == .canceled)
         let polls = io.count(.metadata)
         try await Task.sleep(for: .milliseconds(20))
         #expect(io.count(.metadata) == polls)
-        #expect(await controller.state(of: key) == .cancelled)
+        #expect(await controller.state(of: key) == .canceled)
         #expect(io.count(.downloadRequest) == 1)
     }
 
     @Test func explicitRetryOfAStalledTransferIssuesAFreshRequest() async throws {
         let sleeper = SteppedSleeper()
         let (tree, file, io, controller, key) = try setUp(script: Array(repeating: .stall, count: 100_000)) { duration in
-            if sleeper.isCancelled { try await Task.sleep(for: duration) }
+            if sleeper.isCanceled { try await Task.sleep(for: duration) }
             else { try await sleeper.sleep(duration) }
         }
         _ = tree
@@ -1522,7 +1522,7 @@ struct StallFollowUpTests {
         _ = await controller.makeAvailable(key, at: file)
         _ = await collector.value
         await controller.availabilitySettingChanged(to: .off)
-        #expect(await controller.state(of: key) == .cancelled)
+        #expect(await controller.state(of: key) == .canceled)
         #expect(await controller.activeCount == 0)
         #expect(io.count(.downloadRequest) == 1)
     }
@@ -1567,7 +1567,7 @@ final class SteppedSleeper: @unchecked Sendable {
     private let requestContinuation: AsyncStream<Duration>.Continuation
     private let lock = NSLock()
     private var pending: CheckedContinuation<Void, any Error>?
-    private var cancelled = false
+    private var canceled = false
     private var requestsFinished = false
 
     init() {
@@ -1577,12 +1577,12 @@ final class SteppedSleeper: @unchecked Sendable {
     func sleep(_ duration: Duration) async throws {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
-                let alreadyCancelled = lock.withLock { () -> Bool in
-                    if cancelled { return true }
+                let alreadyCanceled = lock.withLock { () -> Bool in
+                    if canceled { return true }
                     pending = continuation
                     return false
                 }
-                if alreadyCancelled {
+                if alreadyCanceled {
                     continuation.resume(throwing: CancellationError())
                 } else {
                     requestContinuation.yield(duration)
@@ -1590,7 +1590,7 @@ final class SteppedSleeper: @unchecked Sendable {
             }
         } onCancel: {
             let (continuation, shouldFinish) = lock.withLock { () -> (CheckedContinuation<Void, any Error>?, Bool) in
-                cancelled = true
+                canceled = true
                 let shouldFinish = !requestsFinished
                 requestsFinished = true
                 defer { pending = nil }
@@ -1610,18 +1610,18 @@ final class SteppedSleeper: @unchecked Sendable {
         continuation?.resume()
     }
 
-    var isCancelled: Bool { lock.withLock { cancelled } }
+    var isCanceled: Bool { lock.withLock { canceled } }
 }
 
 private enum SteppedSleepRequestResult: Sendable {
     case request(Duration)
     case finished
     case timedOut
-    case cancelled
+    case canceled
 }
 
-/// Waits without parking a cooperative-pool thread. Cancelling the losing deadline task cannot be
-/// mistaken for a timeout, and cancelling the stream read makes `AsyncStream.next()` return promptly.
+/// Waits without parking a cooperative-pool thread. Canceling the losing deadline task cannot be
+/// mistaken for a timeout, and canceling the stream read makes `AsyncStream.next()` return promptly.
 func nextSteppedSleepRequest(
     _ requests: AsyncStream<Duration>,
     timeout: Duration = .seconds(1),
@@ -1640,10 +1640,10 @@ func nextSteppedSleepRequest(
                 try await Task.sleep(for: timeout)
                 return .timedOut
             } catch {
-                return .cancelled
+                return .canceled
             }
         }
-        let first = await group.next() ?? .cancelled
+        let first = await group.next() ?? .canceled
         group.cancelAll()
         return first
     }
@@ -1655,9 +1655,9 @@ func nextSteppedSleepRequest(
         if recordFailure { Issue.record("stepped sleeper ended before the expected sleep request") }
     case .timedOut:
         if recordFailure { Issue.record("timed out waiting for a stepped-sleeper request") }
-    case .cancelled:
+    case .canceled:
         if recordFailure && !Task.isCancelled {
-            Issue.record("stepped-sleeper request wait was cancelled unexpectedly")
+            Issue.record("stepped-sleeper request wait was canceled unexpectedly")
         }
     }
     return nil
@@ -1827,7 +1827,7 @@ struct StallLifetimeTests {
     }
 
     /// Reviewer's interleaving: `beginShutdown()` runs while `makeAvailable` is doing its I/O. Inside
-    /// `requestDownload` (request already out): no observer survives, the transfer is reported cancelled
+    /// `requestDownload` (request already out): no observer survives, the transfer is reported canceled
     /// and counted. During the metadata read: nothing is requested at all.
     @Test(arguments: [InterleavePoint.requestDownload, .metadata])
     func shutdownBeginningDuringMakeAvailableLeavesNoTransfer(_ point: InterleavePoint) async throws {
@@ -1850,8 +1850,8 @@ struct StallLifetimeTests {
         case .requestDownload:
             #expect(base.count(.downloadRequest) == 1, "the request had already gone out")
             #expect(await controller.downloadRequestCount == 1, "counted")
-            #expect(state == .cancelled)
-            #expect(await controller.state(of: record.key) == .cancelled)
+            #expect(state == .canceled)
+            #expect(await controller.state(of: record.key) == .canceled)
         case .metadata:
             #expect(base.count(.downloadRequest) == 0, "refused before any request")
         }
@@ -1903,7 +1903,7 @@ struct StallLifetimeTests {
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         let sleeper = SteppedSleeper()
         let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on) { duration in
-            if sleeper.isCancelled { try await Task.sleep(for: duration) }
+            if sleeper.isCanceled { try await Task.sleep(for: duration) }
             else { try await sleeper.sleep(duration) }
         }
         let collector = await eventCollector(controller, key: key) { $0.isOfflineOrUnknown }
@@ -1983,7 +1983,7 @@ struct StallLifetimeTests {
         #expect(durations == [.milliseconds(1), .milliseconds(1), .milliseconds(1), .milliseconds(1),
                               .milliseconds(4), .milliseconds(8), .milliseconds(16), .milliseconds(16),
                               .milliseconds(16), .milliseconds(16)])
-        #expect(await controller.state(of: key) == .cancelled)
+        #expect(await controller.state(of: key) == .canceled)
         #expect(await controller.activeCount == 0)
         #expect(io.count(.downloadRequest) == 1)
         #expect(io.leakedScopes == 0)
@@ -2041,18 +2041,18 @@ struct TeardownOrderingTests {
         let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on)
         let oldKey = DeviceAccessKey(showID: testShow, sourceID: SourceID())
         let newKey = DeviceAccessKey(showID: testShow, sourceID: SourceID())
-        let oldEvents = await eventCollector(controller, key: oldKey) { $0 == .cancelled }
+        let oldEvents = await eventCollector(controller, key: oldKey) { $0 == .canceled }
         _ = await controller.makeAvailable(oldKey, at: old)
         let ticket = controller.shutdownTicket()
         // Created after the ticket: must survive the late shutdown.
-        let newEvents = await eventCollector(controller, key: newKey, limit: .milliseconds(300)) { $0 == .cancelled }
+        let newEvents = await eventCollector(controller, key: newKey, limit: .milliseconds(300)) { $0 == .canceled }
         _ = await controller.makeAvailable(newKey, at: new)
         await controller.shutdown(through: ticket)
         #expect(await !controller.isActive(oldKey))
         #expect(await controller.isActive(newKey))
-        #expect((await oldEvents.value).last == .cancelled)
+        #expect((await oldEvents.value).last == .canceled)
         let laterStates = await newEvents.value
-        #expect(!laterStates.contains(.cancelled))
+        #expect(!laterStates.contains(.canceled))
         #expect(!laterStates.isEmpty)
         await controller.cancel(newKey)
     }
@@ -2069,7 +2069,7 @@ struct RetryAfterProviderDropTests {
         io.simulate(file, SimulatedCloudItem(script: StallLifetimeTests.stallForever))
         let sleeper = SteppedSleeper()
         let controller = SourceTransferController(context: makeContext(io), policy: StallFollowUpTests.policy, setting: .on) { duration in
-            if sleeper.isCancelled { try await Task.sleep(for: duration) }
+            if sleeper.isCanceled { try await Task.sleep(for: duration) }
             else { try await sleeper.sleep(duration) }
         }
         let key = DeviceAccessKey(showID: testShow, sourceID: SourceID())

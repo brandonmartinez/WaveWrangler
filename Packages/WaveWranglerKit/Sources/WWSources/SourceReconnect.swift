@@ -4,11 +4,11 @@ import Network
 /// T30 (WW-012): which failed transfers WaveWrangler requests again by itself when the network comes back.
 public enum ReconnectRetry {
     /// Only a transfer that failed with an **observed** connectivity error (the provider reported a network
-    /// or iCloud-server error), only while availability is ON, and never one the user cancelled.
+    /// or iCloud-server error), only while availability is ON, and never one the user canceled.
     /// A stall without an observed error, any other failure and cancellations wait for the user's Retry;
     /// with availability OFF nothing is requested automatically.
-    public static func shouldRetry(_ state: TransferState?, setting: SourceAvailabilitySetting, userCancelled: Bool) -> Bool {
-        guard setting == .on, !userCancelled, case let .offlineOrUnknown(error)? = state else { return false }
+    public static func shouldRetry(_ state: TransferState?, setting: SourceAvailabilitySetting, userCanceled: Bool) -> Bool {
+        guard setting == .on, !userCanceled, case let .offlineOrUnknown(error)? = state else { return false }
         return error != nil
     }
 }

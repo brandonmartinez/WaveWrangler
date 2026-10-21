@@ -50,7 +50,7 @@ struct SplitMix64: Sendable {
 struct SceneEvent: Sendable {
     enum Shape: Sendable {
         case pulse(sigma: Double)
-        case chirp(sigma: Double, centreHz: Double, sweepRate: Double, phase: Double)
+        case chirp(sigma: Double, centerHz: Double, sweepRate: Double, phase: Double)
     }
     let time: Double
     let amplitude: Double
@@ -95,7 +95,7 @@ struct Scene: Sendable {
         let sigma = rng.uniform(0.010...0.040)
         let sweepHz = rng.uniform(600...900) * (rng.bool() ? 1 : -1)
         return SceneEvent(time: time, amplitude: rng.uniform(0.05...0.2),
-                          shape: .chirp(sigma: sigma, centreHz: rng.uniform(600...1300), sweepRate: sweepHz / (4 * sigma), phase: rng.uniform(0...(2 * Double.pi))))
+                          shape: .chirp(sigma: sigma, centerHz: rng.uniform(600...1300), sweepRate: sweepHz / (4 * sigma), phase: rng.uniform(0...(2 * Double.pi))))
     }
 
     /// Strong events only the target hears: loud clicks and dense noise-like bursts (near-miss negatives).

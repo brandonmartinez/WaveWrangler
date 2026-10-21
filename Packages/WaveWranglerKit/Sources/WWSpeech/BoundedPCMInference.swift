@@ -3,7 +3,7 @@ import WWWhisperNative
 
 public enum PCMInferenceRefusal: Error, Sendable, Equatable {
     case invalidPCM
-    case cancelled
+    case canceled
     case modelLoadFailed
     case inferenceFailed
 }
@@ -40,12 +40,12 @@ public struct BoundedPCMInference: Sendable {
 
     public func transcribe(
         model: VerifiedTinyModel, pcm: [Float], sampleRate: Int?,
-        channelCount: Int?, isCancelled: @escaping @Sendable () -> Bool = { Task<Never, Never>.isCancelled }
+        channelCount: Int?, isCanceled: @escaping @Sendable () -> Bool = { Task<Never, Never>.isCancelled }
     ) throws(PCMInferenceRefusal) -> PCMTranscript {
         try Self.validateInput(pcm: pcm, sampleRate: sampleRate, channelCount: channelCount)
-        guard !isCancelled() else { throw .cancelled }
+        guard !isCanceled() else { throw .canceled }
 
-        let cancellation = CancellationCheck(isCancelled)
+        let cancellation = CancellationCheck(isCanceled)
         let context = Unmanaged.passUnretained(cancellation).toOpaque()
         let callback: @convention(c) (UnsafeMutableRawPointer?) -> Int32 = { raw in
             guard let raw else { return 1 }
@@ -58,7 +58,7 @@ public struct BoundedPCMInference: Sendable {
         }
         defer { ww_whisper_free_transcript(&native) }
         withExtendedLifetime(cancellation) {}
-        guard !isCancelled(), native.status != WW_INFERENCE_CANCELLED else { throw .cancelled }
+        guard !isCanceled(), native.status != WW_INFERENCE_CANCELED else { throw .canceled }
         switch native.status {
         case WW_INFERENCE_OK: break
         case WW_INFERENCE_INVALID_INPUT: throw .invalidPCM
@@ -80,7 +80,7 @@ public struct BoundedPCMInference: Sendable {
                 endSeconds: validTiming ? Double(segment.t1) / 100 : nil
             ))
         }
-        guard !isCancelled() else { throw .cancelled }
+        guard !isCanceled() else { throw .canceled }
         return PCMTranscript(segments: segments)
     }
 }

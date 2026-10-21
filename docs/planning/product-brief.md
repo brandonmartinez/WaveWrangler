@@ -1,10 +1,15 @@
 # WaveWrangler product brief
 
-## Current delivery policy - user-directed 2026-10-04
+> The delivery process below is historical. Squad and the unfinished issue
+> backlog were retired on 2026-10-20. Product intent and prior evidence remain
+> references; the [development workflow](milestone-runbook.md) and current
+> refinement session govern new work.
+
+## Historical delivery policy - user-directed 2026-10-04
 
 Publish planning through an independently reviewed PR and operate the GitHub backlog now. Deliver M1-M4 internally on this Mac, one orchestrated milestone per session; **first audio handoff is the full cleaned-track M4 MVP, not uncut M2**. Public Release separately qualifies WW-041/052 signing/notarization, actual macOS26/16GB, broader participant/device/accessibility/listening/rights/clean-install claims. Core source/durability/protected-speech/offline/privacy/keyboard/accessibility remains current-milestone acceptance.
 
-Use [the runbook](milestone-runbook.md), [live index](github-backlog.md) and [M1 user kickoff](kickoffs/m1.md). A pasted named kickoff authorizes that milestone's engineering; authorization items record selected contracts/evidence/risks, not a second generic approval. Dependencies gate accepting outcomes, not safe preparatory code. WW-003 closes on complete M1-applicable fixture/truth/provenance/freeze protocol and evidence; later domain qualification stays owned. WW-008 closes on feasible internal lifecycle/support/permission/privacy/rights registers, with public artifact proof in Release. No engine/format is adopted or input consent inferred.
+Use [the runbook](milestone-runbook.md), [live index](github-backlog.md) and [M1 user kickoff](https://github.com/brandonmartinez/WaveWrangler/blob/792aa6687ab0b7a196d41fe13e54f7dd9e048392/docs/planning/kickoffs/m1.md). A pasted named kickoff authorizes that milestone's engineering; authorization items record selected contracts/evidence/risks, not a second generic approval. Dependencies gate accepting outcomes, not safe preparatory code. WW-003 closes on complete M1-applicable fixture/truth/provenance/freeze protocol and evidence; later domain qualification stays owned. WW-008 closes on feasible internal lifecycle/support/permission/privacy/rights registers, with public artifact proof in Release. No engine/format is adopted or input consent inferred.
 
 Current graph is 52 stable IDs/203 acyclic edges/49 open items; completed WW-001/002/004 remain history. The phase statements and counts below describe **historical snapshots**, superseded where they prohibit current issue publication or named kickoff engineering. [Public provenance](publication-provenance.json) distinguishes local original hashes from pointer-redacted published companions, which are not byte-identical mirrors.
 

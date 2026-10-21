@@ -1,6 +1,6 @@
 import AppKit
 
-/// Native sheets for names and destructive confirmations. NSAlert gives standard keyboard behaviour:
+/// Native sheets for names and destructive confirmations. NSAlert gives standard keyboard behavior:
 /// Return = default, Esc = Cancel, focus returns to the invoking window afterwards.
 @MainActor
 enum Dialogs {

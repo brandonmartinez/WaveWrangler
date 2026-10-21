@@ -32,6 +32,43 @@ final class ShowWindowState {
         }
     }
     var inspectorPresented = true
+    var recordingsPresented = false
+    enum WorkspaceInspector: String, CaseIterable {
+        case recording = "Recording"
+        case alignment = "Alignment"
+        case transcript = "Transcript & review"
+        case episode = "Episode"
+
+        var symbol: String {
+            switch self {
+            case .recording: "slider.horizontal.3"
+            case .alignment: "waveform.path"
+            case .transcript: "text.bubble"
+            case .episode: "info.circle"
+            }
+        }
+
+        var identifier: String {
+            switch self {
+            case .recording: "recording"
+            case .alignment: "alignment"
+            case .transcript: "transcript"
+            case .episode: "episode"
+            }
+        }
+    }
+    var workspaceInspector = WorkspaceInspector.recording
+
+    func toggleWorkspaceInspector(_ activity: WorkspaceInspector) {
+        if inspectorPresented, workspaceInspector == activity {
+            inspectorPresented = false
+        } else {
+            workspaceInspector = activity
+            inspectorPresented = true
+        }
+    }
+
+    var compactInspectorWidth: CGFloat { destination == .alignment ? 300 : 190 }
     var sidebarVisibility: NavigationSplitViewVisibility = .all
     var renamingEpisodeID: EpisodeID?
     /// Incremented to ask the episode inspector to focus its Title field (⌘I).
@@ -50,6 +87,14 @@ final class ShowWindowState {
     /// The Alignment workspace currently displayed in this window, for inspector and menu routing.
     var alignmentModel: EpisodeAlignmentModel?
     var cleanupModel: EpisodeCleanupModel?
+    private var listeningStates: [EpisodeID: EpisodeListeningState] = [:]
+
+    func listeningState(for episode: EpisodeID) -> EpisodeListeningState {
+        if let existing = listeningStates[episode] { return existing }
+        let value = EpisodeListeningState()
+        listeningStates[episode] = value
+        return value
+    }
     /// Presentation-only Review selection shared by the linked transcript and inspector panes.
     private let reviewPresentationState = TranscriptReviewState()
     var reviewState: TranscriptReviewState {
@@ -74,6 +119,7 @@ final class ShowWindowState {
         self.store = store
         boundEpisodeID = episodeID
         sidebarSelection = (episodeID ?? store.model.episodes.first?.id).map { .episode($0) }
+        if episodeID != nil { destination = .alignment }
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
@@ -371,7 +417,7 @@ final class ShowWindowState {
     func showSaveStatus() { saveStatusPopoverShown = true }
 
     /// Incremented to move keyboard focus to the save-status item (e.g. when Save a Copy Elsewhere… finishes or is
-    /// cancelled, accessibility-acceptance T28: "Focus returns to the save-status item").
+    /// canceled, accessibility-acceptance T28: "Focus returns to the save-status item").
     private(set) var saveStatusFocusRequest = 0
 
     func focusSaveStatus() { saveStatusFocusRequest += 1 }
@@ -562,7 +608,7 @@ final class ShowWindowState {
 extension DocumentSaveState {
     fileprivate var announcementIsTerminalFailure: Bool {
         switch self {
-        case .notConfirmed, .locationUnavailable, .diskFull, .failed, .cancelled, .conflict: true
+        case .notConfirmed, .locationUnavailable, .diskFull, .failed, .canceled, .conflict: true
         default: false
         }
     }

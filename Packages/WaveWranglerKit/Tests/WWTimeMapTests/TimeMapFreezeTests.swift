@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Testing
+import WWTestSupport
 import WWCore
 @testable import WWTimeMap
 
@@ -24,7 +25,7 @@ enum TimeMapGates {
     static let maximumGapNonInvertibilityFailures = 0
     static let maximumStateAgreementFailures = 0
     static let maximumOracleFailures = 0
-    /// Reported (not gated) percentile of the quantisation error.
+    /// Reported (not gated) percentile of the quantization error.
     static let reportedPercentile = 95.0
 }
 
@@ -122,17 +123,21 @@ struct TimeMapCaseRecord: Codable, Sendable {
     var inverseOutside = 0
     /// |returned frame − exact inverse| per inverse that returned a source, source frames, in probe order.
     /// Recorded raw so the pooled nearest-rank p95 and max can be recomputed from the records file alone.
-    var quantisation: [Double] = []
-    var quantisationCount = 0
-    var quantisationMax: Double?
-    var quantisationP95: Double?
+    var quantization: [Double] = []
+    var quantizationCount = 0
+    var quantizationMax: Double?
+    var quantizationP95: Double?
     var failureCounts: [String: Int] = [:]
     var failures: [String] = []
 
     enum CodingKeys: String, CodingKey {
         case split, caseIndex, seed, stratum, draws, groups, occurrences, spans, maxFrameCount, frameRoundTrips
         case forwardGap, forwardUnsupported, forwardOutside, inverseSource, inverseGap, inverseUnsupported, inverseOutside
-        case quantisation, quantisationCount, quantisationMax, quantisationP95, failureCounts, failures
+        case failureCounts, failures
+        case quantization = "quantisation"
+        case quantizationCount = "quantisationCount"
+        case quantizationMax = "quantisationMax"
+        case quantizationP95 = "quantisationP95"
     }
 }
 
@@ -152,10 +157,10 @@ enum TimeMapGateEvaluation {
             let bad = records.filter { ($0.failureCounts[category.rawValue] ?? 0) > 0 }
             return (records.reduce(0) { $0 + ($1.failureCounts[category.rawValue] ?? 0) }, bad.flatMap { r in r.failures.filter { $0.hasPrefix("[\(category.rawValue)]") }.map { "\(r.split)#\(r.caseIndex): \($0)" } })
         }
-        let quantisation = records.flatMap(\.quantisation)
-        let maxQ = quantisation.contains { $0.isNaN } ? Double.nan : (quantisation.max() ?? .nan)
+        let quantization = records.flatMap(\.quantization)
+        let maxQ = quantization.contains { $0.isNaN } ? Double.nan : (quantization.max() ?? .nan)
         let (roundTrip, roundTripDetail) = failures(.roundTrip)
-        let roundTripEvidence = !quantisation.isEmpty && records.reduce(0) { $0 + $1.frameRoundTrips } > 0
+        let roundTripEvidence = !quantization.isEmpty && records.reduce(0) { $0 + $1.frameRoundTrips } > 0
         let (gap, gapDetail) = failures(.gapNonInvertibility)
         let gapEvidence = records.reduce(0) { $0 + $1.forwardGap } > 0 && records.reduce(0) { $0 + $1.inverseGap } > 0
         let (state, stateDetail) = failures(.stateAgreement)
@@ -170,7 +175,7 @@ enum TimeMapGateEvaluation {
             TimeMapGateOutcome(
                 gate: "round-trip", worst: roundTripEvidence ? maxQ : .nan, limit: TimeMapGates.roundTripSourceFrames,
                 passed: roundTripEvidence && maxQ <= TimeMapGates.roundTripSourceFrames && roundTrip <= TimeMapGates.maximumRoundTripFailures,
-                detail: ["failures \(roundTrip)", "p\(Int(TimeMapGates.reportedPercentile)) \(nearestRank(quantisation, TimeMapGates.reportedPercentile))"] + roundTripDetail
+                detail: ["failures \(roundTrip)", "p\(Int(TimeMapGates.reportedPercentile)) \(nearestRank(quantization, TimeMapGates.reportedPercentile))"] + roundTripDetail
             ),
             counted("gap-non-invertibility", gap, TimeMapGates.maximumGapNonInvertibilityFailures, gapEvidence, gapDetail),
             counted("unsupported-gap-agreement", state, TimeMapGates.maximumStateAgreementFailures, stateEvidence, stateDetail),
@@ -221,10 +226,10 @@ func measureTimeMapCase(split: String, index: Int) -> TimeMapCaseRecord {
     record.inverseGap = stats.inverseGap
     record.inverseUnsupported = stats.inverseUnsupported
     record.inverseOutside = stats.inverseOutside
-    record.quantisation = stats.quantisation
-    record.quantisationCount = stats.quantisation.count
-    record.quantisationMax = stats.quantisation.max()
-    record.quantisationP95 = stats.quantisation.isEmpty ? nil : nearestRank(stats.quantisation, 95)
+    record.quantization = stats.quantization
+    record.quantizationCount = stats.quantization.count
+    record.quantizationMax = stats.quantization.max()
+    record.quantizationP95 = stats.quantization.isEmpty ? nil : nearestRank(stats.quantization, 95)
     record.failureCounts = Dictionary(uniqueKeysWithValues: stats.failureCounts.map { ($0.key.rawValue, $0.value) })
     record.failures = stats.failures
     return record
@@ -247,14 +252,14 @@ func runTimeMapSplit(_ split: String, cases: Int) async throws -> [TimeMapCaseRe
         }
         return results
     }.sorted { $0.caseIndex < $1.caseIndex }
-    let quantisation = records.flatMap(\.quantisation)
+    let quantization = records.flatMap(\.quantization)
     print("""
     M2-TIMEMAP-001 \(split): cases=\(records.count) draws=\(records.reduce(0) { $0 + $1.draws }) occurrences=\(records.reduce(0) { $0 + $1.occurrences }) \
     spans=\(records.reduce(0) { $0 + $1.spans }) maxFrameCount=\(records.map(\.maxFrameCount).max() ?? 0) \
     frameRoundTrips=\(records.reduce(0) { $0 + $1.frameRoundTrips }) forwardGap=\(records.reduce(0) { $0 + $1.forwardGap }) \
     forwardUnsupported=\(records.reduce(0) { $0 + $1.forwardUnsupported }) inverseSource=\(records.reduce(0) { $0 + $1.inverseSource }) \
     inverseGap=\(records.reduce(0) { $0 + $1.inverseGap }) inverseUnsupported=\(records.reduce(0) { $0 + $1.inverseUnsupported }) \
-    quantisation N=\(quantisation.count) max=\(quantisation.max() ?? .nan) p95(nearest-rank)=\(nearestRank(quantisation, 95))
+    quantization N=\(quantization.count) max=\(quantization.max() ?? .nan) p95(nearest-rank)=\(nearestRank(quantization, 95))
     """)
     if let directory = TimeMapFixture.recordsDirectory {
         let encoder = JSONEncoder()
@@ -279,6 +284,7 @@ struct TimeMapCalibrationTests {
     /// Frozen holdout: runs once, only with WW_M2_TIMEMAP_HOLDOUT=1, after m2-freeze-timemap.
     @Test(.enabled(if: TimeMapFixture.holdoutEnabled))
     func holdoutSplitMeetsEveryFrozenGate() async throws {
+        try SourceTreeBaseline.requireHistoricalTrees(for: TimeMapFreezeTests.freezeURL)
         let records = try await runTimeMapSplit("holdout", cases: TimeMapFixture.holdoutCases)
         #expect(records.count == TimeMapFixture.holdoutCases)
         for outcome in TimeMapGateEvaluation.evaluate(records) {
@@ -296,15 +302,15 @@ struct TimeMapCalibrationTests {
             r.forwardUnsupported = 1
             r.inverseUnsupported = 1
             r.inverseSource = 2
-            r.quantisation = [0, 0.5]
+            r.quantization = [0, 0.5]
             edit(&r)
             return r
         }
         let good = TimeMapStratum.allCases.map { record($0) }
         #expect(TimeMapGateEvaluation.evaluate(good).allSatisfy { $0.passed })
         let breaks: [(String, TimeMapCaseRecord)] = [
-            ("round-trip", record(.general) { $0.quantisation = [0.5000001] }),
-            ("round-trip", record(.general) { $0.quantisation = [.nan] }),
+            ("round-trip", record(.general) { $0.quantization = [0.5000001] }),
+            ("round-trip", record(.general) { $0.quantization = [.nan] }),
             ("round-trip", record(.longOccurrence) { $0.failureCounts = ["round-trip": 1] }),
             ("gap-non-invertibility", record(.gap) { $0.failureCounts = ["gap-non-invertibility": 1] }),
             ("unsupported-gap-agreement", record(.unsupported) { $0.failureCounts = ["unsupported-gap-agreement": 1] }),
@@ -317,7 +323,7 @@ struct TimeMapCalibrationTests {
         // Missing evidence fails: no records, no strata, no inverse sources, no gaps, no unsupported probes.
         #expect(TimeMapGateEvaluation.evaluate([]).allSatisfy { !$0.passed })
         #expect(TimeMapGateEvaluation.evaluate(good.filter { $0.stratum != "gap" }).filter { !$0.passed }.map(\.gate) == ["strata-coverage"])
-        let noInverse = good.map { r in var r = r; r.quantisation = []; return r }
+        let noInverse = good.map { r in var r = r; r.quantization = []; return r }
         #expect(TimeMapGateEvaluation.evaluate(noInverse).filter { !$0.passed }.map(\.gate) == ["round-trip"])
         let noGap = good.map { r in var r = r; r.inverseGap = 0; return r }
         #expect(TimeMapGateEvaluation.evaluate(noGap).filter { !$0.passed }.map(\.gate) == ["gap-non-invertibility", "unsupported-gap-agreement"])
@@ -326,7 +332,7 @@ struct TimeMapCalibrationTests {
     }
 
     /// The harness's failure categories reach the gates: a broken map shows up in the right category.
-    @Test func probeFailuresAreCategorised() {
+    @Test func probeFailuresAreCategorized() {
         #expect(RoundTripPropertyTests.forwardCategory(.gap, .outsideCoverage) == .gapNonInvertibility)
         #expect(RoundTripPropertyTests.forwardCategory(.unsupported, .outsideCoverage) == .stateAgreement)
         #expect(RoundTripPropertyTests.forwardCategory(.outside, .outsideCoverage) == .oracle)
@@ -408,29 +414,17 @@ struct TimeMapFreezeTests {
     /// "100644 <name>\0<20-byte blob ID>" entries. Equals `git rev-parse HEAD:<dir>` for a clean checkout;
     /// any edited or untracked file changes it.
     static func gitTreeID(_ directory: URL) throws -> String {
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-            .sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
-        var body = Data()
-        for name in names {
-            let content = try Data(contentsOf: directory.appendingPathComponent(name))
-            var blob = Data("blob \(content.count)\0".utf8)
-            blob.append(content)
-            body.append(Data("100644 \(name)\0".utf8))
-            body.append(contentsOf: Insecure.SHA1.hash(data: blob))
-        }
-        var tree = Data("tree \(body.count)\0".utf8)
-        tree.append(body)
-        return Insecure.SHA1.hash(data: tree).map { String(format: "%02x", $0) }.joined()
+        try SourceTreeBaseline.gitTreeID(directory)
     }
 
-    /// The time-map source and this test tree (generator, oracle, gates, harness) are pinned by the freeze.
-    @Test func timeMapAndHarnessTreesMatchTheFreezeRecord() throws {
-        let trees = try #require(try Self.freeze()["pinnedTrees"] as? [String: String])
+    /// Maintenance pins do not extend the historical holdout's qualification.
+    @Test func timeMapAndHarnessTreesMatchTheMaintenanceBaseline() throws {
+        let trees = try SourceTreeBaseline.currentTrees(for: Self.freezeURL)
         #expect(Set(trees.keys) == ["Sources/WWTimeMap", "Tests/WWTimeMapTests"])
         let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
         for (path, frozen) in trees {
             let actual = try Self.gitTreeID(package.appendingPathComponent(path))
-            #expect(actual == frozen, "\(path) is \(actual) but m2-freeze-timemap pins \(frozen): a frozen tree changed; record a new freeze revision before any holdout")
+            #expect(actual == frozen, "\(path) is \(actual), but the source maintenance baseline pins \(frozen)")
         }
     }
 
@@ -454,8 +448,8 @@ struct TimeMapFreezeTests {
     }
 
     /// The committed calibration records are the ones the freeze hashed, and they alone reproduce the reported
-    /// pooled quantisation count, max and nearest-rank p95.
-    @Test func committedCalibrationRecordsReproduceTheReportedQuantisation() throws {
+    /// pooled quantization count, max and nearest-rank p95.
+    @Test func committedCalibrationRecordsReproduceTheReportedQuantization() throws {
         let summary = try #require(try Self.freeze()["calibrationSummary"] as? [String: Any])
         let file = try #require(summary["recordsFile"] as? String)
         let data = try Data(contentsOf: Self.repository.appendingPathComponent(file))
@@ -466,11 +460,11 @@ struct TimeMapFreezeTests {
         #expect(records.count == TimeMapFixture.calibrationCases)
         #expect(records.map(\.caseIndex) == Array(0 ..< TimeMapFixture.calibrationCases))
         for record in records {
-            #expect(record.quantisation.count == record.quantisationCount, "case \(record.caseIndex)")
-            #expect(record.quantisation.count == record.inverseSource, "case \(record.caseIndex)")
-            #expect(record.quantisation.max() == record.quantisationMax, "case \(record.caseIndex)")
+            #expect(record.quantization.count == record.quantizationCount, "case \(record.caseIndex)")
+            #expect(record.quantization.count == record.inverseSource, "case \(record.caseIndex)")
+            #expect(record.quantization.max() == record.quantizationMax, "case \(record.caseIndex)")
         }
-        let pooled = records.flatMap(\.quantisation)
+        let pooled = records.flatMap(\.quantization)
         let reported = try #require(summary["quantisation"] as? [String: Any])
         #expect(reported["count"] as? Int == pooled.count)
         #expect(reported["max"] as? Double == pooled.max())

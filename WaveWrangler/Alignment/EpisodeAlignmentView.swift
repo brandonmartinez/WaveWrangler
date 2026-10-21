@@ -14,7 +14,10 @@ struct EpisodeAlignmentContent: View {
     var body: some View {
         Group {
             if let model {
-                AlignmentContentHost(model: model, showInspector: { state.inspectorPresented = true })
+                AlignmentContentHost(state: state, model: model, showInspector: {
+                    state.workspaceInspector = .recording
+                    state.inspectorPresented = true
+                })
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let startupError {
                 ContentUnavailableView(
@@ -41,23 +44,46 @@ struct EpisodeAlignmentContent: View {
                 )
                 try Task.checkCancellation()
                 guard state.selectedEpisodeID == episodeID, state.destination == .alignment else { return }
-                let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime)
+                let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime,
+                                                  listening: state.listeningState(for: episodeID))
                 model = value
                 state.alignmentModel = value
+                let cleanup = EpisodeCleanupModel(state: state, episodeID: episodeID, runtime: runtime)
+                cleanup.connectWorkspace(to: value)
+                state.cleanupModel = cleanup
                 value.load()
                 value.loadWaveforms()
                 value.ensureWaveformOverview()
+                await cleanup.refresh()
             } catch is CancellationError {
                 return
             } catch {
                 startupError = String(describing: error)
             }
         }
-        .onChange(of: state.store.model.episode(episodeID)) { _, _ in
+        .onChange(of: state.store.model) { prior, current in
             guard let model else { return }
-            model.stopAudition()
+            if !current.hasSameMediaInputs(as: prior, in: episodeID) { model.stopAudition() }
             model.load()
             model.synchronizeWaveforms()
+            state.cleanupModel?.modelDidChange()
+        }
+        .task(id: state.selectedEpisode.map { EpisodeMediaInputs($0, includingWorkingRange: true) }) {
+            await state.cleanupModel?.refresh()
+        }
+        .onChange(of: model?.listening.playback) { _, _ in model?.refreshListeningGains() }
+        .onChange(of: model?.waveformStartSeconds, initial: true) { _, value in
+            if let value { state.cleanupModel?.windowStart = value }
+        }
+        .onChange(of: model?.waveformDurationSeconds, initial: true) { _, value in
+            if let value { state.cleanupModel?.windowDuration = value }
+        }
+        .onChange(of: model?.waveformPlayheadSeconds, initial: true) { _, value in
+            if let value { state.cleanupModel?.playhead = value }
+        }
+        .onChange(of: state.cleanupModel?.selectedFillerID) { _, _ in
+            guard let review = state.cleanupModel?.selectedFiller else { return }
+            model?.listening.selection = review.bounds.alignedStart...review.bounds.alignedEnd
         }
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
             guard let document = state.store.document,
@@ -70,6 +96,8 @@ struct EpisodeAlignmentContent: View {
             model.ensureWaveformOverview()
         }
         .onDisappear {
+            state.cleanupModel?.cancel()
+            state.cleanupModel = nil
             model?.suspend()
             if let model, state.alignmentModel === model { state.alignmentModel = nil }
         }
@@ -77,24 +105,25 @@ struct EpisodeAlignmentContent: View {
 }
 
 private struct AlignmentContentHost: NSViewRepresentable {
+    let state: ShowWindowState
     let model: EpisodeAlignmentModel
     let showInspector: () -> Void
 
     func makeNSView(context: Context) -> HostedView {
-        HostedView(model: model, showInspector: showInspector)
+        HostedView(state: state, model: model, showInspector: showInspector)
     }
 
     func updateNSView(_ nsView: HostedView, context: Context) {
-        nsView.hostingView.rootView = AlignmentWorkspace(model: model, showInspector: showInspector)
+        nsView.hostingView.rootView = AlignmentWorkspace(state: state, model: model, showInspector: showInspector)
     }
 
     final class HostedView: NSView {
         let hostingView: NSHostingView<AlignmentWorkspace>
 
-        init(model: EpisodeAlignmentModel, showInspector: @escaping () -> Void) {
-            hostingView = NSHostingView(rootView: AlignmentWorkspace(model: model, showInspector: showInspector))
+        init(state: ShowWindowState, model: EpisodeAlignmentModel, showInspector: @escaping () -> Void) {
+            hostingView = NSHostingView(rootView: AlignmentWorkspace(state: state, model: model, showInspector: showInspector))
             hostingView.sizingOptions = []
-            // The hosting view is the single labelled container for the workspace. Labelling it on the
+            // The hosting view is the single labeled container for the workspace. Labeling it on the
             // AppKit side keeps the SwiftUI tree untouched: `accessibilityElement(children: .contain)`
             // on the SwiftUI root absorbed the scroll area's identifier and hid it from assistive
             // clients entirely (#219). `HostedView` itself stays a pass-through so only one group exists.
@@ -117,21 +146,71 @@ private struct AlignmentContentHost: NSViewRepresentable {
     }
 }
 
-private struct AlignmentWorkspace: View {
+struct AlignmentWorkspace: View {
+    @Bindable var state: ShowWindowState
     @Bindable var model: EpisodeAlignmentModel
     let showInspector: () -> Void
+
+    var body: some View {
+        ScrollView {
+            AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
+                showTranscript: {
+                    state.workspaceInspector = .transcript
+                    state.inspectorPresented = true
+                }, showInspector: showInspector)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+        }
+        .accessibilityLabel("Alignment workspace scroll area")
+        .accessibilityIdentifier("ww.alignment.workspace")
+        .safeAreaInset(edge: .top, spacing: 0) {
+            AudioWorkspaceActions(state: state, alignment: model)
+                .padding(10).background(.bar)
+        }
+        .onAppear { AlignmentKeyHandler.install() }
+        .onChange(of: model.requestedAnchorFocus) { _, anchor in
+            if anchor != nil { revealAlignmentInspector() }
+        }
+        .onChange(of: model.requestedEpochFocus) { _, epoch in
+            if epoch != nil { revealAlignmentInspector() }
+        }
+        .sheet(item: $model.editorRequest) { request in
+            switch request {
+            case .numeric:
+                NumericTimingSheet(model: model)
+            case .anchors:
+                AnchorTimingSheet(model: model)
+            case let .anchor(anchorID):
+                EditAnchorSheet(model: model, anchorID: anchorID)
+            }
+        }
+    }
+
+    private func revealAlignmentInspector() {
+        state.workspaceInspector = .alignment
+        state.inspectorPresented = true
+    }
+}
+
+struct AlignmentDetailInspector: View {
+    @Bindable var model: EpisodeAlignmentModel
 
     var body: some View {
         ScrollViewReader { scrollProxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                AlignmentWaveformView(model: model, showInspector: showInspector)
-                DisclosureGroup("Detailed alignment inspection") {
-                AlignmentOutlineTable(model: model)
-                    .id("ww.alignment.groupSection")
-                    .frame(minHeight: 180, idealHeight: 240)
+                Text("Alignment").font(.headline).accessibilityAddTraits(.isHeader)
+                Text("Recorder groups, epochs, timing, and anchors. Scroll tables horizontally for all columns.")
+                    .font(.caption).foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                ScrollView(.horizontal) {
+                    AlignmentOutlineTable(model: model)
+                        .frame(width: 820, height: 240)
+                }
+                .id("ww.alignment.groupSection")
 
                 GroupBox("Anchors for \(model.selectedRow?.epochLabel ?? "selected epoch")") {
+                    ScrollView(.horizontal) {
                     Table(model.selectedAnchors, selection: $model.anchorSelection) {
                         TableColumn("Source time") { anchor in
                             Text(AlignmentPresentation.formatTime(anchor.sourceSeconds))
@@ -155,16 +234,14 @@ private struct AlignmentWorkspace: View {
                         }
                         .width(ideal: 130)
                     }
-                    .frame(minHeight: 90, idealHeight: 120, maxHeight: 160)
+                    .frame(width: 440, height: 120)
+                    .accessibilityLabel("Alignment anchors")
                     .accessibilityIdentifier("ww.alignment.anchors")
+                    }
                 }
                 .id("ww.alignment.anchorSection")
 
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 145), alignment: .leading)],
-                    alignment: .leading,
-                    spacing: 8
-                ) {
+                VStack(alignment: .leading, spacing: 8) {
                     Button("Accept measured interval") { model.acceptProposal() }
                         .disabled(!model.canAcceptProposal)
                         .help("Accept only the measured audio interval; unmeasured frames stay unplaced.")
@@ -206,13 +283,12 @@ private struct AlignmentWorkspace: View {
                               : "Select an anchor inside an accepted map's recorded span, not at either end.")
                         .accessibilityIdentifier("alignment.startNewEpoch")
                 }
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Alignment timing actions")
+                .accessibilityIdentifier("ww.alignment.actions")
 
                 GroupBox("Audition") {
-                    LazyVGrid(
-                        columns: [GridItem(.adaptive(minimum: 150, maximum: 240), alignment: .leading)],
-                        alignment: .leading,
-                        spacing: 8
-                    ) {
+                    VStack(alignment: .leading, spacing: 8) {
                         LabeledContent("Start") {
                             TextField("Start", value: $model.auditionStartSeconds, format: .number.precision(.fractionLength(3)))
                                 .frame(width: 100)
@@ -232,6 +308,9 @@ private struct AlignmentWorkspace: View {
                         .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped epoch with an available source.")
                         .accessibilityIdentifier("ww.alignment.audition.play")
                     }
+                    .frame(maxWidth: 240, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                    .accessibilityLabel("Audition settings")
                 }
                 .accessibilityIdentifier("ww.alignment.audition")
 
@@ -261,7 +340,6 @@ private struct AlignmentWorkspace: View {
                     .accessibilityIdentifier("ww.alignment.region")
                 }
                 }
-                .padding(.leading, 24)
 
                 Text(model.message)
                     .font(.callout)
@@ -284,32 +362,19 @@ private struct AlignmentWorkspace: View {
                 }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
+                .padding(14)
             }
-            .accessibilityLabel("Alignment workspace scroll area")
-            .accessibilityIdentifier("ww.alignment.workspace")
-            .onAppear {
-                AlignmentKeyHandler.install()
-            }
-            .onChange(of: model.requestedAnchorFocus) { _, anchor in
+            .accessibilityLabel("Alignment inspector")
+            .accessibilityIdentifier("ww.inspector.alignment.details")
+            .onChange(of: model.requestedAnchorFocus, initial: true) { _, anchor in
                 guard let anchor else { return }
                 scrollProxy.scrollTo("ww.alignment.anchorSection", anchor: .center)
                 AlignmentAnchorFocus.focus(anchor: anchor, model: model, in: NSApp.keyWindow)
             }
-            .onChange(of: model.requestedEpochFocus) { _, epoch in
+            .onChange(of: model.requestedEpochFocus, initial: true) { _, epoch in
                 guard let epoch else { return }
                 scrollProxy.scrollTo("ww.alignment.groupSection", anchor: .top)
                 AlignmentEpochFocus.focus(epoch: epoch, model: model, in: NSApp.keyWindow)
-            }
-            .sheet(item: $model.editorRequest) { request in
-                switch request {
-                case .numeric:
-                    NumericTimingSheet(model: model)
-                case .anchors:
-                    AnchorTimingSheet(model: model)
-                case let .anchor(anchorID):
-                    EditAnchorSheet(model: model, anchorID: anchorID)
-                }
             }
         }
     }
@@ -671,23 +736,18 @@ struct AlignmentInspectorView: View {
             }
             .labelsHidden()
             .accessibilityIdentifier("ww.inspector.alignment.recording")
-            Button("Manage recordings…", action: manageRecordings)
-                .help("Add recordings, edit recorder groups, and manage speakers in Setup.")
+            Button("Recordings & Speakers…", action: manageRecordings)
+                .help("Add recordings, edit recorder groups, and manage speakers.")
                 .accessibilityIdentifier("ww.inspector.alignment.manageRecordings")
             if let track = model.selectedWaveform {
                 Divider()
                 Text(track.groupName).font(.subheadline.weight(.semibold))
                 Text(track.name).font(.caption).foregroundStyle(.secondary)
                 AlignmentTrackAssignmentControls(model: model, track: track)
-                Toggle("Show and hear recording", isOn: Binding(
-                    get: { model.trackEnabled(track.id) },
-                    set: { model.setTrack(track.id, enabled: $0) }
-                ))
-                .help("Only recordings with accepted timing are played.")
-                Toggle("Show recorder group", isOn: Binding(
-                    get: { model.groupEnabled(track.group) },
-                    set: { model.setGroup(track.group, enabled: $0) }
-                ))
+                AudioTimelineListeningButtons(listening: model.listening, scope: .source(track.id), name: track.name,
+                                              changed: { model.refreshListeningGains() })
+                AudioTimelineListeningButtons(listening: model.listening, scope: .recorder(track.group), name: track.groupName,
+                                              changed: { model.refreshListeningGains() })
                 if track.envelope.channelCount > 1 {
                     Picker("Comparison channel", selection: $model.waveformAuditionChannel) {
                         ForEach(0..<track.envelope.channelCount, id: \.self) { channel in

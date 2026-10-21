@@ -6,8 +6,8 @@ from benchmark import alignment, normalized, text_metrics
 class ScoringTests(unittest.TestCase):
     def test_normalization_keeps_disfluencies(self):
         self.assertEqual(
-            normalized("Um, I, I don't... uh - twenty-five favourites."),
-            ["um", "i", "i", "don't", "uh", "twenty", "five", "favourites"],
+            normalized("Um, I, I don't... uh - twenty-five favorites."),
+            ["um", "i", "i", "don't", "uh", "twenty", "five", "favorites"],
         )
 
     def test_substitution_deletion_insertion(self):

@@ -57,7 +57,7 @@ struct HoldoutOpenRecoveryTests {
             let key = DocumentKey(rawValue: "legacy-\(index)")
             switch variant {
             case "cancelThenRetry":
-                #expect(throws: PublicationError.cancelled) { try DocumentMigrator(publisher: rig.publisher, steps: [SyntheticV0.step]).migrate(url, key: key, isCancelled: { true }) }
+                #expect(throws: PublicationError.canceled) { try DocumentMigrator(publisher: rig.publisher, steps: [SyntheticV0.step]).migrate(url, key: key, isCanceled: { true }) }
                 try check(try Data(contentsOf: url) == original, "cancel changed the original")
             case "faultThenRetry":
                 let boundary = (PublicationBoundary.migration + [.baseChecked, .stagedFlushed])[(index / 3) % 5]

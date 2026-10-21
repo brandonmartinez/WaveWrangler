@@ -74,8 +74,8 @@ struct ConventionTests {
         #expect(aligned(try group.alignedTime(ofFrame: 48000, in: b.id)) == q(13, 2))
     }
 
-    /// The exact inverse at k + 1/2 quantises half-up to k + 1, and reports the exact value.
-    @Test func inverseQuantisesHalfUp() throws {
+    /// The exact inverse at k + 1/2 quantizes half-up to k + 1, and reports the exact value.
+    @Test func inverseQuantizesHalfUp() throws {
         let fx = Fixture()
         let epoch = RecordingEpochID(), target = fx.occurrence(frames: 48000)
         let group = try fx.otherGroup(

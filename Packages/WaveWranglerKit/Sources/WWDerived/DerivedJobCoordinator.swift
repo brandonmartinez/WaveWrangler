@@ -31,12 +31,12 @@ public enum DerivedSlotState: Sendable, Equatable {
     /// The last result or job no longer matches the current inputs; it is never served.
     case stale(DerivedAssetKey, reasons: Set<StaleReason>)
     case failed(DerivedAssetKey, reason: String)
-    case cancelled(DerivedAssetKey)
+    case canceled(DerivedAssetKey)
 
     public var key: DerivedAssetKey? {
         switch self {
         case .idle: nil
-        case let .running(key), let .ready(key), let .stale(key, _), let .failed(key, _), let .cancelled(key): key
+        case let .running(key), let .ready(key), let .stale(key, _), let .failed(key, _), let .canceled(key): key
         }
     }
 }
@@ -47,7 +47,7 @@ public enum DerivedJobOutcome: Sendable, Equatable {
     case reused(DerivedAssetKey)
     /// The key was stale when the job finished (or when it was submitted); nothing was published.
     case discardedStale(Set<StaleReason>)
-    case cancelled
+    case canceled
     case failed(String)
 }
 
@@ -70,7 +70,7 @@ public struct DerivedSlotChange: Sendable, Equatable {
     public var state: DerivedSlotState
 }
 
-/// A submitted job. `outcome` waits for it to finish (cancelled jobs finish promptly once their work observes
+/// A submitted job. `outcome` waits for it to finish (canceled jobs finish promptly once their work observes
 /// cancellation).
 public struct DerivedJob: Sendable {
     public let slot: DerivedSlot
@@ -102,7 +102,7 @@ package struct DerivedCoordinatorTestHooks: Sendable {
 ///
 /// Ordering per job: (off the coordinator) verified-cache lookup → work → stage + flush + read-back verify →
 /// (on the coordinator, one synchronous turn with no suspension point) "is this still the slot's job, not
-/// cancelled, and is every key component current?" → atomic move into the cache → state `ready`. Because the
+/// canceled, and is every key component current?" → atomic move into the cache → state `ready`. Because the
 /// check and the publish share one actor turn, an invalidation can only land entirely before (the result is
 /// discarded) or entirely after (the published result is then marked stale) — the read→transform→publish
 /// sequence cannot interleave with actor reentrancy. Late results never publish stale assets.
@@ -123,7 +123,7 @@ public actor DerivedJobCoordinator {
     private var cachedCandidates: [DerivedSlot: [DerivedAssetKey]] = [:]
     private var explicitlyInvalidated: [DerivedSlot: Set<DerivedAssetKey>] = [:]
     private var nextJobID: UInt64 = 0
-    /// Every job that has not finished, including superseded or cancelled ones whose work is still returning.
+    /// Every job that has not finished, including superseded or canceled ones whose work is still returning.
     private var inFlight: [UInt64: Task<DerivedJobOutcome, Never>] = [:]
     private var hasShutDown = false
 
@@ -161,8 +161,8 @@ public actor DerivedJobCoordinator {
         continuation.finish()
     }
 
-    /// Stops all derived work: every in-flight job is cancelled and can no longer publish, running slots become
-    /// `.cancelled`, and later submits are refused (their work never runs). Returns once every job has finished;
+    /// Stops all derived work: every in-flight job is canceled and can no longer publish, running slots become
+    /// `.canceled`, and later submits are refused (their work never runs). Returns once every job has finished;
     /// work should observe cancellation promptly (work that ignores it delays the return). Idempotent. Call it
     /// before releasing source access — see the type's lifetime note.
     public func shutdown() async {
@@ -174,7 +174,7 @@ public actor DerivedJobCoordinator {
             record.task = nil
             record.currentJob = nil
             if case let .running(key) = record.state {
-                record.state = .cancelled(key)
+                record.state = .canceled(key)
                 continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
             }
             slots[slot] = record
@@ -203,7 +203,7 @@ public actor DerivedJobCoordinator {
     }
 
     /// The accepted map changed (REF-019): everything derived from any other revision of this episode's map
-    /// becomes stale and its in-flight jobs are cancelled.
+    /// becomes stale and its in-flight jobs are canceled.
     public func acceptMap(_ map: MapRevisionReference) {
         inputs.acceptedMaps[map.episode] = map.revision
         refresh()
@@ -288,7 +288,7 @@ public actor DerivedJobCoordinator {
         key: DerivedAssetKey,
         work: @escaping @Sendable () async throws -> Data
     ) -> DerivedJob {
-        guard !hasShutDown else { return DerivedJob(slot: slot, key: key, task: Task { .cancelled }) }
+        guard !hasShutDown else { return DerivedJob(slot: slot, key: key, task: Task { .canceled }) }
         var record = slots[slot] ?? SlotRecord()
         record.task?.cancel()
         nextJobID += 1
@@ -311,29 +311,29 @@ public actor DerivedJobCoordinator {
         let beforeCommit = hooks.beforeCommit
         #endif
         let task = Task.detached(priority: .utility) { [weak self] () async -> DerivedJobOutcome in
-            if Task.isCancelled { return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: nil) ?? .cancelled }
+            if Task.isCancelled { return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: nil) ?? .canceled }
             if !mustRecompute && store.payload(for: key) != nil {
-                return await self?.adoptCached(jobID, slot: slot, key: key) ?? .cancelled
+                return await self?.adoptCached(jobID, slot: slot, key: key) ?? .canceled
             }
             let payload: Data
             do {
                 payload = try await work()
             } catch {
-                return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: String(describing: error)) ?? .cancelled
+                return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: String(describing: error)) ?? .canceled
             }
-            if Task.isCancelled { return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: nil) ?? .cancelled }
+            if Task.isCancelled { return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: nil) ?? .canceled }
             let staged: StagedDerivedAsset
             do {
                 staged = try store.stage(payload, for: key)
             } catch {
-                return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: String(describing: error)) ?? .cancelled
+                return await self?.finishWithoutPublishing(jobID, slot: slot, key: key, failure: String(describing: error)) ?? .canceled
             }
             #if DEBUG
             await beforeCommit?(slot, key)
             #endif
             guard let self else {
                 store.discard(staged)
-                return .cancelled
+                return .canceled
             }
             return await self.commit(jobID, slot: slot, staged: staged)
         }
@@ -352,7 +352,7 @@ public actor DerivedJobCoordinator {
         record.task?.cancel()
         record.task = nil
         record.currentJob = nil
-        record.state = .cancelled(key)
+        record.state = .canceled(key)
         slots[slot] = record
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
     }
@@ -435,21 +435,21 @@ public actor DerivedJobCoordinator {
     private func finishWithoutPublishing(_ jobID: UInt64, slot: DerivedSlot, key: DerivedAssetKey, failure: String?) -> DerivedJobOutcome {
         inFlight[jobID] = nil
         if let refusal = refusal(jobID, slot: slot, key: key) { return refusal }
-        let state: DerivedSlotState = failure.map { .failed(key, reason: $0) } ?? .cancelled(key)
+        let state: DerivedSlotState = failure.map { .failed(key, reason: $0) } ?? .canceled(key)
         slots[slot]?.state = state
         slots[slot]?.currentJob = nil
         slots[slot]?.task = nil
         continuation.yield(DerivedSlotChange(slot: slot, state: state))
         refresh()
-        return failure.map { .failed($0) } ?? .cancelled
+        return failure.map { .failed($0) } ?? .canceled
     }
 
-    /// Non-nil when the job may no longer publish: superseded, cancelled, or its key is stale.
+    /// Non-nil when the job may no longer publish: superseded, canceled, or its key is stale.
     private func refusal(_ jobID: UInt64, slot: DerivedSlot, key: DerivedAssetKey) -> DerivedJobOutcome? {
         guard let record = slots[slot], record.currentJob == jobID else {
             switch slots[slot]?.state {
             case let .stale(staleKey, reasons)? where staleKey == key: return .discardedStale(reasons)
-            case let .cancelled(cancelledKey)? where cancelledKey == key: return .cancelled
+            case let .canceled(canceledKey)? where canceledKey == key: return .canceled
             default: return .discardedStale([.superseded])
             }
         }

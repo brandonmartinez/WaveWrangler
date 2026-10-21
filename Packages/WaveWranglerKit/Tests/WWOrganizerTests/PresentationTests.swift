@@ -58,7 +58,7 @@ struct SaveStatusTests {
         .checking, .unknown(reason: "save confirmation isn't available"), .saved(at: date, folderDisplayName: "Podcasts"),
         .edited, .saving(cancellable: false), .notConfirmed, .conflict(changedAt: nil), .locationUnavailable,
         .diskFull(volumeName: "Data"), .failed(reason: "WaveWrangler doesn't have permission to save in this folder"),
-        .cancelled, .recovered(incompleteSaveAt: date, openedVersionAt: date), .readOnlyNewerFormat, .readOnlyDamaged,
+        .canceled, .recovered(incompleteSaveAt: date, openedVersionAt: date), .readOnlyNewerFormat, .readOnlyDamaged,
         .updateNeeded, .updatingFormat, .updateFailed, .readOnlyLocation, .readOnly(reason: "it's a recovered copy"),
     ]
 
@@ -82,7 +82,7 @@ struct SaveStatusTests {
 
     @Test func onlyD1ClearsDirtyAndEditedSuffix() {
         for state in [DocumentSaveState.edited, .saving(cancellable: true), .notConfirmed, .conflict(changedAt: nil),
-                      .locationUnavailable, .diskFull(volumeName: "Data"), .failed(reason: "x"), .cancelled] {
+                      .locationUnavailable, .diskFull(volumeName: "Data"), .failed(reason: "x"), .canceled] {
             let presentation = present(state)
             #expect(presentation.showsEditedSuffix, "\(state)")
             #expect(DocumentSaveStatus(state: state, autosaveEnabled: true).hasUnsavedChanges, "\(state)")
@@ -274,7 +274,7 @@ struct FormatUpdatePromptTests {
         #expect(failed.messageBar?.heading == "Couldn't update this show")
         #expect(failed.messageBar?.body == "The original is unchanged. You can view it read-only.")
         #expect(failed.messageBar?.actions == [.tryAgain, .showDetails])
-        // Not colour-only: a distinct symbol and text accompany the tint.
+        // Not color-only: a distinct symbol and text accompany the tint.
         #expect(failed.symbolName == "xmark.octagon" && failed.accessibilityValue.contains("Read-only"))
     }
 }

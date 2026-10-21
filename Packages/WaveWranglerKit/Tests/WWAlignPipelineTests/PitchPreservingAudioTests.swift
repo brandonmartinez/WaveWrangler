@@ -171,10 +171,10 @@ struct PitchPreservingAudioTests {
                 try await PitchPreservingAudio.stretch([[0]], sampleRate: 48000, rateRatio: ratio)
             }
         }
-        let cancelled = Task {
+        let canceled = Task {
             withUnsafeCurrentTask { $0?.cancel() }
             return try await PitchPreservingAudio.stretch([[0]], sampleRate: 48000, rateRatio: 1)
         }
-        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        await #expect(throws: CancellationError.self) { try await canceled.value }
     }
 }

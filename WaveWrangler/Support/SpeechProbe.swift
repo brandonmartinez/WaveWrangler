@@ -1,8 +1,7 @@
 import WWCore
 import WWSpeech
 
-/// The app's production speech entry point never reads media or starts a recognizer until an
-/// independently qualified, linked engine and source adapter replace the explicit refusal.
+/// Legacy admission diagnostics. Live cleanup uses PrimarySpeechSourceIssuer and LocalWhisperRecognizer.
 enum AppSpeech {
     static func infer(
         model: ShowDocumentModel, episodeID: EpisodeID, speakerID: SpeakerID,

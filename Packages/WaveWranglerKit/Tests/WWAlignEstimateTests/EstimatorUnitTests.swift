@@ -117,7 +117,7 @@ struct EstimatorUnitTests {
     }
 
     @Test func constantInputIsSilentNotPeriodic() throws {
-        // A pure DC bias has no signal: every window is silent (centred statistics), never "periodic".
+        // A pure DC bias has no signal: every window is silent (centered statistics), never "periodic".
         let reference = try Self.track([Float](repeating: 0.3, count: 160_000))
         let target = try Self.track([Float](repeating: -0.2, count: 160_000))
         let report = try AcousticEstimator.estimate(EstimationRequest(reference: reference, tracks: [target], search: try SearchRange(maximumDeviationSeconds: 1)))
@@ -182,17 +182,17 @@ struct EstimatorUnitTests {
         #expect(FFT.size(atLeast: 1025) == 2048)
     }
 
-    @Test func centredStatisticsIgnoreTheMean() throws {
+    @Test func centeredStatisticsIgnoreTheMean() throws {
         var parameters = EstimatorParameters()
         parameters.proxyRate = 4000
         let samples = (0..<16000).map { Float(0.5 + 0.1 * sin(2 * Double.pi * 300 * Double($0) / 8000)) }
         let proxy = ProxySignal(buffer: try SampleBuffer(samples: samples, sampleRate: 8000), parameters: parameters)
         let interior = 1000..<7000
-        #expect(abs(proxy.centredRMS(interior) - 0.1 / 2.0.squareRoot()) < 0.002)
+        #expect(abs(proxy.centeredRMS(interior) - 0.1 / 2.0.squareRoot()) < 0.002)
         // Constant input stays constant up to the buffer edges (edge extension, no invented step).
         let flat = ProxySignal(buffer: try SampleBuffer(samples: [Float](repeating: 0.7, count: 16000), sampleRate: 8000), parameters: parameters)
-        #expect(flat.centredRMS(interior) < 1e-6)
-        #expect(flat.centredRMS(0..<flat.samples.count) < 1e-6)
+        #expect(flat.centeredRMS(interior) < 1e-6)
+        #expect(flat.centeredRMS(0..<flat.samples.count) < 1e-6)
     }
 
     @Test func nearestRankPercentile() {

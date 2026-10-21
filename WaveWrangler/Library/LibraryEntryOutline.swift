@@ -8,7 +8,7 @@ import WWOrganizer
 /// long list (Shows, 100 rows) cost ~1.5 ms per row and exceeded the WW-007 100 ms interaction gate. Here
 /// cells are frame-laid-out, reused, and rows have one fixed height derived from the in-app text size.
 ///
-/// Same contract as the `Table` it replaces: an outline `ww.library.entries` labelled with the list title;
+/// Same contract as the `Table` it replaces: an outline `ww.library.entries` labeled with the list title;
 /// rows of static texts (name `ww.library.entry.<id>`, Status label + value); sortable Name/Location/Status;
 /// multiple selection bound to `entrySelection`; context menu; Return/double-click opens; type-select by name.
 struct LibraryEntryOutline: NSViewRepresentable {

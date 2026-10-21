@@ -215,7 +215,7 @@ struct EpisodeOpenShowBindingTests {
         }
     }
 
-    @Test func cancelledOpenShowReadNeverIssuesDocument() async throws {
+    @Test func canceledOpenShowReadNeverIssuesDocument() async throws {
         let opened = try open()
         defer { opened.close() }
         let binding = try OpenShowSourceBinding.capture(for: opened.document)

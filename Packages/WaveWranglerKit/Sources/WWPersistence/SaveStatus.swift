@@ -1,8 +1,8 @@
 import Foundation
 import WWCore
 
-/// Honest per-document persistence status (C3 acknowledgement states). Every state has distinct accessible
-/// text; none is conveyed by colour alone, and no state implies provider sync.
+/// Honest per-document persistence status (C3 acknowledgment states). Every state has distinct accessible
+/// text; none is conveyed by color alone, and no state implies provider sync.
 ///
 /// Mirrors the library UI lane's `DocumentSaveState` names so it can be mapped one-to-one once that module
 /// lands; persistence never shows "saved" without an independently verified read-back.
@@ -14,14 +14,14 @@ public enum DocumentSaveState: Sendable, Equatable {
     case saving
     /// Saved on this Mac: verified coherent disk truth at `revision`.
     case saved(revision: Int, at: Date)
-    /// Verified on disk, but a dependant acknowledgement (library/index) or post-publication step did not complete.
+    /// Verified on disk, but a dependent acknowledgment (library/index) or post-publication step did not complete.
     case savedFollowUpIncomplete(revision: Int, at: Date)
     /// Save failed; the prior revision is unchanged on disk and the document stays dirty.
     case saveFailed(retainedRevision: Int?, kind: WriteFailureKind, message: String)
     /// Another revision is on disk; nothing was overwritten and this candidate is preserved on this Mac.
     case conflict(onDiskRevision: Int?, missing: Bool)
     /// Publication may have happened but was not verified. Reopen to verify.
-    case acknowledgementUncertain(message: String)
+    case acknowledgmentUncertain(message: String)
     /// A C2b unpublished edit checkpoint (not a save) protects the unsaved edits on this Mac.
     case recoveryCheckpoint(at: Date)
     /// An automatic save was skipped because autosave is OFF; edits remain open and unsaved.
@@ -30,7 +30,7 @@ public enum DocumentSaveState: Sendable, Equatable {
     case readOnlyNewerFormat(found: Int, supported: Int)
     /// Showing a recovered checkpoint read-only; save it as a new copy to keep it.
     case recoveredReadOnly(revision: Int)
-    case cancelled
+    case canceled
 
     /// Short, accessible status text.
     public var title: String {
@@ -43,12 +43,12 @@ public enum DocumentSaveState: Sendable, Equatable {
         case let .savedFollowUpIncomplete(revision, _): "Saved on this Mac — revision \(revision); library not yet updated"
         case let .saveFailed(retained, _, _): "Save failed — revision \(retained.map(String.init) ?? "on disk") retained"
         case let .conflict(_, missing): missing ? "Conflict — the document was moved or deleted" : "Conflict — another revision is on disk"
-        case .acknowledgementUncertain: "Save may have completed — reopen to verify"
+        case .acknowledgmentUncertain: "Save may have completed — reopen to verify"
         case let .recoveryCheckpoint(at): "Unsaved changes protected on this Mac (checkpoint \(at.formatted(date: .omitted, time: .standard))) — not saved"
         case .autosaveSkipped: "Not saved — autosave is off"
         case .readOnlyNewerFormat: "Read-only — newer format"
         case let .recoveredReadOnly(revision): "Recovered revision \(revision) — read-only"
-        case .cancelled: "Saving canceled — changes not saved"
+        case .canceled: "Saving canceled — changes not saved"
         }
     }
 
@@ -60,12 +60,12 @@ public enum DocumentSaveState: Sendable, Equatable {
         }
     }
 
-    /// ST-11: whether this failed save is retried automatically while autosave is on. D5 (acknowledgement uncertain)
-    /// and the D7–D9 failures are; a cancelled save (D10), a conflict (D6) and every non-failure state are not.
+    /// ST-11: whether this failed save is retried automatically while autosave is on. D5 (acknowledgment uncertain)
+    /// and the D7–D9 failures are; a canceled save (D10), a conflict (D6) and every non-failure state are not.
     public var isAutomaticallyRetryable: Bool {
         switch self {
-        case .acknowledgementUncertain: true
-        case let .saveFailed(_, kind, _): kind != .cancelled
+        case .acknowledgmentUncertain: true
+        case let .saveFailed(_, kind, _): kind != .canceled
         default: false
         }
     }
@@ -73,7 +73,7 @@ public enum DocumentSaveState: Sendable, Equatable {
     /// Whether unsaved work may exist (drives "unsaved" indicators; never cleared by skipped/failed saves).
     public var hasUnsavedWork: Bool {
         switch self {
-        case .edited, .saveFailed, .conflict, .acknowledgementUncertain, .recoveryCheckpoint, .autosaveSkipped, .cancelled, .saving: true
+        case .edited, .saveFailed, .conflict, .acknowledgmentUncertain, .recoveryCheckpoint, .autosaveSkipped, .canceled, .saving: true
         case .clean, .saved, .savedFollowUpIncomplete, .readOnlyNewerFormat, .recoveredReadOnly: false
         }
     }
@@ -84,8 +84,8 @@ public enum DocumentSaveState: Sendable, Equatable {
         case let .invalidCandidate(error): .saveFailed(retainedRevision: retainedRevision, kind: .other, message: error.errorDescription ?? "\(error)")
         case let .conflict(conflict): .conflict(onDiskRevision: conflict.onDisk?.revision, missing: conflict.onDisk == nil)
         case let .failed(_, kind, _): .saveFailed(retainedRevision: retainedRevision, kind: kind, message: error.errorDescription ?? "")
-        case .cancelled: .cancelled
-        case let .acknowledgementUncertain(message): .acknowledgementUncertain(message: message)
+        case .canceled: .canceled
+        case let .acknowledgmentUncertain(message): .acknowledgmentUncertain(message: message)
         }
     }
 }

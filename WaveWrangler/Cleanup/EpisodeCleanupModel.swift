@@ -19,6 +19,10 @@ enum CleanupTimelineTool: String, CaseIterable {
 final class EpisodeCleanupModel {
     let state: ShowWindowState
     let episodeID: EpisodeID
+    private let standaloneListening: EpisodeListeningState
+    var listening: EpisodeListeningState { workspaceAlignment?.listening ?? standaloneListening }
+    var rendersWaveforms = true
+    @ObservationIgnored private weak var workspaceAlignment: EpisodeAlignmentModel?
     var plan: PrimaryCleanupPlan?
     var identities: [SourceID: String] = [:]
     var windowStart = 0.0 {
@@ -31,7 +35,12 @@ final class EpisodeCleanupModel {
     var laneHeight = 96.0
     var normalizeView = false
     var timelineTool = CleanupTimelineTool.seek
-    var mutedSpeakers: Set<SpeakerID> = []
+    var mutedSpeakers: Set<SpeakerID> {
+        guard let episode else { return [] }
+        return Set((plan?.lanes ?? []).filter {
+            !listening.playback.isAudible($0.primary.sourceID, in: episode)
+        }.map(\.speaker))
+    }
     var overviewStrokes: [SpeakerID: [AlignmentWaveformStroke]] = [:]
     var windowStrokes: [SpeakerID: [AlignmentWaveformStroke]] = [:]
     var waveformWindow: ClosedRange<Double>?
@@ -39,9 +48,21 @@ final class EpisodeCleanupModel {
     var waveformMessage = "Loading measured Primary waveforms…"
     var isLoadingWaveforms = false
     var isLoadingOverview = false
-    var isPlaying = false
-    var isPreparingPlayback = false
-    var transportMessage = "Stopped"
+    private var standaloneIsPlaying = false
+    private var standaloneIsPreparingPlayback = false
+    private var standaloneTransportMessage = "Stopped"
+    var isPlaying: Bool {
+        get { workspaceAlignment?.isAuditioning ?? standaloneIsPlaying }
+        set { standaloneIsPlaying = newValue }
+    }
+    var isPreparingPlayback: Bool {
+        get { workspaceAlignment?.isPreparingAudition ?? standaloneIsPreparingPlayback }
+        set { standaloneIsPreparingPlayback = newValue }
+    }
+    var transportMessage: String {
+        get { workspaceAlignment?.auditionLabel ?? standaloneTransportMessage }
+        set { standaloneTransportMessage = newValue }
+    }
     var playhead = 0.0
     var inText = ""
     var outText = ""
@@ -73,6 +94,7 @@ final class EpisodeCleanupModel {
     @ObservationIgnored private var overviewGeneration = UUID()
     @ObservationIgnored private var waveformEpisode: Episode?
     @ObservationIgnored private var workSnapshot: ShowDocumentModel?
+    @ObservationIgnored private var readyInputs: EpisodeMediaInputs?
     @ObservationIgnored private var isPublishing = false
     @ObservationIgnored private var audioEngine: AVAudioEngine?
     @ObservationIgnored private var players: [SpeakerID: AVAudioPlayerNode] = [:]
@@ -91,6 +113,7 @@ final class EpisodeCleanupModel {
          transcriptionSettings: TranscriptionSettings = .shared) {
         self.state = state
         self.episodeID = episodeID
+        self.standaloneListening = state.listeningState(for: episodeID)
         self.suppliedRuntime = runtime
         self.transcriptionSettings = transcriptionSettings
     }
@@ -100,9 +123,17 @@ final class EpisodeCleanupModel {
         return try await AlignmentRuntimeProvider.runtime(for: document, episode: episodeID)
     }
 
+    func connectWorkspace(to alignment: EpisodeAlignmentModel) {
+        workspaceAlignment = alignment
+        rendersWaveforms = false
+        windowStart = alignment.waveformStartSeconds
+        windowDuration = alignment.waveformDurationSeconds
+        playhead = alignment.waveformPlayheadSeconds
+    }
+
     var episode: Episode? { state.store.model.episode(episodeID) }
     var canNavigate: Bool {
-        !isBusy && !isRefreshing && state.store.document != nil
+        state.store.document != nil
             && plan?.alignmentRevision != nil && plan?.lanes.isEmpty == false
             && plan?.lanes.allSatisfy({ identities[$0.primary.sourceID] != nil }) == true
     }
@@ -152,13 +183,13 @@ final class EpisodeCleanupModel {
     }
 
     func modelDidChange() {
-        stopPlayback()
         if isEditingFillerReview { return }
-        let sameAudio = waveformEpisode?.sources == episode?.sources
-            && waveformEpisode?.alignment == episode?.alignment
-            && waveformEpisode?.speakerAssignments == episode?.speakerAssignments
-        cancelWaveforms()
+        if let readyInputs, let episode,
+           readyInputs == EpisodeMediaInputs(episode, includingWorkingRange: true) { return }
+        let sameAudio = waveformEpisode.map { EpisodeMediaInputs($0) } == episode.map { EpisodeMediaInputs($0) }
         if !sameAudio {
+            stopPlayback()
+            cancelWaveforms()
             overviewStrokes = [:]
             windowStrokes = [:]
             waveformWindow = nil
@@ -167,23 +198,28 @@ final class EpisodeCleanupModel {
         identities = [:]
         plan = nil
         selectedWord = nil
-        if !isPublishing, let workSnapshot, workSnapshot != state.store.model {
+        if !isPublishing, let workSnapshot,
+           !state.store.model.hasSameMediaInputs(as: workSnapshot, in: episodeID, includingWorkingRange: true) {
             cancel()
-            message = "The show changed. Transcription was cancelled; no partial result was saved."
+            message = "Source, assignment, timing or working-range inputs changed. Transcription was canceled; no partial result was saved."
         }
     }
 
     func cancel() {
-        generation = UUID()
-        job?.cancel()
-        job = nil
-        workSnapshot = nil
-        isBusy = false
+        cancelTranscription()
         refreshGeneration = UUID()
         isRefreshing = false
         fillerPublicationGeneration = nil
         cancelWaveforms()
         stopPlayback()
+    }
+
+    func cancelTranscription() {
+        generation = UUID()
+        job?.cancel()
+        job = nil
+        workSnapshot = nil
+        isBusy = false
     }
 
     func refresh(skippingReviewOnlyChange: Bool = false) async {
@@ -207,21 +243,25 @@ final class EpisodeCleanupModel {
             identities = [:]
             return
         }
-        plan = PrimaryCleanupPlan.make(model: snapshot, episode: episodeID, map: map)
-        identities = [:]
+        if readyInputs != episode.map({ EpisodeMediaInputs($0, includingWorkingRange: true) }) {
+            plan = PrimaryCleanupPlan.make(model: snapshot, episode: episodeID, map: map)
+            identities = [:]
+        }
         guard map != nil, plan?.lanes.isEmpty == false, let document = state.store.document else { return }
         do {
             let runtime = try await resolveRuntime(for: document)
             let prepared = try await runtime.prepareCleanup(model: snapshot, episode: episodeID, requireReady: false)
             try Task.checkCancellation()
-            guard token == refreshGeneration, state.store.model == snapshot else { return }
+            guard token == refreshGeneration,
+                  state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true) else { return }
             plan = prepared.plan
             identities = prepared.identities
             error = nil
             if !bounds.contains(windowStart) { windowStart = plan?.lanes.map(\.start).min() ?? bounds.lowerBound }
             playhead = min(bounds.upperBound, max(bounds.lowerBound, playhead))
-            mutedSpeakers.formIntersection(Set(prepared.plan.lanes.map(\.speaker)))
+            if let episode { listening.playback.retainScopes(in: episode) }
             waveformEpisode = episode
+            readyInputs = episode.map { EpisodeMediaInputs($0, includingWorkingRange: true) }
             isRefreshing = false
             loadWaveforms()
             if overviewStrokes.isEmpty { loadWaveforms(overview: true) }
@@ -229,9 +269,13 @@ final class EpisodeCleanupModel {
         } catch is CancellationError {
             return
         } catch {
-            guard token == refreshGeneration, state.store.model == snapshot else { return }
+            guard token == refreshGeneration,
+                  state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true) else { return }
             self.error = "Cleanup readiness could not be verified: \(Self.describe(error))"
             plan = nil
+            identities = [:]
+            readyInputs = nil
+            stopPlayback()
         }
     }
 
@@ -275,8 +319,6 @@ final class EpisodeCleanupModel {
         let configuration: TranscriptionConfiguration
         do { configuration = try transcriptionSettings.captureConfiguration() }
         catch { self.error = Self.describe(error); return }
-        stopPlayback()
-        cancelWaveforms()
         let snapshot = state.store.model
         let token = UUID()
         generation = token
@@ -303,13 +345,15 @@ final class EpisodeCleanupModel {
                     await self?.reportProgress(token: token, update: update)
                 }
                 try Task.checkCancellation()
-                guard generation == token, state.store.model == snapshot, state.canEdit,
+                guard generation == token,
+                      state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true),
+                      state.canEdit,
                       document === state.store.document else { throw CancellationError() }
                 guard try publishTranscripts(result, expecting: snapshot)
                 else { throw CancellationError() }
                 message = "Transcribed \(result.count) speaker\(result.count == 1 ? "" : "s") locally. Word timing is approximate; no cuts were applied."
             } catch is CancellationError {
-                if generation == token { message = "Transcription cancelled. No partial result was saved." }
+                if generation == token { message = "Transcription canceled. No partial result was saved." }
             } catch {
                 if generation == token {
                     self.error = "Transcription failed: \(Self.describe(error))"
@@ -321,12 +365,16 @@ final class EpisodeCleanupModel {
 
     /// Called only after all speakers and live source/timing verification have finished.
     func publishTranscripts(_ result: [SpeakerTranscript], expecting snapshot: ShowDocumentModel) throws(DomainError) -> Bool {
-        var cleanup = snapshot.episode(episodeID)?.cleanup ?? EpisodeCleanup()
-        cleanup.transcripts = result
-        let updated = try snapshot.settingCleanup(cleanup.proposingFillers(), in: episodeID)
+        let live = state.store.model
+        guard live.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true),
+              live.episode(episodeID)?.cleanup?.transcripts == snapshot.episode(episodeID)?.cleanup?.transcripts,
+              live.episode(episodeID)?.cleanup?.transcriptHistory == snapshot.episode(episodeID)?.cleanup?.transcriptHistory
+        else { return false }
+        let cleanup = try (live.episode(episodeID)?.cleanup ?? EpisodeCleanup()).replacingTranscripts(result)
+        let updated = try live.settingCleanup(cleanup, in: episodeID)
         isPublishing = true
         defer { isPublishing = false }
-        return state.store.applyReplacement("Transcribe episode", expecting: snapshot, model: updated, afterChange: { _ in })
+        return state.store.applyReplacement("Transcribe episode", expecting: live, model: updated, afterChange: { _ in })
     }
 
     private func reportProgress(token: UUID, update: CleanupTranscriptionProgress) {
@@ -349,6 +397,11 @@ final class EpisodeCleanupModel {
         }
         windowDuration = duration
         windowStart = min(max(bounds.lowerBound, bounds.upperBound - duration), max(bounds.lowerBound, start))
+        if let alignment = workspaceAlignment {
+            alignment.waveformStartSeconds = windowStart
+            alignment.waveformDurationSeconds = windowDuration
+            alignment.loadWaveforms(keepingSnapshot: true)
+        }
     }
 
     func fitTimeline() {
@@ -394,6 +447,7 @@ final class EpisodeCleanupModel {
     }
 
     func loadWaveforms(overview: Bool = false, force: Bool = false) {
+        guard rendersWaveforms else { return }
         guard windowStart.isFinite, windowDuration.isFinite, windowDuration >= 0.5,
               windowDuration <= max(30, maximumDuration), abs(windowStart) <= 86_400 else {
             error = "Choose a finite timeline window between 0.5 seconds and the episode span."
@@ -439,7 +493,7 @@ final class EpisodeCleanupModel {
                 }
                 try Task.checkCancellation()
                 guard (overview ? overviewGeneration : waveformGeneration) == token,
-                      state.store.model == snapshot else { return }
+                      state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID) else { return }
                 if overview { overviewStrokes = projected }
                 else if let window {
                     windowStrokes = projected
@@ -458,13 +512,20 @@ final class EpisodeCleanupModel {
     }
 
     @discardableResult
-    func previewSeek(to time: Double) -> Bool {
+    func previewSeek(to time: Double, revealing: Bool = true) -> Bool {
         guard time.isFinite, abs(time) <= 86_400 else {
             error = "Enter finite aligned seconds within the supported timeline."
             return false
         }
         stopPlayback()
         playhead = min(bounds.upperBound, max(bounds.lowerBound, time))
+        if let workspaceAlignment {
+            if revealing {
+                workspaceAlignment.seekEnabledTracks(to: playhead)
+            } else {
+                return workspaceAlignment.previewWaveformPlayhead(to: playhead)
+            }
+        }
         return true
     }
 
@@ -495,11 +556,15 @@ final class EpisodeCleanupModel {
     }
 
     func setSpeaker(_ speaker: SpeakerID, enabled: Bool) {
-        if enabled { mutedSpeakers.remove(speaker) } else { mutedSpeakers.insert(speaker) }
+        listening.playback.setMuted(!enabled, scope: .speaker(speaker))
         updateGains()
     }
 
-    private func updateGains() {
+    func updateGains() {
+        if let workspaceAlignment {
+            workspaceAlignment.refreshListeningGains()
+            return
+        }
         let audible = players.keys.filter { !mutedSpeakers.contains($0) }.count
         for (speaker, player) in players {
             player.volume = mutedSpeakers.contains(speaker) ? 0 : 1 / Float(max(1, audible))
@@ -517,15 +582,29 @@ final class EpisodeCleanupModel {
     }
 
     func play() {
-        play(interval: nil, loop: false)
+        if let workspaceAlignment {
+            workspaceAlignment.playEnabledTracks()
+            return
+        }
+        play(interval: listening.cycleEnabled ? listening.cycleRange : nil, loop: listening.cycleEnabled)
     }
 
     func play(interval: ClosedRange<Double>?, loop: Bool) {
         guard canNavigate, let document = state.store.document else { return }
+        if let workspaceAlignment {
+            workspaceAlignment.playEnabledTracks(interval: interval, repeatInterval: loop,
+                repeatWhile: { [weak self] in self?.loopsFillerAudition == true })
+            return
+        }
         stopPlayback()
-        let start = interval?.lowerBound
-            ?? (playhead >= bounds.upperBound ? bounds.lowerBound : max(bounds.lowerBound, playhead))
-        let end = interval?.upperBound ?? bounds.upperBound
+        let start = max(bounds.lowerBound, interval?.lowerBound
+            ?? (playhead >= bounds.upperBound ? bounds.lowerBound : max(bounds.lowerBound, playhead)))
+        let end = min(bounds.upperBound, interval?.upperBound ?? bounds.upperBound)
+        guard start.isFinite, end.isFinite, end > start else {
+            error = "The selected interval does not overlap available aligned media."
+            return
+        }
+        let cycling = listening.cycleEnabled && interval == listening.cycleRange
         let snapshot = state.store.model
         let token = UUID()
         playbackGeneration = token
@@ -547,7 +626,7 @@ final class EpisodeCleanupModel {
                     while started, scheduledDuration - elapsedPlayback >= 5 {
                         try await Task.sleep(for: .milliseconds(50))
                     }
-                    guard playbackGeneration == token, state.store.model == snapshot,
+                    guard playbackGeneration == token, state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID),
                           document === state.store.document else { throw CancellationError() }
                     try enqueue(audio, first: first)
                     first = false
@@ -560,7 +639,7 @@ final class EpisodeCleanupModel {
                         isPreparingPlayback = false
                         isPlaying = true
                         updateGains()
-                        startPlaybackProgress(token: token, end: end)
+                        startPlaybackProgress(token: token, end: end, followsPlayhead: interval == nil)
                     }
                 }
                 while elapsedPlayback < scheduledDuration - 1 / 48_000 {
@@ -569,7 +648,8 @@ final class EpisodeCleanupModel {
                 guard playbackGeneration == token else { return }
                 playhead = end
                 stopPlayback(updatePlayhead: false)
-                if loop, loopsFillerAudition, state.store.model == snapshot {
+                if loop, (cycling ? listening.cycleEnabled && listening.cycleRange == interval : loopsFillerAudition),
+                   state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID) {
                     play(interval: start...end, loop: true)
                 } else {
                     transportMessage = interval == nil
@@ -620,7 +700,7 @@ final class EpisodeCleanupModel {
         updateGains()
     }
 
-    private func startPlaybackProgress(token: UUID, end: Double) {
+    private func startPlaybackProgress(token: UUID, end: Double, followsPlayhead: Bool) {
         transportTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, playbackGeneration == token else { return }
@@ -631,7 +711,7 @@ final class EpisodeCleanupModel {
                     error = "Playback could not keep up with aligned audio rendering. Stopped at the last prepared audio; retry from here."
                     return
                 }
-                if playhead > windowStart + windowDuration * 0.8 {
+                if followsPlayhead, playhead > windowStart + windowDuration * 0.8 {
                     setWindow(start: playhead - windowDuration * 0.2, duration: windowDuration)
                 }
                 do { try await Task.sleep(for: .milliseconds(50)) }
@@ -641,6 +721,11 @@ final class EpisodeCleanupModel {
     }
 
     func stopPlayback(updatePlayhead: Bool = true) {
+        if let workspaceAlignment {
+            workspaceAlignment.stopAudition()
+            playhead = workspaceAlignment.waveformPlayheadSeconds
+            return
+        }
         if updatePlayhead, isPlaying {
             playhead = playbackStart + min(scheduledDuration, elapsedPlayback)
         }
@@ -659,6 +744,11 @@ final class EpisodeCleanupModel {
     }
 
     func stop() {
+        if let workspaceAlignment {
+            workspaceAlignment.stopEnabledTracks()
+            playhead = workspaceAlignment.waveformPlayheadSeconds
+            return
+        }
         stopPlayback()
         playhead = windowStart
         transportMessage = "Stopped"
@@ -668,11 +758,24 @@ final class EpisodeCleanupModel {
         stopPlayback()
         selectedSpeaker = speaker
         selectedWord = word
+        if let start = word.alignedStart, let end = word.alignedEnd, end > start {
+            listening.selection = start...end
+        } else { listening.selection = nil }
         selectedFillerID = fillerReviews.first { $0.speaker == speaker && $0.word?.id == word.id
             && fillerIssue($0) == nil }?.id
         updateFillerDrafts()
         state.inspectorPresented = true
-        if let start = word.alignedStart { playhead = start }
+        if let start = word.alignedStart { _ = previewSeek(to: start) }
+    }
+
+    func select(_ words: [TranscriptWord], speaker: SpeakerID) {
+        guard let first = words.first else { return }
+        select(first, speaker: speaker)
+        if let start = words.compactMap(\.alignedStart).min(),
+           let end = words.compactMap(\.alignedEnd).max(), end > start {
+            listening.selection = start...end
+        }
+        listening.selectedTranscriptText = words.map(\.text).joined(separator: " ")
     }
 
     static func describe(_ error: any Error) -> String {

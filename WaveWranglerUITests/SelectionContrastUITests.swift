@@ -34,8 +34,8 @@ final class SelectionContrastUITests: XCTestCase {
             let shows = app.descendants(matching: .any)["ww.library.sidebar.shows"]
             XCTAssertTrue(shows.waitForExistence(timeout: 15), "\(appearance): Library sidebar")
             results.append(measureSelected(shows, surface: "Library sidebar 'Shows'", appearance: appearance, increaseContrast: increaseContrast))
-            // Focus leaves the sidebar: the selection becomes unemphasized (grey); its text must stay legible
-            // (guards against white text drawn on a grey selection).
+            // Focus leaves the sidebar: the selection becomes unemphasized (gray); its text must stay legible
+            // (guards against white text drawn on a gray selection).
             app.typeKey("\t", modifierFlags: [])
             Thread.sleep(forTimeInterval: 1)
             results.append(measureUnemphasized(shows, surface: "Library sidebar 'Shows' (focus in the entry list)", appearance: appearance,

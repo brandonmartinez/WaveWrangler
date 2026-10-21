@@ -74,8 +74,8 @@ struct LocalWhisperTests {
             }
             #expect(engine.revision == configuration.revision(weights: weights))
             #expect(try engine.transcribe(pcm: [Float](repeating: 0, count: 16_000), sampleRate: 16_000).segments.isEmpty)
-            #expect(throws: PCMInferenceRefusal.cancelled) {
-                try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCancelled: { true })
+            #expect(throws: PCMInferenceRefusal.canceled) {
+                try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCanceled: { true })
             }
             #expect(throws: PCMInferenceRefusal.invalidPCM) {
                 try engine.transcribe(pcm: [Float](repeating: 0, count: 480_001), sampleRate: 16_000)
@@ -110,8 +110,8 @@ struct LocalWhisperTests {
         #expect(text.contains("gospel"))
         #expect(text.contains("middle"))
         #expect(!result.segments.isEmpty)
-        #expect(throws: PCMInferenceRefusal.cancelled) {
-            try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCancelled: { true })
+        #expect(throws: PCMInferenceRefusal.canceled) {
+            try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCanceled: { true })
         }
         #expect(try engine.transcribe(pcm: [Float](repeating: 0, count: 16000), sampleRate: 16000).segments.isEmpty)
     }
@@ -215,15 +215,15 @@ struct LocalWhisperTests {
             #expect(barrier.overlapped)
             #expect(await pool.snapshot.reservedBytes == 0)
             let checks = NativeInferenceStart()
-            let cancelled = Task { try await Self.nativeCancelControl(engine, pcm: pcm, checks: checks) }
-            defer { cancelled.cancel() }
+            let canceled = Task { try await Self.nativeCancelControl(engine, pcm: pcm, checks: checks) }
+            defer { canceled.cancel() }
             let deadline = Date().addingTimeInterval(30)
             while !checks.started, Date() < deadline { try await Task.sleep(for: .milliseconds(2)) }
             try #require(checks.started, "Wait for a native graph checkpoint, not just model initialization")
             try await Task.sleep(for: .milliseconds(20))
             let cancelStart = ProcessInfo.processInfo.systemUptime
-            cancelled.cancel()
-            await #expect(throws: PCMInferenceRefusal.cancelled) { try await cancelled.value }
+            canceled.cancel()
+            await #expect(throws: PCMInferenceRefusal.canceled) { try await canceled.value }
             let cancelWall = ProcessInfo.processInfo.systemUptime - cancelStart
             #expect(cancelWall < 30, "Native graph/command buffers must drain; cancellation is not instantaneous")
             heartbeat.cancel()
@@ -238,7 +238,7 @@ struct LocalWhisperTests {
     private static func nativeCancelControl(
         _ engine: LocalWhisper, pcm: [Float], checks: NativeInferenceStart
     ) async throws -> PCMTranscript {
-        try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCancelled: { checks.check() })
+        try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCanceled: { checks.check() })
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_ASR_FULL_CORPUS"] == "1"))
@@ -293,7 +293,7 @@ struct LocalWhisperTests {
         _ engine: LocalWhisper, pcm: [Float], barrier: NativeInferenceBarrier
     ) async throws -> PCMTranscript {
         let checks = NativeCancellationChecks(barrier: barrier)
-        return try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCancelled: { checks.check() })
+        return try engine.transcribe(pcm: pcm, sampleRate: 48_000, isCanceled: { checks.check() })
     }
 }
 

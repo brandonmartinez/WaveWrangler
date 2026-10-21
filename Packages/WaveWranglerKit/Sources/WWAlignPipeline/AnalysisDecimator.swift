@@ -9,8 +9,8 @@ import WWDecode
 /// * mono = the selected channel, or the arithmetic mean of every decoded channel for legacy analyses;
 /// * factor `D` = the largest divisor of the source rate `F` with `F / D >= minimumRate`, so the analysis
 ///   rate `F / D` is an exact integer and analysis sample `j` sits exactly at source frame `start + j·D`;
-/// * anti-alias low-pass: centred Blackman-windowed sinc, `8·D` taps each side, cutoff `0.45 / D` cycles per
-///   source sample, normalised to unit DC gain (`D == 1` is an exact passthrough);
+/// * anti-alias low-pass: centered Blackman-windowed sinc, `8·D` taps each side, cutoff `0.45 / D` cycles per
+///   source sample, normalized to unit DC gain (`D == 1` is an exact passthrough);
 /// * frames outside `[0, sourceFrames)` count as zero (the filter's edge context only).
 struct AnalysisDecimator {
     static let designVersion = 2
@@ -167,7 +167,7 @@ struct AnalysisDecimator {
             output.append(value)
             nextOutput += 1
         }
-        // Drop history no future output needs (amortised).
+        // Drop history no future output needs (amortized).
         let nextCenter = range.lowerBound + Int64(nextOutput) * Int64(factor)
         let keepFrom = Swift.max(historyStart, nextCenter - m)
         let drop = Swift.min(Int(keepFrom - historyStart), history.count)

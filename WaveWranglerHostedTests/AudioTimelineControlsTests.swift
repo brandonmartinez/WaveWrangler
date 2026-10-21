@@ -53,6 +53,86 @@ struct AudioTimelineControlsTests {
         #expect(image.height <= 180)
     }
 
+    @Test func nativeSliderUpdatesBindingsBoundsAndEditingCallbacks() async throws {
+        var firstValue = 0.25
+        var firstEdits: [Bool] = []
+        let host = HostedTimelineWindow(
+            width: 320, height: 60,
+            content: NativeTimelineSlider(
+                value: Binding(get: { firstValue }, set: { firstValue = $0 }),
+                range: 0...1, label: "Horizontal zoom", identifier: "test.zoom",
+                onEditingChanged: { firstEdits.append($0) }))
+        defer { host.close() }
+        try await host.settle()
+        let slider = try #require(
+            host.descendants.compactMap { $0 as? NativeTimelineSlider.Slider }.first)
+        #expect(slider.cell is NSSliderCell)
+        #expect(slider.accessibilityLabel() == "Horizontal zoom")
+        #expect(slider.accessibilityIdentifier() == "test.zoom")
+        #expect(slider.doubleValue == 0.25 && slider.minValue == 0 && slider.maxValue == 1)
+        slider.doubleValue = 0.75
+        #expect(slider.sendAction(slider.action, to: slider.target))
+        #expect(firstValue == 0.75 && firstEdits == [true, false])
+
+        var secondValue = 96.0
+        var secondEdits: [Bool] = []
+        host.view.rootView = NativeTimelineSlider(
+            value: Binding(get: { secondValue }, set: { secondValue = $0 }),
+            range: 64...220, label: "Track height", identifier: "test.height",
+            onEditingChanged: { secondEdits.append($0) })
+        try await host.settle()
+        #expect(host.descendants.contains { $0 === slider })
+        #expect(slider.accessibilityLabel() == "Track height")
+        #expect(slider.accessibilityIdentifier() == "test.height")
+        #expect(slider.doubleValue == 96 && slider.minValue == 64 && slider.maxValue == 220)
+        slider.doubleValue = 144
+        #expect(slider.sendAction(slider.action, to: slider.target))
+        #expect(secondValue == 144 && secondEdits == [true, false])
+        #expect(firstValue == 0.75 && firstEdits == [true, false])
+    }
+
+    @Test func nativeSliderRespectsItsDisabledParent() async throws {
+        let host = HostedTimelineWindow(
+            width: 320, height: 60,
+            content: NativeTimelineSlider(
+                value: .constant(0.5), range: 0...1,
+                label: "Horizontal zoom", identifier: "test.disabledZoom")
+                .disabled(true))
+        defer { host.close() }
+        try await host.settle()
+        let slider = try #require(host.descendants.compactMap { $0 as? NSSlider }.first)
+        #expect(!slider.isEnabled && !slider.acceptsFirstResponder)
+        #expect(slider.accessibilityLabel() == "Horizontal zoom")
+        #expect(slider.doubleValue == 0.5)
+    }
+
+    @Test func rulerAccessibilityNudgesRetainBoundedSeekAndResume() {
+        var sought: [Double] = []
+        var resumes = 0
+        var previewAllowed = true
+        func ruler(canNavigate: Bool) -> AudioTimelineRuler {
+            AudioTimelineRuler(
+                prefix: "test.timeline", headerWidth: 180, start: 0, duration: 40,
+                playhead: 5, bounds: 0...40, seekBounds: 0...6, maximumDuration: 40,
+                isPlaying: true, canNavigate: canNavigate,
+                previewSeek: { sought.append($0); return previewAllowed },
+                resumePlayback: { resumes += 1 }, previewPan: { _ in },
+                setWindow: { _, _ in }, commitWindow: {})
+        }
+        let enabled = ruler(canNavigate: true)
+        enabled.adjustPlayhead(.increment)
+        #expect(sought == [6] && resumes == 1)
+        enabled.adjustPlayhead(.decrement)
+        #expect(sought == [6, 3] && resumes == 2)
+        previewAllowed = false
+        enabled.adjustPlayhead(.increment)
+        #expect(sought == [6, 3, 6] && resumes == 2, "A refused seek does not resume playback")
+        let disabled = ruler(canNavigate: false)
+        disabled.adjustPlayhead(.increment)
+        disabled.adjustPlayhead(.decrement)
+        #expect(sought == [6, 3, 6] && resumes == 2)
+    }
+
     @Test func transportButtonsReceiveMouseInputWithoutActivatingTheDesktop() async throws {
         var calls = [0, 0, 0, 0]
         var sought: Double?
@@ -146,7 +226,7 @@ struct AudioTimelineControlsTests {
         let waveWidth = firstWord.width / 0.5 * model.windowDuration
         let waveX = firstWord.minX - 2 / model.windowDuration * waveWidth
         let waveTop = firstWord.minY - model.laneHeight - 2
-        #expect(abs(waveX - 210) < 2, "Words and audio use the same details column and time origin")
+        #expect(abs(waveX - 210) <= 2, "Native focus frames may extend two points beyond the shared timeline origin")
         #expect(
             wordFrames[1].minY - firstWord.minY - model.laneHeight < 72,
             "The inter-track space contains words, not empty card padding")
@@ -224,13 +304,25 @@ struct AudioTimelineControlsTests {
             abs($0.height - 21) < 0.75 && abs($0.width - fittedWordWidth) < 3 && $0.minY > waveTop
         }.sorted { $0.minY < $1.minY }
         try #require(fittedWords.count == 2, "Words remain time-positioned after zoom and Fit")
-        for word in fittedWords {
-            let top = word.minY - model.laneHeight - 2
-            let checkbox = try #require(
-                host.controlFrames.first {
-                    $0.minX < 32 && $0.width < 30 && $0.minY >= top && $0.maxY < top + 35
-                })
-            try await host.click(CGPoint(x: checkbox.midX, y: checkbox.midY))
+        let fittedWaveTop = try #require(fittedWords.first).minY - model.laneHeight - 2
+        let listeningFrames = host.controlFrames.filter {
+            $0.maxX < 90 && (18...30).contains($0.width) && $0.height <= 20
+                && $0.minY > fittedWaveTop
+        }.sorted { $0.midY < $1.midY }
+        var listeningRows: [[CGRect]] = []
+        for frame in listeningFrames {
+            if let index = listeningRows.firstIndex(where: { abs($0[0].midY - frame.midY) < 2 }) {
+                listeningRows[index].append(frame)
+            } else { listeningRows.append([frame]) }
+        }
+        for (index, wordFrame) in fittedWords.enumerated() {
+            let laneTop = wordFrame.minY - model.laneHeight - 2
+            let row = try #require(listeningRows.first {
+                $0.count == 2 && $0[0].midY > laneTop && $0[0].midY < wordFrame.minY
+            }, "Native Solo/Mute row in speaker lane \(index): \(listeningRows)")
+            let mute = try #require(row.max(by: { $0.maxX < $1.maxX }), "Mute follows Solo in each speaker header.")
+            try await host.click(CGPoint(x: mute.midX, y: mute.midY))
+            #expect(model.mutedSpeakers.count == index + 1)
         }
         #expect(model.mutedSpeakers == Set(transcripts.map(\.speaker)))
         #expect(
@@ -328,7 +420,7 @@ final class HostedTimelineWindow<Content: View> {
             guard !node.isHiddenOrHasHiddenAncestor else { return }
             if node !== view, node.subviews.isEmpty {
                 let frame = view.convert(node.bounds, from: node)
-                if (12...50).contains(frame.height), (0.5...300).contains(frame.width),
+                if (10...50).contains(frame.height), (0.5...300).contains(frame.width),
                     view.bounds.contains(frame), !frames.contains(frame)
                 {
                     frames.append(frame)

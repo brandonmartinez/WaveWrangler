@@ -61,7 +61,7 @@ extension FormatUpdatePolicy {
 /// What the file on disk shows after an update attempt, read back independently of the migration's own result.
 enum FormatUpdateOutcome: Equatable {
     /// A valid current-format revision of this show is on disk: adopt it (even if the attempt reported an error after
-    /// publishing, e.g. a failed acknowledgement).
+    /// publishing, e.g. a failed acknowledgment).
     case updated
     /// Exactly the original bytes are still on disk (D15: "The original is unchanged").
     case unchanged(detail: String)

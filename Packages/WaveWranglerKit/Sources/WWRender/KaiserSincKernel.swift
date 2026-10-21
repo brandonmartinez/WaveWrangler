@@ -5,6 +5,8 @@ import Foundation
 /// `h(v) = 2 fc sinc(2 fc v) * I0(beta * sqrt(1 - (v/H)^2)) / I0(beta)` for `|v| < H` (lower-rate samples),
 /// zero outside. Self-written from the textbook definitions (no third-party code).
 struct KaiserSincKernel: Sendable {
+    static let m2Candidate = KaiserSincKernel(RenderRecipe.m2Candidate.kernel)
+
     let halfWidth: Int
     let phasesPerSample: Int
     /// `h(j / phasesPerSample)` for `j = 0 ... halfWidth * phasesPerSample + 1` (the last two are 0).

@@ -47,7 +47,7 @@ struct PipelineRender75Tests {
             concurrency: 2, targetExcerptSeconds: 10, searchDeviationSeconds: 2, renderSegmentSeconds: 180
         )
         let fixture = try await PipelineFixture(groups(), configuration: configuration, label: label)
-        let report = try await fixture.analyse(preferredReference: "reference")
+        let report = try await fixture.analyze(preferredReference: "reference")
         #expect(report.sourceFailures.isEmpty && report.epochFailures.isEmpty)
         try await fixture.acceptAndActivate(report, [fixture.epochs[1]: truth])
         return (fixture, report)
@@ -208,7 +208,7 @@ struct PipelineRender75Tests {
         let report = try await render.value
         #expect(cancellationElapsed < .seconds(5), "shutdown took \(cancellationElapsed)")
         #expect(!report.isComplete)
-        #expect(report.groups.allSatisfy { $0.failure == .cancelled })
+        #expect(report.groups.allSatisfy { $0.failure == .canceled })
         let read = fixture.content.record(fixture.url(Self.targetNames[0]))
         #expect(read.furthestFrame < fixture.specs[Self.targetNames[0]]!.frames)
         await ConcurrencyTests.expectQuiescent(fixture)

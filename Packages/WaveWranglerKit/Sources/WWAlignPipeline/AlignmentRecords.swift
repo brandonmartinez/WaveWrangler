@@ -85,7 +85,7 @@ public struct SourceFacts: Sendable, Codable, Equatable {
 
 // MARK: - Analysis records (persisted payload of an analysis job)
 
-/// One side of an analysed pair.
+/// One side of an analyzed pair.
 public struct AnalysisParticipant: Sendable, Codable, Equatable {
     public var group: RecorderGroupID
     public var epoch: RecordingEpochID
@@ -95,7 +95,7 @@ public struct AnalysisParticipant: Sendable, Codable, Equatable {
     public var sourceRate: Int
     public var sourceFrames: Int64
     public var channelCount: Int
-    /// Source frames analysed (half-open).
+    /// Source frames analyzed (half-open).
     public var excerptStartFrame: Int64
     public var excerptEndFrame: Int64
     /// Decimated analysis rate (an exact divisor of `sourceRate`).
@@ -164,7 +164,7 @@ public struct AbstentionRecord: Sendable, Codable, Equatable {
     public var abstentionReason: AbstentionReason? { AbstentionReason(rawValue: reason) }
 }
 
-/// The full, versioned result of analysing one epoch against the timeline reference.
+/// The full, versioned result of analyzing one epoch against the timeline reference.
 public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
     public static let currentVersion = 4
 
@@ -284,7 +284,7 @@ public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
         )
     }
 
-    /// A record for an epoch the pipeline could not analyse for a structural reason it decided itself (no
+    /// A record for an epoch the pipeline could not analyze for a structural reason it decided itself (no
     /// estimator run), e.g. no possible overlap with the reference.
     init(recipe: String, reference: AnalysisParticipant, target: AnalysisParticipant, search: SearchRange, abstention: AbstentionReason, detail: String) {
         recordVersion = Self.currentVersion

@@ -118,7 +118,7 @@ struct EditCheckpointOfferTests {
         let offer = assess(rig, key, model, onDisk: r3.fingerprint)
         let candidate = try #require(offer.candidate)
         #expect(candidate.payload == newer && candidate.relation == .basedOnCurrent)
-        // After the newest is restored (or discarded), the older record is still offered, honestly labelled.
+        // After the newest is restored (or discarded), the older record is still offered, honestly labeled.
         let next = offer.excluding([candidate.url])
         #expect(next.candidate?.payload == older && next.candidate?.relation == .basedOnOtherRevision)
     }

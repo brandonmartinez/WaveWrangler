@@ -4,7 +4,7 @@ Stable ID: [WW-019 (#16)](https://github.com/brandonmartinez/WaveWrangler/issues
 Milestone: [M2 — Recording alignment](https://github.com/brandonmartinez/WaveWrangler/milestone/2).
 
 This document **records** the M2 scope, contracts, evidence, risks and authorization already granted
-by the user in [`docs/planning/kickoffs/m2.md`](../planning/kickoffs/m2.md) (pasted 2026-10-06). It is
+by the user in [`docs/planning/kickoffs/m2.md`](https://github.com/brandonmartinez/WaveWrangler/blob/792aa6687ab0b7a196d41fe13e54f7dd9e048392/docs/planning/kickoffs/m2.md) (pasted 2026-10-06). It is
 not a second generic approval, and it does not itself close out WW-024 (milestone acceptance). Where a
 number or scope item is drawn verbatim from the kickoff, this record cites the kickoff rather than
 paraphrasing it loosely.

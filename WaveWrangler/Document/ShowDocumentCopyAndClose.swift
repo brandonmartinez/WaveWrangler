@@ -8,7 +8,7 @@ extension ShowDocument: DocumentStatusActionHandling {
     func performSaveStatusAction(_ action: SaveStatusAction, from window: NSWindow?) -> Bool {
         switch action {
         case .saveACopyElsewhere:
-            // T28: whether the copy was saved or the panel cancelled, focus returns to the save-status item.
+            // T28: whether the copy was saved or the panel canceled, focus returns to the save-status item.
             saveACopyElsewhere { _ in ShowWindowRegistry.state(for: window)?.focusSaveStatus() }
             return true
         case .tryAgain where isAwaitingFormatUpdate:

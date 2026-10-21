@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Testing
+import WWTestSupport
 import WWCore
 @testable import WWDecode
 
@@ -302,19 +303,7 @@ struct DecodeFreezeTests {
     /// "100644 <name>\0<20-byte blob ID>" entries. Equals `git rev-parse HEAD:<dir>` for a clean checkout;
     /// any edited or untracked file changes it.
     static func gitTreeID(_ directory: URL) throws -> String {
-        let names = try FileManager.default.contentsOfDirectory(atPath: directory.path)
-            .sorted { Array($0.utf8).lexicographicallyPrecedes(Array($1.utf8)) }
-        var body = Data()
-        for name in names {
-            let content = try Data(contentsOf: directory.appendingPathComponent(name))
-            var blob = Data("blob \(content.count)\0".utf8)
-            blob.append(content)
-            body.append(Data("100644 \(name)\0".utf8))
-            body.append(contentsOf: Insecure.SHA1.hash(data: blob))
-        }
-        var tree = Data("tree \(body.count)\0".utf8)
-        tree.append(body)
-        return Insecure.SHA1.hash(data: tree).map { String(format: "%02x", $0) }.joined()
+        try SourceTreeBaseline.gitTreeID(directory)
     }
 
     @Test func gitTreeIdentityDetectsEditsAndUntrackedFiles() throws {
@@ -336,18 +325,17 @@ struct DecodeFreezeTests {
     /// The holdout must refuse a changed tree before generating even one case; the always-on test
     /// checks the same contract independently of whether the one-shot holdout is enabled.
     static func requireFrozenTrees() throws {
-        let trees = try #require(try Self.freeze()["pinnedTrees"] as? [String: String])
-        try #require(Set(trees.keys) == ["Sources/WWDecode", "Tests/WWDecodeTests"])
-        let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
-        for (path, frozen) in trees {
-            let actual = try Self.gitTreeID(package.appendingPathComponent(path))
-            try #require(actual == frozen, "\(path) is \(actual) but m3-freeze-decode-6 pins \(frozen): a pinned tree changed; record a new freeze revision before any holdout")
-        }
+        try SourceTreeBaseline.requireHistoricalTrees(for: Self.freezeURL)
     }
 
-    /// The decoder source and this test tree (generator, truth, gates, harness) are pinned by the freeze.
-    @Test func decoderAndHarnessTreesMatchTheFreezeRecord() throws {
-        try Self.requireFrozenTrees()
+    /// Maintenance pins do not extend the historical holdout's qualification.
+    @Test func decoderAndHarnessTreesMatchTheMaintenanceBaseline() throws {
+        let trees = try SourceTreeBaseline.currentTrees(for: Self.freezeURL)
+        try #require(Set(trees.keys) == ["Sources/WWDecode", "Tests/WWDecodeTests"])
+        let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
+        for (path, expected) in trees {
+            #expect(try Self.gitTreeID(package.appendingPathComponent(path)) == expected, "\(path)")
+        }
     }
 
     /// The M2 fixture registry lists this freeze, its record and its fixture with the frozen counts.

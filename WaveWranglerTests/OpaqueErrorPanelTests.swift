@@ -130,13 +130,13 @@ struct OpaqueErrorPanelTests {
 
     // MARK: - Routing (WaveWranglerApplication)
 
-    private static let cancelled = NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
+    private static let canceled = NSError(domain: NSCocoaErrorDomain, code: NSUserCancelledError)
 
     @Test func onScreenWindowPassesThroughToAppKitsSheet() {
         let visible = OpaqueErrorPresenter.WindowState(isVisible: true, isMiniaturized: false)
         #expect(OpaqueErrorPresenter.route(for: Self.refusal, window: visible) == .sheet)
         // AppKit's sheet path applies its own cancellation handling.
-        #expect(OpaqueErrorPresenter.route(for: Self.cancelled, window: visible) == .sheet)
+        #expect(OpaqueErrorPresenter.route(for: Self.canceled, window: visible) == .sheet)
     }
 
     @Test func noHiddenOrMiniaturizedWindowGetsTheOpaquePanel() {
@@ -152,9 +152,9 @@ struct OpaqueErrorPanelTests {
         }
     }
 
-    @Test func userCancelledIsNeverPresentedWithoutAWindow() {
-        #expect(OpaqueErrorPresenter.route(for: Self.cancelled, window: nil) == .suppressed)
-        #expect(OpaqueErrorPresenter.route(for: Self.cancelled, window: .init(isVisible: false, isMiniaturized: true)) == .suppressed)
+    @Test func userCanceledIsNeverPresentedWithoutAWindow() {
+        #expect(OpaqueErrorPresenter.route(for: Self.canceled, window: nil) == .suppressed)
+        #expect(OpaqueErrorPresenter.route(for: Self.canceled, window: .init(isVisible: false, isMiniaturized: true)) == .suppressed)
         #expect(OpaqueErrorPresenter.route(for: NSError(domain: "other", code: NSUserCancelledError), window: nil) == .opaquePanel)
     }
 
@@ -205,9 +205,9 @@ struct OpaqueErrorPanelTests {
         #expect(panel.messageField.stringValue.contains("newer"))
     }
 
-    /// Mini run 1 (f7729e1): the XCUITest audit flagged a decorative icon as an unlabelled image. Every image
+    /// Mini run 1 (f7729e1): the XCUITest audit flagged a decorative icon as an unlabeled image. Every image
     /// and every control in the panel must be described, so the panel has no images at all.
-    @Test func panelHasNoUnlabelledImagesOrControls() {
+    @Test func panelHasNoUnlabeledImagesOrControls() {
         for error in [Self.recoveryOffer(attempter: Attempter()) as Error, Self.refusal] {
             let panel = OpaqueErrorPanel(error: error)
             var views: [NSView] = []
@@ -225,7 +225,7 @@ struct OpaqueErrorPanelTests {
         appearance.performAsCurrentDrawingAppearance {
             let background = Self.rgba(OpaqueBackgroundView.fill)
             let text = Self.rgba(.labelColor)
-            #expect(background.a == 1, "the background colour is opaque")
+            #expect(background.a == 1, "the background color is opaque")
             ratio = Self.contrast(Self.composite(text, over: background), background)
         }
         #expect(ratio >= 4.5, "label text \(ratio):1 in \(name.rawValue)")

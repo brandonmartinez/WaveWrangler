@@ -14,8 +14,8 @@ struct GateEvaluation {
     /// Proposals on strata that must abstain (discontinuity, unrelated, silent, periodic, disconnected,
     /// cycleConflict).
     var proposalsWhereAbstentionRequired: [String] = []
-    /// Acoustic-delay epochs whose proposal is not labelled `acousticConsistentProposal`.
-    var acousticDelayMislabelled: [String] = []
+    /// Acoustic-delay epochs whose proposal is not labeled `acousticConsistentProposal`.
+    var acousticDelayMislabeled: [String] = []
     /// Acoustic-delay proposals that would pass the clock gates against clock truth. Reported, not a false
     /// accept (they are never promoted); a non-empty list means the negative no longer discriminates.
     var acousticDelayWithinClockGates: [String] = []
@@ -30,7 +30,7 @@ struct GateEvaluation {
     var positiveResidualsMs: [Double] = []
 
     /// False accepts on the finite negative set (gate: zero).
-    var falseAccepts: [String] { clockApprovedEpochs + proposalsWhereAbstentionRequired + acousticDelayMislabelled }
+    var falseAccepts: [String] { clockApprovedEpochs + proposalsWhereAbstentionRequired + acousticDelayMislabeled }
     var positiveResidualP95Ms: Double? { Percentile.nearestRank(positiveResidualsMs, 0.95) }
     var positiveResidualMaxMs: Double? { positiveResidualsMs.max() }
 
@@ -87,7 +87,7 @@ struct GateEvaluation {
                 acousticDelayEpochs += 1
                 guard s.proposed else { continue }
                 acousticDelayProposals += 1
-                if s.provenanceKind != .acousticConsistentProposal { acousticDelayMislabelled.append(label) }
+                if s.provenanceKind != .acousticConsistentProposal { acousticDelayMislabeled.append(label) }
                 if Self.withinClockGates(s.clockResidualsMs) { acousticDelayWithinClockGates.append(label) }
             case .clockTruthWithinGates:
                 positiveEpochs += 1
@@ -113,7 +113,7 @@ struct GateEvaluation {
         return """
         gate: \(passed ? "PASS" : "FAIL")\(failures.isEmpty ? "" : " -- " + failures.joined(separator: "; "))
         positives: \(positiveProposals)/\(positiveEpochs) epochs proposed (an abstaining positive fails the window gate); pooled clock residual p95 \(ms(positiveResidualP95Ms)) ms, max \(ms(positiveResidualMaxMs)) ms over \(positiveResidualsMs.count) grid points
-        false accepts: \(falseAccepts.count) (clockApproved \(clockApprovedEpochs.count), proposals where abstention required \(proposalsWhereAbstentionRequired.count), acoustic-delay mislabelled \(acousticDelayMislabelled.count))
+        false accepts: \(falseAccepts.count) (clockApproved \(clockApprovedEpochs.count), proposals where abstention required \(proposalsWhereAbstentionRequired.count), acoustic-delay mislabeled \(acousticDelayMislabeled.count))
         acoustic-delay negatives: \(acousticDelayProposals)/\(acousticDelayEpochs) emitted as acousticConsistentProposal only; \(acousticDelayWithinClockGates.count) within clock gates if promoted (never promoted)
         """
     }

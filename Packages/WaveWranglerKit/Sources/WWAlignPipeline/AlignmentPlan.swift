@@ -61,8 +61,8 @@ public enum NotAttemptedReason: Sendable, Hashable {
 
 public enum PlannedDisposition: Sendable, Hashable {
     case reference
-    /// Analyse `target` (the epoch's first eligible source) against the reference.
-    case analyse(target: SourceID)
+    /// Analyze `target` (the epoch's first eligible source) against the reference.
+    case analyze(target: SourceID)
     case notAttempted(NotAttemptedReason)
 }
 
@@ -76,7 +76,7 @@ public struct PlannedEpoch: Sendable, Hashable {
     public let disposition: PlannedDisposition
 }
 
-/// Which epochs are analysed against which reference, decided from metadata only.
+/// Which epochs are analyzed against which reference, decided from metadata only.
 public struct AlignmentPlan: Sendable, Hashable {
     public let episode: EpisodeID
     public let reference: AlignmentReferenceChoice?
@@ -288,7 +288,7 @@ enum AlignmentPlanner {
                 } else if reference?.group == group.id {
                     disposition = .notAttempted(.sameRecorderAsReference)
                 } else {
-                    disposition = .analyse(target: eligible[0])
+                    disposition = .analyze(target: eligible[0])
                 }
                 epochs.append(PlannedEpoch(group: group.id, epoch: epoch.id, sources: sources, eligibleSources: eligible, disposition: disposition))
             }

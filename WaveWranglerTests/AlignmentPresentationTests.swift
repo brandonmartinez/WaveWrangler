@@ -92,7 +92,7 @@ struct AlignmentPresentationTests {
 
     @Test func everyDecodeFailureIsFullyBlocking() {
         let failures: [DecodeFailure] = [
-            .cancelled, .notFound, .permissionDenied, .notARegularFile, .notOpenedReadOnly,
+            .canceled, .notFound, .permissionDenied, .notARegularFile, .notOpenedReadOnly,
             .notMaterialized, .residencyUnknown, .metadataUnavailable(nil), .emptyFile,
             .unreadableContainer(status: -1), .unsupported(.channelCount(99)), .missingAudioData,
             .truncated(declaredBytes: 10, availableBytes: 2),

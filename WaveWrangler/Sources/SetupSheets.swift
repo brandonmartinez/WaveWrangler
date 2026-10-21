@@ -246,8 +246,8 @@ struct RelinkSheet: View {
             Text("WaveWrangler never moves, renames, copies over or changes either file.")
                 .setupFont(.caption1)
 
-            if comparison.requiresAcknowledgement && comparison.canConfirm {
-                Toggle(RelinkComparison.acknowledgementTitle, isOn: $acknowledged)
+            if comparison.requiresAcknowledgment && comparison.canConfirm {
+                Toggle(RelinkComparison.acknowledgmentTitle, isOn: $acknowledged)
                     .toggleStyle(.checkbox)
                     .checkboxTint()
                     .setupFont(.body)
@@ -255,7 +255,7 @@ struct RelinkSheet: View {
             }
 
             HStack {
-                if comparison.requiresAcknowledgement {
+                if comparison.requiresAcknowledgment {
                     Button("Choose Another…") {
                         model.sheet = nil
                         model.beginRelink(context.sourceID, mode: context.mode)
@@ -264,7 +264,7 @@ struct RelinkSheet: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { model.sheet = nil; dismiss() }
                     .keyboardShortcut(.cancelAction)
-                if comparison.requiresAcknowledgement && comparison.canConfirm {
+                if comparison.requiresAcknowledgment && comparison.canConfirm {
                     // No default button when details differ or are unknown (states §4 step 3).
                     Button(comparison.confirmTitle) { model.confirmRelink(context) }
                         .disabled(!acknowledged)

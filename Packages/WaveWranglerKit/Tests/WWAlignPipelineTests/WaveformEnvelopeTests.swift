@@ -91,7 +91,9 @@ struct WaveformEnvelopeTests {
         let envelope = try await WaveformWindowReader.readOverview(
             sourceURL: url, source: source, matching: witness, decoder: decoder
         )
-        #expect(envelope.bins.count <= WaveformWindowReader.maximumBins)
+        #expect(envelope.bins.count <= WaveformWindowReader.maximumOverviewBins)
+        #expect(envelope.bins.count > WaveformWindowReader.maximumBins,
+                "The witnessed whole-source read must use the higher-resolution overview budget")
         #expect(envelope.bins.first?.firstFrame == 0)
         #expect(envelope.bins.last?.endFrame == Int64(frames))
         #expect(envelope.bins.first?.maximum == 0.75)
@@ -115,7 +117,7 @@ struct WaveformEnvelopeTests {
             }
             Issue.record("Cancellation must not publish a partial overview")
         } catch {
-            #expect(error is CancellationError || error as? DecodeFailure == .cancelled)
+            #expect(error is CancellationError || error as? DecodeFailure == .canceled)
         }
         let first = RecordingEpochID()
         let restarted = RecordingEpochID()
@@ -151,7 +153,7 @@ struct WaveformEnvelopeTests {
                 ), groupMap: shiftedMap
             )
         }
-        #expect(covered.bins.count <= WaveformWindowReader.maximumBins)
+        #expect(covered.bins.count <= WaveformWindowReader.maximumOverviewBins)
         #expect(covered.bins.allSatisfy { $0.endFrame <= 32_000 || $0.firstFrame >= Int64(frames - 32_000) })
         #expect(!covered.bins.contains { $0.minimum == -0.5 })
         #expect(covered.bins.first?.maximum == 0.75 && covered.bins.last?.maximum == 0.25)
@@ -206,19 +208,19 @@ struct WaveformEnvelopeTests {
             startSeconds: 4, durationSeconds: 1, groupMap: map
         )
         #expect(empty.bins.isEmpty)
-        let cancelled = Task {
+        let canceled = Task {
             try Task.checkCancellation()
             return try await WaveformWindowReader.readWindow(
                 sourceURL: url, source: source, matching: witness, decoder: decoder,
                 startSeconds: 0, durationSeconds: 1
             )
         }
-        cancelled.cancel()
+        canceled.cancel()
         do {
-            _ = try await cancelled.value
-            Issue.record("A cancelled read must not publish an envelope")
+            _ = try await canceled.value
+            Issue.record("A canceled read must not publish an envelope")
         } catch {
-            #expect(error is CancellationError || (error as? DecodeFailure) == .cancelled)
+            #expect(error is CancellationError || (error as? DecodeFailure) == .canceled)
         }
         try FileManager.default.moveItem(at: url, to: folder.appendingPathComponent("saved.wav"))
         try data.write(to: url)

@@ -26,7 +26,7 @@ func sleepUntil(epochMs target: Int64?) {
 
 /// m1-freeze-3: evidence names hosts only by pseudonym ("host A" / "host B", from WW_HOST_PSEUDONYM); no hostname,
 /// computer name or account identifier is recorded.
-func hostLabel() -> String { ProcessInfo.processInfo.environment["WW_HOST_PSEUDONYM"].map { "host \($0)" } ?? "unlabelled host" }
+func hostLabel() -> String { ProcessInfo.processInfo.environment["WW_HOST_PSEUDONYM"].map { "host \($0)" } ?? "unlabeled host" }
 
 /// An NSFileVersion's saving computer, pseudonymized: "this host" or "other host" (never the computer name).
 func savingComputerLabel(_ name: String?) -> String {

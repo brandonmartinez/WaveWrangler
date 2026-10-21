@@ -94,12 +94,12 @@ struct TranscriptionResourceTests {
         let holder = Task { try await pool.withAdmission(resources: cost) { try await Task.sleep(for: .seconds(30)) } }
         defer { holder.cancel() }
         try await wait { await pool.snapshot.active == 1 }
-        let cancelled = Task {
-            try await pool.withAdmission(resources: cost) { Issue.record("A cancelled waiter loaded its model") }
+        let canceled = Task {
+            try await pool.withAdmission(resources: cost) { Issue.record("A canceled waiter loaded its model") }
         }
         try await wait { await pool.snapshot.waiting == 1 }
-        cancelled.cancel()
-        await #expect(throws: CancellationError.self) { try await cancelled.value }
+        canceled.cancel()
+        await #expect(throws: CancellationError.self) { try await canceled.value }
         #expect(await pool.snapshot.reservedBytes == 10)
         holder.cancel()
         await #expect(throws: CancellationError.self) { try await holder.value }

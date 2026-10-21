@@ -48,7 +48,34 @@ private actor OpenedPublicationStore {
 
 @Suite("Verified document reconciliation")
 struct VerifiedDocumentReconcilerTests {
-    @Test func cancelledOpenRetriesTheSamePublication() async throws {
+    @Test func sourceResolutionFailureDoesNotPublishAndCanBeRetried() async throws {
+        enum ReadFailure: Error { case unreadableAccess }
+        let reconciler = VerifiedDocumentReconciler()
+        let log = PublicationLog()
+        await #expect(throws: ReadFailure.self) {
+            try await reconciler.reconcile(
+                resolve: { throw ReadFailure.unreadableAccess },
+                publish: { await log.record(1) }
+            )
+        }
+        #expect(await log.values().isEmpty)
+        #expect(try await reconciler.reconcile(resolve: {}, publish: { await log.record(2) }))
+        #expect(await log.values() == [2])
+    }
+
+    @Test func sourceResolutionCancellationIsNotAnAccessFailure() async throws {
+        let reconciler = VerifiedDocumentReconciler()
+        let log = PublicationLog()
+        await #expect(throws: CancellationError.self) {
+            try await reconciler.reconcile(
+                resolve: { throw CancellationError() },
+                publish: { await log.record(1) }
+            )
+        }
+        #expect(await log.values().isEmpty)
+    }
+
+    @Test func canceledOpenRetriesTheSamePublication() async throws {
         let episode = EpisodeID()
         let document = ObjectIdentifier(NSObject())
         let stamp = PublicationStamp(revision: 1, publicationID: UUID(), checksum: "sha256:first")
@@ -59,7 +86,7 @@ struct VerifiedDocumentReconcilerTests {
         let log = PublicationLog()
 
         #expect(await store.begin(episode, document, stamp))
-        let cancelled = Task {
+        let canceled = Task {
             try await reconciler.reconcile(
                 resolve: {
                     await entered.open()
@@ -69,11 +96,11 @@ struct VerifiedDocumentReconcilerTests {
             )
         }
         await entered.wait()
-        cancelled.cancel()
+        canceled.cancel()
         await release.open()
         do {
-            _ = try await cancelled.value
-            Issue.record("cancelled open unexpectedly published")
+            _ = try await canceled.value
+            Issue.record("canceled open unexpectedly published")
         } catch is CancellationError {
             await store.retry(episode, document, stamp)
         }
@@ -139,7 +166,7 @@ struct VerifiedDocumentReconcilerTests {
 
     @Test func olderSourceResolutionCannotPublishAfterANewerDocument() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "reconcile-race")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let first = try await fixture.acceptAndActivate(
             report, [fixture.epochs[1]: ConcurrencyTests.truth]
         )
@@ -180,7 +207,7 @@ struct VerifiedDocumentReconcilerTests {
 
     @Test func verifiedSaveSupersedesSuspendedAdoptionWithoutRevivingDependents() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "reconcile-save-race")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let first = try await fixture.acceptAndActivate(
             report, [fixture.epochs[1]: ConcurrencyTests.truth]
         )
@@ -221,7 +248,7 @@ struct VerifiedDocumentReconcilerTests {
 
     @Test func undoAndRedoSupersedeSuspendedAdoptionsWithoutRevivingDependents() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "reconcile-history-race")
-        let report = try await fixture.analyse(preferredReference: "ref")
+        let report = try await fixture.analyze(preferredReference: "ref")
         let first = try await fixture.acceptAndActivate(
             report, [fixture.epochs[1]: ConcurrencyTests.truth]
         )
@@ -291,12 +318,12 @@ struct VerifiedDocumentReconcilerTests {
         #expect(await fixture.coordinator.readyPayload(for: undoDependent.0) == nil)
     }
 
-    @Test func cancelledReconciliationCannotLeakItsPublication() async throws {
+    @Test func canceledReconciliationCannotLeakItsPublication() async throws {
         let reconciler = VerifiedDocumentReconciler()
         let entered = ReconciliationGate()
         let release = ReconciliationGate()
         let log = PublicationLog()
-        let cancelled = Task {
+        let canceled = Task {
             try await reconciler.reconcile(
                 resolve: {
                     await entered.open()
@@ -308,11 +335,11 @@ struct VerifiedDocumentReconcilerTests {
             )
         }
         await entered.wait()
-        cancelled.cancel()
+        canceled.cancel()
         await release.open()
         do {
-            _ = try await cancelled.value
-            Issue.record("cancelled reconciliation unexpectedly completed")
+            _ = try await canceled.value
+            Issue.record("canceled reconciliation unexpectedly completed")
         } catch is CancellationError {
         } catch {
             Issue.record("unexpected cancellation error: \(error)")

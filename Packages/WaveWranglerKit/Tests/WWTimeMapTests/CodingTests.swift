@@ -54,7 +54,7 @@ struct CodingTests {
         let decoded = try decodeTimeline(encoded)
         #expect(decoded == map)
         #expect(try json(decoded) == encoded)
-        // Behaviour survives too (compiled state is rebuilt by validation, not trusted from the file).
+        // Behavior survives too (compiled state is rebuilt by validation, not trusted from the file).
         for group in map.groups {
             for id in group.occurrenceIDs {
                 for frame: Int64 in [0, 22050, 44099, 50000, 100_000, 143_999] {
@@ -194,7 +194,7 @@ struct CodingTests {
         #expect(throws: TimeMapError.invalidNominalRate(0)) { try JSONDecoder().decode(NominalRate.self, from: Data("0".utf8)) }
     }
 
-    /// A persisted acoustic proposal cannot be relabelled as a clock approval: its payload and its
+    /// A persisted acoustic proposal cannot be relabeled as a clock approval: its payload and its
     /// measurements have different, strictly checked shapes.
     @Test func acousticProposalCannotBeDecodedAsClockApproval() throws {
         let map = try richTimeline()
@@ -218,7 +218,7 @@ struct CodingTests {
         let measurementsOnly = try relabel { provenance in
             let proposal = provenance.removeValue(forKey: "proposal") as! [String: Any]
             provenance["kind"] = "clockApproved"
-            provenance["clockApproval"] = ["evaluator": "relabelled", "reference": ["description": "acoustic events"], "measurements": proposal["measurements"]!]
+            provenance["clockApproval"] = ["evaluator": "relabeled", "reference": ["description": "acoustic events"], "measurements": proposal["measurements"]!]
         }
         #expect(throws: TimeMapDecodingError.unknownKeys(type: "ClockGateMeasurements", keys: ["acousticResidualMaxMilliseconds", "acousticResidualP95Milliseconds"])) { try decodeTimeline(measurementsOnly) }
     }

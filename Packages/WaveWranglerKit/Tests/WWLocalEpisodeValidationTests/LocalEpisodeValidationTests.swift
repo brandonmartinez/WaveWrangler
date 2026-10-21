@@ -530,7 +530,7 @@ private struct Harness {
                 let flags = epoch.flags.isEmpty ? "none" : epoch.flags.map(\.rawValue).sorted().joined(separator: ",")
                 switch epoch.outcome {
                 case .acousticConsistentProposal(let p):
-                    log("\(job.name): PROPOSAL (acoustic-consistent, not clock-approved) offset \(f(p.offsetAtCenterSeconds * 1000, 3)) ms at centre, drift \(f(p.ppm, 3)) ppm, residual p95 \(f(p.acousticResidualP95Milliseconds, 3)) ms, max \(f(p.acousticResidualMaxMilliseconds, 3)) ms | \(coverage) | \(scores) | flags \(flags) | \(search) | time map: \(outcome.timeMap) | \(f(outcome.seconds, 1)) s")
+                    log("\(job.name): PROPOSAL (acoustic-consistent, not clock-approved) offset \(f(p.offsetAtCenterSeconds * 1000, 3)) ms at center, drift \(f(p.ppm, 3)) ppm, residual p95 \(f(p.acousticResidualP95Milliseconds, 3)) ms, max \(f(p.acousticResidualMaxMilliseconds, 3)) ms | \(coverage) | \(scores) | flags \(flags) | \(search) | time map: \(outcome.timeMap) | \(f(outcome.seconds, 1)) s")
                     if job.sameClock, abs(p.offsetAtCenterSeconds) > 0.020 {
                         findings.append("estimator anomaly: \(job.name) proposed \(f(p.offsetAtCenterSeconds * 1000, 1)) ms within one recorder (beyond a 20 ms acoustic path)")
                     }
@@ -656,7 +656,7 @@ private struct Harness {
         log("render \(group.label): time-map round trip \(exact)/\(total) landmark frames exact")
         if exact != total { findings.append("time-map round trip failed \(total - exact)x") }
 
-        // Interchannel skew: per 4096-frame block, each active channel's measured source position (normalised
+        // Interchannel skew: per 4096-frame block, each active channel's measured source position (normalized
         // cross-correlation peak, parabolic refinement) minus the exact mapped position; skew = max - min.
         let block = 4096
         var worstSkew = 0.0
@@ -686,7 +686,7 @@ private struct Harness {
         if verdict != "within" { findings.append("render skew \(verdict) (\(f(worstSkew, 3)) frames)") }
     }
 
-    /// Fractional source position whose content best matches the rendered block: normalised cross-correlation
+    /// Fractional source position whose content best matches the rendered block: normalized cross-correlation
     /// over integer lags near the expected position, refined by a parabola. Nil when the block is quiet or the
     /// match is weak.
     static func measurePosition(_ out: [Float], source: [Float], sourceStart: Int64, near expected: Double) -> Double? {
@@ -832,7 +832,7 @@ private struct CopySliceSink: DecodedAudioSink {
 }
 
 /// Streaming zero-phase FIR decimator (Blackman-windowed sinc, 16·D + 1 taps, cutoff 0.4/D cycles per input
-/// sample). Output sample j is centred on input sample j·D, so every source keeps its time origin.
+/// sample). Output sample j is centered on input sample j·D, so every source keeps its time origin.
 private struct Decimator {
     let factor: Int
     let taps: [Float]
@@ -1122,7 +1122,7 @@ private extension Harness {
             configuration: AlignmentPipelineConfiguration(concurrency: 1, targetExcerptSeconds: 600,
                 searchDeviationSeconds: 120, renderSegmentSeconds: 6)
         )
-        let fullAnalysis = try #require(await originalPipeline.analyse(model: model, episode: episodeID,
+        let fullAnalysis = try #require(await originalPipeline.analyze(model: model, episode: episodeID,
             sources: originalSources, authorizations: authorizations, preferredReference: reference))
         guard fullAnalysis.plan.epochs.count == groups.count, fullAnalysis.sourceFailures.isEmpty,
               fullAnalysis.epochFailures.isEmpty, fullAnalysis.facts.count == decoded.count else {
@@ -1137,7 +1137,7 @@ private extension Harness {
             authorizations: authorizations, preferredReference: reference))
         guard plan.epochs.count == groups.count, plan.ineligible.isEmpty else { throw HarnessError("manual plan incomplete") }
         log("manual plan: \(groups.count) groups, \(decoded.count) eligible sources; all channels copied from gateway-decoded 36 s excerpts")
-        let analysis = try #require(await pipeline.analyse(model: model, episode: episodeID, sources: sources,
+        let analysis = try #require(await pipeline.analyze(model: model, episode: episodeID, sources: sources,
             authorizations: authorizations, preferredReference: reference))
         guard analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty, analysis.facts.count == decoded.count else {
             throw HarnessError("manual analysis probe or epoch failed")
@@ -1167,19 +1167,19 @@ private extension Harness {
         }
         log("manual acceptance: U1 reference, 3 U4 numeric manual epochs, revision \(accepted.revision.revision), one map digest; no clock approval")
 
-        let cancelledStarted = Date()
+        let canceledStarted = Date()
         let renderModel = model
         let renderSources = sources
         let renderAuthorizations = authorizations
-        let cancelledTask = Task.detached(priority: .utility) { [pipeline, renderModel, renderSources, renderAuthorizations, episodeID] in
+        let canceledTask = Task.detached(priority: .utility) { [pipeline, renderModel, renderSources, renderAuthorizations, episodeID] in
             try await pipeline.renderAlignedAssets(model: renderModel, episode: episodeID,
                 sources: renderSources, authorizations: renderAuthorizations)
         }
         try await Task.sleep(for: .milliseconds(200))
-        cancelledTask.cancel()
-        let cancelled = try await cancelledTask.value
-        let cancellationSeconds = Date().timeIntervalSince(cancelledStarted)
-        guard !cancelled.isComplete, cancellationSeconds < 5 else {
+        canceledTask.cancel()
+        let canceled = try await canceledTask.value
+        let cancellationSeconds = Date().timeIntervalSince(canceledStarted)
+        guard !canceled.isComplete, cancellationSeconds < 5 else {
             throw HarnessError("active render cancellation did not stop within 5 s")
         }
         log("active render cancellation: incomplete, returned in \(f(cancellationSeconds, 3)) s")
@@ -1360,7 +1360,7 @@ private extension Harness {
             let baseline = try PhaseMemorySampler.now()
             let sampler = PhaseMemorySampler(baseline: baseline)
             let started = Date()
-            let analysis = await pipeline.analyse(model: model, episode: episodeID,
+            let analysis = await pipeline.analyze(model: model, episode: episodeID,
                 sources: sources, authorizations: authorizations, preferredReference: reference)
             let peak = try sampler.stop()
             log("memory original: idle \(baseline.megabytes); peak \(peak.megabytes); elapsed \(f(Date().timeIntervalSince(started), 2)) s")
@@ -1377,7 +1377,7 @@ private extension Harness {
             guard rates.count == 12, channelCounts.reduce(0, +) == 19 else {
                 throw HarnessError("short-copy source layout changed")
             }
-            let analysis = try #require(await pipeline.analyse(model: model, episode: episodeID,
+            let analysis = try #require(await pipeline.analyze(model: model, episode: episodeID,
                 sources: sources, authorizations: authorizations, preferredReference: reference))
             guard analysis.sourceFailures.isEmpty, analysis.epochFailures.isEmpty,
                   analysis.facts.count == 12 else { throw HarnessError("copy pipeline analysis incomplete") }

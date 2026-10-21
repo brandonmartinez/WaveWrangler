@@ -43,13 +43,13 @@ public enum TransferStatus: Hashable, Sendable {
     /// `fraction` is only ever a value the system reported; `nil` means progress unknown.
     case downloading(fraction: Double?)
     case paused
-    case cancelled
+    case canceled
     case failed(reason: String)
     case noConnection
     case downloadsOff
     /// The file is in a cloud location WaveWrangler can't request downloads from (no generic classifier).
     case unsupportedLocation
-    /// Downloads were turned off while the provider was mid-transfer and couldn't be cancelled.
+    /// Downloads were turned off while the provider was mid-transfer and couldn't be canceled.
     case providerMayFinish
 }
 
@@ -231,7 +231,7 @@ extension TransferStatus {
             .init(.transfer, "Downloading — progress unknown", .indeterminate, summary: "Downloading…", spoken: "downloading, progress unknown", priority: 4, tint: .secondary)
         case .paused:
             .init(.transfer, "Download paused", .symbol("pause.circle"), summary: "Paused", spoken: "download paused", priority: 4, tint: .secondary)
-        case .cancelled:
+        case .canceled:
             .init(.transfer, "Download canceled", .symbol("xmark.circle"), summary: "Canceled", spoken: "download canceled", priority: 4, tint: .secondary)
         case let .failed(reason):
             .init(.transfer, "Download failed: \(reason)", .symbol("exclamationmark.circle"), summary: "Download failed", spoken: "download failed", priority: 4, attention: true, tint: .failed)
@@ -356,7 +356,7 @@ extension SourceStatusSnapshot {
         let ordered = [access.presentation, location.presentation, identity.presentation, transfer.presentation, residency.presentation]
         let issues = ordered.filter { (1...5).contains($0.priority ?? 0) }
         let checking = ordered.filter { $0.priority == 6 }
-        let unprioritised = ordered.filter { $0.priority == nil && $0.spokenIssue != nil }
+        let unprioritized = ordered.filter { $0.priority == nil && $0.spokenIssue != nil }
 
         let lead: (text: String, indicator: DimensionPresentation.Indicator, tint: StatusTint)
         if let first = issues.first, let text = first.summaryText {
@@ -371,7 +371,7 @@ extension SourceStatusSnapshot {
         if issues.isEmpty && checking.isEmpty { spoken.append("Ready") }
         spoken += issues.compactMap(\.spokenIssue)
         spoken += checking.compactMap(\.spokenIssue)
-        spoken += unprioritised.compactMap(\.spokenIssue)
+        spoken += unprioritized.compactMap(\.spokenIssue)
         if let first = spoken.first {
             spoken[0] = first.prefix(1).uppercased() + first.dropFirst()
         }
@@ -401,7 +401,7 @@ public enum SourceStatusCatalog {
     public static let allLocations: [LocationStatus] = [.checking, .known, .moved(newFolder: "Archive"), .moved(newFolder: nil), .missing(sameNamedFileAtOriginalLocation: false), .missing(sameNamedFileAtOriginalLocation: true), .unknown(reason: "the drive isn't connected")]
     public static let allAccess: [AccessStatus] = [.checking, .granted, .refreshing, .needsPermission, .denied, .unknown(reason: "macOS didn't say"), .notChecked(reason: "the file wasn't found")]
     public static let allResidency: [ResidencyStatus] = [.checking, .local, .cloudOnly, .unknown]
-    public static let allTransfers: [TransferStatus] = [.idle, .queued, .downloading(fraction: 0.42), .downloading(fraction: nil), .paused, .cancelled, .failed(reason: "the cloud service stopped responding"), .noConnection, .downloadsOff, .unsupportedLocation, .providerMayFinish]
+    public static let allTransfers: [TransferStatus] = [.idle, .queued, .downloading(fraction: 0.42), .downloading(fraction: nil), .paused, .canceled, .failed(reason: "the cloud service stopped responding"), .noConnection, .downloadsOff, .unsupportedLocation, .providerMayFinish]
     public static let allIdentity: [IdentityStatus] = [.checking, .notChecked, .confirmationNeeded, .detailsMatch, .changed(differences: "size differs", acceptedByUser: false), .changed(differences: "size differs", acceptedByUser: true), .mismatch(differences: "size and created date differ")]
 
     public static var allSnapshots: [SourceStatusSnapshot] {

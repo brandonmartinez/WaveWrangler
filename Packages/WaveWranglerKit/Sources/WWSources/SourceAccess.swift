@@ -14,7 +14,7 @@ import WWCore
 /// Product default is ON; users may turn it OFF. The persisted preference lives in the app
 /// (`WWDownloadSourcesAutomatically`, Bool, missing key = ON); WWSources only receives the value.
 /// OFF/metadata-only paths make zero content, hash, header, preview, decode or download requests. An
-/// explicit per-item "Make Available" request from the user is still honored while OFF and is labelled
+/// explicit per-item "Make Available" request from the user is still honored while OFF and is labeled
 /// as a content transfer.
 public enum SourceAvailabilitySetting: String, Sendable, Codable, Equatable, CaseIterable {
     case on
@@ -125,13 +125,18 @@ public enum TransferState: Sendable, Codable, Equatable {
     case inProgress(fractionCompleted: Knowledge<Double>)
     /// The app stopped requesting/observing. Originals are never evicted or modified; the provider may
     /// still finish on its own.
-    case cancelled
+    case canceled
     case failed(SourceErrorDescriptor)
     /// The provider reported a connectivity/unavailable error, or no progress was reported before the
     /// stall heuristic fired. The app cannot tell offline from a silent provider, so it says so. After a
     /// stall (`nil` error) the app keeps observing with backoff and moves to `idle` if the item becomes
     /// local; Retry issues a fresh request.
     case offlineOrUnknown(SourceErrorDescriptor?)
+
+    private enum CodingKeys: String, CodingKey {
+        case unknown, idle, notRequested, requested, inProgress, failed, offlineOrUnknown
+        case canceled = "cancelled"
+    }
 
     public var isActive: Bool {
         switch self {
@@ -253,7 +258,7 @@ public struct AvailabilityObservation: Sendable, Codable, Equatable {
         case .unverified(.insufficientEvidence), .matchesRecorded, .unknown: break
         }
         switch transfer {
-        case .failed, .offlineOrUnknown, .cancelled: result.append(.retryTransfer)
+        case .failed, .offlineOrUnknown, .canceled: result.append(.retryTransfer)
         case .notRequested(.availabilityOff): result.append(.makeAvailable)
         default: break
         }

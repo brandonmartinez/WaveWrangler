@@ -217,7 +217,7 @@ struct EpisodeSetupOperationTests {
         let down = try f.model.movingSource(f.tr1.id, .down, in: f.episode.id)
         #expect(try f.ep(down).sources.map(\.id) == [f.tr2.id, f.tr1.id, f.loose.id])
         let edge = try f.model.movingSource(f.tr2.id, .down, in: f.episode.id)
-        #expect(edge == f.model, "no neighbour in the same group")
+        #expect(edge == f.model, "no neighbor in the same group")
     }
 
     @Test func importAppliesOnlyConfirmedNamesAndReusesExistingOnes() throws {

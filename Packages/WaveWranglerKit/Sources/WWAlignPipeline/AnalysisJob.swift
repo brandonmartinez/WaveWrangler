@@ -146,7 +146,7 @@ struct AnalysisUnit: Sendable {
 
     var key: DerivedAssetKey { key(peers: []) }
 
-    /// Centred target excerpt, source frames.
+    /// Centered target excerpt, source frames.
     var targetRange: Range<Int64> {
         let n = targetFacts.frameCount
         let length = Swift.min(n, Int64(configuration.targetExcerptSeconds) * Int64(targetFacts.sampleRate))

@@ -3,6 +3,7 @@ import Foundation
 /// Why a pure domain operation refused to produce a new value.
 public enum DomainError: Error, Sendable, Equatable {
     case invalidCleanup
+    case invalidWorkspace(String)
     case emptyTitle
     case duplicateEpisode(EpisodeID)
     case duplicateSpeaker(SpeakerID)
@@ -48,11 +49,17 @@ extension ShowDocumentModel {
         return copy
     }
 
-    public func addingEpisode(_ episode: Episode) throws(DomainError) -> ShowDocumentModel {
+    public func addingEpisode(_ episode: Episode, inheritingShowHosts: Bool = true) throws(DomainError) -> ShowDocumentModel {
         guard self.episode(episode.id) == nil else { throw .duplicateEpisode(episode.id) }
         guard !episode.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw .emptyTitle }
         var copy = self
-        copy.episodes.append(episode)
+        var newEpisode = episode
+        if inheritingShowHosts {
+            for host in show.profile?.hosts ?? [] where newEpisode.assignment(for: host) == nil {
+                newEpisode.speakerAssignments.append(SpeakerAssignment(speakerID: host))
+            }
+        }
+        copy.episodes.append(newEpisode)
         return copy
     }
 

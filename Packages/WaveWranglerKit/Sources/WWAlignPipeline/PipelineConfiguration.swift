@@ -5,7 +5,7 @@ import WWDecode
 // decoded sources into acoustic-consistent PROPOSALS (or abstentions), turns a person's decision into a
 // versioned, accepted EpisodeAlignment map, and streams aligned per-channel derived assets for that map.
 //
-// Hard rules (docs/m2/ww-019-m2-contracts.md M2-C1..C7, .squad/decisions.md):
+// Hard rules (docs/m2/ww-019-m2-contracts.md M2-C1..C7):
 // * Content is read only through the WWDecode gateway (`SourceDecoder.withDecodingCursor`), only for a
 //   source with an explicit `ContentWorkAuthorization` and availability ON. Every other path is
 //   metadata-only and opens nothing.
@@ -30,7 +30,7 @@ public struct AlignmentPipelineConfiguration: Sendable, Equatable {
     public let concurrency: Int
     /// Upper bound on the estimated working set of all concurrently admitted analysis units, bytes.
     public let analysisMemoryBudgetBytes: Int
-    /// Longest target excerpt analysed per epoch, seconds (centred in the target). The default (10 min)
+    /// Longest target excerpt analyzed per epoch, seconds (centered in the target). The default (10 min)
     /// keeps one unit's estimated working set (~440 MB at a 120 s search) inside the default memory budget;
     /// a longer excerpt mostly buys estimator windows, not accuracy, for a constant-rate segment.
     public let targetExcerptSeconds: Int

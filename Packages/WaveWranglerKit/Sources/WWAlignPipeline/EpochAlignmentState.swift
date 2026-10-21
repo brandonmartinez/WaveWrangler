@@ -26,7 +26,7 @@ public enum AlignmentRemedy: String, Sendable, Hashable, CaseIterable {
 public enum SourceBlock: Sendable, Equatable {
     /// "Can't read this file": the format is unsupported or the content is damaged. Every action disabled.
     case cannotDecode(DecodeFailure)
-    /// Availability must be resolved in Setup (missing, permission, not materialised, residency, OFF, no
+    /// Availability must be resolved in Setup (missing, permission, not materialized, residency, OFF, no
     /// consent). Alignment never duplicates the Setup remedy.
     case needsSetup(SetupCause)
     /// "Can't read this file … Try again, or resolve it in Setup."
@@ -59,7 +59,7 @@ public enum SourceBlock: Sendable, Equatable {
 
 /// Why an epoch is unsupported (U8) or disconnected (U7), beyond the `UnsupportedReason` itself.
 public enum UnsupportedCause: Sendable, Equatable {
-    /// The plan did not analyse it (no reference, same recorder as the reference, no eligible source …).
+    /// The plan did not analyze it (no reference, same recorder as the reference, no eligible source …).
     case notAttempted(NotAttemptedReason)
     /// Analysis has not produced a current result yet (never run, running, or its inputs changed).
     case analysisPending
@@ -196,7 +196,7 @@ enum AlignmentStateResolver {
     }
 
     private static func involvedSources(_ planned: PlannedEpoch, plan: AlignmentPlan) -> [SourceID] {
-        guard case let .analyse(target) = planned.disposition else { return [] }
+        guard case let .analyze(target) = planned.disposition else { return [] }
         return [plan.reference?.source, target].compactMap { $0 }
     }
 

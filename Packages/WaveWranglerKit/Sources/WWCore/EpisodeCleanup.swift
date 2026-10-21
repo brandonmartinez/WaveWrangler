@@ -91,12 +91,14 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
     public var workingRange: EpisodeWorkingRange?
     public var transcripts: [SpeakerTranscript]
     public var fillerReviews: [FillerTimingReview]?
+    public var transcriptHistory: [SpeakerTranscript]?
 
     public init(workingRange: EpisodeWorkingRange? = nil, transcripts: [SpeakerTranscript] = [],
-                fillerReviews: [FillerTimingReview]? = nil) {
+                fillerReviews: [FillerTimingReview]? = nil, transcriptHistory: [SpeakerTranscript]? = nil) {
         self.workingRange = workingRange
         self.transcripts = transcripts
         self.fillerReviews = fillerReviews
+        self.transcriptHistory = transcriptHistory
     }
 
     public var isValid: Bool {
@@ -104,9 +106,25 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
             && transcripts.allSatisfy(\.isValid)
             && Set(transcripts.map(\.speaker)).count == transcripts.count
             && Set(transcripts.map(\.id)).count == transcripts.count
+            && transcriptHistory?.allSatisfy(\.isValid) != false
+            && Set((transcriptHistory ?? []).map(\.id) + transcripts.map(\.id)).count
+                == (transcriptHistory?.count ?? 0) + transcripts.count
             && (fillerReviews?.count ?? 0) <= 100_000
             && fillerReviews?.allSatisfy(\.isValid) != false
             && Set((fillerReviews ?? []).map(\.id)).count == (fillerReviews?.count ?? 0)
+    }
+
+    public func replacingTranscripts(_ replacement: [SpeakerTranscript]) throws(DomainError) -> Self {
+        var result = self
+        var history = transcriptHistory ?? []
+        for prior in transcripts where !replacement.contains(prior) {
+            guard !replacement.contains(where: { $0.id == prior.id }) else { throw .invalidCleanup }
+            history.append(prior)
+        }
+        result.transcriptHistory = history.isEmpty ? nil : history
+        result.transcripts = replacement
+        guard result.isValid else { throw .invalidCleanup }
+        return result.proposingFillers()
     }
 
     /// Existing decisions, including rejections and stale history, are never overwritten by another scan.

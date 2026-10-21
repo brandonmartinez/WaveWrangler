@@ -116,7 +116,7 @@ struct AudioTimelineNavigation: View {
     private var zoomControls: some View {
         HStack(spacing: 5) {
             Image(systemName: "minus.magnifyingglass")
-            Slider(
+            NativeTimelineSlider(
                 value: Binding(
                     get: {
                         AlignmentWaveformProjection.zoomLevel(
@@ -126,11 +126,11 @@ struct AudioTimelineNavigation: View {
                         if let value = AlignmentWaveformProjection.zoomDuration(
                             for: $0, maximum: maximumDuration) { duration = value }
                     }
-                ), in: 0...1, onEditingChanged: zoomEditing
-            ) { Text("Horizontal zoom") }
-            .frame(minWidth: 90, maxWidth: 220)
+                ), range: 0...1, label: "Horizontal zoom", identifier: "\(prefix).zoom",
+                onEditingChanged: zoomEditing
+            )
+            .frame(minWidth: 90, idealWidth: 120, maxWidth: 220)
             .disabled(!canNavigate)
-            .accessibilityIdentifier("\(prefix).zoom")
             Image(systemName: "plus.magnifyingglass")
             Text(AlignmentPresentation.formatTime(duration))
                 .font(.caption).monospacedDigit().frame(minWidth: 54)
@@ -148,10 +148,11 @@ struct AudioTimelineNavigation: View {
     private var heightControls: some View {
         HStack(spacing: 5) {
             Image(systemName: "waveform")
-            Slider(value: $laneHeight, in: 64...220) { Text("Track height") }
-                .frame(minWidth: 70, maxWidth: 130)
+            NativeTimelineSlider(
+                value: $laneHeight, range: 64...220,
+                label: "Track height", identifier: "\(prefix).laneHeight")
+                .frame(minWidth: 70, idealWidth: 90, maxWidth: 130)
                 .disabled(!canNavigate)
-                .accessibilityIdentifier("\(prefix).laneHeight")
         }
     }
 
@@ -186,6 +187,9 @@ struct AudioTimelineRuler: View {
     let isPlaying: Bool
     let canNavigate: Bool
     var markers: [AudioTimelineMarker] = []
+    var cycleRange: ClosedRange<Double>? = nil
+    var cycleEnabled = false
+    var changeCycle: ((ClosedRange<Double>) -> Void)? = nil
     var clicked: ((Double) -> Void)? = nil
     let previewSeek: (Double) -> Bool
     let resumePlayback: () -> Void
@@ -214,9 +218,13 @@ struct AudioTimelineRuler: View {
         let bounds: ClosedRange<Double>
         let maximum: Double
     }
+    private enum CycleEdge {
+        case start, end
+    }
     @State private var pan: Pan?
     @State private var scrub: Scrub?
     @State private var zoom: Zoom?
+    @State private var cycleDrag: CycleEdge?
 
     var body: some View {
         HStack(spacing: 8) {
@@ -233,6 +241,15 @@ struct AudioTimelineRuler: View {
                 let width = geometry.size.width
                 ZStack(alignment: .topLeading) {
                     Rectangle().fill(Color.primary.opacity(0.025))
+                    if let cycleRange {
+                        let lo = (cycleRange.lowerBound - start) / duration * width
+                        let hi = (cycleRange.upperBound - start) / duration * width
+                        Rectangle().fill(Color.yellow.opacity(cycleEnabled ? 0.24 : 0.06))
+                            .frame(width: max(0, hi - lo), height: 8).offset(x: lo, y: 36)
+                            .allowsHitTesting(false)
+                        cycleLocator(time: cycleRange.lowerBound, isStart: true, width: width)
+                        cycleLocator(time: cycleRange.upperBound, isStart: false, width: width)
+                    }
                     ForEach(
                         AlignmentWaveformProjection.rulerTicks(
                             start: start, duration: duration, width: Double(width)
@@ -246,7 +263,7 @@ struct AudioTimelineRuler: View {
                             Text(AlignmentPresentation.formatTime(tick.time))
                                 .font(.caption2).monospacedDigit()
                                 .fixedSize()
-                                .position(x: min(max(x, 25), max(25, width - 25)), y: 10)
+                                .position(x: min(max(x, 36), max(36, width - 36)), y: 10)
                         }
                     }
                     ForEach(markers) { marker in
@@ -267,17 +284,17 @@ struct AudioTimelineRuler: View {
                             Rectangle().fill(Color.primary).frame(width: 1.5)
                         }
                         .frame(width: 20, height: 44)
-                        .offset(x: x - 10)
-                        .accessibilityElement()
-                        .accessibilityLabel("Aligned playhead")
-                        .accessibilityValue(AlignmentPresentation.formatTime(playhead))
-                        .accessibilityAdjustableAction { direction in
-                            guard canNavigate else { return }
-                            let increment = max(0.1, duration / 20)
-                            let step = direction == .increment ? increment : -increment
-                            seek(playhead + step)
+                        .accessibilityRepresentation {
+                            Stepper(
+                                "Aligned playhead",
+                                onIncrement: { adjustPlayhead(.increment) },
+                                onDecrement: { adjustPlayhead(.decrement) }
+                            )
+                            .accessibilityValue(AlignmentPresentation.formatTime(playhead))
+                            .accessibilityIdentifier("\(prefix).ruler.playhead")
+                            .disabled(!canNavigate)
                         }
-                        .accessibilityIdentifier("\(prefix).ruler.playhead")
+                        .offset(x: x - 10)
                         .allowsHitTesting(false)
                     }
                 }
@@ -286,7 +303,7 @@ struct AudioTimelineRuler: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("\(prefix).ruler.surface")
                 .onTapGesture { point in
-                    guard canNavigate,
+                    guard canNavigate, cycleEdge(at: point, width: Double(width)) == nil,
                         let time = AlignmentWaveformProjection.rulerTime(
                             at: Double(point.x), width: Double(width), start: start,
                             duration: duration, bounds: seekBounds
@@ -298,20 +315,25 @@ struct AudioTimelineRuler: View {
                     DragGesture(minimumDistance: 4)
                         .onChanged { drag in
                             guard canNavigate, width > 0, zoom == nil else { return }
-                            if pan == nil, scrub == nil {
-                                let x = (playhead - start) / duration * width
-                                if abs(drag.startLocation.x - x) <= 14 {
-                                    scrub = Scrub(
-                                        start: start, duration: duration,
-                                        bounds: seekBounds, wasPlaying: isPlaying,
-                                        time: playhead, width: Double(width))
-                                } else {
-                                    pan = Pan(
-                                        start: start, duration: duration, bounds: bounds,
-                                        width: Double(width))
+                            if pan == nil, scrub == nil, cycleDrag == nil {
+                                cycleDrag = cycleEdge(at: drag.startLocation, width: Double(width))
+                                if cycleDrag == nil {
+                                    let x = (playhead - start) / duration * width
+                                    if abs(drag.startLocation.x - x) <= 14 {
+                                        scrub = Scrub(
+                                            start: start, duration: duration,
+                                            bounds: seekBounds, wasPlaying: isPlaying,
+                                            time: playhead, width: Double(width))
+                                    } else {
+                                        pan = Pan(
+                                            start: start, duration: duration, bounds: bounds,
+                                            width: Double(width))
+                                    }
                                 }
                             }
-                            if let scrub {
+                            if let cycleDrag {
+                                moveCycle(cycleDrag, to: start + Double(drag.location.x) / Double(width) * duration)
+                            } else if let scrub {
                                 let time = min(
                                     scrub.bounds.upperBound,
                                     max(
@@ -338,6 +360,7 @@ struct AudioTimelineRuler: View {
                             let moved = pan != nil || scrub != nil
                             pan = nil
                             scrub = nil
+                            cycleDrag = nil
                             if moved { commitWindow() }
                             if resume { resumePlayback() }
                         }
@@ -345,7 +368,7 @@ struct AudioTimelineRuler: View {
                 .simultaneousGesture(
                     MagnifyGesture()
                         .onChanged { value in
-                            guard canNavigate, width > 0, pan == nil, scrub == nil else { return }
+                            guard canNavigate, width > 0, pan == nil, scrub == nil, cycleDrag == nil else { return }
                             if zoom == nil {
                                 let fraction = Double(value.startAnchor.x)
                                 zoom = Zoom(
@@ -370,14 +393,61 @@ struct AudioTimelineRuler: View {
         }
         .frame(height: 44)
         .help(
-            "Click to seek, drag the playhead to scrub, drag empty ruler space to pan, or pinch to zoom. Audio tracks are not moved."
+            "Click to seek, drag the playhead to scrub, drag cycle locators to set the loop, drag empty ruler space to pan, or pinch to zoom. Audio tracks are not moved."
         )
+    }
+
+    func adjustPlayhead(_ direction: AccessibilityAdjustmentDirection) {
+        guard canNavigate else { return }
+        let step = max(0.1, duration / 20) * (direction == .increment ? 1 : -1)
+        seek(playhead + step)
     }
 
     private func seek(_ time: Double) {
         let resume = isPlaying
         if previewSeek(min(seekBounds.upperBound, max(seekBounds.lowerBound, time))), resume {
             resumePlayback()
+        }
+    }
+
+    private func cycleEdge(at point: CGPoint, width: Double) -> CycleEdge? {
+        guard let cycleRange, changeCycle != nil, width > 0, duration > 0,
+              abs(point.y - 36) <= 10 else { return nil }
+        let lo = (cycleRange.lowerBound - start) / duration * width
+        let hi = (cycleRange.upperBound - start) / duration * width
+        let loDistance = (0...width).contains(lo)
+            ? abs(Double(point.x) - min(max(8, lo), max(8, width - 8))) : Double.infinity
+        let hiDistance = (0...width).contains(hi)
+            ? abs(Double(point.x) - min(max(8, hi), max(8, width - 8))) : Double.infinity
+        guard min(loDistance, hiDistance) <= 10 else { return nil }
+        return loDistance < hiDistance ? .start : .end
+    }
+
+    private func moveCycle(_ edge: CycleEdge, to time: Double) {
+        guard canNavigate, time.isFinite, let range = cycleRange, let changeCycle else { return }
+        let value = min(seekBounds.upperBound, max(seekBounds.lowerBound, time))
+        switch edge {
+        case .start:
+            if value < range.upperBound { changeCycle(value...range.upperBound) }
+        case .end:
+            if value > range.lowerBound { changeCycle(range.lowerBound...value) }
+        }
+    }
+
+    @ViewBuilder
+    private func cycleLocator(time: Double, isStart: Bool, width: Double) -> some View {
+        let x = (time - start) / duration * width
+        if x >= 0, x <= width {
+            Image(systemName: isStart ? "arrowtriangle.right.fill" : "arrowtriangle.left.fill")
+                .font(.system(size: 10)).foregroundStyle(cycleEnabled ? Color.yellow : Color.secondary)
+                .frame(width: 16, height: 16).contentShape(Rectangle())
+                .position(x: min(max(8, x), max(8, width - 8)), y: 36)
+                .accessibilityLabel(isStart ? "Cycle start" : "Cycle end")
+                .accessibilityValue(AlignmentPresentation.formatTime(time))
+                .accessibilityAdjustableAction { direction in
+                    let step = max(0.01, duration / 100) * (direction == .increment ? 1 : -1)
+                    moveCycle(isStart ? .start : .end, to: time + step)
+                }
         }
     }
 }
@@ -410,32 +480,40 @@ struct AudioTimelineWaveformDrawing: View, Equatable {
     }
 
     var body: some View {
+        let columns = AlignmentWaveformProjection.displayColumns(
+            strokes: strokes, start: start, duration: duration,
+            width: size.width, pixelsPerPoint: displayScale,
+            draftEpoch: draftEpoch, ratePPM: draftRatePPM,
+            offsetMilliseconds: draftOffsetMilliseconds)
+        let gradient = LinearGradient(
+            colors: [color.mix(with: .white, by: 0.16), color, color.mix(with: .black, by: 0.16)],
+            startPoint: .top, endPoint: .bottom)
         ZStack {
-            path(mapped: true).stroke(
-                color,
-                style: StrokeStyle(
-                    lineWidth: lineWidth, dash: ghost ? [4, 3] : []
-                ))
-            path(mapped: false).stroke(
+            if ghost {
+                path(columns: columns, mapped: true).stroke(
+                    gradient, style: StrokeStyle(lineWidth: lineWidth, dash: [4, 3]))
+            } else {
+                path(columns: columns, mapped: true).fill(gradient)
+            }
+            path(columns: columns, mapped: false).stroke(
                 Color.orange, style: StrokeStyle(lineWidth: lineWidth, dash: [3, 2]))
         }
         .frame(width: size.width, height: size.height)
     }
 
-    private func path(mapped: Bool) -> Path {
+    private func path(columns: [AlignmentWaveformProjection.DisplayColumn], mapped: Bool) -> Path {
         Path { path in
-            for column in AlignmentWaveformProjection.displayColumns(
-                strokes: strokes, start: start, duration: duration,
-                width: size.width, pixelsPerPoint: displayScale,
-                draftEpoch: draftEpoch, ratePPM: draftRatePPM,
-                offsetMilliseconds: draftOffsetMilliseconds
-            ) where column.mapped == mapped {
-                path.move(
-                    to: CGPoint(
-                        x: column.x, y: size.height * (0.5 - Double(column.high) * gain * 0.45)))
-                path.addLine(
-                    to: CGPoint(
-                        x: column.x, y: size.height * (0.5 - Double(column.low) * gain * 0.45)))
+            for column in columns where column.mapped == mapped {
+                let top = size.height * (0.5 - Double(column.high) * gain * 0.45)
+                let bottom = size.height * (0.5 - Double(column.low) * gain * 0.45)
+                if mapped && !ghost {
+                    path.addRect(CGRect(
+                        x: column.x - 0.5 / displayScale, y: top,
+                        width: 1 / displayScale, height: max(1 / displayScale, bottom - top)))
+                } else {
+                    path.move(to: CGPoint(x: column.x, y: top))
+                    path.addLine(to: CGPoint(x: column.x, y: bottom))
+                }
             }
         }
     }

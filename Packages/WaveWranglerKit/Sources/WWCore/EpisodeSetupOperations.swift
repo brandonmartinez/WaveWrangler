@@ -6,7 +6,7 @@ import Foundation
 // Every operation returns a new value or throws without partial mutation, never touches referenced
 // originals and never reads media. Schema 2 encodings used here:
 // - **Epoch number** `n` of a grouped source is the 1-based position of its `placement.epochID` in its
-//   group's `epochs`. Groups gain epochs labelled "1", "2", … as needed; unused epochs are kept.
+//   group's `epochs`. Groups gain epochs labeled "1", "2", … as needed; unused epochs are kept.
 // - **Stated channel.** M1 never observes channel counts. A channel the user has stated for a source is
 //   recorded as a `ChannelLabel` in `placement.channelLabels`; when none is stated the channel is
 //   *unknown*. Speaker channel references of a source follow its stated channel: `.known(n)` when the
@@ -110,6 +110,7 @@ extension ShowDocumentModel {
         try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.recorderGroups.firstIndex(where: { $0.id == groupID }) else { throw .recorderGroupNotFound(groupID) }
             episode.recorderGroups.remove(at: index)
+            episode.workspace?.positionLocks.removeAll { $0.group == groupID }
             for sourceIndex in episode.sources.indices where episode.sources[sourceIndex].placement.recorderGroupID == groupID {
                 episode.sources[sourceIndex].placement.recorderGroupID = nil
                 episode.sources[sourceIndex].placement.epochID = nil
@@ -215,12 +216,17 @@ extension ShowDocumentModel {
         var copy = try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.speakerAssignments.firstIndex(where: { $0.speakerID == speakerID }) else { throw .speakerNotFound(speakerID) }
             let removed = episode.speakerAssignments.remove(at: index)
+            episode.speakerAppearanceOverrides?.removeAll { $0.speaker == speakerID }
             let channels = (removed.primary.map { [$0] } ?? []) + removed.backups
             for sourceID in Set(channels.map(\.sourceID)) where episode.references(to: sourceID).isEmpty {
                 Self.setRole(.unassigned, .provisional, of: sourceID, in: &episode)
             }
         }
-        if !copy.episodes.contains(where: { $0.assignment(for: speakerID) != nil }) {
+        let retainedByProfile = copy.show.profile?.hosts.contains(speakerID) == true
+            || copy.show.profile?.recorderDefinitions.contains(where: {
+                $0.sources.contains { $0.assignments.contains { $0.speaker == speakerID } }
+            }) == true
+        if !retainedByProfile, !copy.episodes.contains(where: { $0.assignment(for: speakerID) != nil }) {
             copy.speakers.removeAll { $0.id == speakerID }
         }
         return copy
@@ -318,7 +324,7 @@ extension ShowDocumentModel {
         }
     }
 
-    /// Moves a source before/after its neighbour in the same recorder group (manual order).
+    /// Moves a source before/after its neighbor in the same recorder group (manual order).
     public func movingSource(_ sourceID: SourceID, _ direction: MoveDirection, in episodeID: EpisodeID) throws(DomainError) -> ShowDocumentModel {
         try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.sources.firstIndex(where: { $0.id == sourceID }) else { throw .sourceNotFound(sourceID) }
@@ -326,8 +332,8 @@ extension ShowDocumentModel {
             let candidates = direction == .up
                 ? Array(episode.sources.indices.prefix(upTo: index).reversed())
                 : Array(episode.sources.indices.suffix(from: index + 1))
-            guard let neighbour = candidates.first(where: { episode.sources[$0].placement.recorderGroupID == groupID }) else { return }
-            episode.sources.swapAt(index, neighbour)
+            guard let neighbor = candidates.first(where: { episode.sources[$0].placement.recorderGroupID == groupID }) else { return }
+            episode.sources.swapAt(index, neighbor)
         }
     }
 

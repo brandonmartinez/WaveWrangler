@@ -115,22 +115,22 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     @discardableResult
     public func save(
         automatic: Bool = false,
-        isCancelled: () -> Bool = { false },
+        isCanceled: () -> Bool = { false },
         followUp: PublicationFollowUp = .none
     ) -> Result<PublicationReceipt, PublicationError> {
         if let readOnlyReason { return .failure(.readOnly(readOnlyReason)) }
         if automatic, let gate, !gate.isEnabled {
             status.state = .autosaveSkipped
-            return .failure(.cancelled)
+            return .failure(.canceled)
         }
         // Nothing pending for automatic work. An explicit Save still republishes and verifies disk truth.
-        if automatic, !isDirty, base != nil { return .failure(.cancelled) }
+        if automatic, !isDirty, base != nil { return .failure(.canceled) }
         status.state = .saving
         let target: PublicationTarget = base.map { .inPlace(expectedBase: $0) } ?? .newLocation
         let next = max(revision, base?.revision ?? 0) + 1
         do {
             let receipt = try publisher.publish(
-                payload, revision: next, key: key, to: url, target: target, isCancelled: isCancelled, followUp: followUp
+                payload, revision: next, key: key, to: url, target: target, isCanceled: isCanceled, followUp: followUp
             )
             base = receipt.fingerprint
             revision = receipt.revision
@@ -144,11 +144,11 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
         } catch let error as PublicationError {
             status.state = DocumentSaveState.from(error, retainedRevision: base?.revision)
             // C2b: an automatic publication that failed or is uncertain still gets an edit checkpoint.
-            if automatic, error != .cancelled { writeEditCheckpoint(keepingStatus: true) }
+            if automatic, error != .canceled { writeEditCheckpoint(keepingStatus: true) }
             return .failure(error)
         } catch {
-            status.state = .acknowledgementUncertain(message: "\(error)")
-            return .failure(.acknowledgementUncertain("\(error)"))
+            status.state = .acknowledgmentUncertain(message: "\(error)")
+            return .failure(.acknowledgmentUncertain("\(error)"))
         }
     }
 
@@ -158,9 +158,9 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     public func saveAs(
         _ destination: URL,
         replacingExisting: Bool = false,
-        isCancelled: () -> Bool = { false }
+        isCanceled: () -> Bool = { false }
     ) -> Result<PublicationReceipt, PublicationError> {
-        let result = duplicate(to: destination, replacingExisting: replacingExisting, isCancelled: isCancelled)
+        let result = duplicate(to: destination, replacingExisting: replacingExisting, isCanceled: isCanceled)
         if case let .success(receipt) = result {
             url = destination
             base = receipt.fingerprint
@@ -178,19 +178,19 @@ public actor CanonicalDocumentSession<Coder: CanonicalDocumentCoding> {
     public func duplicate(
         to destination: URL,
         replacingExisting: Bool = false,
-        isCancelled: () -> Bool = { false }
+        isCanceled: () -> Bool = { false }
     ) -> Result<PublicationReceipt, PublicationError> {
         guard allowsCopies else { return .failure(.readOnly(readOnlyReason ?? "This document can't be copied.")) }
         do {
             let receipt = try publisher.publish(
                 payload, revision: max(revision, 1), key: key, to: destination,
-                target: .saveAs(replacingExisting: replacingExisting), isCancelled: isCancelled
+                target: .saveAs(replacingExisting: replacingExisting), isCanceled: isCanceled
             )
             return .success(receipt)
         } catch let error as PublicationError {
             return .failure(error)
         } catch {
-            return .failure(.acknowledgementUncertain("\(error)"))
+            return .failure(.acknowledgmentUncertain("\(error)"))
         }
     }
 

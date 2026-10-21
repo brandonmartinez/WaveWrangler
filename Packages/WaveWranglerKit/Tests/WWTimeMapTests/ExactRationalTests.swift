@@ -47,7 +47,7 @@ struct ExactRationalTests {
         #expect(throws: TimeMapError.zeroDenominator) { try ExactRational.one.divided(by: .zero) }
     }
 
-    @Test func quantisationIsHalfUp() {
+    @Test func quantizationIsHalfUp() {
         #expect(q(109, 2).roundedHalfUp() == 55) // 54.5
         #expect(q(-109, 2).roundedHalfUp() == -54) // -54.5
         #expect(q(5449, 100).roundedHalfUp() == 54)
@@ -56,7 +56,7 @@ struct ExactRationalTests {
         #expect(q(-7, 2).floor() == -4 && q(-7, 2).ceil() == -3)
         #expect(q(7, 2).floor() == 3 && q(7, 2).ceil() == 4)
         #expect(q(-8, 2).floor() == -4 && q(-8, 2).ceil() == -4)
-        // Error of the quantiser is always <= 1/2 (seeded).
+        // Error of the quantizer is always <= 1/2 (seeded).
         var rng = SplitMix64(seed: 16)
         for _ in 0..<10_000 {
             let x = q(rng.int(-10_000_000...10_000_000), rng.int(1...1000))

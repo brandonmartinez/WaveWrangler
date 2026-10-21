@@ -99,7 +99,7 @@ struct HoldoutSaveLifecycleTests {
             try check(scheduler.noteEdit() == false, "OFF scheduled work")
             // Queued automatic requests delivered while OFF complete as non-success.
             for _ in 0..<HoldoutGen.int(1...5, &rng) {
-                guard case .failure(.cancelled) = await session.save(automatic: true) else { throw CaseFailure(description: "automatic save was not refused") }
+                guard case .failure(.canceled) = await session.save(automatic: true) else { throw CaseFailure(description: "automatic save was not refused") }
             }
             try check(await session.writeEditCheckpoint() == false, "OFF wrote an edit checkpoint")
             try await Task.sleep(for: .milliseconds(1_300))   // bounded observation window
@@ -292,18 +292,18 @@ struct HoldoutSaveLifecycleTests {
             let operation = ["save", "saveAs"][(index / 2) % 2]
             let calls = Mutex(0)
             // The publisher consults cancellation right before publishing (call 1) and after it (call 2).
-            let isCancelled: () -> Bool = {
+            let isCanceled: () -> Bool = {
                 let call = calls.withLock { $0 += 1; return $0 }
                 return stage == "beforePublish" ? true : call >= 2
             }
             let copy = show.rig.url("SaveAs-\(index).wwshow")
-            let outcome = operation == "save" ? await session.save(isCancelled: isCancelled) : await session.saveAs(copy, isCancelled: isCancelled)
+            let outcome = operation == "save" ? await session.save(isCanceled: isCanceled) : await session.saveAs(copy, isCanceled: isCanceled)
             if stage == "beforePublish" {
-                guard case .failure(.cancelled) = outcome else { throw CaseFailure(description: "\(outcome)") }
+                guard case .failure(.canceled) = outcome else { throw CaseFailure(description: "\(outcome)") }
                 try check(show.bytes == original, "disk changed")
                 try check(!FileManager.default.fileExists(atPath: copy.path), "Save As destination created")
                 try check(await session.isDirty, "dirty cleared")
-                return CaseResult("\(operation):cancelledBeforePublish")
+                return CaseResult("\(operation):canceledBeforePublish")
             }
             guard case let .success(receipt) = outcome, receipt.followUpIncomplete else { throw CaseFailure(description: "\(outcome)") }
             let target = operation == "save" ? show.url : copy
@@ -405,7 +405,7 @@ struct HoldoutSaveLifecycleTests {
             let library = LibraryRig("dur014-lib")
             let store = library.store()
             _ = await store.load()
-            let outcome = await session.saveAs(destination, isCancelled: { variant == "cancel" })
+            let outcome = await session.saveAs(destination, isCanceled: { variant == "cancel" })
             if case let .success(receipt) = outcome {
                 _ = await store.acknowledgeShowPublication(expected.show.id, title: expected.show.title, publication: receipt.publication)
             }
@@ -432,9 +432,9 @@ struct HoldoutSaveLifecycleTests {
         expectAllPassed(result)
     }
 
-    // MARK: DUR-015 acknowledgement-uncertain publication and reconcile
+    // MARK: DUR-015 acknowledgment-uncertain publication and reconcile
 
-    @Test func dur015AcknowledgementUncertain() async {
+    @Test func dur015AcknowledgmentUncertain() async {
         let result = await runFamily("M1-DUR-015", calibration: 10, holdout: 100) { index, seed in
             var rng = SeededGenerator(seed: seed)
             let variant = ["staleReadBack", "readBackError", "libraryAckFailure"][index % 3]
@@ -456,7 +456,7 @@ struct HoldoutSaveLifecycleTests {
             let libraryBefore = try #require(await store.library)
             let session = show.session()
             let expected = await applyEdits(session, HoldoutGen.edits(1...20, on: show.r2, &rng))!
-            let followUp = PublicationFollowUp(acknowledgeLibrary: { _ in throw CaseFailure(description: "library acknowledgement interrupted") })
+            let followUp = PublicationFollowUp(acknowledgeLibrary: { _ in throw CaseFailure(description: "library acknowledgment interrupted") })
             let outcome = await session.save(followUp: variant == "libraryAckFailure" ? followUp : .none)
             let state = await session.status.state
             switch variant {
@@ -464,7 +464,7 @@ struct HoldoutSaveLifecycleTests {
                 guard case let .success(receipt) = outcome, receipt.followUpIncomplete,
                       case .savedFollowUpIncomplete = state else { throw CaseFailure(description: "\(outcome) \(state)") }
             default:
-                guard case .failure(.acknowledgementUncertain) = outcome, case .acknowledgementUncertain = state
+                guard case .failure(.acknowledgmentUncertain) = outcome, case .acknowledgmentUncertain = state
                 else { throw CaseFailure(description: "\(outcome) \(state)") }
                 try check(state.title == "Save may have completed — reopen to verify", "status text \(state.title)")
             }

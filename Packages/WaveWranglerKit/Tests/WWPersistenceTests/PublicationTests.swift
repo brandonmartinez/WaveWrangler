@@ -136,14 +136,14 @@ struct PublicationTests {
         let url = rig.url()
         let (current, base) = try rig.seedTwoRevisions(model, at: url)
         let before = try Data(contentsOf: url)
-        #expect(throws: PublicationError.cancelled) {
+        #expect(throws: PublicationError.canceled) {
             try rig.publisher.publish(try current.renamingShow(to: "C"), revision: 3, key: .show(model.show.id), to: url,
-                                      target: .inPlace(expectedBase: base), isCancelled: { true })
+                                      target: .inPlace(expectedBase: base), isCanceled: { true })
         }
         #expect(try Data(contentsOf: url) == before)
     }
 
-    @Test func staleReadBackIsAcknowledgementUncertainNotSuccess() throws {
+    @Test func staleReadBackIsAcknowledgmentUncertainNotSuccess() throws {
         let dir = TempDirectory("stale")
         let clean = Rig(dir: dir)
         let model = Fixtures.show(seed: 8)
@@ -154,7 +154,7 @@ struct PublicationTests {
         #expect {
             try faulty.publisher.publish(try current.renamingShow(to: "N"), revision: 3, key: .show(model.show.id), to: url, target: .inPlace(expectedBase: base))
         } throws: { error in
-            if case .acknowledgementUncertain = error as? PublicationError { return true }
+            if case .acknowledgmentUncertain = error as? PublicationError { return true }
             return false
         }
     }
@@ -293,7 +293,7 @@ struct MigrationTests {
         try original.write(to: url)
         let migrator = DocumentMigrator(publisher: rig.publisher, steps: [SyntheticV0.step])
         let key = DocumentKey(rawValue: "legacy-31")
-        #expect(throws: PublicationError.cancelled) { try migrator.migrate(url, key: key, isCancelled: { true }) }
+        #expect(throws: PublicationError.canceled) { try migrator.migrate(url, key: key, isCanceled: { true }) }
         #expect(try Data(contentsOf: url) == original)
         _ = try migrator.migrate(url, key: key)
         #expect(try rig.recovery.migrationBackups(for: key).count == 1)

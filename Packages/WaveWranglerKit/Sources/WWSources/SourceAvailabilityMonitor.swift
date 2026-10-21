@@ -17,8 +17,8 @@ public final class SourceAvailabilityMonitor {
     @ObservationIgnored public let transfers: SourceTransferController
     @ObservationIgnored private var tracked: [SourceID] = []
     @ObservationIgnored private var resolvedURLs: [SourceID: URL] = [:]
-    /// Sources whose transfer the user cancelled; not automatically re-requested until Retry.
-    @ObservationIgnored private var userCancelled: Set<SourceID> = []
+    /// Sources whose transfer the user canceled; not automatically re-requested until Retry.
+    @ObservationIgnored private var userCanceled: Set<SourceID> = []
     /// Bumped on every setting change; refreshes evaluated under an older setting are discarded (the
     /// change triggers its own refresh).
     @ObservationIgnored private var settingGeneration = 0
@@ -96,12 +96,12 @@ public final class SourceAvailabilityMonitor {
         await refresh(tracked)
     }
 
-    /// Explicit per-item request; allowed even when availability is OFF (labelled a content transfer).
+    /// Explicit per-item request; allowed even when availability is OFF (labeled a content transfer).
     public func makeAvailable(_ sourceID: SourceID) async {
         guard !isStopped else { return }
         let generation = lifecycleGeneration
         let decided = transfers.shutdownTicket()
-        userCancelled.remove(sourceID)
+        userCanceled.remove(sourceID)
         guard let url = resolvedURLs[sourceID] else {
             await refreshOne(sourceID)
             guard !isStopped, lifecycleGeneration == generation, let url = resolvedURLs[sourceID] else { return }
@@ -112,7 +112,7 @@ public final class SourceAvailabilityMonitor {
     }
 
     public func cancelTransfer(_ sourceID: SourceID) async {
-        userCancelled.insert(sourceID)
+        userCanceled.insert(sourceID)
         await transfers.cancel(key(sourceID))
     }
 
@@ -130,7 +130,7 @@ public final class SourceAvailabilityMonitor {
         let evaluatedGeneration = settingGeneration
         let decided = transfers.shutdownTicket()
         let due = tracked.filter {
-            ReconnectRetry.shouldRetry(observations[$0]?.transfer, setting: setting, userCancelled: userCancelled.contains($0))
+            ReconnectRetry.shouldRetry(observations[$0]?.transfer, setting: setting, userCanceled: userCanceled.contains($0))
         }
         var requested: [SourceID] = []
         for sourceID in due {
@@ -189,10 +189,10 @@ public final class SourceAvailabilityMonitor {
         observations[sourceID] = evaluation.observation
 
         let needsUserRetry: Bool = switch evaluation.observation.transfer {
-        case .failed, .offlineOrUnknown, .cancelled: true
+        case .failed, .offlineOrUnknown, .canceled: true
         default: false
         }
-        guard setting == .on, !userCancelled.contains(sourceID), !needsUserRetry,
+        guard setting == .on, !userCanceled.contains(sourceID), !needsUserRetry,
               evaluation.supportsDownloadRequest,
               evaluation.observation.residency == .cloudPlaceholder,
               let url = evaluation.resolvedURL

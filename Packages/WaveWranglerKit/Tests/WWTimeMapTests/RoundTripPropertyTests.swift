@@ -17,7 +17,7 @@ struct RoundTripPropertyTests {
         var maxFrameCount: Int64 = 0
         var maxAbsPPM = 0.0
         /// |returned frame - exact inverse| in source frames, for every inverse that returned a source.
-        var quantisation: [Double] = []
+        var quantization: [Double] = []
         var failures: [String] = []
         /// Every failure, uncapped, by the m2-freeze-timemap gate it counts against.
         var failureCounts: [FailureCategory: Int] = [:]
@@ -74,8 +74,8 @@ struct RoundTripPropertyTests {
             }
         }
 
-        let maxQ = stats.quantisation.max() ?? .nan
-        let p95Q = nearestRank(stats.quantisation, 95)
+        let maxQ = stats.quantization.max() ?? .nan
+        let p95Q = nearestRank(stats.quantization, 95)
         print("""
         WW-015 synthetic truth: seed=0x\(String(Self.seed, radix: 16)) timelines=\(stats.timelines) groups=\(stats.groups) \
         mappedEpochs=\(stats.mappedEpochs) unsupportedEpochs=\(stats.unsupportedEpochs) segments=\(stats.segments) \
@@ -83,7 +83,7 @@ struct RoundTripPropertyTests {
         WW-015 probes: frameRoundTrips=\(stats.frameRoundTrips) (exact) forwardGap=\(stats.forwardGap) \
         forwardUnsupported=\(stats.forwardUnsupported) forwardOutside=\(stats.forwardOutside) \
         inverseSource=\(stats.inverseSource) inverseGap=\(stats.inverseGap) inverseUnsupported=\(stats.inverseUnsupported) inverseOutside=\(stats.inverseOutside)
-        WW-015 inverse quantisation (source frames, N=\(stats.quantisation.count)): max=\(maxQ) p95(nearest-rank)=\(p95Q)
+        WW-015 inverse quantization (source frames, N=\(stats.quantization.count)): max=\(maxQ) p95(nearest-rank)=\(p95Q)
         """)
         #expect(stats.failures.isEmpty, "\(stats.failures.joined(separator: "\n"))")
         #expect(stats.timelines == Self.timelineCount)
@@ -247,7 +247,7 @@ struct RoundTripPropertyTests {
             let drift = try! back.instant.subtracting(t)
             if (drift < .zero ? drift.negated() : drift) > bound { stats.fail(.roundTrip, "aligned round trip \(drift) exceeds \(bound) at \(t)") }
             stats.inverseSource += 1
-            stats.quantisation.append(absError.approximateDouble)
+            stats.quantization.append(absError.approximateDouble)
         case (.gap, .gap(let boundary)):
             // State agreement: a gap is between ADJACENT spans (nothing unsupported in between), and the
             // forward map of any frame strictly between them reports the same gap.
@@ -287,7 +287,7 @@ struct RoundTripPropertyTests {
     static func doubleSanity(_ group: TruthGroup, _ occ: TruthOccurrence, _ n: Int64, _ t: ExactRational, _ stats: inout Stats) {
         guard let span = occ.spans.first(where: { n >= $0.start && n < $0.end }),
               case .mapped(let segments, _) = group.epoch(span.epoch).mapping else { return }
-        // Segment selection uses the exact u (Double rounding at a knot would pick a neighbour); the
+        // Segment selection uses the exact u (Double rounding at a knot would pick a neighbor); the
         // arithmetic below is pure Double and independent of ExactRational.
         let exactU = try! q(n, occ.rate).adding(span.e)
         guard let s = segments.first(where: { exactU >= $0.u0 && exactU < $0.u1 }) else {

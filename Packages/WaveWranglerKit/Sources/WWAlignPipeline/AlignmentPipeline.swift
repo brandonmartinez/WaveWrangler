@@ -24,7 +24,7 @@ public struct AlignmentAnalysisReport: Sendable {
 }
 
 /// Metadata-only state for the Alignment workspace. Producing this value never probes, opens, hashes,
-/// decodes or analyses a source; it only combines the episode structure, registered source revisions and
+/// decodes or analyzes a source; it only combines the episode structure, registered source revisions and
 /// the accepted map. `states` therefore reports current accepted decisions or an honest pending/unsupported
 /// state until the person explicitly requests analysis.
 public struct AlignmentInspectionSnapshot: Sendable {
@@ -141,7 +141,7 @@ public final class AlignmentPipeline: Sendable {
 
     // MARK: Plan (metadata only)
 
-    /// Decides which epochs are analysed against which reference. Reads no content.
+    /// Decides which epochs are analyzed against which reference. Reads no content.
     ///
     /// - Parameters:
     ///   - sources: where each source is and its Setup availability.
@@ -253,10 +253,10 @@ public final class AlignmentPipeline: Sendable {
         )
     }
 
-    /// Probes every eligible placed source (header only), then analyses each planned epoch against the
+    /// Probes every eligible placed source (header only), then analyzes each planned epoch against the
     /// reference. Results are derived assets keyed by every M2-C5 component; nothing becomes a map until a
     /// person accepts it. Returns `nil` when the episode does not exist.
-    public func analyse(
+    public func analyze(
         model: ShowDocumentModel,
         episode episodeID: EpisodeID,
         sources: [AlignmentSource],
@@ -295,12 +295,12 @@ public final class AlignmentPipeline: Sendable {
             }
         }
 
-        // 2. One analysis unit per epoch to analyse.
+        // 2. One analysis unit per epoch to analyze.
         var units: [AnalysisUnit] = []
         var epochFailures: [RecordingEpochID: AlignmentWorkFailure] = [:]
         if let reference = plan.reference {
             for planned in plan.epochs {
-                guard case let .analyse(targetID) = planned.disposition else { continue }
+                guard case let .analyze(targetID) = planned.disposition else { continue }
                 guard let referenceFacts = facts[reference.source], let referenceSource = eligibility.admitted(reference.source)?.source else {
                     epochFailures[planned.epoch] = sourceFailures[reference.source] ?? .sourceFactsUnavailable(reference.source)
                     continue
@@ -405,9 +405,9 @@ public final class AlignmentPipeline: Sendable {
         )
     }
 
-    /// Analyses just the selected speaker's assigned channels. A previously aligned recorder can
+    /// Analyzes just the selected speaker's assigned channels. A previously aligned recorder can
     /// serve as reference without moving it: only the target group's clock is proposed for review.
-    public func analyseSpeaker(
+    public func analyzeSpeaker(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         sources: [AlignmentSource], authorizations: [ContentWorkAuthorization],
         targetEpoch: RecordingEpochID, speaker: SpeakerID,
@@ -1530,7 +1530,7 @@ public final class AlignmentPipeline: Sendable {
         let reports = await boundedMap(jobs, limit: configuration.concurrency) { job in
             // Registered before any cursor opens, so shutdown() cancels and awaits it.
             await Self.tracked(renders, environment: environment) { await AlignedAssetRun.run(job, environment: environment) }
-                ?? Self.cancelledReport(job)
+                ?? Self.canceledReport(job)
         }
         var combined = failedGroups + reports
         for (correction, participant) in adaptive {
@@ -1538,7 +1538,7 @@ public final class AlignmentPipeline: Sendable {
                 await self.renderAdaptiveAssets(model: model, episode: episodeID, correction: correction,
                     participant: participant, identity: identity, outputRate: outputRate)
             } ?? GroupRenderReport(group: correction.group, outputRate: outputRate, outputFrames: 0..<0,
-                                   segments: 0, failure: .cancelled)
+                                   segments: 0, failure: .canceled)
             if let index = combined.firstIndex(where: { $0.group == report.group }) {
                 let previous = combined[index]
                 var joined = GroupRenderReport(group: report.group, outputRate: outputRate,
@@ -1573,9 +1573,9 @@ public final class AlignmentPipeline: Sendable {
         return await work.run(operation)
     }
 
-    static func cancelledReport(_ job: GroupRenderJob) -> GroupRenderReport {
+    static func canceledReport(_ job: GroupRenderJob) -> GroupRenderReport {
         var report = GroupRenderReport(group: job.map.group, outputRate: job.outputRate, outputFrames: job.outputFrames, segments: job.segmentIndices.count)
-        report.failure = .cancelled
+        report.failure = .canceled
         return report
     }
 
@@ -1606,7 +1606,7 @@ extension PipelineJobResult {
     var typedFailure: AlignmentWorkFailure? {
         switch outcome {
         case .published, .reused: nil
-        case .cancelled: .cancelled
+        case .canceled: .canceled
         case let .discardedStale(reasons): .staleInputs(reasons)
         case let .failed(detail): failure ?? .encoding(detail)
         }

@@ -2,6 +2,15 @@ import SwiftUI
 import WWCore
 import WWSpeech
 
+enum FillerMarkerDetail {
+    case boundaries, pole, dot
+
+    static func make(width: Double, neighborDistance: Double = .infinity) -> Self {
+        if width < 3 || neighborDistance < 14 { return .dot }
+        return width < 36 ? .pole : .boundaries
+    }
+}
+
 struct FillerTimingOverlay: View {
     @Bindable var model: EpisodeCleanupModel
     let reviews: [FillerTimingReview]
@@ -14,15 +23,34 @@ struct FillerTimingOverlay: View {
                 } else {
                     ForEach(reviews) { review in
                         FillerTimingRegionView(model: model, review: review, size: geometry.size,
-                            start: model.windowStart, duration: model.visibleDuration)
+                            start: model.windowStart, duration: model.visibleDuration,
+                            neighborDistance: nearestDistance(to: review, width: geometry.size.width))
                             .zIndex(model.selectedFillerID == review.id ? 1 : 0)
                     }
+                }
+            }
+            .overlay {
+                if let review = model.selectedFiller, reviews.contains(where: { $0.id == review.id }) {
+                    AudioTimelineSelectionOverlay(listening: model.listening,
+                        start: model.windowStart, duration: model.visibleDuration,
+                        play: { model.auditionFiller(review.id, context: $0) }, cleanup: model)
                 }
             }
         }
         .clipped()
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.cleanup.fillers.rails")
+        .onChange(of: model.selectedFiller?.bounds, initial: true) { _, bounds in
+            if let review = model.selectedFiller, reviews.contains(where: { $0.id == review.id }), let bounds {
+                model.listening.selection = bounds.alignedStart...bounds.alignedEnd
+            }
+        }
+    }
+
+    private func nearestDistance(to review: FillerTimingReview, width: Double) -> Double {
+        reviews.filter { $0.id != review.id }.map {
+            abs($0.bounds.alignedStart - review.bounds.alignedStart) / model.visibleDuration * width
+        }.min() ?? .infinity
     }
 
     private func denseOverview(size: CGSize) -> some View {
@@ -33,9 +61,7 @@ struct FillerTimingOverlay: View {
                     let hi = min(size.width, (review.bounds.alignedEnd - model.windowStart) / model.visibleDuration * size.width)
                     let color: Color = review.decision == .rejected ? .secondary
                         : review.decision == .reviewed ? .green : .orange
-                    context.fill(Path(CGRect(x: lo, y: 0, width: max(1, hi - lo), height: size.height)),
-                                 with: .color(color.opacity(0.1)))
-                    for x in [lo, hi] {
+                    for x in hi - lo >= 36 ? [lo, hi] : [lo] {
                         var rail = Path()
                         rail.move(to: CGPoint(x: x, y: 0))
                         rail.addLine(to: CGPoint(x: x, y: size.height))
@@ -53,22 +79,25 @@ struct FillerTimingOverlay: View {
                     max($0.bounds.alignedStart - time, time - $0.bounds.alignedEnd, 0)
                         < max($1.bounds.alignedStart - time, time - $1.bounds.alignedEnd, 0)
                 }) {
-                    model.selectFiller(closest.id, reveal: false)
-                    model.zoomTimeline(duration: min(5, model.maximumDuration))
-                    model.state.inspectorPresented = true
+                    model.activateFillerMarker(closest.id)
+                    if model.listening.effectiveTool.reviewDecision == nil {
+                        model.zoomTimeline(duration: min(5, model.maximumDuration))
+                    }
                 }
             }
             .accessibilityElement()
             .accessibilityLabel("\(reviews.count) filler timing intervals. Zoom in to review individual handles.")
             .accessibilityAction {
                 if let first = reviews.first {
-                    model.selectFiller(first.id)
-                    model.zoomTimeline(duration: min(5, model.maximumDuration))
-                    model.state.inspectorPresented = true
+                    model.activateFillerMarker(first.id)
+                    if model.listening.effectiveTool.reviewDecision == nil {
+                        model.zoomTimeline(duration: min(5, model.maximumDuration))
+                    }
                 }
             }
         }
         .accessibilityIdentifier("ww.cleanup.fillers.density")
+        .allowsHitTesting(model.listening.effectiveTool != .move)
     }
 
     private func denseHitArea(size: CGSize) -> Path {
@@ -88,11 +117,10 @@ private struct FillerTimingRegionView: View {
     let size: CGSize
     let start: Double
     let duration: Double
+    var neighborDistance: Double = .infinity
     @State private var dragOrigin: FillerTimingBounds?
     @State private var dragTime: Double?
     @State private var dragEdge: FillerTimingEdge?
-    @State private var showsToolbar = false
-    @State private var toolbarEdge: FillerTimingEdge?
 
     private var bounds: FillerTimingBounds {
         guard let dragTime, let dragEdge, let dragOrigin,
@@ -109,15 +137,11 @@ private struct FillerTimingRegionView: View {
     var body: some View {
         let bounds = self.bounds
         let lo = max(0, x(bounds.alignedStart)), hi = min(size.width, x(bounds.alignedEnd))
-        let anchor = toolbarEdge.map { edge in
-            handleFrame(edge, time: edge == .start ? bounds.alignedStart : bounds.alignedEnd)
-        } ?? CGRect(x: lo, y: 0, width: max(1, hi - lo), height: size.height)
+        let detail = FillerMarkerDetail.make(width: hi - lo, neighborDistance: neighborDistance)
         ZStack(alignment: .topLeading) {
-            if hi > lo {
+            if hi > lo, detail == .boundaries {
                 Button {
-                    model.selectFiller(review.id, reveal: false)
-                    toolbarEdge = nil
-                    showsToolbar = true
+                    model.activateFillerMarker(review.id)
                 } label: {
                     Rectangle().fill(color.opacity(model.selectedFillerID == review.id ? 0.23 : 0.1))
                         .frame(width: max(1, hi - lo), height: size.height)
@@ -131,7 +155,7 @@ private struct FillerTimingRegionView: View {
                 .accessibilityIdentifier("ww.cleanup.filler.\(review.id)")
             }
             Canvas { context, _ in
-                for time in [bounds.alignedStart, bounds.alignedEnd] {
+                for time in detail == .boundaries ? [bounds.alignedStart, bounds.alignedEnd] : [bounds.alignedStart] {
                     var rail = Path()
                     rail.move(to: CGPoint(x: x(time), y: 0))
                     rail.addLine(to: CGPoint(x: x(time), y: size.height))
@@ -139,18 +163,28 @@ private struct FillerTimingRegionView: View {
                 }
             }
             .allowsHitTesting(false)
-            handle(.start, time: bounds.alignedStart)
-            handle(.end, time: bounds.alignedEnd)
+            if detail == .boundaries {
+                handle(.start, time: bounds.alignedStart)
+                handle(.end, time: bounds.alignedEnd)
+            } else if lo >= 0, lo <= size.width {
+                Button {
+                    model.activateFillerMarker(review.id)
+                } label: {
+                    Image(systemName: detail == .dot ? "circle.fill" : "text.bubble.fill")
+                        .font(.system(size: detail == .dot ? 5 : 12))
+                        .foregroundStyle(color)
+                        .frame(width: detail == .dot ? 8 : 18, height: 18)
+                }
+                .buttonStyle(.plain).offset(x: lo - (detail == .dot ? 4 : 9))
+                .accessibilityLabel("\(review.word?.text ?? "Manual filler"), \(review.status). Select to review; zoom in for timing handles.")
+                .accessibilityValue(String(format: "%.6f to %.6f aligned seconds", bounds.alignedStart, bounds.alignedEnd))
+                .accessibilityIdentifier("ww.cleanup.filler.\(review.id)")
+            }
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(name: review.id)
-        .popover(isPresented: $showsToolbar, attachmentAnchor: .rect(.rect(anchor)), arrowEdge: .bottom) {
-            FillerTimingToolbar(model: model, reviewID: review.id)
-                .padding(12).frame(width: 370)
-        }
-        .onChange(of: model.selectedFillerID) { _, id in
-            if id != review.id { showsToolbar = false }
-        }
+        .allowsHitTesting(model.listening.effectiveTool != .move)
+        .accessibilityElement(children: .contain)
     }
 
     private func handleFrame(_ edge: FillerTimingEdge, time: Double) -> CGRect {
@@ -164,9 +198,7 @@ private struct FillerTimingRegionView: View {
         if dragEdge == edge || (time >= start && time <= start + duration) {
             let frame = handleFrame(edge, time: time)
             Button {
-                model.selectFiller(review.id, reveal: false)
-                toolbarEdge = edge
-                showsToolbar = true
+                model.activateFillerMarker(review.id)
             } label: {
                 Image(systemName: edge == .start ? "arrow.right.to.line" : "arrow.left.to.line")
                     .font(.system(size: 9, weight: .bold))
@@ -180,12 +212,11 @@ private struct FillerTimingRegionView: View {
             .disabled(!model.canReviewFillers)
             .highPriorityGesture(DragGesture(minimumDistance: 2, coordinateSpace: .named(review.id))
                 .onChanged { value in
+                    guard model.listening.effectiveTool == .select else { return }
                     if dragOrigin == nil {
                         dragOrigin = review.bounds
                         dragEdge = edge
-                        toolbarEdge = edge
-                        showsToolbar = false
-                        model.selectFiller(review.id, reveal: false)
+                        model.selectFiller(review.id, reveal: false, movePlayhead: false)
                     }
                     if let dragOrigin {
                         let origin = edge == .start ? dragOrigin.alignedStart : dragOrigin.alignedEnd
@@ -193,7 +224,7 @@ private struct FillerTimingRegionView: View {
                     }
                 }
                 .onEnded { value in
-                    if let dragOrigin {
+                    if model.listening.effectiveTool == .select, let dragOrigin {
                         let origin = edge == .start ? dragOrigin.alignedStart : dragOrigin.alignedEnd
                         let time = origin + value.translation.width / max(1, size.width) * duration
                         model.setFillerBounds(review.id,
@@ -203,7 +234,6 @@ private struct FillerTimingRegionView: View {
                     dragOrigin = nil
                     dragTime = nil
                     dragEdge = nil
-                    showsToolbar = true
                 })
             .onKeyPress(.leftArrow) { model.nudgeFiller(review.id, edge: edge, seconds: -0.001); return .handled }
             .onKeyPress(.rightArrow) { model.nudgeFiller(review.id, edge: edge, seconds: 0.001); return .handled }
@@ -225,64 +255,31 @@ struct FillerTimingToolbar: View {
 
     var body: some View {
         if let review = model.fillerReviews.first(where: { $0.id == reviewID }) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Text(review.word?.text ?? "Manual missed filler").font(.headline).textSelection(.enabled)
-                    Spacer()
-                    Text(review.status).font(.caption)
-                }
-                Text("Audible-word bounds · not editorial cut boundaries").font(.caption).foregroundStyle(.secondary)
-                Text(String(format: "Current: %.6f–%.6f s", review.bounds.alignedStart, review.bounds.alignedEnd))
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(review.word?.text ?? "Manual filler") · \(review.status)")
+                    .font(.caption.weight(.semibold)).lineLimit(1)
                 if let issue = model.fillerIssue(review) {
                     Label(issue, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
                 } else {
-                    HStack {
-                        Button("Word") { model.auditionFiller(review.id, context: 0) }
-                            .accessibilityIdentifier("\(accessibilityPrefix).audition")
-                        Button("With context") { model.auditionFiller(review.id) }
-                            .help("Listen with up to 0.5 seconds of supported context on each side.")
-                            .accessibilityIdentifier("\(accessibilityPrefix).context")
-                        Toggle("Loop", isOn: $model.loopsFillerAudition).toggleStyle(.checkbox)
-                            .accessibilityIdentifier("\(accessibilityPrefix).loop")
-                        if model.isPlaying || model.isPreparingPlayback {
-                            Button("Stop") { model.stopPlayback() }
-                                .accessibilityIdentifier("\(accessibilityPrefix).stop")
-                        }
-                    }
-                    VStack(spacing: 5) {
-                        edgeControls(.start)
-                        edgeControls(.end)
-                    }
-                    Button("Apply audible-word bounds") { model.applyFillerText(reviewID: review.id) }
-                        .accessibilityIdentifier("\(accessibilityPrefix).apply")
-                    HStack {
-                        Button(review.isAdjusted ? "Mark reviewed" : "Reviewed unchanged") {
+                    HStack(spacing: 4) {
+                        Button("Reviewed", systemImage: "checkmark.circle") {
                             model.decideFiller(review.id, decision: .reviewed)
                         }
                         .accessibilityIdentifier("\(accessibilityPrefix).reviewed")
-                        Button("Not a filler") { model.decideFiller(review.id, decision: .rejected) }
+                        Button("Reject", systemImage: "xmark.circle") { model.decideFiller(review.id, decision: .rejected) }
                             .accessibilityIdentifier("\(accessibilityPrefix).reject")
-                    }
-                    HStack {
+                        Button("Clear review", systemImage: "arrow.uturn.backward.circle") {
+                            model.decideFiller(review.id, decision: .pending)
+                        }
+                        .help("Return to Needs review. Keep the detection, adjusted bounds, audio, and transcript.")
+                        .accessibilityIdentifier("\(accessibilityPrefix).clearReview")
                         if review.detectedBounds != nil {
-                            Button("Revert to detected") { model.revertFiller(review.id) }
+                            Button("Revert to detected", systemImage: "arrow.counterclockwise") { model.revertFiller(review.id) }
                                 .accessibilityIdentifier("\(accessibilityPrefix).revert")
                         }
-                        Button("Needs review") { model.decideFiller(review.id, decision: .pending) }
                     }
+                    .labelStyle(.iconOnly)
                 }
-                if let detected = review.detectedBounds {
-                    Text(String(format: "Detected: %.6f–%.6f s", detected.alignedStart, detected.alignedEnd))
-                    Text("Detected source frames: [\(detected.sourceStartFrame), \(detected.sourceEndFrame))")
-                    Text(String(format: "Human offset: start %+.3f ms · end %+.3f ms",
-                        (review.bounds.alignedStart - detected.alignedStart) * 1000,
-                        (review.bounds.alignedEnd - detected.alignedEnd) * 1000))
-                } else {
-                    Text("Manual proposal. No detected timing exists.")
-                }
-                Text("Current source frames: [\(review.bounds.sourceStartFrame), \(review.bounds.sourceEndFrame))")
-                Text("Human reference data, not proof of phonetic ground truth. No audio or raw transcript is changed.")
-                    .foregroundStyle(.secondary)
             }
             .font(.caption).controlSize(.small)
             .disabled(!model.canReviewFillers)
@@ -291,22 +288,22 @@ struct FillerTimingToolbar: View {
         }
     }
 
-    private func edgeControls(_ edge: FillerTimingEdge) -> some View {
-        HStack {
-            Text(edge == .start ? "Start" : "End").frame(width: 34, alignment: .leading)
-            TextField("Aligned seconds", text: edge == .start ? $model.fillerStartText : $model.fillerEndText)
-                .textFieldStyle(.roundedBorder).monospacedDigit()
-                .accessibilityLabel("Filler audible-word \(edge == .start ? "start" : "end"), aligned seconds")
-                .accessibilityIdentifier("\(accessibilityPrefix).\(edge == .start ? "start" : "end").seconds")
-                .onSubmit { model.applyFillerText(reviewID: reviewID) }
-            Button("-1 ms") { model.nudgeFiller(reviewID, edge: edge, seconds: -0.001) }
-            Button("+1 ms") { model.nudgeFiller(reviewID, edge: edge, seconds: 0.001) }
+}
+
+extension EpisodeCleanupModel {
+    func activateFillerMarker(_ id: UUID) {
+        guard let review = fillerReviews.first(where: { $0.id == id }) else { return }
+        selectFiller(id, reveal: false)
+        listening.selection = review.bounds.alignedStart...review.bounds.alignedEnd
+        if let decision = listening.effectiveTool.reviewDecision {
+            decideFiller(id, decision: decision)
         }
     }
 }
 
 struct FillerTimingReviewSummary: View {
     @Bindable var model: EpisodeCleanupModel
+    @State private var showsSavedReviews = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -318,7 +315,18 @@ struct FillerTimingReviewSummary: View {
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if !model.fillerReviews.isEmpty {
-                DisclosureGroup("Saved reviews and retained history (\(model.fillerReviews.count))") {
+                Button {
+                    showsSavedReviews.toggle()
+                } label: {
+                    Label("Saved reviews and retained history (\(model.fillerReviews.count))",
+                          systemImage: showsSavedReviews ? "chevron.down" : "chevron.right")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityValue(showsSavedReviews ? "Expanded" : "Collapsed")
+                .accessibilityIdentifier("ww.cleanup.fillers.history")
+                if showsSavedReviews {
                     LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(model.fillerReviews) { review in
                             let issue = model.fillerIssue(review)
@@ -334,8 +342,10 @@ struct FillerTimingReviewSummary: View {
                                     if let issue { Text("Inactive: \(issue)").foregroundStyle(.orange) }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(Rectangle())
                             }
                             .buttonStyle(.plain)
+                            .accessibilityIdentifier("ww.cleanup.filler.review.\(review.id)")
                         }
                     }
                     .font(.caption)

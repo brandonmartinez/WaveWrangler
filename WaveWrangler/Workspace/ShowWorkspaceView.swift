@@ -30,7 +30,7 @@ private struct ShowWindowContent: View {
                     if state.inspectorPresented {
                         Divider()
                         InspectorContainer(state: state)
-                            .frame(width: 190)
+                            .frame(width: state.compactInspectorWidth)
                     }
                 }
             } else {
@@ -50,6 +50,21 @@ private struct ShowWindowContent: View {
                 DestinationControl(state: state)
             }
         }
+        .sheet(isPresented: $state.recordingsPresented) {
+            if let episode = state.selectedEpisode {
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Recordings & Speakers").font(.headline)
+                        Spacer()
+                        Button("Done") { state.recordingsPresented = false }
+                            .keyboardShortcut(.defaultAction)
+                    }.padding(12)
+                    SetupContainerView(state: state, episode: episode)
+                }
+                .frame(minWidth: 760, idealWidth: 1000, minHeight: 540, idealHeight: 680)
+                .wwAppEnvironment()
+            }
+        }
     }
 
     private var core: some View {
@@ -67,12 +82,16 @@ private struct ShowWindowContent: View {
                 }
                 .accessibilityIdentifier("ww.show.library")
                 SaveStatusItem(state: state)
-                Button {
-                    state.toggleInspector()
-                } label: {
-                    Label(state.inspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                if state.destination == .alignment, state.selectedEpisode != nil {
+                    WorkspaceInspectorToggles(state: state)
+                } else {
+                    Button {
+                        state.toggleInspector()
+                    } label: {
+                        Label(state.inspectorPresented ? "Hide Inspector" : "Show Inspector", systemImage: "sidebar.right")
+                    }
+                    .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
                 }
-                .help(state.inspectorPresented ? "Hide Inspector (⌃⌘I)" : "Show Inspector (⌃⌘I)")
             }
         }
         // The NSWindow owns the complete 760×440 minimum. A content-driven minimum here is only for
@@ -281,12 +300,24 @@ private struct ShowDetailContent: View {
                         EpisodeAlignmentContent(state: state, episodeID: episode.id)
                             .id(episode.id)
                     } else {
-                        ContentUnavailableView {
-                            Label("Add recordings to begin", systemImage: "waveform")
-                        } description: {
-                            Text("Organize recordings into recorder groups and confirm their originals in Setup.")
-                        } actions: {
-                            Button("Manage recordings…") { state.select(.setup) }
+                        CenteredScrollView {
+                            VStack(spacing: 12) {
+                                Image(systemName: "waveform")
+                                    .wwFont(.largeTitle)
+                                    .accessibilityHidden(true)
+                                Text("Add recordings to begin")
+                                    .wwFont(.title2)
+                                    .accessibilityAddTraits(.isHeader)
+                                Text("Organize recordings into recorder groups and confirm their originals in Setup.")
+                                    .wwFont(.body)
+                                    .foregroundStyle(Color(nsColor: .textColor))
+                                    .multilineTextAlignment(.center)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: 360)
+                                Button("Add recordings…", systemImage: "plus") {
+                                    state.recordingsPresented = true
+                                }
+                            }
                         }
                     }
                 }

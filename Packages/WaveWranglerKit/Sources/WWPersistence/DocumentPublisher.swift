@@ -5,7 +5,7 @@ import WWCore
 /// ordered steps and a fault-injection boundary in the harness.
 ///
 /// Show documents use P1–P7. The library document uses the same publisher; its L1–L6 are P1–P6 with the
-/// derived index update directly after L6 (the library has no library acknowledgement step).
+/// derived index update directly after L6 (the library has no library acknowledgment step).
 public enum PublicationBoundary: String, Sendable, CaseIterable, Codable {
     /// P1/L1: candidate encoded and validated → retain the validated prior.
     case candidateValidated = "P1"
@@ -17,7 +17,7 @@ public enum PublicationBoundary: String, Sendable, CaseIterable, Codable {
     case stagedFlushed = "P4"
     /// P5/L5: publication returned → independent read-back.
     case published = "P5"
-    /// P6/L6: read-back verified → library acknowledgement (shows) or index update (library).
+    /// P6/L6: read-back verified → library acknowledgment (shows) or index update (library).
     case readBackVerified = "P6"
     /// P7: library acknowledged → derived index update (shows only).
     case libraryAcknowledged = "P7"
@@ -64,7 +64,7 @@ public enum WriteFailureKind: String, Sendable, Equatable, Codable {
     case diskFull
     case permissionDenied
     case unavailable
-    case cancelled
+    case canceled = "cancelled"
     case other
 
     public init(classifying error: any Error) {
@@ -78,7 +78,7 @@ public enum WriteFailureKind: String, Sendable, Equatable, Codable {
             case ENOSPC, EDQUOT: self = .diskFull; return
             case EACCES, EPERM, EROFS: self = .permissionDenied; return
             case ENETDOWN, ENETUNREACH, ETIMEDOUT, EHOSTUNREACH, ENOENT, ENXIO, ENOTDIR: self = .unavailable; return
-            case ECANCELED: self = .cancelled; return
+            case ECANCELED: self = .canceled; return
             default: break
             }
         }
@@ -88,7 +88,7 @@ public enum WriteFailureKind: String, Sendable, Equatable, Codable {
             case .fileWriteNoPermission, .fileReadNoPermission, .fileWriteVolumeReadOnly: self = .permissionDenied
             case .fileNoSuchFile, .fileReadNoSuchFile, .fileReadUnknown, .ubiquitousFileUnavailable, .ubiquitousFileNotUploadedDueToQuota:
                 self = .unavailable
-            case .userCancelled: self = .cancelled
+            case .userCancelled: self = .canceled
             default: self = .other
             }
             return
@@ -107,7 +107,7 @@ public struct PublicationConflict: Sendable, Equatable {
 }
 
 /// Why a publication did not produce an acknowledged revision. Every case leaves the prior valid revision
-/// in place (or, for `acknowledgementUncertain`, possibly a newer coherent one) — never a mixture.
+/// in place (or, for `acknowledgmentUncertain`, possibly a newer coherent one) — never a mixture.
 public enum PublicationError: Error, Sendable, Equatable {
     /// The document is read-only (for example written by a newer WaveWrangler). Nothing was written.
     case readOnly(String)
@@ -116,11 +116,11 @@ public enum PublicationError: Error, Sendable, Equatable {
     case conflict(PublicationConflict)
     /// The write failed before publication, after boundary `stage` was passed. The prior revision is unchanged on disk.
     case failed(stage: PublicationBoundary, kind: WriteFailureKind, detail: String)
-    /// Cancelled before publication; nothing changed on disk.
-    case cancelled
+    /// Canceled before publication; nothing changed on disk.
+    case canceled
     /// Publication may have happened but could not be verified. The user must reopen/reconcile before
     /// anything treats it as saved.
-    case acknowledgementUncertain(String)
+    case acknowledgmentUncertain(String)
 }
 
 extension PublicationError: LocalizedError {
@@ -134,20 +134,20 @@ extension PublicationError: LocalizedError {
             case .diskFull: "The document could not be saved because the disk is full."
             case .permissionDenied: "The document could not be saved because WaveWrangler does not have permission."
             case .unavailable: "The document could not be saved because its location is unavailable."
-            case .cancelled: "Saving was canceled."
+            case .canceled: "Saving was canceled."
             case .other: "The document could not be saved."
             }
-        case .cancelled: "Saving was canceled."
-        case .acknowledgementUncertain: "The save may have completed, but it could not be verified."
+        case .canceled: "Saving was canceled."
+        case .acknowledgmentUncertain: "The save may have completed, but it could not be verified."
         }
     }
 
     public var recoverySuggestion: String? {
         switch self {
         case .readOnly: "Open it with the version of WaveWrangler that created it."
-        case .invalidCandidate, .failed, .cancelled: "The previously saved revision is unchanged. Your changes are still open; try saving again."
+        case .invalidCandidate, .failed, .canceled: "The previously saved revision is unchanged. Your changes are still open; try saving again."
         case .conflict: "Your changes are still open and a copy is kept on this Mac. Save them as a new document, or open the other version."
-        case .acknowledgementUncertain: "Your changes are still open. Reopen the document to check what was saved."
+        case .acknowledgmentUncertain: "Your changes are still open. Reopen the document to check what was saved."
         }
     }
 
@@ -157,8 +157,8 @@ extension PublicationError: LocalizedError {
         case let .invalidCandidate(error): error.errorDescription
         case let .conflict(conflict): "Expected \(conflict.expected?.description ?? "no document"), found \(conflict.onDisk?.description ?? "nothing")."
         case let .failed(stage, _, detail): "\(stage.rawValue): \(detail)"
-        case .cancelled: nil
-        case let .acknowledgementUncertain(detail): detail
+        case .canceled: nil
+        case let .acknowledgmentUncertain(detail): detail
         }
     }
 }
@@ -172,7 +172,7 @@ public struct PublicationReceipt: Sendable, Equatable {
     /// The coherent prior revision retained before publication, if there was one.
     public let priorCheckpoint: RecoveryCheckpoint?
     public let verifiedAt: Date
-    /// Publication was verified, but cancellation or a dependant (library/index) acknowledgement did not
+    /// Publication was verified, but cancellation or a dependent (library/index) acknowledgment did not
     /// complete. The document itself is coherent at `revision`.
     public let followUpIncomplete: Bool
 
@@ -195,9 +195,9 @@ public enum PublishStep {
     case external((URL, Data) throws -> Void)
 }
 
-/// Dependants acknowledged only after read-back verification (C3 step 8).
+/// Dependents acknowledged only after read-back verification (C3 step 8).
 public struct PublicationFollowUp {
-    /// Library acknowledgement (P6 → P7). Shows only.
+    /// Library acknowledgment (P6 → P7). Shows only.
     public var acknowledgeLibrary: ((PublicationReceipt) throws -> Void)?
     /// Derived index update (after P7 for shows, after L6 for the library).
     public var updateIndex: ((PublicationReceipt) throws -> Void)?
@@ -244,7 +244,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
     }
 
     /// Encodes `payload` as `revision` with a fresh publication ID and publishes it. Throws
-    /// `PublicationError`; injected harness interruptions propagate unchanged (modelling process death).
+    /// `PublicationError`; injected harness interruptions propagate unchanged (modeling process death).
     public func publish(
         _ payload: Coder.Payload,
         revision: Int,
@@ -252,7 +252,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         to url: URL,
         target: PublicationTarget,
         retainPrior: Bool = true,
-        isCancelled: () -> Bool = { false },
+        isCanceled: () -> Bool = { false },
         step: PublishStep = .stagedReplace,
         followUp: PublicationFollowUp = .none
     ) throws -> PublicationReceipt {
@@ -266,7 +266,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             throw PublicationError.invalidCandidate(.invalidRevision(revision))
         }
         return try publish(encoded: encoded, key: key, to: url, target: target, retainPrior: retainPrior,
-                           isCancelled: isCancelled, step: step, followUp: followUp)
+                           isCanceled: isCanceled, step: step, followUp: followUp)
     }
 
     /// Publishes already-encoded bytes (exact copies such as library relocation, or the candidate an
@@ -277,7 +277,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         to url: URL,
         target: PublicationTarget,
         retainPrior: Bool,
-        isCancelled: () -> Bool,
+        isCanceled: () -> Bool,
         step: PublishStep,
         followUp: PublicationFollowUp
     ) throws -> PublicationReceipt {
@@ -345,7 +345,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
                 }
                 try hooks.reached(.stagedFlushed)
             }
-            if !isCancelled() {
+            if !isCanceled() {
                 do {
                     switch step {
                     case .stagedReplace: try ops.replace(url, withStaged: staged!)
@@ -359,11 +359,11 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
                     } else if now.map(RevisionFingerprint.digest) == onDiskFingerprint?.byteDigest {
                         throw PublicationError.failed(stage: .stagedFlushed, kind: WriteFailureKind(classifying: error), detail: "\(error)")
                     } else {
-                        throw PublicationError.acknowledgementUncertain("publication reported \(error) and the on-disk state is unknown")
+                        throw PublicationError.acknowledgmentUncertain("publication reported \(error) and the on-disk state is unknown")
                     }
                 }
             } else {
-                throw PublicationError.cancelled
+                throw PublicationError.canceled
             }
             try hooks.reached(.published)
 
@@ -372,12 +372,12 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
             do {
                 readBack = try ops.read(url)
             } catch where !(error is any InjectedInterruption) {
-                throw PublicationError.acknowledgementUncertain("read-back failed: \(error)")
+                throw PublicationError.acknowledgmentUncertain("read-back failed: \(error)")
             }
             guard RevisionFingerprint.digest(readBack) == candidateFingerprint.byteDigest,
                   let decoded = try? coder.decode(readBack), decoded.publication == encoded.publication
             else {
-                throw PublicationError.acknowledgementUncertain("read-back did not match publication \(encoded.publication.publicationID)")
+                throw PublicationError.acknowledgmentUncertain("read-back did not match publication \(encoded.publication.publicationID)")
             }
             return (prior, Date())
         }
@@ -386,7 +386,7 @@ public struct DocumentPublisher<Coder: CanonicalDocumentCoding>: Sendable {
         try? recovery?.recordLocation(url, for: key)
         var receipt = PublicationReceipt(
             url: url, fingerprint: candidateFingerprint, publication: encoded.publication,
-            priorCheckpoint: prior, verifiedAt: verifiedAt, followUpIncomplete: isCancelled()
+            priorCheckpoint: prior, verifiedAt: verifiedAt, followUpIncomplete: isCanceled()
         )
         guard !receipt.followUpIncomplete else { return receipt }
         // Step 8: acknowledge, then the derived index.

@@ -1,6 +1,34 @@
 import SwiftUI
 import WWOrganizer
 
+struct WorkspaceInspectorToggles: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { activity in
+                let active = state.inspectorPresented && state.workspaceInspector == activity
+                Button {
+                    state.toggleWorkspaceInspector(activity)
+                } label: {
+                    Image(systemName: activity.symbol)
+                        .frame(width: 24, height: 24)
+                        .background(active ? Color.accentColor.opacity(0.2) : .clear,
+                                    in: RoundedRectangle(cornerRadius: 5))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(activity.rawValue) sidebar")
+                .accessibilityValue(active ? "Shown" : "Hidden")
+                .accessibilityAddTraits(active ? [.isSelected] : [])
+                .accessibilityIdentifier("ww.sidebar.\(activity.identifier)")
+                .help("\(active ? "Hide" : "Show") \(activity.rawValue) sidebar")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Sidebar activities")
+    }
+}
+
 /// Destination control (IA §4.2). Segments are separate accessibility elements with stable identifiers
 /// so later destinations are focusable and announce "Not available in this version" (IA-12). Selecting
 /// one never moves keyboard focus (IA-13).
@@ -8,47 +36,31 @@ struct DestinationControl: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
-        HStack(spacing: 2) {
-            ForEach(ShowDestination.allCases) { destination in
-                let selected = state.destination == destination
-                Button {
-                    state.select(destination)
-                } label: {
-                    HStack(spacing: 4) {
-                        Text(destination.title)
-                        if !destination.isAvailableInThisVersion {
-                            Image(systemName: "lock.fill")
-                                .imageScale(.small)
-                                .accessibilityHidden(true)
-                        }
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background {
-                        if selected {
-                            RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.25))
-                        }
-                    }
-                    .overlay {
-                        if selected {
-                            RoundedRectangle(cornerRadius: 6).strokeBorder(.secondary, lineWidth: 1)
-                        }
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .help("\(destination.title) (⌘\(destination.shortcutDigit)). \(destination.helpText)")
-                .accessibilityLabel(destination.title)
-                .accessibilityValue(destination.unavailableValue ?? "")
-                .accessibilityAddTraits(selected ? [.isSelected] : [])
-                .accessibilityHint("Destination \(ShowDestination.allCases.firstIndex(of: destination)! + 1) of \(ShowDestination.allCases.count)")
-                .accessibilityIdentifier("ww.show.destination.\(destination.rawValue)")
-            }
+        HStack(spacing: 8) {
+            Button("Workspace", systemImage: "waveform") { state.select(.alignment) }
+                .accessibilityAddTraits(state.destination == .alignment ? [.isSelected] : [])
+                .accessibilityIdentifier("ww.show.destination.alignment")
+            NativeActionMenu(
+                label: "Views", symbol: "rectangle.3.group",
+                identifier: "ww.show.views", actions: viewActions)
+            Button("Export…", systemImage: "square.and.arrow.up") { state.select(.export) }
+                .help("Export is not available yet. This opens the availability explanation; nothing is exported.")
         }
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("Destination")
+        .accessibilityLabel("Workspace and alternative views")
         .accessibilityValue(state.destination.title)
         .accessibilityIdentifier("ww.show.destination")
+    }
+
+    private var viewActions: [NativeActionMenu.Action] {
+        [.init(title: "Recordings & Speakers…", identifier: "ww.show.views.recordings") {
+            state.recordingsPresented = true
+        }] + ShowDestination.allCases.filter { $0 != .export }.enumerated().map { index, destination in
+            .init(
+                title: "Legacy \(destination.title)",
+                identifier: "ww.show.destination.\(destination.rawValue)", separatorBefore: index == 0
+            ) { state.select(destination) }
+        }
     }
 }
 

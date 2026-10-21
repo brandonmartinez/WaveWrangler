@@ -8,7 +8,7 @@ struct ShowSchema4MigrationTests {
     static let golden = Data(#"{"checksum":"sha256:0d2778357123b3083227cb2d4beda89d781bf20a74b920dd3bb0589b8cb5bfae","format":"com.brandonmartinez.wavewrangler.show","payload":{"episodes":[],"history":{"cursor":0,"entries":[]},"schemaVersion":4,"show":{"id":"00000000-0000-4000-8000-000000000401","notes":"","title":"Schema 4 golden"},"speakers":[]},"publicationID":"00000000-0000-4000-8000-000000000402","revision":7,"schemaVersion":4}"#.utf8)
 
     @Test func oldDocumentsRequireConsentAndPreserveEveryValue() throws {
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 4, minimum: 6)) {
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 4, minimum: SchemaVersion.show)) {
             try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Self.golden)
         }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(Self.golden)
@@ -16,7 +16,7 @@ struct ShowSchema4MigrationTests {
         #expect(upgraded.revision == 7)
         #expect(upgraded.payload.show.title == "Schema 4 golden")
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: upgraded.payload).isEmpty)
-        #expect(ShowSchemaMigration.steps.map(\.fromSchema) == [1, 2, 3, 4, 5])
+        #expect(ShowSchemaMigration.steps.map(\.fromSchema) == [1, 2, 3, 4, 5, 6])
     }
 
     @Test func markersAndSourceBoundTextRoundTripAndCannotBeMislabeledAsSchema4() throws {

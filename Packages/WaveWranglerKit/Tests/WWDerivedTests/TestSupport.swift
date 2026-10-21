@@ -207,7 +207,7 @@ final class RecordingSourceIO: SourceIO, @unchecked Sendable {
 // MARK: - Ordering gates
 
 /// A one-shot latch. `wait()` ignores task cancellation, so a job blocked on it models work that finishes
-/// late even after it was cancelled.
+/// late even after it was canceled.
 actor Latch {
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []

@@ -56,7 +56,7 @@ struct FormatUpdateTests {
                                              onDiskIsCurrentFormatOfThisShow: true) == .updated)
         #expect(FormatUpdateOutcome.classify(errorDetail: "simulated", original: original, onDiskNow: original,
                                              onDiskIsCurrentFormatOfThisShow: false) == .unchanged(detail: "simulated"))
-        // No error yet the original is still there (e.g. cancelled): D15 with a generic reason.
+        // No error yet the original is still there (e.g. canceled): D15 with a generic reason.
         guard case .unchanged = FormatUpdateOutcome.classify(errorDetail: nil, original: original, onDiskNow: original,
                                                              onDiskIsCurrentFormatOfThisShow: false) else {
             Issue.record("expected unchanged")

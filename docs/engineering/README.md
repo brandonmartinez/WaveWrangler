@@ -1,8 +1,8 @@
 # WaveWrangler engineering guide
 
-How the native macOS app is laid out, who owns which folder, and how to build and test it. Product
-scope, milestones and decisions live in [`docs/planning/`](../planning/milestone-runbook.md); this page
-covers code only.
+How the native macOS app is laid out and how to build and test it. The
+[development workflow](../planning/milestone-runbook.md) and current refinement
+session govern work; older milestone documents are historical references.
 
 ## Layout
 
@@ -53,18 +53,21 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 .github/workflows/ci.yml          Ordinary build/test CI
 ```
 
-**Planned (M2):** `WWTimeMap` (WW-015) adds its row through its own lane. Each lane adds its own
-`Sources/<Module>/` row here when its module merges.
+`WWTimeMap` contains the exact source/group/aligned coordinate maps.
+`WWCommonEdit` contains the provisional common episode edit-map implementation;
+its presence does not mean export or protected-cut acceptance is complete.
 
 Because app folders are `PBXFileSystemSynchronizedRootGroup`s, adding/removing files under
 `WaveWrangler/`, `WaveWranglerTests/` or `WaveWranglerUITests/` does **not** edit `project.pbxproj`.
-Only touch the project file for genuine target/build-setting changes, and coordinate those through the
-Mac owner to avoid parallel pbxproj conflicts. Non-source files placed in `WaveWrangler/` are copied as
+Only touch the project file for genuine target/build-setting changes and avoid
+overlapping edits. Non-source files placed in `WaveWrangler/` are copied as
 resources unless listed in the target's membership exceptions (as `Info.plist` is).
 
-## Module and folder ownership
+## Module boundaries
 
-Parallel sessions work on disjoint folders. Cross-folder changes go through the owning lane.
+The owner names in the historical table below describe the original implementation,
+not active Squad roles or approval gates. Work directly across the relevant
+boundaries as needed, keeping independently edited surfaces disjoint.
 
 | Area | Owner | Notes |
 | --- | --- | --- |
@@ -92,18 +95,112 @@ integration. `WWPersistence` and `WWSources` depend on `WWCore`; `WWDecode` depe
 The selected-speaker path additionally depends on `WWAutoAlign`; general multi-recorder cycle analysis
 continues to use the frozen `WWAlignEstimate`.
 
+### Listening startup and replay
+
+Aligned transport prepares one second of the initially audible tracks, then fills
+contiguous half-second output-frame windows with at most 3.5 seconds queued ahead.
+All tracks use the same exact output ranges and shared host clock. Muted tracks do
+not render before audible startup. One optional source at a time warms up to one
+second in the background, targeting a later producer window rather than racing the
+immediately next request; only an enabled source with a freshly reverified window
+can join a future transport boundary. Pending or unavailable sources are reported
+without restarting the other tracks. A missed producer deadline stops playback
+with an explicit error instead of treating an underrun as successful listening.
+
+Bounded selection and marker auditions keep the current timeline viewport stable,
+including during repeats, so their Stop and review controls stay reachable. Ordinary
+unbounded playback continues following the playhead.
+
+Source resolution and accepted-map activation are batched once per window, not
+once per track. The runtime's ordinary audition cache is process-local, limited to
+16 MiB of PCM and 64 entries, and keyed by exact raw witness, complete decoded
+format, group map, accepted episode/revision, channel, output frames and render
+recipe/version. Contained windows can reuse the same samples. Every hit still opens
+the witnessed decoder, validates the measured format/channel against the placement,
+and checks source identity; the runtime also rechecks device access and the accepted
+map before returning audio. No cached PCM grants authorization or substitutes for a
+changed recording. Adaptive corrections retain their independently verified
+five-second tile path; a cold adaptive tile can still dominate preparation.
+
+The immutable default sinc prototype is shared between renders and never built for
+identity-only plans; samples, render recipes and historical DSP qualification are
+unchanged. Stop clears scheduled audio but retains the compatible paused transport
+graph, reducing repeated engine/node setup. Each restart still has the existing
+100 ms scheduling lead: these changes do **not** promise gapless cycles or measured
+physical audio latency.
+
+The opt-in synthetic listening benchmark exercises generated 48 kHz PCM, identity
+and +100 ppm maps, two audible tracks, multiple windows and three cycles. Its useful
+local acceptance is cold first-window preparation below 1.5 seconds, faster than
+preparing the former five-second window, subsequent windows before the synthetic
+scheduled deadline, exact repeated samples, and bounded cache storage. It measures
+witnessed PCM production, not full app admission, device start or acoustic latency.
+On 2026-10-20, same-host generated-PCM measurements were:
+
+| Build / two-track maps | Former 5 s window policy | Cold 1 s first window | Cached first window (cycles 2-3) | Cold 500 ms fill |
+| --- | ---: | ---: | ---: | ---: |
+| Debug / identity + drift | 2,457 ms | 487 ms | 0.57-1.34 ms | 242-247 ms |
+| Debug / two drift | 4,733 ms | 948 ms | 0.77-1.03 ms | 472-483 ms |
+| Release / identity + drift | 108 ms | 22.5 ms | 0.51-0.87 ms | 12.0-12.8 ms |
+| Release / two drift | 247 ms | 43.6 ms | 0.61-0.90 ms | 22.8-25.9 ms |
+
+These are observations, not a p95 guarantee; each case has one cold cycle and two
+cached cycles. The five-second comparison uses the former window policy on the
+current renderer. Separately, the pre-change Debug renderer-only baseline measured
+88.8-89.8 ms for five-second identity, 18.1 ms for 500 ms identity and 249-253 ms for
+500 ms drift; after kernel reuse those measured 77.4-78.6, 7.80-7.89 and 237-241 ms.
+Each two-track case retained 1,536,000 PCM bytes, with 14 misses and 28 witnessed
+hits across three four-second cycles. Serial macOS VM hosted regressions also
+exercise three real model playback cycles, synchronous Stop, live unmute/Solo
+without restarting the shared clock, and the actual producer-deadline callback
+with synthetic recordings. Those are functional checks, not measurements of full
+app admission, physical output startup, or gapless cycles. More simultaneous
+drifting tracks and cold adaptive tiles are not covered by this two-track timing
+acceptance.
+
+Run with the normal package scratch directory and bounded workers:
+
+```sh
+WW_LISTENING_BENCHMARK=1 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 \
+swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm \
+  --jobs 2 --no-parallel --filter 'AlignedAuditionStartupTests|ListeningRenderStartupTests'
+```
+
 ### Bounded visual alignment
 
-The native episode editor keeps measured shared-ruler lanes as its main surface. Its contextual
+The native episode editor opens into the integrated all-source workspace. It shares one transport,
+ruler and listening state with progressive transcript annotations and contextual review. The fixed
+action strip exposes recording management, refresh, transcription and its model/Preferences shortcut.
+Legacy Setup, Alignment and Edit & Cleanup remain in Views and their keyboard commands; Export
+opens the existing unavailable explanation, not an export engine. Its contextual
 Recording inspector owns speaker/channel assignments, group nudges, numeric timing, and picked-point
-anchor actions; timing evidence is expandable. Recording settings buttons select their own source
-and open that inspector. Manage recordings opens Setup for import, recorder grouping, and speaker
-management rather than embedding a second copy of Setup above the timeline. Import
+anchor actions; timing evidence is expandable. Grouped top-bar buttons toggle one Recording,
+Alignment, Transcript & review, or Episode sidebar at a time. The Alignment sidebar owns the
+epoch/anchor tables, detailed timing actions, and status previously shown below the tracks;
+its tables scroll horizontally in narrow windows. Recording settings buttons select their own source
+and open that inspector. The compact plus opens the existing native recording/speaker management
+surface in a sheet rather than switching stages or duplicating source records. Import
 identity is provisional until the user explicitly confirms an unchanged original; the Setup engine
 checks current metadata and captures the decoder-owned raw witness before saving confirmation.
 Relink/Grant Access can also restore a missing device-local record or accept different file details
 only after the user acknowledges the comparison; the chosen local file is rechecked around read-only
 raw-witness capture before its new confirmed baseline is saved. It never silently substitutes a file.
+
+The compact primary and Command-click tool menus contain only Pointer, Move recorder, Reviewed,
+and Reject. Command temporarily selects the second tool; release or window deactivation restores
+the primary. Review tools target existing filler regions through the same undoable model actions;
+they never cut or erase audio. Move recorder retains position locks and reference protection.
+The single marker toolbar is centered on the visible selected interval and clamped to its track.
+It retains audition/context/loop access and adds Reviewed, Reject, Clear review, and Revert to
+detected. Clear review resets only the decision; it keeps adjusted bounds, detection, audio, and text.
+Numeric marker fields and the duplicate marker popover are removed; graphical handles and their
+keyboard/VoiceOver adjustments remain.
+
+Above the tracks, Listen now presets sit beside Add. Their active state reflects current listening
+choices, and Restore listening choices returns to the pre-preset choices. These session-only
+presets preserve explicit Mutes, do not change roles or saved policy, and do not count as Begin
+editing. The separate After alignment menu still saves the policy applied only by the explicit
+Begin editing action, once per accepted revision.
 
 The decoding-boundary scan distinguishes in-memory nominal conversion from source decoding:
 only `WWDecode/PCMResampling.swift` and `WWSpeech/LocalWhisper.swift` may name
@@ -115,18 +212,20 @@ requires mono 48 kHz PCM WAVE and 4-30 seconds, verifies the source unchanged, a
 without creating a show; it does not read samples or authorize any other media.
 
 Layout is per-window presentation: separate lanes can be grouped by recorder or assigned speaker,
-while overlay always groups enabled recordings by speaker. Both speaker layouts use the same
+while overlay groups recordings by speaker, including muted tracks. Both speaker layouts use the same
 source-to-speaker projection and retain unknown speakers. Recorder IDs and group-move semantics
-are unchanged; switching layouts preserves track/group visibility and the shared viewport.
+are unchanged; switching layouts preserves independent Solo/Mute, selection, cycle and the shared viewport.
 `AlignmentPipeline.prepareManual` gathers header facts without requiring estimator output; initial
 placement maps only one eligible epoch per non-reference group so recorder restarts with overlapping
 source clocks are not invented as synchronized. The user can place later epochs individually.
 `shiftAcceptedGroup` translates every supported segment of a non-reference group in one revision,
 preserving gaps, unsupported epochs, source spans, Undo, and canonical save verification. Playback
 prepares separate timed source windows on a shared clock; enabled untimed sources remain visible but are
-explicitly excluded, and playback refuses if none is timed. Show/hear toggles change the gains of
-prepared sources without pausing playback or resetting the playhead; muting every track advances
-silently. An unavailable muted source cannot be heard if enabled until playback is restarted, and
+explicitly excluded, and playback refuses if none is timed and audible at preparation.
+Independent S/M controls apply to files, speakers and recorder groups: matching Mute always wins,
+and multiple Solo scopes add their member files together. Group controls never erase member choices
+or change Primary/Backup roles. Live gain changes do not pause or reset playback; muting every track
+while running advances silently. An unavailable muted source cannot be heard if unmuted until playback is restarted, and
 the transport reports why. Each source window still requires the verified map, source witness, and
 exact decoded format to match; a mismatch on an enabled source stops playback rather than
 substituting audio. It may buffer between windows; it does not create an export or promise seamless
@@ -134,47 +233,100 @@ transport. "Timing not set — not attempted" describes the epoch's clock state,
 not the recording's file format; manual numeric timing or anchors do not require an estimator run.
 
 `WaveformWindowReader` produces at most 2,048 extrema bins per recording for a viewport of at most
-30 aligned seconds. Untimed recordings begin as dashed source-origin previews at aligned zero,
+30 aligned seconds. Its existing witnessed full-source overview targets 20 ms extrema bins,
+retains at least the former resolution for short sources, and caps each source at 65,536 bins.
+Overview cache recipe 3 invalidates the older 2,048-bin whole-source results. The existing pipeline
+resource gate admits 16 MiB plus the configured bounded decode chunks for the overview's transient
+extrema/encoding work; decoding remains
+streamed and range/channel/witness checked. The cap can coarsen detail for very long sources;
+only pauses resolvable in the measured bins and viewport can be shown. Untimed recordings begin as dashed source-origin previews at aligned zero,
 including when another group has accepted timing; they cannot play through the shared transport
 until a manual placement is accepted and verified. `WaveformViewport` inverts each supported affine segment into the correct source
 frame windows, clips to occurrence spans, and never reads gap frames into an envelope. Unsupported
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.
 The alignment workspace puts a compact transport with a centered editable live playhead and five-second
-skips above compact icon/slider zoom and lane-height controls beside Fit Timeline. The adaptive ruler
+skips above compact icon/slider zoom and lane-height controls beside Fit Timeline.
+Zoom and lane-height use the shared `NativeTimelineSlider`: real AppKit sliders retain
+numeric thumb values, keyboard adjustment, inherited disabled state and continuous
+bindings. Zoom refreshes measured detail when editing ends, not on every drag sample.
+The adaptive ruler
 uses a larger draggable flag and a high-contrast position line through each waveform, and offers evenly
 spaced time ticks: click to seek, drag its visible marker to move the
 playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
-gesture's time anchor. Aligned time may be negative relative to the reference, and verified
+gesture's time anchor. Horizontal scrolling over the waveform workspace pans time; Option-horizontal
+scrolling zooms around the pointer and Option-vertical scrolling resizes the lanes. Ordinary vertical
+scrolling is passed through unchanged to the workspace scroll view. Seeking and panning change
+presentation state and do not require unrelated document edits to be saved; accepted playback
+and timing edits retain their verification checks.
+Aligned time may be negative relative to the reference, and verified
 negative placements can be sought and played. The marker and all lanes share the same time-to-pixel transform; the ruler
-also exposes its range and adjustable playhead to accessibility clients. Recorder-group headers sit
+also exposes its range and a Stepper representation of the visible playhead to accessibility clients.
+Its nudges use the existing bounded seek and playback-resume path. Alignment inspectors keep timing
+actions and audition settings in labeled single-column groups with independently accessible controls.
+The empty alignment workspace reuses the Library's `CenteredScrollView`, scaled text styles,
+and a native text foreground so the recovery instructions and Add recordings action can scroll
+when space is constrained.
+Recorder-group headers sit
 beside adjustable-height
 source lanes; a translucent overlay with source selection is available for peak matching. Separate
 lanes and overlay share a ruler and playhead, selected with one segmented control. Overlay panels
-group the enabled recordings by speaker (with an Unknown speaker panel for unassigned sources),
+group the recordings by speaker (with an Unknown speaker panel for unassigned sources),
 while selection, drag, save and Undo/Redo still operate on the entire recorder group across panels.
 Zoom changes the
-visible transform around the current window center with the slider or around the gesture anchor
+visible transform around the current viewport center with the slider or around the gesture anchor
 on the ruler. **Fit timeline** includes the complete cached overview and five minutes of
 negative pre-roll for initial placement. Spans wider than 30 seconds draw the coarse, witnessed
 overview rather than decoding unbounded exact windows; narrower views request missing measured
 tiles on release. During panning the last measured tile or coarse overview stays visible without
 issuing a decode for every drag update. Each slice is clipped in its own tile coordinates before translation to the
-visible window. Peaks falling within one device-pixel column are merged into a min/max display
-envelope (mapped and unplaced audio separately) to avoid overlapping fractional strokes. A released
+visible window. Every cached bin covers its measured time span rather than a lone midpoint stick.
+Peaks falling within one device-pixel column are merged into a min/max display envelope (mapped
+and unplaced audio separately); mapped columns form a filled silhouette preserving relative
+amplitude and quiet intervals without bridging uncovered source/timing gaps. No image cache or
+source resampling is added. Marker-boundary edits retain the edited marker, zoom and viewport;
+explicit history navigation reveals an offscreen marker with only the necessary pan. A released
 group drag, including an untimed group's first manual placement, retains that visual position while the replacement map is saved
 and verified, then loads fresh measured audio. Numeric move and epoch timing remain keyboard-accessible
 alternatives; visual previews never change playback timing. The episode overview is secondary and
 can be expanded for navigation outside the current measured window.
-The pointer shows an open hand only over a selectable waveform in a movable recorder group, and
+Accepted positions are locked by default, with the reference always fixed. Unlock a target before
+automatic alignment or advanced timing corrections; locks also prevent reset and epoch splitting.
+The default Select tool creates an arbitrary temporary marquee. Only the explicit Move recorder tool
+can save a drag as one undoable timing revision. The pointer shows an open hand only over a selectable waveform in an unlocked recorder group in that tool, and
 a closed hand during its drag; the fixed reference and empty lane space do not advertise dragging.
 An untimed drag is accepted only if the selected source and epoch appear as a mapped placement in
 the resulting revision. If an earlier accepted map omitted that source, the manual plan rebuilds
 the map while preserving every other accepted placement and mapping; an ineligible or stale source
 is refused explicitly rather than producing a no-op revision.
-Speaker colors follow sorted stable speaker IDs so distinct speakers receive distinct palette slots
-until the palette wraps; unknown speakers
-remain gray, with names and roles available independently of color.
+Speaker colors are persistent show defaults with optional episode overrides; an ID-stable initial
+palette does not change when another speaker is added. Owned PNG avatars survive image-file removal;
+recorder origins use a separate native icon catalog. Unknown speakers remain gray, and names/roles
+remain available independently of color. Show hosts seed new episodes only. Saved recorder/source
+definitions are show-scoped reusable assignments, not copied recordings; applying them never
+silently replaces an existing Primary.
+
+Selection, enabled cycle locators and persistent revision-bound episode IN/OUT are distinct.
+The anchored marquee toolbar auditions the selected interval or adds half a second of context,
+clamped to media bounds and honoring the current Solo/Mute choices. Cycle repeats separately;
+filler loops do not change it. Explicit Begin editing applies a named optional playback policy once
+per verified accepted revision, with a restore action; the default keeps deliberate listening choices.
+Transcript labels progress from hidden to sentences, phrases, individual words and words with
+start/end timing markers, in one stable row. Zoom and typical timed-word size determine detail;
+silence and the current viewport's word count do not inflate it. Adjacent words never merge back
+into larger units; overlapping recognition clips label space without changing actual word bounds.
+Markers remain approximate recognition boundaries, not editable cut handles.
+Clipping at the viewport edge does not invent an additional word boundary.
+Full copyable text, explained untimed speech, earlier raw transcripts,
+and actionable filler review remain in the inspector. Narrow filler markers become poles or dots
+without merging or retiming events.
+
+Header-only metadata inspection/backfill uses the existing decoder and local matching originals,
+never implicit cloud downloads. Known facts survive unavailable files. Waveform caches remain
+identity/recipe keyed. Processing leaves navigation, playback and appearance changes available;
+actual source/timing/range mutations are job inputs. Publication compares scoped media inputs and
+merges only its result into the live document, preserving unrelated appearance and review edits.
+Changed inputs, competing transcripts or late lock changes refuse stale publication explicitly.
 
 `AlignmentRuntime` resolves the existing identity/availability records, captures an opened-file
 witness and lends only witness-bound WWDecode cursors. Access records and witnesses are rechecked
@@ -185,7 +337,7 @@ the aligned-asset renderer's applicability, dependency and exact active-content 
 `AlignedAuditionWindowReader` reuses `WWRender` and its cursor sample provider for at most five
 seconds of 48 kHz listening PCM. The app plays the reference's first decoded channel on the left
 and the explicitly selected target channel on the right. Nothing is written to a source, export or
-canonical document. Waveform results are discarded on cancelled/superseded loads; switching episode,
+canonical document. Waveform results are discarded on canceled/superseded loads; switching episode,
 changing source assignments or undoing/changing the accepted map invalidates or reloads the view.
 PCM cursors seek through the existing opened-descriptor gateway with `ExtAudioFileSeek`/`Tell`,
 preserving exact source frames and checking identity/cancellation around each seek and on return.
@@ -348,8 +500,28 @@ scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, D
 scripts/build.sh Release
 scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, segment, pipeline memory, timing and render calibration passes, then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
-scripts/test.sh --ui        # XCUITests only (launches the app); needs GUI permission + the coordinator's GUI lock
+scripts/test.sh --ui        # XCUITests only on the current host; use the VM lease pipeline instead on the development Mac
 ```
+
+### Source maintenance and historical qualification
+
+The [2026-10-20 source baselines](source-tree-baselines.json) pin the maintained
+estimator, segmenter, renderer, time-map and decoder source/test trees after
+American English cleanup. They also pin the SHA-256 of each unchanged historical
+freeze record. The shared test-only `WWTestSupport` helper checks these baselines
+and includes edited/untracked files when calculating a tree identity.
+
+These pins are source-integrity checks, **not new DSP qualification**. The
+historical measurements, seeds, gates and vendored engine bytes are unchanged.
+Old one-shot holdout entry points now refuse changed historical source trees
+before generating cases. A future qualification needs its own explicit freeze,
+approval and evidence; do not replace old measurement records or clear that guard.
+
+First-party names use American English. Platform spellings such as
+`Task.isCancelled` and the legacy serialized `"cancelled"` case/key remain
+unchanged so OS integration and existing documents/access records stay compatible.
+
+### Local speech diagnostics
 
 The isolated `ww-tiny-pcm-probe` is a **headless experiment**, not app inference. Standard
 package tests exercise missing, wrong-size and wrong-hash model refusal, descriptor I/O
@@ -370,15 +542,29 @@ checks the descriptor before/after, and hashes the bytes against
 before loading them from memory into the pinned CPU library. It generates two seconds
 of 16 kHz mono PCM with two inference threads and at most 16 decoded tokens. Output is
 aggregate only; segment timing availability is **not** word timing or accuracy.
-Never put model bytes in the repo. `SpeechInference.infer` still refuses even for a
-selected primary; no production source binding, sandbox offline proof or media use is
-established by this command.
+Never put model bytes in the repo. The legacy diagnostic `SpeechInference.infer` still refuses even for a
+selected primary. It is not the live cleanup transcription entry point
+(`PrimarySpeechSourceIssuer` and `LocalWhisperRecognizer`), and this command does
+not establish production source binding, sandbox offline proof or media consent.
+
+### GUI testing
 
 For headless functional XCUITests, build on the development Mac and run the
 signed Products inside the [macOS VM GUI hosts](ui-test-vm-hosts.md) through
 their own lease helpers. `scripts/test.sh --ui` launches on the **current
 host** and must not be run on the user's desktop outside an approved window.
-Performance and responsiveness gates stay on the Mac mini.
+Do not fall back to the Mac mini when a VM is unavailable. Physical-device
+performance, audio hardware, and unsupported virtualized GPU behavior need a
+concrete hardware-specific reason and separate approval.
+
+**Current refinement qualification discrepancy (Xcode 27.0, macOS 27.0):**
+the unchanged `AlignmentInspectionUITests.testBlockedRecoveryContrastAudit` passes on the
+Retina VM (1024x768 logical, 2x) but fails on the second VM at 1920x1200, 1x, for the
+recording-recovery description, including with sampled black-on-white pixels. Seven isolated
+SwiftUI and native `NSTextField` text comparisons pass on that same 1x VM, so the cause remains
+unresolved and is not established as a framework-wide defect. Delivery of this refinement was
+explicitly approved against the passing Retina gate with this discrepancy documented.
+Audit criteria and waivers are unchanged; this is not a general exemption from 1x testing.
 
 Per-PR GUI selection and the reviewed conditional flake-quarantine policy (currently only the
 #218 broad synthetic Library contrast test) are documented in [GUI flake quarantine](gui-flake-quarantine.md).
@@ -510,7 +696,15 @@ additively and update this table.
 | `LibraryEntryObserving` (same file) | `InMemoryLibraryBackend` (per-show “as of last open” details from shows opened this run) | Device-local, rebuildable; open/locate/reveal by show identity. `InMemoryLibraryBackend` also backs UI-test fixtures. |
 | `SourceCommandHandling` (`Commands/SourceCommands.swift`) | Sources UI | File › Import Sources…, Relink Source…, extra Source-menu items, and optional Edit › Delete / Move Up/Down hooks for the Sources/Speakers tables (return a title only while your table has focus). `SourceCommands.handler` defaults to a placeholder that changes nothing. |
 | `AutosavePolicyConnection` (`Settings/AutosavePolicyConnection.swift`) | Persistence `AutosavePolicyController` | The Settings toggle binds to `AutosavePolicyController.shared.isEnabled` (`WWAutosaveEnabled`/`WWAutosaveDelaySeconds`); `isConnected` is true only while that controller is the source of truth. |
-| `SetupSourcesContent.makeView` (`Workspace/SetupContainerView.swift`) | Sources UI | `(ShowDocumentStore, EpisodeID) -> AnyView` hosted in the Setup destination (Sources outline + Speakers table). |
+| `SetupContainerView` (`Workspace/SetupContainerView.swift`) | `EpisodeSetupContent` | Direct, typed construction from the shared document store, episode identity, and environment text scale. Episode identity resets view-local state; no mutable factory registration or placeholder is required. |
+
+`EpisodeAlignmentModel` owns document-facing presentation and asynchronous job admission.
+`AlignmentWaveformCache` owns bounded tile retention, coverage, eviction, and atomic reprojection
+without re-decoding retained bins. `AlignmentAudioPlayback` owns the audio engine, nodes, scheduled
+buffers, gains, and playback clock. The model retains cancellation/generation guards, verified-map
+checks, and the bounded playback producer. `AlignmentSourceAccess` distinguishes an absent
+device-local record from read/refresh failures; failures propagate to the operation's visible error
+state, while cancellation remains cancellation.
 
 Episode windows: `EpisodeWindowController` hosts `ShowWorkspaceView(state:)` with a fixed
 `ShowWindowState.boundEpisodeID`, restored by logical episode ID. Opening the same episode reuses its

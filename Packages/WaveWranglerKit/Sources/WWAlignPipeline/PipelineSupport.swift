@@ -16,7 +16,7 @@ public enum AlignmentWorkFailure: Error, Sendable, Equatable {
     case formatRevisionMismatch(interpretation: Int, envelope: Int)
     /// The source rate is below the estimator's minimum analysis rate.
     case sourceRateBelowAnalysisMinimum(rate: Int, minimum: Int)
-    /// What the decoder reported while analysing differs from the source's recorded facts.
+    /// What the decoder reported while analyzing differs from the source's recorded facts.
     case sourceFactsMismatch
     /// A source's facts are not ready (probe first).
     case sourceFactsUnavailable(SourceID)
@@ -31,7 +31,7 @@ public enum AlignmentWorkFailure: Error, Sendable, Equatable {
     case acceptedMapChanged
     /// The coordinator already considers the job's inputs stale (a source, format, map or recipe changed).
     case staleInputs(Set<StaleReason>)
-    case cancelled
+    case canceled
 }
 
 /// Holds the typed failure of one job (the coordinator keeps only a string).
@@ -107,7 +107,7 @@ actor TrackedWork {
         entries[id] = nil
     }
 
-    /// Runs `operation` as tracked work and returns its result; `nil` (nothing ran) once closed. Cancelling
+    /// Runs `operation` as tracked work and returns its result; `nil` (nothing ran) once closed. Canceling
     /// the caller cancels the work.
     nonisolated func run<T: Sendable>(_ operation: @escaping @Sendable () async -> T) async -> T? {
         guard let (id, task) = await start(operation) else { return nil }
@@ -128,13 +128,13 @@ actor TrackedWork {
 }
 
 extension DerivedJobCoordinator {
-    /// Cancels `slot` only while it is running `key`, so cancelling one caller never stops newer work that
+    /// Cancels `slot` only while it is running `key`, so canceling one caller never stops newer work that
     /// superseded it under a different key.
     func cancel(_ slot: DerivedSlot, ifRunning key: DerivedAssetKey) {
         if case let .running(running) = state(of: slot), running == key { cancel(slot) }
     }
 
-    /// Submits `work` and waits for its outcome. Cancelling the calling task cancels the job (the coordinator
+    /// Submits `work` and waits for its outcome. Canceling the calling task cancels the job (the coordinator
     /// runs work in its own detached task, which the caller's cancellation would not otherwise reach).
     func run(
         _ slot: DerivedSlot,
@@ -189,7 +189,7 @@ func boundedMap<Input: Sendable, Output: Sendable>(
 
 extension DecodeFailure {
     var asWorkFailure: AlignmentWorkFailure {
-        self == .cancelled ? .cancelled : .decode(self)
+        self == .canceled ? .canceled : .decode(self)
     }
 }
 
@@ -198,7 +198,7 @@ func workFailure(_ error: any Error) -> AlignmentWorkFailure {
     switch error {
     case let failure as AlignmentWorkFailure: failure
     case let failure as DecodeFailure: failure.asWorkFailure
-    case is CancellationError: .cancelled
+    case is CancellationError: .canceled
     case let failure as ResourceGate.Refusal:
         switch failure {
         case let .exceedsBudget(requested, budget): .memoryBudget(requested: requested, budget: budget)

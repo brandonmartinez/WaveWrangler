@@ -220,7 +220,7 @@ struct LibrarySessionTests {
         #expect(change.revert(on: change.apply(to: other)).collections.map(\.name) == ["B", "A", "C"])
     }
 
-    @Test func showPublicationAcknowledgementDoesNotBreakCollectionUndo() throws {
+    @Test func showPublicationAcknowledgmentDoesNotBreakCollectionUndo() throws {
         var session = LibrarySession()
         _ = session.didLoad(stored, allowsEdits: true)
         let collection = try #require(stored.collections.first)

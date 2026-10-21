@@ -56,7 +56,7 @@ struct SpeakerMatchTests {
                 backups: [ChannelReference(sourceID: fixture.id("short"), statedChannel: 0)]
             ),
         ]
-        let report = try await fixture.pipeline.analyseSpeaker(
+        let report = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
@@ -88,7 +88,7 @@ struct SpeakerMatchTests {
                 ]
             ),
         ]
-        let first = try await fixture.pipeline.analyseSpeaker(
+        let first = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
@@ -98,7 +98,7 @@ struct SpeakerMatchTests {
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources
         ))
         #expect(snapshot.speakerMatches[fixture.epochs[2]]?.count == 2)
-        let report = try await fixture.pipeline.analyseSpeaker(
+        let report = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[2],
             speaker: speaker, referenceSource: fixture.id("two"), targetSource: fixture.id("three")
@@ -158,7 +158,7 @@ struct SpeakerMatchTests {
         #expect(before.speakerMatches[fixture.epochs[1]]?.map(\.speaker) == [speakerA])
         #expect(before.speakerMatches[fixture.epochs[2]]?.isEmpty == true)
 
-        let first = try await fixture.pipeline.analyseSpeaker(
+        let first = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speakerA
         )
@@ -176,7 +176,7 @@ struct SpeakerMatchTests {
         let secondOption = try #require(after.speakerMatches[fixture.epochs[2]]?.first)
         #expect(secondOption.speaker == speakerB)
         #expect(secondOption.reference.source == fixture.id("b2"))
-        let second = try await fixture.pipeline.analyseSpeaker(
+        let second = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[2], speaker: speakerB
         )
@@ -230,7 +230,7 @@ struct SpeakerMatchTests {
             nil, forSource: fixture.id("one"), in: fixture.episodeID
         )
         await #expect(throws: AlignmentAcceptanceError.self) {
-            try await fixture.pipeline.analyseSpeaker(
+            try await fixture.pipeline.analyzeSpeaker(
                 model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
                 authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
             )
@@ -251,7 +251,7 @@ struct SpeakerMatchTests {
                 backups: [ChannelReference(sourceID: fixture.id("two"), statedChannel: 0)]
             ),
         ]
-        let report = try await fixture.pipeline.analyseSpeaker(
+        let report = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )
@@ -295,7 +295,7 @@ struct SpeakerMatchTests {
                 backups: [ChannelReference(sourceID: fixture.id("two"), statedChannel: 1)]
             ),
         ]
-        let report = try await fixture.pipeline.analyseSpeaker(
+        let report = try await fixture.pipeline.analyzeSpeaker(
             model: fixture.model, episode: fixture.episodeID, sources: fixture.sources,
             authorizations: fixture.authorizations, targetEpoch: fixture.epochs[1], speaker: speaker
         )

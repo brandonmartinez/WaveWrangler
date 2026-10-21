@@ -123,7 +123,7 @@ struct PendingLibraryEditsTests {
         #expect(await store.levelState == .newerFormat)
     }
 
-    @Test func acknowledgementsQueueButReconciliationDoesNot() async throws {
+    @Test func acknowledgmentsQueueButReconciliationDoesNot() async throws {
         let offline = try await OfflineRig()
         try offline.goOffline()
         let store = offline.rig.store()

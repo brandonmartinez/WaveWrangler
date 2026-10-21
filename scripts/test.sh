@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Run WaveWranglerKit package tests, then the unhosted WaveWranglerTests unit tests.
 # UI tests launch the app and are NOT run by default. `--ui` runs ONLY the XCUITests (GUI); use it only
-# when GUI launch is permitted and the GUI lock is held.
+# on a ready, leased macOS VM (docs/engineering/gui-testing.md). A physical host
+# requires specific approval; an unavailable VM is not permission to use the desktop.
 # Usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/Class/test]]
 set -euo pipefail
 
@@ -144,7 +145,7 @@ for segment_test in "${SEGMENT_REQUIRED[@]}"; do
 done
 rm -f "$SEGMENT_LOG"
 
-# WW-021 analysis memory bound: three 14-channel 75-minute synthetic groups analysed at the default
+# WW-021 analysis memory bound: three 14-channel 75-minute synthetic groups analyzed at the default
 # configuration must peak well under 1 GiB resident. Runs alone so no other suite inflates the process peak.
 echo "==> swift test pipeline memory pass: PipelineMemoryTests"
 PIPELINE_LOG="$(mktemp)"

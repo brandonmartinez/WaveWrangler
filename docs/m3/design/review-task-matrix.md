@@ -2,7 +2,7 @@
 
 **Owner:** Design · **Status:** proposed documentary acceptance plan; no native task or human evidence is claimed.
 
-**Refs:** [WW-025 (#22)](https://github.com/brandonmartinez/WaveWrangler/issues/22) · [WW-044 (#48)](https://github.com/brandonmartinez/WaveWrangler/issues/48) · [WW-029 (#26)](https://github.com/brandonmartinez/WaveWrangler/issues/26) · [Transcript and edit review spec](transcript-review-spec.md) · [M3 kickoff](../../planning/kickoffs/m3.md)
+**Refs:** [WW-025 (#22)](https://github.com/brandonmartinez/WaveWrangler/issues/22) · [WW-044 (#48)](https://github.com/brandonmartinez/WaveWrangler/issues/48) · [WW-029 (#26)](https://github.com/brandonmartinez/WaveWrangler/issues/26) · [Transcript and edit review spec](transcript-review-spec.md) · [M3 kickoff](https://github.com/brandonmartinez/WaveWrangler/blob/792aa6687ab0b7a196d41fe13e54f7dd9e048392/docs/planning/kickoffs/m3.md)
 
 This matrix makes the proposed interaction testable. All rows are **Not run** in this documentation-only PR. A passing design review, text-level test, pure-state test, or synthetic fixture is not native keyboard/AX/VoiceOver proof, human comprehension evidence, or M3 completion.
 

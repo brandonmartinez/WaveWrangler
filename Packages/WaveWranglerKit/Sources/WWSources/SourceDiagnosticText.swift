@@ -57,7 +57,7 @@ extension TransferState {
             } else {
                 "Downloading — progress unknown"
             }
-        case .cancelled: "Download stopped — the original was not changed"
+        case .canceled: "Download stopped — the original was not changed"
         case .failed: "Download failed — try again"
         case .offlineOrUnknown: "no progress reported or provider unavailable; connection loss not observed"
         }

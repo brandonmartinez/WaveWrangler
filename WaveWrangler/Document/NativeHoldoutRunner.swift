@@ -216,24 +216,24 @@ enum NativeHoldoutRunner {
         }
         try check(document.store.model == expected, "edits not applied")
 
-        // Library for the acknowledgement (P7: interrupted at its L6 boundary, before the derived index update).
+        // Library for the acknowledgment (P7: interrupted at its L6 boundary, before the derived index update).
         let libraryDir = dir.appending(path: "Library", directoryHint: .isDirectory)
         let library = LibraryStore(containerFolder: libraryDir, settings: InMemorySettings(), bookmarks: SecurityScopedFolderBookmarks(), recovery: recovery,
                                    indexCache: LibraryIndexCache(url: dir.appending(path: "index.json")),
                                    hooks: boundary == .libraryAcknowledged ? InterruptAt(boundary: .readBackVerified) : NoPublicationHooks())
         _ = await library.load()
-        let acknowledgementCount = Mutex(0)
+        let acknowledgmentCount = Mutex(0)
         ShowDocument.debugLibraryAcknowledger = { id, title, stamp in
-            acknowledgementCount.withLock { $0 += 1 }
+            acknowledgmentCount.withLock { $0 += 1 }
             _ = await library.acknowledgeShowPublication(id, title: title, publication: stamp)
         }
         if boundary != .libraryAcknowledged { ShowDocument.debugPublicationHooks = InterruptAt(boundary: boundary) }
         let target = operation == .saveAsOperation ? saveAsURL : url
         let error = await save(document, to: target, operation)
         ShowDocument.debugPublicationHooks = nil
-        try await Task.sleep(for: .milliseconds(50))   // let the acknowledgement task run
+        try await Task.sleep(for: .milliseconds(50))   // let the acknowledgment task run
         let state = document.status.saveStatus.state
-        let acknowledgements = acknowledgementCount.withLock { $0 }
+        let acknowledgments = acknowledgmentCount.withLock { $0 }
         document.close()
 
         let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: recovery)
@@ -255,7 +255,7 @@ enum NativeHoldoutRunner {
         if boundary == .libraryAcknowledged {
             try check(error == nil && outcome == "new", "P7 save should be verified: \(String(describing: error)) \(outcome)")
             try check(state.isVerifiedOnDisk, "status \(state)")
-            try check(acknowledgements == 1, "acknowledged \(acknowledgements)×")
+            try check(acknowledgments == 1, "acknowledged \(acknowledgments)×")
             let reloaded = LibraryStore(containerFolder: libraryDir, settings: InMemorySettings(), bookmarks: SecurityScopedFolderBookmarks(), recovery: recovery,
                                         indexCache: LibraryIndexCache(url: dir.appending(path: "index.json")))
             _ = await reloaded.load()
@@ -270,9 +270,9 @@ enum NativeHoldoutRunner {
         try check(error != nil, "save did not report the interruption")
         try check(!state.isVerifiedOnDisk, "status claims saved: \(state)")
         if outcome == "new" {
-            guard case .acknowledgementUncertain = state else { throw Failure(description: "published but status \(state)") }
+            guard case .acknowledgmentUncertain = state else { throw Failure(description: "published but status \(state)") }
         }
-        try check(acknowledgements == 0, "library advanced on a failed save")
+        try check(acknowledgments == 0, "library advanced on a failed save")
         return "\(name):\(outcome):\(outcome == "new" ? "ackUncertain" : "failedRetained")"
     }
 

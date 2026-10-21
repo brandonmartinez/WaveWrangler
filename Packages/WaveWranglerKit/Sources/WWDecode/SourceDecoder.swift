@@ -187,7 +187,7 @@ public struct SourceDecoder: Sendable {
     // MARK: - Checks
 
     static func checkCancellation() throws(DecodeFailure) {
-        if Task.isCancelled { throw .cancelled }
+        if Task.isCancelled { throw .canceled }
     }
 
     /// Metadata only (WWSources gateway). Refuses anything not proven to be a local regular file.

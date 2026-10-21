@@ -131,12 +131,12 @@ final class LibraryLocationUITests: XCTestCase {
         launch(state: "ready")
         let before = libraryState()
 
-        let empty = folder("Cancelled Folder")
+        let empty = folder("Canceled Folder")
         let popup = openLibraryLocation()
         chooseFolder(empty, from: popup)
         let sheet = app.sheets.firstMatch
         XCTAssertTrue(sheet.waitForExistence(timeout: 10))
-        XCTAssertTrue(sheet.staticTexts["Move your library to “Cancelled Folder”?"].exists, texts(sheet).description)
+        XCTAssertTrue(sheet.staticTexts["Move your library to “Canceled Folder”?"].exists, texts(sheet).description)
         app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(sheet.waitForNonExistence(timeout: 5))
         XCTAssertEqual(popup.value as? String, "In WaveWrangler", "Cancel keeps the location")

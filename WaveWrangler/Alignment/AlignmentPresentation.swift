@@ -649,7 +649,7 @@ enum AlignmentPresentation {
 
     private static func brief(_ failure: DecodeFailure) -> String {
         switch failure {
-        case .cancelled: "reading was canceled"
+        case .canceled: "reading was canceled"
         case .notARegularFile: "the item is not a regular file"
         case .notOpenedReadOnly: "the file could not be opened read-only"
         case .metadataUnavailable: "required metadata is unavailable"

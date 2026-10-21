@@ -547,7 +547,7 @@ private struct CellView: View {
         Text(cell.text)
             .setupFont(.body)
             // Single-glyph placeholders ("—" none, "?" unknown) are drawn bold so their thin strokes keep
-            // full label-colour contrast (#100); the VoiceOver value says "none" / "unknown".
+            // full label-color contrast (#100); the VoiceOver value says "none" / "unknown".
             .fontWeight(Self.isPlaceholder(cell) ? .bold : nil)
             .foregroundStyle(.primary)
             .lineLimit(2)

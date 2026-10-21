@@ -73,6 +73,11 @@ final class EpisodeSetupModel {
     @ObservationIgnored var window: () -> NSWindow? = { nil }
 
     var statuses: [SourceID: SourceStatusSnapshot] = [:]
+    private(set) var mediaDetailsMessages: [SourceID: String] = [:]
+    @ObservationIgnored private var mediaDetailsTask: Task<Void, Never>?
+    @ObservationIgnored private var mediaDetailsGeneration: UInt64 = 0
+    @ObservationIgnored private var pendingMediaDetails: [SourceID: Bool] = [:]
+    @ObservationIgnored private var requestedMediaDetails: Set<SourceID> = []
     @ObservationIgnored private var overviewTask: Task<Void, Never>?
     @ObservationIgnored private var overviewGeneration: UInt64 = 0
     @ObservationIgnored private var requestedOverviewEpisode: Episode?
@@ -123,7 +128,7 @@ final class EpisodeSetupModel {
     var inspectorFollowsSpeakers = false
     /// Incremented to ask the inspector to focus its first editable field (Return in the tables).
     var inspectorFocusRequest = 0
-    /// A focus request not yet honoured (the details may still be appearing). Consumed once.
+    /// A focus request not yet honored (the details may still be appearing). Consumed once.
     @ObservationIgnored private var pendingInspectorFocus = false
 
     /// Return in a table: move focus to the details' first editable field, opening them if collapsed.
@@ -258,6 +263,11 @@ final class EpisodeSetupModel {
         overviewTask = nil
         requestedOverviewEpisode = nil
         requestedOverviewSources = []
+        mediaDetailsGeneration += 1
+        mediaDetailsTask?.cancel()
+        mediaDetailsTask = nil
+        pendingMediaDetails = [:]
+        requestedMediaDetails = []
     }
 
     private func receive(_ update: [SourceID: SourceStatusSnapshot], for ids: Set<SourceID>) {
@@ -278,6 +288,60 @@ final class EpisodeSetupModel {
             announceTransferChange(from: previousFocused, to: now, name: name)
         }
         ensureConfirmedOverviews()
+        let confirmed = Set(ids.filter { statuses[$0]?.allowsWaveformOverview == true })
+        requestedMediaDetails.formIntersection(confirmed)
+        inspectMediaDetails(confirmed)
+    }
+
+    func inspectMediaDetails(_ ids: Set<SourceID>, explicitlyRequested: Bool = false, force: Bool = false) {
+        guard let document = store.document, FormatUpdatePolicy.allowsEdits(document.status.formatUpdate) else { return }
+        for id in ids where episode?.source(id) != nil && (force || !requestedMediaDetails.contains(id)) {
+            pendingMediaDetails[id] = explicitlyRequested || pendingMediaDetails[id] == true
+            requestedMediaDetails.insert(id)
+        }
+        guard mediaDetailsTask == nil, !pendingMediaDetails.isEmpty else { return }
+        let generation = mediaDetailsGeneration
+        mediaDetailsTask = Task { [weak self] in
+            guard let self else { return }
+            defer { if generation == mediaDetailsGeneration { mediaDetailsTask = nil } }
+            do {
+                let runtime = try await AlignmentRuntimeProvider.runtime(for: document, episode: episodeID)
+                while let id = pendingMediaDetails.keys.sorted(by: { $0.description < $1.description }).first {
+                    guard !Task.isCancelled, generation == mediaDetailsGeneration else { return }
+                    let permitProvisional = pendingMediaDetails.removeValue(forKey: id) == true
+                    guard let source = episode?.source(id) else { continue }
+                    do {
+                        let observations = try await runtime.inspectMediaDetails(source: id, permitProvisional: permitProvisional)
+                        guard !Task.isCancelled, generation == mediaDetailsGeneration else { return }
+                        guard episode?.source(id) != nil else { continue }
+                        let applied = store.apply("Read Audio Details") { model throws(DomainError) in
+                            try model.recordingMediaObservations(observations, source: id, in: episodeID)
+                        }
+                        if applied {
+                            mediaDetailsMessages[id] = nil
+                        } else {
+                            let reason = store.lastError.map(Self.describe) ?? "The document is read-only."
+                            mediaDetailsMessages[id] = "Audio details were not updated: \(reason) Check the stated channel and speaker assignments, then retry."
+                            message = "\(source.displayNameHint): \(mediaDetailsMessages[id] ?? reason)"
+                        }
+                    } catch is CancellationError {
+                        return
+                    } catch {
+                        guard !Task.isCancelled else { return }
+                        let reason = "Audio details were not updated: \(error.localizedDescription)"
+                        mediaDetailsMessages[id] = reason
+                        message = "\(source.displayNameHint): \(reason)"
+                    }
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                guard !Task.isCancelled else { return }
+                message = "Audio details could not be inspected: \(error.localizedDescription)"
+                for id in pendingMediaDetails.keys { mediaDetailsMessages[id] = message }
+                pendingMediaDetails = [:]
+            }
+        }
     }
 
     func ensureConfirmedOverviews(force: Bool = false) {
@@ -418,7 +482,7 @@ final class EpisodeSetupModel {
     func deleteSpeaker(_ id: SpeakerID) {
         let rows = presentation.speakerRows.map(\.id)
         if edit({ $0.deleteSpeaker(id) }) {
-            speakerSelection = Self.neighbour(of: id, in: rows).map { [$0] } ?? []
+            speakerSelection = Self.neighbor(of: id, in: rows).map { [$0] } ?? []
             announce(speakerSelection.first.map { "Selected \(speakerName($0))" } ?? "No speakers")
         }
     }
@@ -439,7 +503,7 @@ final class EpisodeSetupModel {
         let order = presentation.orderedSourceIDs
         if edit({ $0.removeSources(ids) }) {
             let remaining = order.filter { !ids.contains($0) }
-            let next = ids.last.flatMap { last in Self.neighbour(of: last, in: order).flatMap { remaining.contains($0) ? $0 : nil } } ?? remaining.last
+            let next = ids.last.flatMap { last in Self.neighbor(of: last, in: order).flatMap { remaining.contains($0) ? $0 : nil } } ?? remaining.last
             selection = next.map { [.source($0)] } ?? []
             if let next, let name = episode?.source(next)?.displayNameHint { announce("Selected \(name)") }
         }
@@ -516,6 +580,7 @@ final class EpisodeSetupModel {
         Task { [engine] in
             do {
                 try await engine.commitImport(accepted, fromScan: token)
+                self.inspectMediaDetails(Set(accepted.values), explicitlyRequested: true)
             } catch {
                 self.message = "The sources were added, but WaveWrangler couldn't save permission to reach them on this Mac: \(Self.reason(error))."
             }
@@ -637,7 +702,7 @@ final class EpisodeSetupModel {
 
     // MARK: Helpers
 
-    static func neighbour<T: Equatable>(of item: T, in list: [T]) -> T? {
+    static func neighbor<T: Equatable>(of item: T, in list: [T]) -> T? {
         guard let index = list.firstIndex(of: item) else { return nil }
         if index + 1 < list.count { return list[index + 1] }
         return index > 0 ? list[index - 1] : nil
@@ -649,6 +714,7 @@ final class EpisodeSetupModel {
 
     static func describe(_ error: DomainError) -> String {
         switch error {
+        case let .invalidWorkspace(reason): reason
         case .emptyTitle: "A name can't be empty."
         case let .invalidEpochNumber(n): "Epoch \(n) isn't valid. Enter a whole number of 1 or more."
         case .sourceNotInRecorderGroup: "Choose a recorder group first. Epochs belong to a recorder group."

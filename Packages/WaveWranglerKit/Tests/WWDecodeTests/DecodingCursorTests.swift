@@ -114,9 +114,9 @@ struct DecodingCursorTests {
         let content = ScriptedContentIO(source.script())
         let escaped = try await makeDecoder(io: AdjustableIO(), content: content).withDecodingCursor(source.url, source: SourceID()) { $0 }
         let failure = await Self.failure { _ = try await escaped.next() }
-        #expect(failure == .cancelled)
+        #expect(failure == .canceled)
         #expect(content.record.reads == 0)
-        #expect(await Self.failure { try await escaped.verifyUnchanged() } == .cancelled)
+        #expect(await Self.failure { try await escaped.verifyUnchanged() } == .canceled)
     }
 
     @Test("A source changed while reading fails the call, so nothing derived from it is returned")
@@ -252,12 +252,12 @@ struct DecodingCursorTests {
                 }
             }
         }
-        #expect(await task.value == .cancelled)
+        #expect(await task.value == .canceled)
         #expect(content.record.reads == 3, "priming-only reads, then the first frames; nothing after the cancel")
         #expect(content.record.closes == 1)
         #expect(ledger.snapshot.openScopes == 0)
 
-        // Already cancelled: no scope, no metadata, no open.
+        // Already canceled: no scope, no metadata, no open.
         let io = AdjustableIO()
         let untouched = ScriptedContentIO(source.script())
         let early = Task { () -> DecodeFailure? in
@@ -266,7 +266,7 @@ struct DecodingCursorTests {
                 _ = try await makeDecoder(io: io, content: untouched).withDecodingCursor(url, source: SourceID()) { _ in 0 }
             }
         }
-        #expect(await early.value == .cancelled)
+        #expect(await early.value == .canceled)
         #expect(untouched.record.opens == 0 && io.metadataCalls == 0)
     }
 
@@ -291,7 +291,7 @@ struct DecodingCursorTests {
         target.install(task)
         gate.release()
 
-        #expect(await task.value == .cancelled)
+        #expect(await task.value == .canceled)
         #expect(returned.count == 0, "the chunk read while cancellation arrived must not reach the cursor body")
         #expect(content.record.reads == 1)
         #expect(content.record.closes == 1)

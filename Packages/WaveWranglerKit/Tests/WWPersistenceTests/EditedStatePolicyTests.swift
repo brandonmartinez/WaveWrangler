@@ -8,7 +8,7 @@ struct EditedStatePolicyTests {
         #expect(EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: true))
         // Edits arrived during the save: still edited (and the status says "Edited").
         #expect(!EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: false))
-        // Not verified (failed, conflict, acknowledgement uncertain): still edited.
+        // Not verified (failed, conflict, acknowledgment uncertain): still edited.
         #expect(!EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: false, publishedEqualsCurrent: true))
         // Exports and AppKit's autosave-elsewhere copies never clear this document's edited state; Save and
         // Save As are cleared by AppKit itself.

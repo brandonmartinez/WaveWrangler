@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WWOrganizer
 
-/// Settings window: non-customisable toolbar with General, Sources and Transcription panes, title
+/// Settings window: non-customizable toolbar with General, Sources and Transcription panes, title
 /// matching the pane, minimize/zoom dimmed, reopens on the last pane. Changes apply immediately.
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate {

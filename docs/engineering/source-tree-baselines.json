@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "date": "2026-10-20",
+  "basedOn": "792aa6687ab0b7a196d41fe13e54f7dd9e048392",
+  "reason": "American English source maintenance, shared source-integrity checks, and sample-preserving listening kernel reuse; not new DSP qualification. Historical holdouts refuse changed historical trees.",
+  "records": {
+    "m2-freeze-estimator-2": {
+      "historicalRecord": "docs/m2/fixtures/m2-freeze-estimator-2.json",
+      "historicalRecordSHA256": "94aea7e220c0d319ec9d50c1ab3e05d0c2dc7a2a5090504ed826e66f1cd32667",
+      "currentTrees": {
+        "Sources/WWAlignEstimate": "12ee6f32ad639fe5c4073c29e308e56c4f254653",
+        "Tests/WWAlignEstimateTests": "e9c5ab5629936bf62a14046b72d5796d2c209b04"
+      }
+    },
+    "m2-freeze-discontinuity-2": {
+      "historicalRecord": "docs/m2/fixtures/m2-freeze-discontinuity-2.json",
+      "historicalRecordSHA256": "444da9e6fceee2efa1db81e37178691801c16065d03365af245bbe2f777101cc",
+      "currentTrees": {
+        "Sources/WWAlignSegment": "0bfcebde6ae94312fee25fea901c29c7aecd1d5b",
+        "Tests/WWAlignSegmentTests": "6cb344988d453bed2f1fa2a497b60512c60a2d1c"
+      }
+    },
+    "m2-freeze-render": {
+      "historicalRecord": "docs/m2/fixtures/m2-freeze-render.json",
+      "historicalRecordSHA256": "7b9cb3fb28177b2d5cf085395b48fc331f21b7297916d17c7d964cf9e684762c",
+      "currentTrees": {
+        "Sources/WWRender": "9de7878720f99808a11f16d55d0928cf3061cc0c",
+        "Tests/WWRenderTests": "f45827e1228900de7f64f96fed430d42481df88d"
+      }
+    },
+    "m2-freeze-timemap": {
+      "historicalRecord": "docs/m2/fixtures/m2-freeze-timemap.json",
+      "historicalRecordSHA256": "99798844656f21368906a2589280d35b0867cfe1a4fe5dec80a304763bfb3e3d",
+      "currentTrees": {
+        "Sources/WWTimeMap": "c3403ae62b15f5e3982b2566f85855f10c38aea4",
+        "Tests/WWTimeMapTests": "2b43c7e5042f5bee88bc936f2eb9443b8e457280"
+      }
+    },
+    "m3-freeze-decode-6": {
+      "historicalRecord": "docs/m2/fixtures/m3-freeze-decode-6.json",
+      "historicalRecordSHA256": "dcf87786e907e949d64e105acca352e6ef6c28bf24cce773eaa3be7ff181b9c3",
+      "currentTrees": {
+        "Sources/WWDecode": "9475de351d3e56e524f011d8be6009f690c3c455",
+        "Tests/WWDecodeTests": "8aee1489f3689b76a3b901d8ac6ebacd7e6a84fd"
+      }
+    }
+  }
+}

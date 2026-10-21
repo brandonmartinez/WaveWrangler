@@ -1,8 +1,11 @@
-# Live GitHub backlog index
+# Historical GitHub backlog index
 
-**Operational authority:** live GitHub issues/milestones. This document and [JSON mapping](github-backlog.json) are a publication snapshot; check live state before starting or closing work. Research artifacts are evidence, not a competing queue.
+**Retired 2026-10-20:** the user permanently deleted all 90 then-open issues.
+This document and [JSON mapping](github-backlog.json) preserve an older
+publication snapshot, not a live backlog. Counts, assignments, dependencies,
+and links below are historical and do not authorize work.
 
-**User-directed 2026-10-04:** internal usable M1-M4 on this Mac first, with first audio handoff at full cleaned-track M4; public Release and optional Future separate. [Runbook](milestone-runbook.md) · [M1 copyable kickoff](kickoffs/m1.md) · [Product brief](product-brief.md) · [Evidence/protocols](research.md) · [Public provenance](publication-provenance.json).
+**User-directed 2026-10-04:** internal usable M1-M4 on this Mac first, with first audio handoff at full cleaned-track M4; public Release and optional Future separate. [Runbook](milestone-runbook.md) · [M1 copyable kickoff](https://github.com/brandonmartinez/WaveWrangler/blob/792aa6687ab0b7a196d41fe13e54f7dd9e048392/docs/planning/kickoffs/m1.md) · [Product brief](product-brief.md) · [Evidence/protocols](research.md) · [Public provenance](publication-provenance.json).
 
 **53 stable WW IDs / 207 acyclic edges / 50 open issues / 3 completed historical items.** Old 51-ID/196-edge and 52-ID/203-edge snapshots remain historical. WW-003/008 are staged M1; WW-041 follows WW-042 in Release rather than blocking it; WW-053 (M5) depends on WW-042/007/029; WW-052 depends on WW-042/041/007/008/018/026/029/053. Optional Future nodes are absent from internal MVP acceptance ancestry.
 

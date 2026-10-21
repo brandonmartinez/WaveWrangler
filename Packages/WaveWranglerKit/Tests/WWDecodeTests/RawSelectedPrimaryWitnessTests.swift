@@ -562,7 +562,7 @@ struct RawSelectedPrimaryWitnessTests {
                 }
             }
         }
-        #expect(await task.value == .cancelled)
+        #expect(await task.value == .canceled)
         #expect(returned.count == 1)
     }
 }

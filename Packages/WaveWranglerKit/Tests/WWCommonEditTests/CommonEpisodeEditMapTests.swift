@@ -284,7 +284,7 @@ struct CommonEpisodeEditMapTests {
         }
     }
 
-    @Test func nonUnitEpochRatioAndMixedNominalRateStayExactUntilOneQuantisation() throws {
+    @Test func nonUnitEpochRatioAndMixedNominalRateStayExactUntilOneQuantization() throws {
         let epoch = RecordingEpochID()
         let source = fx.occurrence(frames: 176_400, rate: 44_100)
         let group = try fx.otherGroup(

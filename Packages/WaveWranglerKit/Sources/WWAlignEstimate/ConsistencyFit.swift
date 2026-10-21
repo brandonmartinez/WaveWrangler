@@ -1,27 +1,27 @@
 import Foundation
 
-/// A least-squares line in centred coordinates: offset(u) = intercept + slope * (u - centre).
+/// A least-squares line in centered coordinates: offset(u) = intercept + slope * (u - center).
 struct LineFit: Sendable, Equatable {
-    let centre: Double
+    let center: Double
     let intercept: Double
     let slope: Double
 
-    func offset(at u: Double) -> Double { intercept + slope * (u - centre) }
+    func offset(at u: Double) -> Double { intercept + slope * (u - center) }
 
     /// nil when fewer than two distinct abscissae.
     static func leastSquares(_ points: [(u: Double, o: Double)]) -> LineFit? {
         guard points.count >= 2 else { return nil }
         let n = Double(points.count)
-        let centre = points.reduce(0) { $0 + $1.u } / n
+        let center = points.reduce(0) { $0 + $1.u } / n
         let mean = points.reduce(0) { $0 + $1.o } / n
         var sxx = 0.0, sxy = 0.0
         for p in points {
-            let du = p.u - centre
+            let du = p.u - center
             sxx += du * du
             sxy += du * (p.o - mean)
         }
         guard sxx > 0 else { return nil }
-        return LineFit(centre: centre, intercept: mean, slope: sxy / sxx)
+        return LineFit(center: center, intercept: mean, slope: sxy / sxx)
     }
 
     func maximumResidual(_ points: [(u: Double, o: Double)]) -> Double {
