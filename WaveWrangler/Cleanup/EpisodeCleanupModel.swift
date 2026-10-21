@@ -639,7 +639,7 @@ final class EpisodeCleanupModel {
                         isPreparingPlayback = false
                         isPlaying = true
                         updateGains()
-                        startPlaybackProgress(token: token, end: end)
+                        startPlaybackProgress(token: token, end: end, followsPlayhead: interval == nil)
                     }
                 }
                 while elapsedPlayback < scheduledDuration - 1 / 48_000 {
@@ -700,7 +700,7 @@ final class EpisodeCleanupModel {
         updateGains()
     }
 
-    private func startPlaybackProgress(token: UUID, end: Double) {
+    private func startPlaybackProgress(token: UUID, end: Double, followsPlayhead: Bool) {
         transportTask = Task { [weak self] in
             while !Task.isCancelled {
                 guard let self, playbackGeneration == token else { return }
@@ -711,7 +711,7 @@ final class EpisodeCleanupModel {
                     error = "Playback could not keep up with aligned audio rendering. Stopped at the last prepared audio; retry from here."
                     return
                 }
-                if playhead > windowStart + windowDuration * 0.8 {
+                if followsPlayhead, playhead > windowStart + windowDuration * 0.8 {
                     setWindow(start: playhead - windowDuration * 0.2, duration: windowDuration)
                 }
                 do { try await Task.sleep(for: .milliseconds(50)) }

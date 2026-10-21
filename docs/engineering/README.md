@@ -107,6 +107,10 @@ can join a future transport boundary. Pending or unavailable sources are reporte
 without restarting the other tracks. A missed producer deadline stops playback
 with an explicit error instead of treating an underrun as successful listening.
 
+Bounded selection and marker auditions keep the current timeline viewport stable,
+including during repeats, so their Stop and review controls stay reachable. Ordinary
+unbounded playback continues following the playhead.
+
 Source resolution and accepted-map activation are batched once per window, not
 once per track. The runtime's ordinary audition cache is process-local, limited to
 16 MiB of PCM and 64 entries, and keyed by exact raw witness, complete decoded

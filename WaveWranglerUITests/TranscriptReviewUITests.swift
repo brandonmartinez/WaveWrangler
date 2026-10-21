@@ -136,6 +136,7 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertFalse(app.buttons["ww.cleanup.filler.revert"].exists, "Manual intervals never claim detected times")
         XCTAssertFalse(app.textFields["ww.cleanup.filler.start.seconds"].exists)
         XCTAssertFalse(app.textFields["ww.cleanup.filler.end.seconds"].exists)
+        let auditionViewport = try XCTUnwrap(app.staticTexts["ww.cleanup.ruler"].value as? String)
         app.buttons["ww.cleanup.filler.loop"].click()
         app.buttons["Play with context"].firstMatch.click()
         let stop = app.buttons["ww.cleanup.filler.stop"]
@@ -146,6 +147,11 @@ final class TranscriptReviewUITests: XCTestCase {
         }, "The compact toolbar starts bounded context playback")
         stop.click()
         XCTAssertTrue(wait { !stop.exists })
+        XCTAssertTrue(wait {
+            self.text(self.app.staticTexts["ww.cleanup.transport.status"]).hasPrefix("Paused at")
+        }, "Stop must end playback, not merely disappear as the marker scrolls out of view")
+        XCTAssertEqual(app.staticTexts["ww.cleanup.ruler"].value as? String, auditionViewport,
+                       "A bounded marker audition keeps its review controls in the current viewport")
         app.buttons["ww.cleanup.filler.loop"].click()
         XCTAssertFalse(app.staticTexts["ww.cleanup.error"].exists, app.debugDescription)
         app.buttons["ww.cleanup.filler.reject"].click()

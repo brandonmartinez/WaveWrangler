@@ -120,6 +120,7 @@ struct AudioTimelineSelectionOverlay: View {
                     .help("Audition uses current Solo/Mute choices. Context adds up to half a second; episode IN/OUT is unchanged.")
                     .accessibilityElement(children: .contain)
                     .accessibilityIdentifier("ww.timeline.selection.actions")
+                    .accessibilitySortPriority(1)
                 }
             }
         }

@@ -13,9 +13,10 @@ final class ControlsSidebarUITests: XCTestCase {
     func testCommandReviewToolIsTemporaryAndMarkerUsesOneCenteredToolbar() throws {
         let app = launch()
         defer { app.terminate() }
-        let region = app.buttons.matching(NSPredicate(
+        let candidate = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND label CONTAINS 'Um,'")).firstMatch
-        XCTAssertTrue(region.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(candidate.waitForExistence(timeout: 20), app.debugDescription)
+        let region = app.buttons[candidate.identifier]
         app.menuButtons["alignment.waveforms.commandTool"].click()
         app.menuItems["Reject"].click()
         let primary = app.menuButtons["alignment.waveforms.tool"]

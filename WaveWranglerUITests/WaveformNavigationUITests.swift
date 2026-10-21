@@ -1,5 +1,3 @@
-import AppKit
-import ApplicationServices
 import XCTest
 
 @MainActor
@@ -66,7 +64,8 @@ final class WaveformNavigationUITests: XCTestCase {
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND identifier ENDSWITH '.start'"))
         XCTAssertTrue(wait { markers.count == 2 }, app.debugDescription)
         let previous = markers.element(boundBy: 0)
-        let previousRegionID = String(previous.identifier.dropLast(".start".count))
+        let previousHandleID = previous.identifier
+        let previousRegionID = String(previousHandleID.dropLast(".start".count))
         previous.click()
         XCTAssertEqual(app.buttons["ww.sidebar.transcript"].value as? String, "Hidden",
                        "Compact marker review must not open a sidebar and resize the timeline")
@@ -76,9 +75,10 @@ final class WaveformNavigationUITests: XCTestCase {
         playhead.typeKey("a", modifierFlags: .command)
         playhead.typeText("2.15")
         playhead.typeKey(.return, modifierFlags: [])
-        let edited = markers.element(boundBy: 1)
+        let edited = markers.matching(NSPredicate(format: "identifier != %@", previousHandleID)).firstMatch
         reveal(edited, in: app)
         let id = edited.identifier
+        XCTAssertNotEqual(id, previousHandleID, "The regression must edit a different marker")
         let originalValue = edited.value as? String
         let originalX = edited.frame.midX
         let oldViewport = try viewport(in: app)
@@ -156,39 +156,7 @@ final class WaveformNavigationUITests: XCTestCase {
             if element.isHittable, scroll.frame.contains(element.frame) { return }
             scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY > scroll.frame.midY ? -100 : 100)
         }
-        let hittable = element.isHittable
-        if !hittable {
-            capture(app, name: "Unavailable marker action before coordinate diagnostic")
-            let applications = NSRunningApplication.runningApplications(
-                withBundleIdentifier: "com.brandonmartinez.wavewrangler")
-            var details = "matching applications=\(applications.count), trusted=\(AXIsProcessTrusted())\n"
-            if applications.count == 1, let application = applications.first {
-                var hit: AXUIElement?
-                let result = AXUIElementCopyElementAtPosition(
-                    AXUIElementCreateApplication(application.processIdentifier),
-                    Float(element.frame.midX), Float(element.frame.midY), &hit)
-                details += "hit result=\(result)\n"
-                if let hit {
-                    for attribute in [kAXRoleAttribute, kAXIdentifierAttribute, kAXTitleAttribute,
-                                      kAXDescriptionAttribute, "AXActivationPoint"] {
-                        var value: CFTypeRef?
-                        let status = AXUIElementCopyAttributeValue(hit, attribute as CFString, &value)
-                        details += "\(attribute): \(status), \(String(describing: value))\n"
-                    }
-                }
-            }
-            let hitAttachment = XCTAttachment(string: details)
-            hitAttachment.name = "Marker action native accessibility hit"
-            hitAttachment.lifetime = .keepAlways
-            add(hitAttachment)
-            element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
-            capture(app, name: "Unavailable marker action after coordinate diagnostic")
-            let tree = XCTAttachment(string: app.debugDescription)
-            tree.name = "Marker action coordinate diagnostic"
-            tree.lifetime = .keepAlways
-            add(tree)
-        }
-        XCTAssertTrue(hittable, element.debugDescription)
+        XCTAssertTrue(element.isHittable, element.debugDescription)
     }
 
     private func wait(_ condition: () -> Bool) -> Bool {

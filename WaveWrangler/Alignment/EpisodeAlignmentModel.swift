@@ -1474,7 +1474,8 @@ final class EpisodeAlignmentModel {
                                 let time = min(end, start + max(0, -started.timeIntervalSinceNow))
                                 waveformPlayheadSeconds = time
                                 refreshTransportGains()
-                                if time > waveformStartSeconds + waveformDurationSeconds * 0.8,
+                                if requestedRange == nil,
+                                   time > waveformStartSeconds + waveformDurationSeconds * 0.8,
                                    let window = AlignmentWaveformProjection.windowStart(
                                        centeredAt: time, duration: waveformDurationSeconds
                                    ) {

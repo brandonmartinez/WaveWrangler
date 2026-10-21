@@ -101,6 +101,15 @@ console is unlocked, and the guest's first functional smoke-test `.xcresult`
 shows Passed. A configured VM without these checks is not an available GUI
 host. Resolve readiness or report a blocker; do not fall back to a physical host.
 
+Direct public Accessibility API diagnostics require a separate Accessibility grant
+for the UI-test runner inside the guest. Working XCTest automation does not imply
+`AXIsProcessTrusted()`: verify trust before interpreting a failed public AX query.
+Obtain operator approval and enable the grant in the guest's System Settings;
+do not edit the protected TCC database, disable system protection, or change host
+permissions. Ad-hoc rebuilds can change the runner's signing identity, so recheck
+trust when reusing a grant. This diagnostic permission is not a prerequisite for
+ordinary XCTest automation.
+
 Follow the [GUI lease pipeline](gui-testing.md):
 build-for-testing on the development Mac (`-jobs 4`, isolated DerivedData);
 record the source SHA and any uncommitted changes. Dirty-tree runs are

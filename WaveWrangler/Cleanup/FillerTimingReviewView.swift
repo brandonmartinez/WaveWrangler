@@ -184,6 +184,7 @@ private struct FillerTimingRegionView: View {
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(name: review.id)
         .allowsHitTesting(model.listening.effectiveTool != .move)
+        .accessibilityElement(children: .contain)
     }
 
     private func handleFrame(_ edge: FillerTimingEdge, time: Double) -> CGRect {
