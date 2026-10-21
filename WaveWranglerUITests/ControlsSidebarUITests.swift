@@ -41,12 +41,31 @@ final class ControlsSidebarUITests: XCTestCase {
         XCTAssertEqual(interval.count, 2)
         XCTAssertEqual(visible.count, 2)
         let midpoint = (try XCTUnwrap(interval.first) + XCTUnwrap(interval.last)) / 2
+        XCTAssertLessThan(toolbar.frame.height, 40, "The selection toolbar is one compact row, not a word/status heading over buttons")
+        XCTAssertEqual(toolbar.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@", "Um,", "Um,")).count, 0,
+            "The selected word stays in the transcript, not duplicated in the floating controls")
         let visibleStart = try XCTUnwrap(visible.first)
         let duration = try XCTUnwrap(visible.last) - visibleStart
         let intervalCenter = rails.frame.minX + (midpoint - visibleStart) / duration * rails.frame.width
         let center = min(max(rails.frame.minX + toolbar.frame.width / 2, intervalCenter),
                          rails.frame.maxX - toolbar.frame.width / 2)
         XCTAssertEqual(toolbar.frame.midX, center, accuracy: 2)
+        let playhead = app.textFields["alignment.waveforms.playhead"].value as? String
+        let zoom = app.buttons["ww.cleanup.filler.zoom"]
+        XCTAssertTrue(zoom.isHittable)
+        zoom.click()
+        XCTAssertTrue(wait {
+            let times = (ruler.value as? String ?? ruler.label).split(separator: " ").compactMap { Double($0) }
+            return times.count == 2 && abs((times[0] + times[1]) / 2 - midpoint) < 0.002
+        }, "Zoom to word centers its complete interval")
+        let focused = (ruler.value as? String ?? ruler.label).split(separator: " ").compactMap { Double($0) }
+        XCTAssertEqual(focused.count, 2)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(focused.first), try XCTUnwrap(interval.first))
+        XCTAssertGreaterThanOrEqual(try XCTUnwrap(focused.last), try XCTUnwrap(interval.last))
+        XCTAssertLessThan(try XCTUnwrap(focused.last) - XCTUnwrap(focused.first), duration)
+        XCTAssertEqual(app.textFields["alignment.waveforms.playhead"].value as? String, playhead,
+                       "Zoom to word changes the viewport, not playback time")
         app.buttons["ww.cleanup.filler.clearReview"].click()
         XCTAssertTrue(wait { region.label.contains("Pending") })
         region.click()

@@ -14,6 +14,7 @@ final class VoiceOverWalkUITests: XCTestCase {
     private var lastCaption = ""
 
     override func setUp() async throws {
+        try AcceptanceAudit.requireQualification()
         continueAfterFailure = true
         guard voiceOver.state == .runningForeground || voiceOver.state == .runningBackground else {
             throw XCTSkip("VoiceOver is not running; the harness turns it on (grant B) before this suite")

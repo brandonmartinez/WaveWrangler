@@ -252,11 +252,10 @@ final class FormatUpdateUITests: XCTestCase {
                     app.typeKey(.return, modifierFlags: [])
                     let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
                     check(copy.waitForExistence(timeout: 10), "the recovered copy opens")
-                    let showInfo = copy.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-                    if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
-                    let title = copy.textFields["Show title"]
-                    check(title.waitForExistence(timeout: 5) && title.value as? String == "Placeholder Show",
-                          "the last complete version opens: \(title.value ?? "nil")")
+                    let title = copy.staticTexts.matching(
+                        NSPredicate(format: "value == %@", "Placeholder Show")).firstMatch
+                    check(title.waitForExistence(timeout: 5),
+                          "the last complete version opens with its retained Show title")
                     check(!app.buttons["ww.formatUpdate.update"].exists, "a recovered copy is a new current-format show: no update prompt")
                 } else {
                     app.typeKey(.escape, modifierFlags: [])
@@ -353,6 +352,7 @@ final class FormatUpdateUITests: XCTestCase {
 
     private func audit(_ surface: String, types: XCUIAccessibilityAuditType = AcceptanceAudit.types,
                        preAuditedPopoverContent: Bool = false) throws {
+        guard AcceptanceAudit.shouldRun(named: surface) else { return }
         let visible = NSScreen.screens.first?.visibleFrame
         for window in app.windows.matching(identifier: "ww.show.window").allElementsBoundByIndex {
             check(Acceptance.waitFor(timeout: 5) {

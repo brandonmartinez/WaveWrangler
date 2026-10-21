@@ -107,6 +107,24 @@ extension EpisodeCleanupModel {
         }
     }
 
+    func zoomToFiller(_ id: UUID) {
+        guard canNavigate, let review = fillerReviews.first(where: { $0.id == id }),
+              fillerIssue(review) == nil else {
+            error = "Select a current filler interval before zooming to it."
+            return
+        }
+        let start = review.bounds.alignedStart
+        let end = review.bounds.alignedEnd
+        guard let window = AlignmentWaveformProjection.rulerZoom(
+            duration: (end - start) * 2, playhead: start + (end - start) / 2,
+            magnification: 1, bounds: bounds, maximumDuration: maximumDuration
+        ) else {
+            error = "The selected filler interval cannot be shown within the available timeline."
+            return
+        }
+        setWindow(start: window.start, duration: window.duration)
+    }
+
     func updateFillerDrafts() {
         fillerStartText = selectedFiller.map { String(format: "%.6f", $0.bounds.alignedStart) } ?? ""
         fillerEndText = selectedFiller.map { String(format: "%.6f", $0.bounds.alignedEnd) } ?? ""

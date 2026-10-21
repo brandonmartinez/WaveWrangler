@@ -41,18 +41,16 @@
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
       selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
       shouldUseLaunchSchemeArgsEnv = "YES">
-      <Testables>
-         <TestableReference
-            skipped = "NO">
-            <BuildableReference
-               BuildableIdentifier = "primary"
-               BlueprintIdentifier = "77746556A807AB1774029007"
-               BuildableName = "WaveWranglerUITests.xctest"
-               BlueprintName = "WaveWranglerUITests"
-               ReferencedContainer = "container:WaveWrangler.xcodeproj">
-            </BuildableReference>
-         </TestableReference>
-      </Testables>
+      <TestPlans>
+         <TestPlanReference reference = "container:TestPlans/PoC.xctestplan" default = "YES">
+         </TestPlanReference>
+         <TestPlanReference reference = "container:TestPlans/Regression.xctestplan">
+         </TestPlanReference>
+         <TestPlanReference reference = "container:TestPlans/Accessibility.xctestplan">
+         </TestPlanReference>
+         <TestPlanReference reference = "container:TestPlans/Performance.xctestplan">
+         </TestPlanReference>
+      </TestPlans>
    </TestAction>
    <LaunchAction
       buildConfiguration = "Debug"

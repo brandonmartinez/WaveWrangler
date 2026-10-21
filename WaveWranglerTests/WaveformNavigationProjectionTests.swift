@@ -79,11 +79,34 @@ struct WaveformNavigationProjectionTests {
             return
         }
         let viewport = try #require(AlignmentWaveformProjection.rulerZoom(
-            start: 12, duration: 8, anchor: 0.25, magnification: magnification,
+            duration: 8, playhead: 14, magnification: magnification,
             bounds: -100...100, maximumDuration: 30))
-        #expect(abs(viewport.start + viewport.duration * 0.25 - 14) < 0.000_001)
+        #expect(abs(viewport.start + viewport.duration / 2 - 14) < 0.000_001)
         #expect(viewport.duration < 8)
         #expect(AlignmentWaveformProjection.scrollAction(
             deltaX: .nan, deltaY: 0, option: true, precise: true) == nil)
+    }
+
+    @Test(arguments: [0.5, 1.0, 2.0, 8.0])
+    func zoomCentersOnPlayheadInBothDirections(magnification: Double) throws {
+        let window = try #require(AlignmentWaveformProjection.rulerZoom(
+            duration: 8, playhead: 42, magnification: magnification,
+            bounds: 0...120, maximumDuration: 120))
+        #expect(window.duration == 8 / magnification)
+        #expect(window.start + window.duration / 2 == 42)
+    }
+
+    @Test func zoomClampsAtTimelineEdgesAndRejectsInvalidInput() throws {
+        let first = try #require(AlignmentWaveformProjection.rulerZoom(
+            duration: 8, playhead: 0, magnification: 2, bounds: 0...120, maximumDuration: 30))
+        #expect(first.start == 0 && first.duration == 4)
+        let last = try #require(AlignmentWaveformProjection.rulerZoom(
+            duration: 8, playhead: 120, magnification: 2, bounds: 0...120, maximumDuration: 30))
+        #expect(last.start == 116 && last.duration == 4)
+        for playhead in [-1, 121, .nan, .infinity] {
+            #expect(AlignmentWaveformProjection.rulerZoom(
+                duration: 8, playhead: playhead, magnification: 2,
+                bounds: 0...120, maximumDuration: 30) == nil)
+        }
     }
 }

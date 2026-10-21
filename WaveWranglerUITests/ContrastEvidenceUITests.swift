@@ -14,6 +14,7 @@ final class ContrastEvidenceUITests: XCTestCase {
     private var app: XCUIApplication!
 
     override func setUp() async throws {
+        try AcceptanceAudit.requireQualification()
         continueAfterFailure = true
     }
 

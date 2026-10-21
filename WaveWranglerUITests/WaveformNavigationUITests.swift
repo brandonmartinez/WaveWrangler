@@ -2,6 +2,41 @@ import XCTest
 
 @MainActor
 final class WaveformNavigationUITests: XCTestCase {
+    func testZoomCentersOnPlayheadAfterPanningWithoutSeeking() throws {
+        let app = launch("Playhead-centered zoom")
+        defer { app.terminate() }
+        let track = tracks(in: app).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 20), app.debugDescription)
+        let playhead = app.textFields["alignment.waveforms.playhead"]
+        reveal(playhead, in: app)
+        playhead.click()
+        playhead.typeKey("a", modifierFlags: .command)
+        playhead.typeText("2.25")
+        playhead.typeKey(.return, modifierFlags: [])
+        let zoom = app.sliders["alignment.waveforms.zoom"]
+        for level in [0.4, 0.85, 0.6] {
+            reveal(zoom, in: app)
+            zoom.adjust(toNormalizedSliderPosition: level)
+            XCTAssertTrue(wait {
+                guard let window = try? self.viewport(in: app) else { return false }
+                return abs(window.start + window.duration / 2 - 2.25) < 0.002
+            }, "Both zoom directions keep the playhead centered: \(app.debugDescription)")
+            XCTAssertEqual(playhead.value as? String, "2.250", "Zooming is not a seek")
+        }
+        reveal(track, in: app)
+        track.scroll(byDeltaX: -300, deltaY: 0)
+        let panned = try viewport(in: app)
+        XCTAssertGreaterThan(abs(panned.start + panned.duration / 2 - 2.25), 0.1)
+        XCUIElement.perform(withKeyModifiers: [.option]) {
+            track.scroll(byDeltaX: 20, deltaY: 0)
+        }
+        XCTAssertTrue(wait {
+            guard let window = try? self.viewport(in: app) else { return false }
+            return abs(window.start + window.duration / 2 - 2.25) < 0.002
+        }, "Option-scroll returns zoom to the playhead even after panning away")
+        XCTAssertEqual(playhead.value as? String, "2.250")
+    }
+
     func testTimelineSlidersExposeNativeValuesAndReceiveKeyboardInput() throws {
         let app = launch("Native timeline sliders")
         defer { app.terminate() }
@@ -68,8 +103,8 @@ final class WaveformNavigationUITests: XCTestCase {
         }
         XCTAssertTrue(wait { (try? self.viewport(in: app).duration) != panned.duration }, app.debugDescription)
         let zoomed = try viewport(in: app)
-        XCTAssertEqual(zoomed.start + zoomed.duration / 2, panned.start + panned.duration / 2,
-                       accuracy: 0.15, "Option-horizontal zoom is anchored at the pointer over the track")
+        XCTAssertEqual(zoomed.start + zoomed.duration / 2, try XCTUnwrap(Double(playhead ?? "")),
+                       accuracy: 0.002, "Option-horizontal zoom centers on the playhead")
         XCTAssertEqual(track.frame.height, height, accuracy: 1)
         XCUIElement.perform(withKeyModifiers: [.option]) {
             track.scroll(byDeltaX: 0, deltaY: 8)
@@ -107,17 +142,11 @@ final class WaveformNavigationUITests: XCTestCase {
         reveal(zoom, in: app)
         zoom.dragHorizontalSliderToMaximum()
         XCTAssertEqual(try XCTUnwrap(zoom.value as? NSNumber).doubleValue, 1, accuracy: 0.000001)
-        // Zoom preserves the viewport center; pan both starts into view before testing an edit.
         let zoomedWindow = try viewport(in: app)
         let centeredStart = 2.25 - zoomedWindow.duration / 2
-        let ruler = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
-        let pan = ruler.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.8))
-        pan.click(forDuration: 0.1, thenDragTo: pan.withOffset(CGVector(
-            dx: (zoomedWindow.start - centeredStart) / zoomedWindow.duration * ruler.frame.width,
-            dy: 0)))
         XCTAssertEqual(try viewport(in: app).start, centeredStart, accuracy: 0.002)
         XCTAssertEqual(try viewport(in: app).duration, zoomedWindow.duration, accuracy: 0.002)
-        XCTAssertEqual(playhead.value as? String, "2.250", "Setup pans without seeking or changing zoom")
+        XCTAssertEqual(playhead.value as? String, "2.250", "Zooming does not seek")
         let markers = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND identifier ENDSWITH '.start'"))
         XCTAssertTrue(wait { markers.count == 2 }, app.debugDescription)

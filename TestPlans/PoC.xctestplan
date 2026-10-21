@@ -1,0 +1,38 @@
+{
+  "configurations": [
+    { "id": "5F6E7667-2F6A-4A23-B101-000000000001", "name": "Default", "options": {} }
+  ],
+  "defaultOptions": {
+    "environmentVariableEntries": [
+      { "key": "WW_UI_ACCESSIBILITY", "value": "0" }
+    ],
+    "targetForVariableExpansion": {
+      "containerPath": "container:WaveWrangler.xcodeproj",
+      "identifier": "04EB296F827131170B2A4D94",
+      "name": "WaveWrangler"
+    }
+  },
+  "testTargets": [
+    {
+      "parallelizable": false,
+      "selectedTests": [
+        "VisualAlignmentUITests/testNormalImportThroughSavedManualPlayback()",
+        "UnifiedWorkspaceUITests/testIntegratedWorkspaceManagementSelectionCycleAndReadableTranscript()",
+        "TranscriptReviewUITests/testUnalignedEpisodeCannotTranscribeOrFabricateWordsAndHasRecoveryNavigation()",
+        "TranscriptReviewUITests/testManualFillerRailsHaveIndependentDragsCompactReviewAndUndo()",
+        "ControlsSidebarUITests/testCommandReviewToolIsTemporaryAndMarkerUsesOneCenteredToolbar()",
+        "WaveformNavigationUITests/testZoomCentersOnPlayheadAfterPanningWithoutSeeking()",
+        "WaveformNavigationUITests/testNativeScrollAxesPanZoomResizeAndKeepVerticalScrolling()",
+        "LibraryWorkspaceUITests/testLibraryReopensShowAfterRelaunchAndSaves()",
+        "FormatUpdateUITests/testOlderDamagedFileIsRefusedUnchanged()",
+        "AlignmentInspectionUITests/testEmptyWorkspaceCanAddRecordings()"
+      ],
+      "target": {
+        "containerPath": "container:WaveWrangler.xcodeproj",
+        "identifier": "77746556A807AB1774029007",
+        "name": "WaveWranglerUITests"
+      }
+    }
+  ],
+  "version": 1
+}

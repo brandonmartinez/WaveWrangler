@@ -1305,13 +1305,13 @@ final class EpisodeAlignmentModel {
     }
 
     @discardableResult
-    func zoomWaveformViewport(magnification: Double, anchor: Double) -> Bool {
+    func zoomWaveformViewport(magnification: Double) -> Bool {
         guard let result = AlignmentWaveformProjection.rulerZoom(
-            start: waveformStartSeconds, duration: waveformDurationSeconds, anchor: anchor,
+            duration: waveformDurationSeconds, playhead: waveformPlayheadSeconds,
             magnification: magnification, bounds: waveformViewingBounds,
             maximumDuration: maximumWaveformDuration
         ) else {
-            waveformMessage = "Choose a finite zoom and an anchor within the visible timeline."
+            waveformMessage = "Choose a finite zoom and a playhead within the available timeline."
             return false
         }
         return previewWaveformViewport(start: result.start, duration: result.duration)

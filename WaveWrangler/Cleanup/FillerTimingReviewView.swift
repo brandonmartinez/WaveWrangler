@@ -255,13 +255,16 @@ struct FillerTimingToolbar: View {
 
     var body: some View {
         if let review = model.fillerReviews.first(where: { $0.id == reviewID }) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(review.word?.text ?? "Manual filler") · \(review.status)")
-                    .font(.caption.weight(.semibold)).lineLimit(1)
+            HStack(spacing: 4) {
                 if let issue = model.fillerIssue(review) {
                     Label(issue, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
                 } else {
                     HStack(spacing: 4) {
+                        Button("Zoom to word", systemImage: "plus.magnifyingglass") {
+                            model.zoomToFiller(review.id)
+                        }
+                        .help("Center this audible-word interval and show its complete boundaries with surrounding context.")
+                        .accessibilityIdentifier("\(accessibilityPrefix).zoom")
                         Button("Reviewed", systemImage: "checkmark.circle") {
                             model.decideFiller(review.id, decision: .reviewed)
                         }
@@ -281,7 +284,7 @@ struct FillerTimingToolbar: View {
                     .labelStyle(.iconOnly)
                 }
             }
-            .font(.caption).controlSize(.small)
+            .font(.caption)
             .disabled(!model.canReviewFillers)
             .accessibilityElement(children: .contain)
             .accessibilityIdentifier("\(accessibilityPrefix).toolbar")

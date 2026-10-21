@@ -481,13 +481,13 @@ struct AlignmentWaveformTests {
         let width = 800.0
         let duration = 20.0
         let zoom = try #require(AlignmentWaveformProjection.rulerZoom(
-            start: start, duration: duration, anchor: 0.25, magnification: 2,
+            duration: duration, playhead: 95, magnification: 2,
             bounds: 0...120, maximumDuration: 30
         ))
         #expect(zoom.duration == 10)
-        #expect(zoom.start == 92.5)
+        #expect(zoom.start == 90)
         #expect(AlignmentWaveformProjection.rulerTime(
-            at: 200, width: width, start: zoom.start, duration: zoom.duration, bounds: 0...120
+            at: 400, width: width, start: zoom.start, duration: zoom.duration, bounds: 0...120
         ) == 95)
         #expect(AlignmentWaveformProjection.rulerTime(
             at: 400, width: width, start: start, duration: duration, bounds: 0...95
@@ -508,19 +508,19 @@ struct AlignmentWaveformTests {
             from: 4.5, translation: -200, width: 500, duration: 2, bounds: 0...5
         ) == 4.5)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 0, duration: 20, anchor: 0.25, magnification: 0.01,
+            duration: 20, playhead: 5, magnification: 0.01,
             bounds: 0...120, maximumDuration: 30
         )?.duration == 30)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 0, duration: 20, anchor: 0.25, magnification: 1_000,
+            duration: 20, playhead: 5, magnification: 1_000,
             bounds: 0...120, maximumDuration: 30
         )?.duration == 0.5)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 4, duration: 2, anchor: 0, magnification: 2,
+            duration: 2, playhead: 4, magnification: 2,
             bounds: 0...4, maximumDuration: 30
         )?.start == 3)
         #expect(AlignmentWaveformProjection.rulerZoom(
-            start: 0, duration: 20, anchor: 0.25, magnification: 0,
+            duration: 20, playhead: 5, magnification: 0,
             bounds: 0...120, maximumDuration: 30
         ) == nil)
         #expect(AlignmentWaveformProjection.rulerTime(

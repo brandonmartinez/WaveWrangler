@@ -298,6 +298,20 @@ enum SelectedSetupStatusContrast {
 }
 
 enum AcceptanceAudit {
+    static var isEnabled: Bool { Acceptance.environment["WW_UI_ACCESSIBILITY"] == "1" }
+
+    static func shouldRun(named surface: String) -> Bool {
+        guard isEnabled else {
+            print("ACCESSIBILITY DEFERRED: \(surface). Run the Accessibility test plan to qualify this surface.")
+            return false
+        }
+        return true
+    }
+
+    static func requireQualification() throws {
+        try XCTSkipUnless(isEnabled, "Dedicated accessibility qualification requires the Accessibility test plan.")
+    }
+
     /// Minimum glyph pixels (>= 1.5:1 against the background) for a measured contrast waiver, with p75 >= 4.5.
     /// Policy change 2026-10-05 (coordinator decision, disclosed in WW-007 evidence §7): 100 → 40, decided after
     /// the mini run at 550506d found a legible short word ("unknown", 65 px at p75 12.39) under 100. Separation
@@ -311,6 +325,7 @@ enum AcceptanceAudit {
     @MainActor
     static func perform(_ app: XCUIApplication, kinds: XCUIAccessibilityAuditType, surface: String, test: XCTestCase,
                         handling handler: @escaping (XCUIAccessibilityAuditIssue) -> Bool) throws {
+        try requireQualification()
         func isTimeout(_ error: Error) -> Bool {
             let error = error as NSError
             return error.code == -56 && error.localizedDescription.contains("Audit failed to complete in time")
@@ -416,6 +431,7 @@ enum AcceptanceAudit {
                     types kinds: XCUIAccessibilityAuditType = types,
                     preAuditedPopoverContent: Bool = false,
                     additionalWaiver: ((XCUIAccessibilityAuditIssue) -> String?)? = nil) throws -> [String] {
+        guard shouldRun(named: surface) else { return [] }
         var unwaived: [String] = []
         var waived: [[String: Any]] = []
         let sheet: XCUIElement? = app.sheets.firstMatch.exists ? app.sheets.firstMatch : nil

@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # Run WaveWranglerKit package tests, then the unhosted WaveWranglerTests unit tests.
-# UI tests launch the app and are NOT run by default. `--ui` runs ONLY the XCUITests (GUI); use it only
+# UI tests launch the app and are NOT run by default. `--ui` runs the feature-focused PoC plan; use it only
 # on a ready, leased macOS VM (docs/engineering/gui-testing.md). A physical host
 # requires specific approval; an unavailable VM is not permission to use the desktop.
-# Usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/Class/test]]
+# Usage: scripts/test.sh [--package-only] [--ui [--ui-profile=poc|regression|accessibility|performance] [-only-testing:WaveWranglerUITests/Class/test]]
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -33,19 +33,49 @@ export SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH="${WW_TEST_WORKERS:-4}"
 DERIVED_DATA="${WW_DERIVED_DATA:-$ROOT/.build/DerivedData}"
 PACKAGE_ONLY=0
 UI=0
+UI_PLAN=""
 UI_ARGS=()
 
 for arg in "$@"; do
   case "$arg" in
     --package-only) PACKAGE_ONLY=1 ;;
     --ui) UI=1 ;;
+    --ui-profile=*)
+      UI=1
+      case "${arg#--ui-profile=}" in
+        poc) plan=PoC ;;
+        regression) plan=Regression ;;
+        accessibility) plan=Accessibility ;;
+        performance) plan=Performance ;;
+        *) echo "Unknown UI profile: ${arg#--ui-profile=}" >&2; exit 2 ;;
+      esac
+      if [[ -n "$UI_PLAN" && "$UI_PLAN" != "$plan" ]]; then
+        echo "Choose only one UI profile per invocation" >&2
+        exit 2
+      fi
+      UI_PLAN="$plan"
+      ;;
     -only-testing:WaveWranglerUITests*) UI_ARGS+=("$arg") ;;
     *)
-      echo "usage: scripts/test.sh [--package-only] [--ui [-only-testing:WaveWranglerUITests/...]]" >&2
+      echo "usage: scripts/test.sh [--package-only] [--ui [--ui-profile=poc|regression|accessibility|performance] [-only-testing:WaveWranglerUITests/...]]" >&2
       exit 2
       ;;
   esac
 done
+
+if [[ "$UI" == 1 && "$PACKAGE_ONLY" == 1 ]]; then
+  echo "--package-only cannot be combined with UI tests" >&2
+  exit 2
+fi
+if [[ "$UI" == 0 && ${#UI_ARGS[@]} -gt 0 ]]; then
+  echo "UI test selectors require --ui" >&2
+  exit 2
+fi
+if [[ -z "$UI_PLAN" ]]; then
+  if [[ ${#UI_ARGS[@]} -gt 0 ]]; then UI_PLAN=Regression; else UI_PLAN=PoC; fi
+fi
+
+python3 "$ROOT/scripts/test-ui-plans.py" --static
 
 if [[ "$UI" == 1 ]]; then
   echo "==> swift build wwpersist-probe (synthetic fixtures for UI tests)"
@@ -55,12 +85,13 @@ if [[ "$UI" == 1 ]]; then
     --jobs "$JOBS" \
     --product wwpersist-probe
   PROBE="$(swift build --package-path "$ROOT/Packages/WaveWranglerKit" --scratch-path "$ROOT/.build/swiftpm" --show-bin-path)/wwpersist-probe"
-  echo "==> xcodebuild test (WaveWranglerUITests; launches the app)"
+  echo "==> xcodebuild test (WaveWranglerUITests, $UI_PLAN plan; launches the app)"
   cd "$ROOT"
   if [[ ${#UI_ARGS[@]} -eq 0 ]]; then UI_ARGS=(-only-testing:WaveWranglerUITests); fi
   TEST_RUNNER_WW_PROBE="$PROBE" xcodebuild \
     -project WaveWrangler.xcodeproj \
     -scheme WaveWranglerUITests \
+    -testPlan "$UI_PLAN" \
     -configuration Debug \
     -destination 'platform=macOS,arch=arm64' \
     -derivedDataPath "$DERIVED_DATA" \

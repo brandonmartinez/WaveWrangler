@@ -1,0 +1,39 @@
+{
+  "configurations": [
+    { "id": "5F6E7667-2F6A-4A23-B101-000000000003", "name": "Default", "options": {} }
+  ],
+  "defaultOptions": {
+    "environmentVariableEntries": [
+      { "key": "WW_UI_ACCESSIBILITY", "value": "1" }
+    ],
+    "targetForVariableExpansion": {
+      "containerPath": "container:WaveWrangler.xcodeproj",
+      "identifier": "04EB296F827131170B2A4D94",
+      "name": "WaveWrangler"
+    }
+  },
+  "testTargets": [
+    {
+      "parallelizable": false,
+      "selectedTests": [
+        "ContrastEvidenceUITests",
+        "SelectionContrastUITests",
+        "VoiceOverWalkUITests",
+        "EpisodeSetupUITests",
+        "LibraryWorkspaceUITests",
+        "FormatUpdateUITests",
+        "CoreTasksKeyboardUITests",
+        "OfflineSaveKeyboardUITests",
+        "SheetKeyboardUITests",
+        "AlignmentInspectionUITests",
+        "WaveformNavigationUITests/testTimelineSlidersExposeNativeValuesAndReceiveKeyboardInput()"
+      ],
+      "target": {
+        "containerPath": "container:WaveWrangler.xcodeproj",
+        "identifier": "77746556A807AB1774029007",
+        "name": "WaveWranglerUITests"
+      }
+    }
+  ],
+  "version": 1
+}

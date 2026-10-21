@@ -3,7 +3,7 @@ import SwiftUI
 
 struct AudioTimelineScrollSurface: NSViewRepresentable {
     var headerWidth: Double
-    var handle: (AlignmentWaveformProjection.ScrollAction, Double, Double) -> Bool
+    var handle: (AlignmentWaveformProjection.ScrollAction, Double) -> Bool
 
     func makeNSView(context: Context) -> Surface {
         Surface(headerWidth: headerWidth, handle: handle)
@@ -20,12 +20,12 @@ struct AudioTimelineScrollSurface: NSViewRepresentable {
 
     final class Surface: NSView {
         var headerWidth: Double
-        var handle: (AlignmentWaveformProjection.ScrollAction, Double, Double) -> Bool
+        var handle: (AlignmentWaveformProjection.ScrollAction, Double) -> Bool
         private var monitor: Any?
 
         init(
             headerWidth: Double,
-            handle: @escaping (AlignmentWaveformProjection.ScrollAction, Double, Double) -> Bool
+            handle: @escaping (AlignmentWaveformProjection.ScrollAction, Double) -> Bool
         ) {
             self.headerWidth = headerWidth
             self.handle = handle
@@ -64,8 +64,7 @@ struct AudioTimelineScrollSurface: NSViewRepresentable {
             else { return false }
             let width = bounds.width - headerWidth
             guard width > 0 else { return false }
-            let x = convert(event.locationInWindow, from: nil).x - headerWidth
-            return handle(action, min(1, max(0, x / width)), width)
+            return handle(action, width)
         }
     }
 }

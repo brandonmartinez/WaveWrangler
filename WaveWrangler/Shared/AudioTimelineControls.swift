@@ -212,9 +212,8 @@ struct AudioTimelineRuler: View {
         let width: Double
     }
     private struct Zoom {
-        let start: Double
         let duration: Double
-        let anchor: Double
+        let playhead: Double
         let bounds: ClosedRange<Double>
         let maximum: Double
     }
@@ -370,15 +369,13 @@ struct AudioTimelineRuler: View {
                         .onChanged { value in
                             guard canNavigate, width > 0, pan == nil, scrub == nil, cycleDrag == nil else { return }
                             if zoom == nil {
-                                let fraction = Double(value.startAnchor.x)
                                 zoom = Zoom(
-                                    start: start, duration: duration,
-                                    anchor: min(1, max(0, fraction)),
+                                    duration: duration, playhead: playhead,
                                     bounds: bounds, maximum: maximumDuration)
                             }
                             guard let zoom,
                                 let result = AlignmentWaveformProjection.rulerZoom(
-                                    start: zoom.start, duration: zoom.duration, anchor: zoom.anchor,
+                                    duration: zoom.duration, playhead: zoom.playhead,
                                     magnification: Double(value.magnification), bounds: zoom.bounds,
                                     maximumDuration: zoom.maximum
                                 )

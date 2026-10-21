@@ -251,7 +251,23 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(waitForSelectedEpoch("Guest take"), "Reading the dependent notice must not change epoch selection")
     }
 
-    func testTM212NoRecorderGroupBlockedPanel() throws {
+    func testEmptyWorkspaceCanAddRecordings() {
+        let addRecordings = openEmptyWorkspace()
+        addRecordings.click()
+        assertRecordingManagementIsOpen()
+    }
+
+    func testBlockedRecoveryIsKeyboardReachable() throws {
+        guard UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 else {
+            throw XCTSkip("Tab-only recovery requires system Full Keyboard Access")
+        }
+        let addRecordings = openEmptyWorkspace()
+        XCTAssertTrue(tabToFocus(addRecordings))
+        app.typeKey(.space, modifierFlags: [])
+        assertRecordingManagementIsOpen()
+    }
+
+    private func openEmptyWorkspace() -> XCUIElement {
         app.terminate()
         app = XCUIApplication()
         app.launchArguments = [
@@ -264,11 +280,10 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Add recordings to begin"].waitForExistence(timeout: 5))
         let addRecordings = app.windows["ww.show.window"].buttons["Add recordings…"]
         XCTAssertTrue(addRecordings.exists)
-        guard UserDefaults.standard.integer(forKey: "AppleKeyboardUIMode") & 2 != 0 else {
-            throw XCTSkip("Tab-only recovery requires system Full Keyboard Access")
-        }
-        XCTAssertTrue(tabToFocus(addRecordings))
-        app.typeKey(.space, modifierFlags: [])
+        return addRecordings
+    }
+
+    private func assertRecordingManagementIsOpen() {
         let recordings = app.sheets.firstMatch
         XCTAssertTrue(recordings.waitForExistence(timeout: 5), "Blocked recovery must open Recordings & Speakers")
         XCTAssertTrue(recordings.staticTexts["Recordings & Speakers"].exists)
@@ -306,6 +321,7 @@ final class AlignmentInspectionUITests: XCTestCase {
             XCTAssertFalse(workspaceRoot.descendants(matching: .any)[identifier].exists,
                            "Detailed inspection must not be duplicated on the track canvas")
         }
+        guard AcceptanceAudit.shouldRun(named: "Alignment workspace") else { return }
         // Resolve every container the audit may waive *before* the audit runs, so each waiver is pinned to
         // one element's exact frame and to the identified children it exposes, rather than to any group of
         // roughly the right shape (#219 review).
@@ -430,6 +446,7 @@ final class AlignmentInspectionUITests: XCTestCase {
     }
 
     func testBlockedRecoveryContrastAudit() throws {
+        try AcceptanceAudit.requireQualification()
         app.terminate()
         app = XCUIApplication()
         app.launchArguments = [

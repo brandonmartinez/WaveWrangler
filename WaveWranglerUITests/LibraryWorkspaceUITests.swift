@@ -58,6 +58,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
     /// Audit types available on macOS (acceptance §4.2). Issues on system-drawn controls that we can't
     /// change are waived with a rationale; everything else fails the test.
     private func audit(_ surface: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        guard AcceptanceAudit.shouldRun(named: surface) else { return }
         var findings: [String] = []
         let table = app.outlines["ww.library.entries"]
         entryTableFrame = table.exists ? table.frame : nil

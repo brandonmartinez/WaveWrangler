@@ -235,20 +235,17 @@ enum AlignmentWaveformProjection {
     }
 
     static func rulerZoom(
-        start: Double, duration: Double, anchor: Double, magnification: Double,
+        duration: Double, playhead: Double, magnification: Double,
         bounds: ClosedRange<Double>, maximumDuration: Double
     ) -> (start: Double, duration: Double)? {
-        guard start.isFinite, duration.isFinite, duration > 0,
-              anchor.isFinite, (0...1).contains(anchor),
+        guard duration.isFinite, duration > 0, playhead.isFinite,
               magnification.isFinite, magnification > 0,
               bounds.lowerBound.isFinite, bounds.upperBound.isFinite,
-              bounds.lowerBound < bounds.upperBound,
+              bounds.lowerBound < bounds.upperBound, bounds.contains(playhead),
               maximumDuration.isFinite, maximumDuration >= 0.5 else { return nil }
         let span = min(maximumDuration, max(0.5, duration / magnification))
-        let anchoredTime = start + anchor * duration
-        guard anchoredTime.isFinite else { return nil }
         return (min(max(bounds.lowerBound, bounds.upperBound - span),
-                    max(bounds.lowerBound, anchoredTime - anchor * span)), span)
+                    max(bounds.lowerBound, playhead - span / 2)), span)
     }
 
     static func rulerPanStart(

@@ -253,9 +253,9 @@ bindings. Zoom refreshes measured detail when editing ends, not on every drag sa
 The adaptive ruler
 uses a larger draggable flag and a high-contrast position line through each waveform, and offers evenly
 spaced time ticks: click to seek, drag its visible marker to move the
-playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom around the
-gesture's time anchor. Horizontal scrolling over the waveform workspace pans time; Option-horizontal
-scrolling zooms around the pointer and Option-vertical scrolling resizes the lanes. Ordinary vertical
+playhead, drag empty ruler space to pan without moving the playhead, or pinch to zoom centered on the
+playhead. Horizontal scrolling over the waveform workspace pans time; Option-horizontal
+scrolling zooms around the playhead and Option-vertical scrolling resizes the lanes. Ordinary vertical
 scrolling is passed through unchanged to the workspace scroll view. Seeking and panning change
 presentation state and do not require unrelated document edits to be saved; accepted playback
 and timing edits retain their verification checks.
@@ -274,8 +274,12 @@ lanes and overlay share a ruler and playhead, selected with one segmented contro
 group the recordings by speaker (with an Unknown speaker panel for unassigned sources),
 while selection, drag, save and Undo/Redo still operate on the entire recorder group across panels.
 Zoom changes the
-visible transform around the current viewport center with the slider or around the gesture anchor
-on the ruler. **Fit timeline** includes the complete cached overview and five minutes of
+visible transform around the playhead with the slider, Option-scroll, or pinch, including after
+panning away. Zoom never seeks; it clamps at the available viewing bounds.
+The compact word-review toolbar omits duplicated selected-word/status text and offers
+**Zoom to word**, which instead fits the complete selected interval with surrounding context
+without moving the playhead or changing the review decision.
+**Fit timeline** includes the complete cached overview and five minutes of
 negative pre-roll for initial placement. Spans wider than 30 seconds draw the coarse, witnessed
 overview rather than decoding unbounded exact windows; narrower views request missing measured
 tiles on release. During panning the last measured tile or coarse overview stays visible without
@@ -565,10 +569,18 @@ SwiftUI and native `NSTextField` text comparisons pass on that same 1x VM, so th
 unresolved and is not established as a framework-wide defect. Delivery of this refinement was
 explicitly approved against the passing Retina gate with this discrepancy documented.
 Audit criteria and waivers are unchanged; this is not a general exemption from 1x testing.
+The later PoC scope decision defers this broad qualification to the explicit Accessibility
+plan; a passing feature gate does not resolve or qualify this discrepancy.
 
 Per-PR GUI selection and the reviewed conditional flake-quarantine policy (currently only the
 #218 broad synthetic Library contrast test) are documented in [GUI flake quarantine](gui-flake-quarantine.md).
-Capped full GUI suites use `scripts/test.sh --ui` without selectors so every UI test runs.
+`scripts/test.sh --ui` now selects the 10-test **PoC** feature gate, not the entire UI bundle.
+Explicit `--ui-profile=regression`, `--ui-profile=accessibility`, and
+`--ui-profile=performance` preserve broader coverage separately. Functional assertions,
+source safety, persistence, Undo/Redo, and ordinary keyboard shortcuts remain covered;
+broad accessibility/appearance audits are deferred, not waived or reported as passing.
+See the [plan selection and VM pipeline](gui-testing.md) for focused selectors and
+audit admission. Manual-only CI triggers are unchanged.
 
 Environment overrides: `WW_JOBS` (default 4) and `WW_DERIVED_DATA` (default `.build/DerivedData`).
 `WW_SEGMENT_SWEEPS` selects the WW-017 segment pass. `1` runs calibration, the floor sweep and edge silence; `0` runs

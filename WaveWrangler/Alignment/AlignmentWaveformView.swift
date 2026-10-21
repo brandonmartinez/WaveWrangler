@@ -119,7 +119,7 @@ struct AlignmentWaveformView: View {
             .padding(4)
         }
         .background {
-            AudioTimelineScrollSurface(headerWidth: headerWidth + 24) { action, anchor, width in
+            AudioTimelineScrollSurface(headerWidth: headerWidth + 24) { action, width in
                 guard dragSession == nil, model.pendingWaveformMove == nil else { return false }
                 switch action {
                 case .pan(let delta):
@@ -130,7 +130,7 @@ struct AlignmentWaveformView: View {
                     return model.previewWaveformViewport(
                         start: start, duration: model.waveformDurationSeconds)
                 case .zoom(let magnification):
-                    return model.zoomWaveformViewport(magnification: magnification, anchor: anchor)
+                    return model.zoomWaveformViewport(magnification: magnification)
                 case .resize(let delta):
                     laneHeight = min(220, max(64, laneHeight + delta))
                     return true
@@ -266,7 +266,7 @@ struct AlignmentWaveformView: View {
             prefix: "alignment.waveforms", maximumDuration: model.maximumWaveformDuration,
             duration: Binding(get: { model.waveformDurationSeconds }, set: { duration in
                 _ = model.zoomWaveformViewport(
-                    magnification: model.waveformDurationSeconds / duration, anchor: 0.5)
+                    magnification: model.waveformDurationSeconds / duration)
             }), laneHeight: $laneHeight, showsLaneHeight: layout != .overlay,
             isLoading: model.isLoadingWaveforms,
             canNavigate: model.pendingWaveformMove == nil,

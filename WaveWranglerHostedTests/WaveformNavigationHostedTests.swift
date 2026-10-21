@@ -8,6 +8,24 @@ import WWCore
 @MainActor
 @Suite("Waveform navigation and rendered silhouettes", .serialized)
 struct WaveformNavigationHostedTests {
+    @Test func zoomReturnsToThePlayheadAfterPanningWithoutSeekingOrEditing() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
+        defer { f.close() }
+        let original = f.document.store.model
+        let bytes = try f.files.map { try Data(contentsOf: $0) }
+        try #require(f.model.previewWaveformPlayhead(to: 2))
+        f.model.waveformStartSeconds = 18
+        f.model.waveformDurationSeconds = 8
+        try #require(f.model.zoomWaveformViewport(magnification: 2))
+        #expect(f.model.waveformStartSeconds == 0 && f.model.waveformDurationSeconds == 4)
+        #expect(f.model.waveformPlayheadSeconds == 2)
+        try #require(f.model.zoomWaveformViewport(magnification: 0.5))
+        #expect(f.model.waveformStartSeconds == -2 && f.model.waveformDurationSeconds == 8)
+        #expect(f.model.waveformPlayheadSeconds == 2)
+        #expect(f.document.store.model == original)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
+    }
+
     @Test(arguments: [1.0, 2.0])
     func renderedCoarseEnvelopeIsFilledAndRetainsQuietAndRelativeAmplitude(scale: Double) throws {
         let epoch = RecordingEpochID()
@@ -107,6 +125,19 @@ struct WaveformNavigationHostedTests {
         cleanup.selectFiller(previous.id)
         #expect(f.model.waveformStartSeconds == 2 && f.model.waveformDurationSeconds == 5,
                 "Explicit reveal pans only far enough to include the chosen marker, without changing zoom")
+        cleanup.selectFiller(edited.id, reveal: false, movePlayhead: false)
+        let beforeZoom = f.document.store.model
+        let playhead = f.model.waveformPlayheadSeconds
+        let bounds = try #require(cleanup.selectedFiller?.bounds)
+        cleanup.zoomToFiller(edited.id)
+        #expect(abs(f.model.waveformStartSeconds + f.model.waveformDurationSeconds / 2
+                    - (bounds.alignedStart + bounds.alignedEnd) / 2) < 0.000_001)
+        #expect(f.model.waveformStartSeconds <= bounds.alignedStart)
+        #expect(f.model.waveformStartSeconds + f.model.waveformDurationSeconds >= bounds.alignedEnd)
+        #expect(f.model.waveformDurationSeconds == 0.5)
+        #expect(f.model.waveformPlayheadSeconds == playhead)
+        #expect(f.document.store.model == beforeZoom && cleanup.selectedFillerID == edited.id)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
     }
 
     private func wait(_ condition: () -> Bool) async throws {

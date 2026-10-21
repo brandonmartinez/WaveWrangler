@@ -106,6 +106,7 @@ final class EpisodeSetupUITests: XCTestCase {
     /// macOS audit types (acceptance §4.2). Every finding is either waived by a rule (printed, counted
     /// and checked against the surface's pin) or fails the test.
     private func audit(_ surface: String, file: StaticString = #filePath, line: UInt = #line) throws {
+        guard AcceptanceAudit.shouldRun(named: surface) else { return }
         var findings: [String] = []
         var counts: [WaiverRule: Int] = [:]
         let titlebarBottom = app.windows["ww.show.window"].frame.minY + 56

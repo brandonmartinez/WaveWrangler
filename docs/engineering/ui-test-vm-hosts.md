@@ -111,7 +111,7 @@ trust when reusing a grant. This diagnostic permission is not a prerequisite for
 ordinary XCTest automation.
 
 Follow the [GUI lease pipeline](gui-testing.md):
-build-for-testing on the development Mac (`-jobs 4`, isolated DerivedData);
+build-for-testing on the development Mac (`-jobs 2`, isolated DerivedData, explicit test plan);
 record the source SHA and any uncommitted changes. Dirty-tree runs are
 development feedback, not exact-commit qualification; do not commit or push
 just to obtain a test label. Copy signed Products atomically to
