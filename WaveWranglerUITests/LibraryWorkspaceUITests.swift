@@ -489,8 +489,9 @@ final class LibraryWorkspaceUITests: XCTestCase {
         app.typeKey("w", modifierFlags: .command)
         // K24: the editor is bound to Pilot; episode management stays in Library.
         window.typeKey("2", modifierFlags: .command)
-        waitFor(app.buttons["Manage recordings…"])
-        app.buttons["Manage recordings…"].click()
+        let recordings = app.buttons["ww.show.empty.addRecordings"]
+        waitFor(recordings)
+        recordings.click()
         waitFor(element("ww.setup.sources"))
         waitFor(element("ww.setup.speakers"))
         try audit("Show window (Setup)")

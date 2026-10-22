@@ -120,8 +120,7 @@ final class ControlsSidebarUITests: XCTestCase {
         let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
         let allTracks = 2
         reveal(layout, in: app)
-        layout.radioButtons["Speakers only"].click()
-        XCTAssertEqual((layout.radioButtons["Speakers only"].value as? NSNumber)?.intValue, 1)
+        selectTimelineLayout("Speakers only", in: app)
         reveal(candidate, in: app)
         candidate.click()
         let cutAction = app.buttons["ww.timeline.selection.cut"]
@@ -139,7 +138,7 @@ final class ControlsSidebarUITests: XCTestCase {
         let cutIdentifier = cut.identifier
         let previousCutValue = cut.value as? String
         reveal(layout, in: app)
-        layout.radioButtons["By speaker"].click()
+        selectTimelineLayout("By speaker", in: app)
         let tracks = app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier BEGINSWITH 'alignment.waveforms.track.'"))
         XCTAssertTrue(wait { tracks.count == allTracks && tracks.count > 1 }, app.debugDescription)
@@ -254,7 +253,7 @@ final class ControlsSidebarUITests: XCTestCase {
         XCTAssertTrue(app.buttons[markerID].waitForExistence(timeout: 5))
         XCTAssertFalse(cut.exists)
         reveal(layout, in: app)
-        layout.radioButtons["By speaker"].click()
+        selectTimelineLayout("By speaker", in: app)
         XCTAssertEqual(app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier BEGINSWITH 'alignment.waveforms.track.'")).count, allTracks)
         let mutedNonPrimaries = app.buttons.matching(NSPredicate(
@@ -271,7 +270,7 @@ final class ControlsSidebarUITests: XCTestCase {
         defer { app.terminate() }
         let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
         XCTAssertTrue(layout.waitForExistence(timeout: 20))
-        layout.radioButtons["Speakers only"].click()
+        selectTimelineLayout("Speakers only", in: app)
         let playhead = app.textFields["alignment.waveforms.playhead"]
         playhead.click()
         playhead.typeKey("a", modifierFlags: .command)
@@ -305,7 +304,7 @@ final class ControlsSidebarUITests: XCTestCase {
         app.launch()
         app.activate()
         XCTAssertTrue(layout.waitForExistence(timeout: 20), app.debugDescription)
-        XCTAssertEqual((layout.radioButtons["Speakers only"].value as? NSNumber)?.intValue, 1)
+        XCTAssertEqual(layout.value as? String, "Speakers only")
         XCTAssertEqual(playhead.value as? String, "2.250")
         XCTAssertEqual(app.staticTexts["alignment.waveforms.ruler"].value as? String, viewport)
         XCTAssertEqual(try XCTUnwrap(height.value as? NSNumber).doubleValue, heightValue, accuracy: 0.01)

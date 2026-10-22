@@ -42,15 +42,25 @@ extension EpisodeCleanupModel {
         }
         if let transcriptID = review.transcriptID {
             if fillerWordIndexGeneration != state.store.modelGeneration {
-                fillerWordIndex = Dictionary(uniqueKeysWithValues: (episode?.cleanup?.transcripts ?? []).map {
-                    ($0.id, Dictionary(uniqueKeysWithValues: $0.words.map { ($0.id, $0) }))
-                })
+                let active = episode?.cleanup?.transcripts ?? []
+                fillerActiveTranscriptIDs = Set(active.map(\.id))
+                fillerTranscriptIndex = Dictionary(uniqueKeysWithValues:
+                    (active + (episode?.cleanup?.transcriptHistory ?? [])).map { ($0.id, $0) })
+                fillerWordIndex = [:]
                 fillerWordIndexGeneration = state.store.modelGeneration
             }
-            guard let transcript = episode?.cleanup?.transcripts.first(where: { $0.id == transcriptID }),
-                  review.matchesOrigin(of: transcript),
-                  review.word.map({ fillerWordIndex[transcriptID]?[$0.id] == $0 }) != false else {
+            guard (review.retainsUserJudgment || fillerActiveTranscriptIDs.contains(transcriptID)),
+                  let transcript = fillerTranscriptIndex[transcriptID],
+                  review.matchesOrigin(of: transcript) else {
                 return "Transcript or captured word changed. Original review retained; no automatic reassociation."
+            }
+            if let word = review.word {
+                if fillerWordIndex[transcriptID] == nil {
+                    fillerWordIndex[transcriptID] = Dictionary(uniqueKeysWithValues: transcript.words.map { ($0.id, $0) })
+                }
+                guard fillerWordIndex[transcriptID]?[word.id] == word else {
+                    return "Captured word changed. Original review retained; no automatic reassociation."
+                }
             }
         }
         guard review.bounds.alignedStart >= max(lane.start, episode?.cleanup?.workingRange?.tracksIn ?? lane.start),

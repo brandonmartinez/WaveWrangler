@@ -72,14 +72,12 @@ final class EpisodeLibraryUITests: XCTestCase {
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         let originalRange = ruler.value as? String ?? ruler.label
         let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
-        let recorderMode = layout.descendants(matching: .any)["By recorder"]
-        let speakerMode = layout.descendants(matching: .any)["By speaker"]
-        let overlayMode = layout.descendants(matching: .any)["Overlay"]
-        XCTAssertTrue(recorderMode.isHittable)
-        XCTAssertTrue(speakerMode.isHittable)
-        XCTAssertTrue(overlayMode.isHittable)
-        XCTAssertLessThan(speakerMode.frame.minX, recorderMode.frame.minX)
-        XCTAssertLessThan(recorderMode.frame.minX, overlayMode.frame.minX)
+        XCTAssertTrue(layout.isHittable)
+        layout.click()
+        let modes = ["By recorder", "By speaker", "Overlay", "Speakers only"].map { app.menuItems[$0] }
+        XCTAssertTrue(modes.allSatisfy(\.exists))
+        XCTAssertEqual(modes.map(\.frame.minY), modes.map(\.frame.minY).sorted())
+        app.typeKey(.escape, modifierFlags: [])
         XCTAssertTrue(app.staticTexts["alignment.waveforms.speakerHeading.unknown"].waitForExistence(timeout: 5))
         XCTAssertEqual(Set(tracks.allElementsBoundByIndex.map(\.identifier)), sourceIDs)
         XCTAssertTrue(app.sliders["alignment.waveforms.laneHeight"].isHittable)
@@ -89,12 +87,12 @@ final class EpisodeLibraryUITests: XCTestCase {
         let firstToggleID = enabled.firstMatch.identifier
         enabled.firstMatch.click()
         XCTAssertEqual(tracks.count, 1)
-        overlayMode.click()
+        selectTimelineLayout("Overlay", in: app)
         let overlay = app.descendants(matching: .any)["alignment.waveforms.overlay.unknown"]
         XCTAssertTrue(overlay.waitForExistence(timeout: 5))
         XCTAssertTrue((overlay.value as? String ?? overlay.label).contains("1 enabled track"))
         XCTAssertFalse(app.sliders["alignment.waveforms.laneHeight"].exists)
-        recorderMode.click()
+        selectTimelineLayout("By recorder", in: app)
         XCTAssertEqual(tracks.count, 1)
         app.checkBoxes[firstToggleID].click()
         XCTAssertEqual(Set(tracks.allElementsBoundByIndex.map(\.identifier)), sourceIDs)
@@ -103,7 +101,7 @@ final class EpisodeLibraryUITests: XCTestCase {
         )).firstMatch
         recorderToggle.click()
         XCTAssertEqual(tracks.count, 1)
-        speakerMode.click()
+        selectTimelineLayout("By speaker", in: app)
         let restore = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "alignment.waveforms.showRecorder."
         )).firstMatch
@@ -111,7 +109,7 @@ final class EpisodeLibraryUITests: XCTestCase {
         restore.click()
         XCTAssertEqual(Set(tracks.allElementsBoundByIndex.map(\.identifier)), sourceIDs)
         XCTAssertEqual(ruler.value as? String ?? ruler.label, originalRange)
-        overlayMode.click()
+        selectTimelineLayout("Overlay", in: app)
         XCTAssertTrue((overlay.value as? String ?? overlay.label).contains("2 enabled tracks"))
     }
 

@@ -216,7 +216,7 @@ struct EpisodeCleanupContent: View {
 
     private var transcriptionControls: some View {
         HStack {
-            Button("Transcribe Episode") { model.transcribe() }
+            Button("Transcribe Tracks") { model.requestTranscription() }
                 .disabled(!model.canTranscribe)
                 .help("Transcribe every aligned Primary locally, retaining fillers. No uploads or automatic cuts.")
                 .accessibilityIdentifier("ww.cleanup.transcribe")
@@ -711,7 +711,7 @@ struct CleanupInspectorView: View {
                     Text("This raw recognition cannot be placed on the waveform. It may repeat overlapping recognition windows. Listen to the source, or transcribe again after verifying alignment; the original text is retained.")
                         .font(.caption)
                     Text(untimed.map(\.text).joined(separator: " ")).textSelection(.enabled)
-                    Button("Transcribe again") { model.transcribe() }.disabled(!model.canTranscribe)
+                    Button("Transcribe again") { model.requestTranscription() }.disabled(!model.canTranscribe)
                 }
             }
         }

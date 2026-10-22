@@ -271,7 +271,7 @@ extension IdentityStatus {
         case .notChecked:
             .init(.identity, "Not checked", .symbol("questionmark.circle"), summary: nil, spoken: "file details not checked", priority: nil, tint: .secondary)
         case .confirmationNeeded:
-            .init(.identity, "File details match, but this original hasn't been confirmed for audio", .symbol("questionmark.circle"), summary: "Confirm original", spoken: "confirm original before playing audio", priority: 3, attention: true, tint: .attention)
+            .init(.identity, "File details match, but this older recording needs approval for audio", .symbol("questionmark.circle"), summary: "Approve audio", spoken: "review recording access before playback", priority: 3, attention: true, tint: .attention)
         case .detailsMatch:
             .init(.identity, "File details match what WaveWrangler recorded (audio not compared)", .symbol("checkmark.seal"), summary: nil, spoken: nil, priority: nil, tint: .none)
         case let .changed(differences, true):
@@ -326,7 +326,7 @@ extension SourceStatusSnapshot {
         switch identity {
         case .mismatch: return "This is a different file. Relink the original in Setup."
         case .changed: return "The original's details changed. Review or relink it in Setup."
-        case .confirmationNeeded: return "Confirm original in Setup before loading its audio."
+        case .confirmationNeeded: return "Review Recording Access in Recordings & Speakers to approve older recordings together before loading audio."
         case .notChecked, .checking:
             return "The original's identity could not be verified. Check or relink it in Setup."
         case .detailsMatch: break

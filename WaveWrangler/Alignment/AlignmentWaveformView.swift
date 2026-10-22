@@ -7,8 +7,11 @@ struct AlignmentWaveformView: View {
     var cleanup: EpisodeCleanupModel? = nil
     var showTranscript: () -> Void = {}
     let showInspector: () -> Void
+    var sourceEditingEnabled = true
+    var workspaceState: ShowWindowState? = nil
     #if DEBUG
     var trackVisibilityChanged: ((SourceID, Bool) -> Void)?
+    var fitGeometryChanged: ((Double, Double, Double, Int) -> Void)?
     #endif
     @Environment(\.displayScale) private var displayScale
     @State private var dragSession: AlignmentWaveformDrag?
@@ -25,9 +28,17 @@ struct AlignmentWaveformView: View {
         nonmutating set { model.listening.workspace.showProposedAlignment = newValue }
     }
     private var laneHeight: Double {
-        get { model.listening.workspace.laneHeight }
-        nonmutating set { model.listening.workspace.laneHeight = newValue }
+        get { fillsSpace ? fittedLaneHeight : model.listening.workspace.laneHeight }
+        nonmutating set {
+            model.listening.workspace.fillSpace = false
+            model.listening.workspace.laneHeight = min(220, max(64, newValue))
+        }
     }
+    private var fillsSpace: Bool { model.listening.workspace.fillSpace }
+    @State private var fittedLaneHeight = AudioTimelineTrackFit.minimumHeight
+    @State private var trackViewportHeight = 0.0
+    @State private var trackMeasuredHeight = 0.0
+    @State private var fitMeasurement = AudioTimelineFitMeasurement()
     @State private var trackScrollPosition = ScrollPosition(y: 0)
     @State private var trackContentWidth: CGFloat = 0
     @State private var hoveringMovableWaveform = false
@@ -35,6 +46,7 @@ struct AlignmentWaveformView: View {
     @State private var confirmingExtension = false
     @State private var confirmingReset = false
     @State private var confirmingAdaptiveAcceptance = false
+    @State private var newGroupSource: SourceRecord?
 
     private let headerWidth: CGFloat = 190
 
@@ -57,8 +69,31 @@ struct AlignmentWaveformView: View {
         return visibleTracks.first?.id
     }
 
+    private func hasWaveformSamples(_ track: AlignmentWaveformTrack) -> Bool {
+        model.hasVisibleWaveformStrokes(for: track)
+            || model.waveformOverviewStrokes[track.id]?.isEmpty == false
+    }
+
+    private var fittedRowCount: Int {
+        switch layout {
+        case .overlay:
+            AlignmentWaveformProjection.speakerGroups(
+                tracks: visibleTracks, speakerForSource: model.trackSpeakerID).count
+        case .speakersOnly:
+            model.primaryWaveformGroups.reduce(0) { count, group in
+                count + group.tracks.filter(hasWaveformSamples).count
+            }
+        case .speaker:
+            visibleTracks.filter(hasWaveformSamples).count
+        case .recorderGroup:
+            visibleTracks.filter {
+                !model.listening.collapsedRecorders.contains($0.group) && hasWaveformSamples($0)
+            }.count
+        }
+    }
+
     private var trackContent: some View {
-        LazyVStack(alignment: .leading, spacing: 8) {
+        AudioTimelineTrackStack(fits: fillsSpace, spacing: 8) {
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
                     if model.hasAcceptedRevision {
@@ -105,6 +140,7 @@ struct AlignmentWaveformView: View {
                     }
                 }
                 if layout == .overlay { recordings }
+                if !model.ungroupedSources.isEmpty { ungroupedSection }
                 if let cleanup {
                     let inactive = cleanup.manualCuts.count - cleanup.activeManualCuts.count
                     if inactive > 0 {
@@ -122,7 +158,7 @@ struct AlignmentWaveformView: View {
                         .accessibilityIdentifier("alignment.waveforms.refusal.\(refusal.id)")
                 }
                 if model.waveformTracks.isEmpty {
-                    Text("Refresh audio reads a bounded portion of grouped recordings. Confirm originals in Setup first.")
+                    Text("Refresh audio reads a bounded portion of authorized, grouped recordings. Review older recordings' access in Recordings & Speakers.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Text(model.waveformMessage)
@@ -141,12 +177,35 @@ struct AlignmentWaveformView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { trackContentWidth = $0 }
+        .onGeometryChange(for: AudioTimelineFitMeasurement.self) {
+            AudioTimelineFitMeasurement(laneHeight: laneHeight, contentHeight: $0.size.height, rows: fittedRowCount)
+        } action: {
+            fitMeasurement = $0
+            trackMeasuredHeight = $0.contentHeight
+        }
+    }
+
+    private func refitTracks() {
+        #if DEBUG
+        fitGeometryChanged?(fitMeasurement.laneHeight, trackViewportHeight,
+                            fitMeasurement.contentHeight, fitMeasurement.rows)
+        #endif
+        guard fillsSpace, fitMeasurement.laneHeight == fittedLaneHeight,
+              fitMeasurement.rows == fittedRowCount,
+              let height = AudioTimelineTrackFit.height(
+            current: fitMeasurement.laneHeight, viewport: trackViewportHeight, content: fitMeasurement.contentHeight,
+            rows: fitMeasurement.rows, scale: displayScale) else { return }
+        fittedLaneHeight = height
     }
 
     var body: some View {
         VStack(spacing: 0) {
             timelineChrome
             ScrollView { trackContent }
+            .onGeometryChange(for: Double.self) { $0.size.height } action: {
+                trackViewportHeight = $0
+            }
+            .scrollIndicators(fillsSpace && trackMeasuredHeight <= trackViewportHeight + 0.5 ? .hidden : .automatic)
             .scrollPosition($trackScrollPosition)
             .onScrollGeometryChange(for: Double.self) { geometry in
                 max(0, geometry.contentOffset.y + geometry.contentInsets.top)
@@ -161,6 +220,11 @@ struct AlignmentWaveformView: View {
             .accessibilityIdentifier("ww.alignment.workspace")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: AudioTimelineFitRequest(enabled: fillsSpace, measurement: fitMeasurement, viewport: trackViewportHeight)) {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            refitTracks()
+        }
         .modifier(floatingToolbar)
         .background(alignment: .leading) {
             AudioTimelineScrollSurface(headerWidth: headerWidth + 48) { action, width in
@@ -186,25 +250,108 @@ struct AlignmentWaveformView: View {
             clearHandCursor()
             if value == .speakersOnly { model.muteNonPrimaryTracks() }
         }
+        .onChange(of: fillsSpace) { _, enabled in
+            if enabled {
+                fittedLaneHeight = AudioTimelineTrackFit.minimumHeight
+                model.listening.workspace.trackScrollOffset = 0
+                trackScrollPosition.scrollTo(y: 0)
+            }
+        }
         .onChange(of: model.listening.effectiveTool) { _, _ in
             if dragSession != nil { cancelGroupDrag() }
             clearHandCursor()
         }
         .onDisappear { clearHandCursor() }
+        .sheet(item: $newGroupSource) { source in
+            SetupNameForm(
+                context: NameSheetContext(kind: .newGroup, initial: "", assigning: [source.id]),
+                cancel: { newGroupSource = nil },
+                apply: { name in
+                    model.groupUngroupedSource(source.id, newName: name)
+                    newGroupSource = nil
+                }
+            )
+        }
+    }
+
+    private var ungroupedSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Ungrouped").font(.headline).accessibilityAddTraits(.isHeader)
+            Text("Add these recordings to a recorder group before aligning or playing them. These are source references, not timed waveforms; no audio is loaded for this section.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(model.ungroupedSources) { source in
+                HStack(alignment: .center, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Label(source.displayNameHint, systemImage: "doc.waveform")
+                            .lineLimit(2).truncationMode(.middle)
+                        Text(model.ungroupedSpeakerLabel(for: source.id))
+                            .font(.caption).foregroundStyle(.secondary)
+                        Text("Ungrouped · Not timed · Not played")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    .frame(width: headerWidth, alignment: .leading)
+                    VStack(spacing: 6) {
+                        Text("Add to a group to show its waveform").font(.callout)
+                        Menu {
+                            ForEach(model.availableRecorderGroups) { group in
+                                Button(group.name) { model.groupUngroupedSource(source.id, existing: group.id) }
+                            }
+                            if !model.availableRecorderGroups.isEmpty { Divider() }
+                            Button("New Recorder Group…") { newGroupSource = source }
+                        } label: {
+                            Label("Add to Group", systemImage: "plus")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .disabled(!sourceEditingEnabled || model.isWorking)
+                        .accessibilityLabel("Add \(source.displayNameHint) to Group")
+                        .accessibilityIdentifier("alignment.ungrouped.add.\(source.id)")
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 88)
+                    .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 6))
+                }
+                .padding(8)
+                .background(.quaternary.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Ungrouped recording: \(source.displayNameHint)")
+                .accessibilityIdentifier("alignment.ungrouped.source.\(source.id)")
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Ungrouped recordings")
+        .accessibilityIdentifier("alignment.ungrouped")
     }
 
     private var timelineChrome: some View {
         VStack(alignment: .leading, spacing: 8) {
             transport
             AudioTimelineAdaptiveRow(horizontalSpacing: 8, verticalSpacing: 8) {
-                timelineTools
-                editingPlaybackControls
+                HStack(spacing: 8) {
+                    layoutPicker
+                    if let workspaceState {
+                        AudioWorkspaceWorkflowActions(state: workspaceState, alignment: model)
+                    }
+                }
+                AudioTimelineAdaptiveRow(horizontalSpacing: 12, verticalSpacing: 8, alignsTrailing: true, wraps: true) {
+                    normalization
+                    navigationControls.zoomGroup
+                    navigationControls.heightGroup
+                    TimelineToolControls(listening: model.listening)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                    AudioTimelineRefresh(
+                        prefix: "alignment.waveforms", isLoading: model.isLoadingWaveforms,
+                        canNavigate: model.pendingWaveformMove == nil && !model.isWorking
+                            && cleanup?.isBusy != true && cleanup?.isRefreshing != true,
+                        refresh: refreshWaveforms)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .accessibilityElement(children: .contain)
+                .accessibilityLabel("Timeline view controls")
+                .accessibilityIdentifier("alignment.waveforms.viewControls")
             }
             .controlSize(.small)
-            AudioTimelineAdaptiveRow(horizontalSpacing: 8, verticalSpacing: 8) {
-                comparisonControls
-                navigationControls.frame(maxWidth: .infinity, alignment: .trailing)
-            }
             ruler
         }
         .padding(.horizontal, 12)
@@ -219,26 +366,13 @@ struct AlignmentWaveformView: View {
         .accessibilityIdentifier("alignment.waveforms.controls")
     }
 
-    private var comparisonControls: some View {
-        AudioTimelineAdaptiveRow(horizontalSpacing: 8, verticalSpacing: 8) {
-            layoutPicker
-            normalization
-        }
-    }
-
     private var layoutPicker: some View {
-        ViewThatFits(in: .horizontal) {
-            Picker("Compare", selection: Binding(get: { layout }, set: { layout = $0 })) {
-                layoutOptions
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .fixedSize()
-            Picker("Compare", selection: Binding(get: { layout }, set: { layout = $0 })) {
-                layoutOptions
-            }
-            .pickerStyle(.menu)
+        Picker("Track view", selection: Binding(get: { layout }, set: { layout = $0 })) {
+            layoutOptions
         }
+        .pickerStyle(.menu)
+        .labelsHidden()
+        .fixedSize()
         .accessibilityLabel("Compare waveform layout")
         .accessibilityIdentifier("alignment.waveforms.layout")
         .help("Speakers only shows confirmed Primary tracks and mutes non-primary tracks. Primary Solo/Mute choices are preserved. Hidden tracks receive the same cross-track cuts.")
@@ -274,7 +408,7 @@ struct AlignmentWaveformView: View {
 
     private func groupLane(_ group: RecorderGroupID) -> some View {
         let tracks = model.waveformTracks.filter { $0.group == group }
-        return LazyVStack(alignment: .leading, spacing: 4) {
+        return AudioTimelineTrackStack(fits: fillsSpace, spacing: 4) {
             HStack(spacing: 8) {
                 Button {
                     if !model.listening.collapsedRecorders.insert(group).inserted {
@@ -304,38 +438,6 @@ struct AlignmentWaveformView: View {
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
     }
 
-    private var timelineTools: some View {
-        HStack {
-            TimelineToolControls(listening: model.listening)
-            Button("Cycle", systemImage: "repeat") {
-                if model.listening.cycleRange == nil {
-                    model.listening.cycleRange = model.listening.selection
-                        ?? model.waveformStartSeconds...(model.waveformStartSeconds + model.waveformDurationSeconds)
-                }
-                model.listening.cycleEnabled.toggle()
-            }
-            .tint(model.listening.cycleEnabled ? .yellow : .secondary)
-            .accessibilityValue(model.listening.cycleEnabled ? "On" : "Off")
-            .accessibilityIdentifier("ww.timeline.cycle")
-        }
-    }
-
-    private var editingPlaybackControls: some View {
-        HStack {
-            NativeActionMenu(label: "After alignment", symbol: nil, identifier: "ww.listening.savedPolicy",
-                value: model.editingPlaybackPolicy.title, prefix: "After alignment",
-                actions: EditingPlaybackPolicy.allCases.map { policy in
-                    .init(title: policy.title, isSelected: policy == model.editingPlaybackPolicy) {
-                        model.setEditingPlaybackPolicy(policy)
-                    }
-                })
-            .frame(width: 140, height: 24)
-            .help("Saved editing playback policy. Applied once per accepted revision only when you explicitly begin editing; Listen now presets do not change it.")
-            Button("Begin editing", systemImage: "pencil") { model.beginEditing() }
-                .disabled(!model.hasAcceptedRevision || model.isWorking)
-        }
-    }
-
     private var transport: some View {
         AudioTimelineTransport(
             prefix: "alignment.waveforms", isPlaying: model.canStopAudition,
@@ -346,12 +448,22 @@ struct AlignmentWaveformView: View {
             playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() },
             stop: { model.stopEnabledTracks() },
             forward: { model.seekEnabledTracks(to: min(86_400, model.waveformPlayheadSeconds + 5)) },
-            seek: { model.seekEnabledTracks(to: $0) }, isEdited: !model.cutTimeline.removals.isEmpty
+            seek: { model.seekEnabledTracks(to: $0) }, isEdited: !model.cutTimeline.removals.isEmpty,
+            cycleEnabled: model.listening.cycleEnabled,
+            toggleCycle: {
+                if model.listening.cycleRange == nil {
+                    model.listening.setCycleRange(model.listening.selection
+                        ?? model.waveformStartSeconds...(model.waveformStartSeconds + model.waveformDurationSeconds))
+                }
+                model.listening.cycleEnabled.toggle()
+            },
+            followPlayhead: model.listening.workspace.followPlayhead,
+            toggleFollowPlayhead: { model.setFollowPlayhead(!model.listening.workspace.followPlayhead) }
         )
         .padding(.vertical, 2)
     }
 
-    private var navigationControls: some View {
+    private var navigationControls: AudioTimelineNavigation {
         AudioTimelineNavigation(
             prefix: "alignment.waveforms", maximumDuration: model.maximumWaveformDuration,
             duration: Binding(get: { model.waveformDurationSeconds }, set: { duration in
@@ -368,11 +480,21 @@ struct AlignmentWaveformView: View {
                 }
             },
             fit: { if model.waveformFitRange != nil { model.fitWaveformTimeline() } },
-            refresh: {
-                model.isLoadingWaveforms ? model.cancelWaveforms()
-                    : model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
-            }
+            refresh: refreshWaveforms,
+            fillSpace: Binding(get: { fillsSpace }, set: { model.listening.workspace.fillSpace = $0 }),
+            showsRefresh: false
         )
+    }
+
+    private func refreshWaveforms() {
+        if model.isLoadingWaveforms {
+            model.cancelWaveforms()
+        } else {
+            model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
+            if let cleanup, !cleanup.isBusy, !cleanup.isRefreshing, !model.isWorking {
+                Task { await cleanup.refresh() }
+            }
+        }
     }
 
     private var ruler: some View {
@@ -392,7 +514,13 @@ struct AlignmentWaveformView: View {
                 },
             ].compactMap { $0 },
             cycleRange: model.listening.cycleRange, cycleEnabled: model.listening.cycleEnabled,
-            changeCycle: { model.listening.cycleRange = $0 },
+            changeCycle: { model.listening.setCycleRange($0) },
+            createCycle: {
+                cleanup?.selectedFillerID = nil
+                cleanup?.selectedManualCutID = nil
+                model.listening.setCycleRange($0, selecting: true)
+                model.listening.cycleEnabled = true
+            },
             previewSeek: { model.previewWaveformPlayhead(to: $0) },
             resumePlayback: { model.playEnabledTracks() },
             previewPan: { _ = model.previewWaveformWindow(start: $0) },
@@ -404,12 +532,11 @@ struct AlignmentWaveformView: View {
             }, isEdited: !model.cutTimeline.removals.isEmpty
         )
         .padding(.horizontal, 8)
-        .frame(height: 44)
-        .help("Click the ruler to seek, drag its marker to move the playhead, drag empty space to pan, or pinch to zoom around the pointer.")
+        .frame(height: 68)
     }
 
     private var overlay: some View {
-        LazyVStack(alignment: .leading, spacing: 6) {
+        AudioTimelineTrackStack(fits: fillsSpace, spacing: 6) {
             ForEach(AlignmentWaveformProjection.speakerGroups(
                 tracks: visibleTracks, speakerForSource: model.trackSpeakerID
             )) { speakerGroup in
@@ -575,7 +702,7 @@ struct AlignmentWaveformView: View {
     }
 
     private func speakerLanes(_ speakerGroup: AlignmentWaveformSpeakerGroup) -> some View {
-        LazyVStack(alignment: .leading, spacing: 8) {
+        AudioTimelineTrackStack(fits: fillsSpace, spacing: 8) {
             HStack {
                 if let speaker = speakerGroup.id {
                     SpeakerAvatarView(name: model.speakerName(speaker), appearance: model.speakerAppearance(speaker))
@@ -656,8 +783,7 @@ struct AlignmentWaveformView: View {
                 }
             }
         } content: {
-            if (model.hasVisibleWaveformStrokes(for: track)
-                   || model.waveformOverviewStrokes[track.id]?.isEmpty == false) {
+            if hasWaveformSamples(track) {
                 GeometryReader { geometry in
                     let slices = model.waveformTileSlices(for: track.group)
                     ZStack {

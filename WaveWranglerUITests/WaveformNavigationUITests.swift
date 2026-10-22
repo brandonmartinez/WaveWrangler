@@ -2,6 +2,164 @@ import XCTest
 
 @MainActor
 final class WaveformNavigationUITests: XCTestCase {
+    func testFillSpaceDropdownAndConsolidatedToolbar() throws {
+        let app = launch("Fitted tracks", singlePrimary: true)
+        defer { app.terminate() }
+        XCTAssertTrue(tracks(in: app).firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        app.menuBars.menuBarItems["Window"].click()
+        app.menuBars.menuItems["Zoom"].click()
+        let sidebar = app.buttons["ww.sidebar.recording"]
+        if sidebar.value as? String == "Shown" { sidebar.click() }
+        let picker = app.popUpButtons["alignment.waveforms.layout"]
+        XCTAssertTrue(picker.isHittable)
+        picker.click()
+        let options = ["By recorder", "By speaker", "Overlay", "Speakers only"].map { picker.menuItems[$0] }
+        XCTAssertTrue(options.allSatisfy(\.exists))
+        XCTAssertEqual(options.map(\.frame.minY), options.map(\.frame.minY).sorted())
+        app.typeKey(.escape, modifierFlags: [])
+        selectTimelineLayout("Speakers only", in: app)
+        let fit = app.descendants(matching: .any)["alignment.waveforms.fillSpace"]
+        XCTAssertTrue(fit.isHittable, app.debugDescription)
+        fit.click()
+        let track = tracks(in: app).firstMatch
+        XCTAssertTrue(wait { track.frame.height > 220 }, app.debugDescription)
+        let scroll = app.scrollViews["ww.alignment.workspace"]
+        XCTAssertEqual(scroll.scrollBars.count, 0, "Fitted rows use the viewport without a vertical scrollbar")
+        let fittedHeight = track.frame.height
+        selectTimelineLayout("By recorder", in: app)
+        XCTAssertTrue(wait { track.frame.height >= 64 && track.frame.height < fittedHeight })
+        selectTimelineLayout("Overlay", in: app)
+        XCTAssertTrue(app.sliders["alignment.waveforms.laneHeight"].exists == false)
+        selectTimelineLayout("Speakers only", in: app)
+        XCTAssertTrue(wait { track.frame.height > 220 })
+        let slider = app.sliders["alignment.waveforms.laneHeight"]
+        slider.adjust(toNormalizedSliderPosition: 0.5)
+        XCTAssertTrue(wait {
+            guard let value = slider.value as? NSNumber else { return false }
+            return abs(track.frame.height - value.doubleValue) <= 1.5
+        },
+                      "Manual slider=\(String(describing: slider.value)), row height=\(track.frame.height), fit=\(String(describing: fit.value))")
+        XCTAssertEqual(String(describing: fit.value ?? ""), "0")
+        let play = app.buttons["alignment.waveforms.transport.play"]
+        let cycle = app.buttons["ww.timeline.cycle"]
+        XCTAssertEqual(cycle.label, "Cycle")
+        XCTAssertEqual(cycle.frame.midY, play.frame.midY, accuracy: 2)
+        XCTAssertLessThan(cycle.frame.width, 50, "Cycle is icon-only")
+        let workflow = app.buttons["ww.workflow.alignTracks"]
+        let transcribe = app.buttons["ww.workflow.transcribeTracks"]
+        XCTAssertEqual(app.buttons.matching(identifier: "ww.workflow.alignTracks").count, 1)
+        XCTAssertEqual(app.buttons.matching(identifier: "ww.workflow.transcribeTracks").count, 1)
+        XCTAssertEqual(app.buttons.matching(identifier: "alignment.waveforms.load").count, 1)
+        XCTAssertLessThan(picker.frame.maxX, workflow.frame.minX)
+        XCTAssertLessThan(workflow.frame.maxX, transcribe.frame.minX)
+        let refresh = app.buttons["alignment.waveforms.load"]
+        let tool = app.menuButtons["alignment.waveforms.tool"]
+        XCTAssertTrue(refresh.isHittable && tool.isHittable && transcribe.isHittable)
+        XCTAssertGreaterThan(refresh.frame.maxX, tool.frame.maxX)
+        let chrome = app.descendants(matching: .any)["alignment.waveforms.controls"]
+        XCTAssertLessThan(chrome.frame.maxX - refresh.frame.maxX, 30, "Refresh is at the trailing edge")
+        capture(app, name: "Selected-view dropdown and single trailing control group")
+        fit.click()
+        XCTAssertTrue(wait { track.frame.height > 220 })
+        app.typeKey("s", modifierFlags: .command)
+        let arguments = app.launchArguments
+        let index = try XCTUnwrap(arguments.firstIndex(of: "-WWUITestShowFolder"))
+        let file = "\(arguments[index + 1])/Fitted tracks.wwshow"
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES",
+            "-WWUITestOpenWithoutShowWindows", file]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(fit.waitForExistence(timeout: 20))
+        XCTAssertEqual(String(describing: fit.value ?? ""), "1", "Fill Space is remembered per episode")
+    }
+
+    func testCycleStripCreatesSharedRangeWithoutHijackingRulerGestures() throws {
+        let app = launch("Ruler cycle")
+        defer { app.terminate() }
+        XCTAssertTrue(tracks(in: app).firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        let area = app.descendants(matching: .any)["alignment.waveforms.ruler.cycleArea"]
+        XCTAssertTrue(area.isHittable)
+        let before = try viewport(in: app)
+        let playhead = app.textFields["alignment.waveforms.playhead"]
+        let originalTime = playhead.value as? String
+        let start = area.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.5))
+        let end = area.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 0.5))
+        start.click(forDuration: 0.1, thenDragTo: end)
+        XCTAssertTrue(wait { app.buttons["ww.timeline.cycle"].value as? String == "On" }, app.debugDescription)
+        XCTAssertTrue(area.label.contains(" to "), app.debugDescription)
+        XCTAssertEqual(playhead.value as? String, originalTime, "Cycle creation is not a seek")
+        XCTAssertEqual(try viewport(in: app).start, before.start, accuracy: 0.002)
+        XCTAssertTrue(app.buttons["ww.timeline.selection.actions"].exists
+            || app.descendants(matching: .any)["ww.timeline.selection.actions"].exists)
+        let surface = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
+        let originalRange = area.label
+        let locator = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.65, dy: 36.0 / 44.0))
+        locator.click(forDuration: 0.1,
+                      thenDragTo: surface.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 36.0 / 44.0)))
+        XCTAssertNotEqual(area.label, originalRange, "Existing cycle locators still edit the shared range")
+        XCTAssertEqual(playhead.value as? String, originalTime, "Locator editing is not a seek")
+        let cycleRange = area.label
+        surface.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.25)).click()
+        XCTAssertNotEqual(playhead.value as? String, originalTime, "The upper ruler still seeks")
+        XCTAssertEqual(area.label, cycleRange)
+        let beforeScrub = playhead.value as? String
+        surface.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.25)).click(forDuration: 0.1,
+            thenDragTo: surface.coordinate(withNormalizedOffset: CGVector(dx: 0.7, dy: 0.25)))
+        XCTAssertNotEqual(playhead.value as? String, beforeScrub, "Dragging the upper playhead still scrubs")
+        XCTAssertEqual(try viewport(in: app).start, before.start, accuracy: 0.002, "Scrubbing is not panning")
+        XCTAssertEqual(area.label, cycleRange)
+        let pan = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.25))
+        pan.click(forDuration: 0.1, thenDragTo: pan.withOffset(CGVector(dx: -50, dy: 0)))
+        XCTAssertTrue(wait { (try? self.viewport(in: app).start) != before.start })
+        XCTAssertEqual(area.label, cycleRange, "Upper-ruler panning does not redefine the loop")
+        XCTAssertEqual(app.buttons["alignment.waveforms.followPlayhead"].value as? String, "Off")
+        capture(app, name: "Dedicated cycle creation strip preserves ruler navigation")
+    }
+
+    func testFollowPagesDuringPlaybackAndManualPanRequiresExplicitEnable() throws {
+        let app = launch("Paged playback")
+        defer { app.terminate() }
+        XCTAssertTrue(tracks(in: app).firstMatch.waitForExistence(timeout: 20))
+        let follow = app.buttons["alignment.waveforms.followPlayhead"]
+        XCTAssertEqual(follow.value as? String, "On")
+        let zoom = app.sliders["alignment.waveforms.zoom"]
+        zoom.dragHorizontalSliderToMaximum()
+        let playhead = app.textFields["alignment.waveforms.playhead"]
+        playhead.click()
+        playhead.typeKey("a", modifierFlags: .command)
+        playhead.typeText("1")
+        playhead.typeKey(.return, modifierFlags: [])
+        let old = try viewport(in: app)
+        let play = app.buttons["alignment.waveforms.transport.play"]
+        play.click()
+        XCTAssertTrue(wait { play.label == "Pause" })
+        XCTAssertTrue(wait { (try? self.viewport(in: app).start) ?? old.start > old.start })
+        XCTAssertEqual(play.label, "Pause", "Following does not stop playback")
+        let track = tracks(in: app).firstMatch
+        track.scroll(byDeltaX: -400, deltaY: 0)
+        XCTAssertTrue(wait { follow.value as? String == "Off" })
+        let manual = try viewport(in: app)
+        follow.click()
+        XCTAssertEqual(follow.value as? String, "On")
+        XCTAssertEqual(play.label, "Pause")
+        XCTAssertTrue(wait { (try? self.viewport(in: app).start) != manual.start })
+        play.click()
+        follow.click()
+        XCTAssertEqual(follow.value as? String, "Off")
+        app.typeKey("s", modifierFlags: .command)
+        let arguments = app.launchArguments
+        let index = try XCTUnwrap(arguments.firstIndex(of: "-WWUITestShowFolder"))
+        let file = "\(arguments[index + 1])/Paged playback.wwshow"
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES",
+            "-WWUITestOpenWithoutShowWindows", file]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(follow.waitForExistence(timeout: 20))
+        XCTAssertEqual(follow.value as? String, "Off", "The explicit follow choice is saved per episode")
+    }
+
     func testZoomCentersOnPlayheadAfterPanningWithoutSeeking() throws {
         let app = launch("Playhead-centered zoom")
         defer { app.terminate() }
@@ -157,7 +315,7 @@ final class WaveformNavigationUITests: XCTestCase {
         app.activate()
         XCTAssertTrue(track.waitForExistence(timeout: 20), app.debugDescription)
         XCTAssertTrue(wait { abs(track.frame.minY - scrolledFrame.minY) <= 2 },
-                      "Saved vertical position must be restored after waveform tracks finish loading")
+                      "Saved vertical position must be restored after waveform tracks finish loading: \(scrolledFrame) -> \(track.frame), scroll \(app.scrollViews["ww.alignment.workspace"].frame)")
         XCTAssertEqual(track.frame.height, scrolledFrame.height, accuracy: 1)
     }
 
@@ -243,7 +401,7 @@ final class WaveformNavigationUITests: XCTestCase {
         capture(app, name: "Edited marker stays in place through Undo and Redo")
     }
 
-    private func launch(_ name: String, minimum: Bool = false) -> XCUIApplication {
+    private func launch(_ name: String, minimum: Bool = false, singlePrimary: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
@@ -257,6 +415,7 @@ final class WaveformNavigationUITests: XCTestCase {
             "-WWUITestCleanupTimelineFixture", "YES", "-WWUITestTranscriptFixture", "YES",
         ]
         if minimum { app.launchArguments += ["-WWUITestMinimumShowWindow", "YES"] }
+        if singlePrimary { app.launchArguments += ["-WWUITestSinglePrimaryFixture", "YES"] }
         app.launch()
         app.activate()
         return app

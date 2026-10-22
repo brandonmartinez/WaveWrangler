@@ -94,7 +94,7 @@ enum LaunchFixtures {
             if let suite = UserDefaults(suiteName: "com.brandonmartinez.wavewrangler.uitest-preferences") {
                 for key in [PreferenceKey.autosaveEnabled, "WWAutosaveDelaySeconds", "WWLocalWhisperModelBookmark", PreferenceKey.whisperModel, PreferenceKey.transcriptionWorkers, PreferenceKey.transcriptionBackend, PreferenceKey.transcriptionThreads] { suite.removeObject(forKey: key) }
             }
-            for key in [PreferenceKey.autosaveEnabled, PreferenceKey.downloadSourcesAutomatically, PreferenceKey.textSizePercent, PreferenceKey.settingsLastPane] {
+            for key in [PreferenceKey.autosaveEnabled, PreferenceKey.downloadSourcesAutomatically, PreferenceKey.textSizePercent, PreferenceKey.settingsLastPane, PreferenceKey.editingPlaybackPolicy] {
                 defaults.removeObject(forKey: key)
             }
         }
@@ -165,7 +165,14 @@ enum LaunchFixtures {
                         model.speakers.append(contentsOf: fixture.speakers)
                         model = try model.addingEpisode(fixture.episode)
                     }
-                    try await SetupEngineProvider.store.save(fixtures.flatMap(\.records))
+                    let records = fixtures.flatMap(\.records).map { record in
+                        guard defaults.bool(forKey: "WWUITestLegacyOriginals") else { return record }
+                        var legacy = record
+                        legacy.recordedIdentity?.confirmation = .provisional
+                        legacy.recordedIdentity?.rawWitness = nil
+                        return legacy
+                    }
+                    try await SetupEngineProvider.store.save(records)
                     if defaults.bool(forKey: "WWUITestTranscriptFixture") {
                         let runtime = try await AlignmentRuntime.make(showID: showID,
                             accessStore: SetupEngineProvider.store, access: SetupEngineProvider.context)

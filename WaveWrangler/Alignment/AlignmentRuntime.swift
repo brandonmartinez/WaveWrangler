@@ -126,6 +126,34 @@ actor AlignmentRuntime {
         return report
     }
 
+    func analyzeTracks(
+        model: ShowDocumentModel, episode episodeID: EpisodeID
+    ) async throws -> AlignmentAnalysisReport {
+        let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let authorization = sources.filter { $0.availability == .on }
+            .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
+        if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
+            try await pipeline.activate(model: model, episode: episodeID)
+        }
+        return try await pipeline.analyzeTracks(
+            model: model, episode: episodeID, sources: sources, authorizations: authorization
+        )
+    }
+
+    func acceptTracks(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        report: AlignmentAnalysisReport, selected: Set<RecordingEpochID>
+    ) async throws -> AcceptedAlignment {
+        _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let decisions = Dictionary(uniqueKeysWithValues: selected.map {
+            ($0, EpochMapDecision.acceptProposal())
+        })
+        return try await pipeline.accept(
+            model: model, episode: episodeID, report: report, decisions: decisions,
+            replacingAlignment: true
+        )
+    }
+
     func analyzeSpeaker(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         targetEpoch: RecordingEpochID, speaker: SpeakerID,

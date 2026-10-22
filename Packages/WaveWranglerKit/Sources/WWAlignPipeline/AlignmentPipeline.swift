@@ -416,6 +416,87 @@ public final class AlignmentPipeline: Sendable {
         let base = try await prepareManual(
             model: model, episode: episodeID, sources: sources, authorizations: authorizations
         )
+        return try await analyzeSpeaker(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations,
+            targetEpoch: targetEpoch, speaker: speaker, referenceSource: referenceSource,
+            targetSource: targetSource, base: base
+        )
+    }
+
+    /// One coherent report for every eligible recorder epoch. Each epoch uses an explicitly assigned
+    /// shared speaker/channel pair; absent matches remain unresolved rather than using mixed-channel audio.
+    public func analyzeTracks(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        sources: [AlignmentSource], authorizations: [ContentWorkAuthorization]
+    ) async throws -> AlignmentAnalysisReport {
+        try Task.checkCancellation()
+        guard let episode = model.episode(episodeID),
+              let initialPlan = await plan(
+                model: model, episode: episodeID, sources: sources, authorizations: authorizations
+              ) else {
+            throw AlignmentAcceptanceError.episodeNotFound(episodeID)
+        }
+        guard initialPlan.reference != nil else {
+            return AlignmentAnalysisReport(
+                plan: initialPlan, facts: [:], probes: [:], analyses: [:], records: [:],
+                sourceFailures: [:], epochFailures: [:],
+                referenceRevision: episode.alignment?.acceptedRevision, references: [:],
+                speakerAssignments: episode.speakerAssignments
+            )
+        }
+        let base = try await prepareManual(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations
+        )
+        let accepted = episode.alignment?.acceptedRevision == nil
+            ? nil : try await admittedMap(model: model, episode: episodeID)
+        var analyses: [RecordingEpochID: PipelineJobResult] = [:]
+        var records: [RecordingEpochID: EpochAnalysisRecord] = [:]
+        var failures: [RecordingEpochID: AlignmentWorkFailure] = [:]
+        var references: [RecordingEpochID: AlignmentReferenceChoice] = [:]
+        for epoch in base.plan.epochs {
+            try Task.checkCancellation()
+            guard case .analyze = epoch.disposition else { continue }
+            let options = AlignmentPlanner.speakerMatches(
+                episode: episode, plan: base.plan, accepted: accepted?.map, targetEpoch: epoch.epoch
+            )
+            guard let pair = options.first(where: {
+                guard let reference = base.facts[$0.reference.source], let target = base.facts[$0.target] else { return false }
+                return $0.referenceChannel < reference.channelCount && $0.targetChannel < target.channelCount
+            }) else {
+                failures[epoch.epoch] = .encoding(
+                    "Verify source access and assign the same identified speaker with valid channels on this recorder and an eligible reference in Recordings & Speakers, or place timing numerically/with anchors."
+                )
+                continue
+            }
+            do {
+                let report = try await analyzeSpeaker(
+                    model: model, episode: episodeID, sources: sources, authorizations: authorizations,
+                    targetEpoch: epoch.epoch, speaker: pair.speaker,
+                    referenceSource: pair.reference.source, targetSource: pair.target, base: base
+                )
+                analyses.merge(report.analyses) { _, new in new }
+                records.merge(report.records) { _, new in new }
+                failures.merge(report.epochFailures) { _, new in new }
+                references.merge(report.references) { _, new in new }
+            } catch AlignmentAcceptanceError.invalidMap(let reason) {
+                failures[epoch.epoch] = .encoding(reason)
+            }
+        }
+        try Task.checkCancellation()
+        return AlignmentAnalysisReport(
+            plan: base.plan, facts: base.facts, probes: base.probes, analyses: analyses, records: records,
+            sourceFailures: base.sourceFailures, epochFailures: failures,
+            referenceRevision: base.referenceRevision, references: references,
+            speakerAssignments: episode.speakerAssignments
+        )
+    }
+
+    private func analyzeSpeaker(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        sources: [AlignmentSource], authorizations: [ContentWorkAuthorization],
+        targetEpoch: RecordingEpochID, speaker: SpeakerID,
+        referenceSource: SourceID?, targetSource: SourceID?, base: AlignmentAnalysisReport
+    ) async throws -> AlignmentAnalysisReport {
         guard let episode = model.episode(episodeID) else {
             throw AlignmentAcceptanceError.episodeNotFound(episodeID)
         }
@@ -588,7 +669,10 @@ public final class AlignmentPipeline: Sendable {
 
     /// The engineering state of every planned epoch (inspection spec §1.1–1.2). Analysis records whose keys
     /// went stale since the run are dropped (shown as pending, never as a current proposal).
-    public func states(model: ShowDocumentModel, episode episodeID: EpisodeID, report: AlignmentAnalysisReport) async -> [EpochAlignmentState] {
+    public func states(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, report: AlignmentAnalysisReport,
+        reviewingAnalysis: Bool = false
+    ) async -> [EpochAlignmentState] {
         let episode = model.episode(episodeID)
         let current = ((report.references.isEmpty
             || report.referenceRevision == episode?.alignment?.acceptedRevision)
@@ -601,7 +685,7 @@ public final class AlignmentPipeline: Sendable {
             accepted = prior
         }
         return AlignmentStateResolver.resolve(
-            plan: report.plan, acceptedMap: accepted, analyses: current,
+            plan: report.plan, acceptedMap: reviewingAnalysis ? nil : accepted, analyses: current,
             epochFailures: report.epochFailures, sourceFailures: report.sourceFailures
         )
     }
@@ -620,10 +704,11 @@ public final class AlignmentPipeline: Sendable {
         model: ShowDocumentModel,
         episode episodeID: EpisodeID,
         report: AlignmentAnalysisReport,
-        decisions: [RecordingEpochID: EpochMapDecision]
+        decisions: [RecordingEpochID: EpochMapDecision],
+        replacingAlignment: Bool = false
     ) async throws(AlignmentAcceptanceError) -> AcceptedAlignment {
         guard let episode = model.episode(episodeID), report.plan.episode == episodeID else { throw .episodeNotFound(episodeID) }
-        guard episode.alignment?.acceptedMap?.sourceCorrections?.isEmpty != false else {
+        guard replacingAlignment || episode.alignment?.acceptedMap?.sourceCorrections?.isEmpty != false else {
             throw .invalidMap("Remove adaptive file timing before editing recorder-group timing.")
         }
         guard report.references.isEmpty || report.referenceRevision == episode.alignment?.acceptedRevision else {
@@ -650,6 +735,13 @@ public final class AlignmentPipeline: Sendable {
             } catch {
                 throw .priorMapUnreadable(error)
             }
+            if replacingAlignment, let prior {
+                guard report.plan.reference?.group == prior.reference.group,
+                      report.plan.reference?.epoch == prior.reference.epoch,
+                      report.plan.reference?.occurrence == prior.reference.occurrence else {
+                    throw .invalidMap("Replacement alignment must keep the original timeline reference fixed.")
+                }
+            }
         }
         let priorIsCurrent: Bool
         if let prior, let priorRevision, let version = episode.alignment?.map(revision: priorRevision) {
@@ -666,7 +758,7 @@ public final class AlignmentPipeline: Sendable {
             .map(MapDependencies.acceptedProposals) ?? [:]
         let built = try MapAcceptance.build(
             plan: report.plan, facts: facts, analyses: analyses, decisions: decisions,
-            prior: prior, priorIsCurrent: priorIsCurrent,
+            prior: replacingAlignment ? nil : prior, priorIsCurrent: priorIsCurrent && !replacingAlignment,
             priorAcceptedProposals: priorAcceptedProposals,
             currentAnalyses: currentAnalyses, analysisReferences: report.references
         )

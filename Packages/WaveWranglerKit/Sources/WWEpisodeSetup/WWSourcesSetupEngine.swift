@@ -183,7 +183,8 @@ public enum WWSourcesStatusMapping {
 
 /// `SourceSetupEngine` backed by WWSources for one show: device-local records keyed by
 /// `DeviceAccessKey(showID, sourceID)`, the metadata-only importer, availability monitor, transfer
-/// controller and relink evaluator. Nothing here reads content or writes to referenced files.
+/// controller and relink evaluator. Only explicit import/legacy/relink approval captures a guarded
+/// read-only witness. Referenced files are never written.
 @MainActor
 public final class WWSourcesSetupEngine: SourceSetupEngine {
     public nonisolated let pauseSupported = false
@@ -362,13 +363,56 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         guard let plan = plans.removeValue(forKey: token) else {
             throw .failed(reason: "the file list is out of date; choose the files again")
         }
-        let byID = Dictionary(plan.items.map { ($0.sourceRecord.id, $0.accessRecord) }, uniquingKeysWith: { first, _ in first })
+        let byID = Dictionary(plan.items.map { ($0.sourceRecord.id.rawValue, $0.accessRecord) }, uniquingKeysWith: { first, _ in first })
         var records: [DeviceAccessRecord] = []
-        for sourceID in accepted.values {
-            guard let record = byID[sourceID] else {
+        for (candidateID, sourceID) in accepted {
+            guard let record = byID[candidateID], record.sourceID == sourceID else {
                 throw .failed(reason: "WaveWrangler has no permission record for one of the chosen files")
             }
             records.append(record)
+        }
+        // Scanning stays metadata-only. The Import button is the explicit authorization boundary.
+        if context.io is SystemSourceIO || captureRawIdentity != nil {
+            guard let captureRawIdentity else {
+                throw .failed(reason: "source authorization is unavailable; no recordings were authorized")
+            }
+            do {
+                let evaluator = RelinkEvaluator(context: context)
+                let others = activeRecords(try await store.records(in: showID)) + records
+                var confirmed: [DeviceAccessRecord] = []
+                for record in records {
+                    guard let bookmark = record.bookmark,
+                          case let .resolved(url, stale) = context.io.resolveBookmark(bookmark), !stale
+                    else { throw SourceEngineError.failed(reason: "choose the original recordings again") }
+                    let proposal = evaluator.evaluate(candidate: url, for: record.key, record: record, otherRecords: others)
+                    guard proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil else {
+                        throw SourceEngineError.failed(reason: "a chosen recording changed or is already linked; choose the recordings again")
+                    }
+                    confirmed.append(try await evaluator.applyConfirmed(
+                        proposal, to: record, captureRawIdentity: captureRawIdentity
+                    ))
+                }
+                let latest = activeRecords(try await store.records(in: showID))
+                for record in confirmed {
+                    guard !isShutDown, activeSourceIDs?()?.contains(record.sourceID) != false,
+                          try await store.record(for: record.key) == nil,
+                          let path = record.lastKnownPath else {
+                        throw SourceEngineError.failed(reason: "the show or source record changed during import; try again")
+                    }
+                    let proposal = evaluator.evaluate(
+                        candidate: URL(filePath: path), for: record.key, record: record,
+                        otherRecords: latest + confirmed
+                    )
+                    guard proposal.canApply, proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil else {
+                        throw SourceEngineError.failed(reason: "a chosen recording changed or is already linked; choose the recordings again")
+                    }
+                }
+                records = confirmed
+            } catch let error as SourceEngineError {
+                throw error
+            } catch {
+                throw .failed(reason: "recordings weren't authorized: \(error.localizedDescription)")
+            }
         }
         let outcome: Result<Void, any Error>? = await tracked { [monitor] in
             do {
@@ -531,10 +575,14 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
                 throw SourceEngineError.failed(reason: "the source record changed; try again")
             }
             let latestOthers = activeRecords(try await store.records(in: showID))
-            if let other = evaluator.evaluate(
+            let final = evaluator.evaluate(
                 candidate: url, for: key, record: previous, otherRecords: latestOthers
-            ).alreadyLinkedTo {
+            )
+            if let other = final.alreadyLinkedTo {
                 throw SourceEngineError.failed(reason: "this file is already used by “\(sourceNames(other))” in this show")
+            }
+            guard final.canApply, final.comparison.isExactMatch else {
+                throw SourceEngineError.failed(reason: "file details changed; review the original with Relink Source")
             }
             try await store.save(confirmed)
             _ = await tracked { [monitor] in await monitor.refresh([sourceID]) }

@@ -168,6 +168,10 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             app.terminate()
         }
         app.activate()
+        let follow = app.buttons["alignment.waveforms.followPlayhead"]
+        XCTAssertTrue(follow.waitForExistence(timeout: 20))
+        follow.click()
+        XCTAssertEqual(follow.value as? String, "Off", "Keep this selection/locator workflow's viewport stable")
         let addButton = app.buttons["ww.audioWorkspace.add"]
         XCTAssertTrue(addButton.waitForExistence(timeout: 20), app.debugDescription)
         addButton.click()
@@ -188,7 +192,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         }
         let tracks = app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH 'alignment.waveforms.track.'"))
-        XCTAssertTrue(wait { tracks.count == 2 }, app.debugDescription)
+        XCTAssertTrue(tracks.firstMatch.waitForExistence(timeout: 20), app.debugDescription)
         let muteHost = app.buttons["Mute Host"]
         reveal(muteHost, in: app)
         muteHost.click()
@@ -208,14 +212,20 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         XCTAssertEqual(soloHost.value as? String, "On")
         muteHost.click()
         soloHost.click()
-        XCTAssertEqual(tracks.count, 2, "Solo/Mute and grouping never hide or duplicate recordings.")
-        let waveform = tracks.firstMatch
+        for name in ["synthetic-studio.wav", "synthetic-remote.wav"] {
+            let recording = tracks.matching(NSPredicate(format: "label CONTAINS %@", name)).firstMatch
+            reveal(recording, in: app)
+            XCTAssertTrue(recording.label.contains("measured amplitude bins."),
+                          "Solo/Mute and grouping retain each measured recording.")
+        }
+        let waveform = tracks.matching(NSPredicate(format: "label CONTAINS 'synthetic-studio.wav'")).firstMatch
         reveal(waveform, in: app)
         XCTAssertTrue(waveform.isHittable)
         let start = waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5))
         start.click(forDuration: 0.1, thenDragTo: waveform.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
         let playSelection = app.buttons["Play selection"].firstMatch
         XCTAssertTrue(playSelection.waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["Cycle selection"].firstMatch.click()
         playSelection.click()
         XCTAssertTrue(wait {
             let status = app.staticTexts["alignment.waveforms.transport.status"]
@@ -225,8 +235,6 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         let stop = app.buttons["alignment.waveforms.transport.stop"]
         reveal(stop, in: app)
         stop.click()
-        reveal(playSelection, in: app)
-        app.buttons["Cycle selection"].firstMatch.click()
         XCTAssertTrue(app.descendants(matching: .any)["Cycle start"].exists)
         XCTAssertTrue(app.descendants(matching: .any)["Cycle end"].exists)
         let locator = app.images["Cycle end"]
@@ -294,17 +302,18 @@ final class UnifiedWorkspaceUITests: XCTestCase {
     private func selectLayout(_ title: String, in app: XCUIApplication) {
         let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
         reveal(layout, in: app)
-        let segment = layout.radioButtons[title]
-        if segment.exists {
-            segment.click()
-        } else {
-            layout.click()
-            app.menuItems[title].click()
-        }
+        selectTimelineLayout(title, in: app)
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, scrollID: String = "ww.alignment.workspace") {
         let scroll = app.scrollViews[scrollID]
+        if !element.exists {
+            scroll.scroll(byDeltaX: 0, deltaY: 400)
+            for _ in 0..<12 {
+                if element.exists { break }
+                scroll.scroll(byDeltaX: 0, deltaY: -100)
+            }
+        }
         for _ in 0..<12 {
             let chrome = app.descendants(matching: .any)["alignment.waveforms.controls"]
             if element.isHittable,

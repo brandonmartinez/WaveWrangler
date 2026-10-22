@@ -32,7 +32,8 @@ Device-local records left by sources removed from the show do not block confirmi
 imported source; an original still used by another source in the show remains unavailable.
 
 In **Alignment**, the shared timeline is the primary editor. **Refresh audio** loads bounded
-measured waveform windows on one seconds-based ruler. **By speaker** is the first and default layout,
+measured waveform windows on one seconds-based ruler. The track-view dropdown lists **By recorder**,
+**By speaker**, **Overlay**, and **Speakers only**, in that order. **By speaker** remains the default,
 grouping lanes by assigned speaker across recorders. **By recorder** groups lanes by recorder group.
 Unassigned recordings remain under **Unknown speaker**. **Overlay** always combines enabled
 recordings by speaker on the same scale. Changing layout does not change timing, recorder-group
@@ -46,6 +47,20 @@ tile (including zoomed-out main lanes); it does not change audio, playback, or s
 timing. Up to eight bounded measured tiles and their projected strokes are cached in memory;
 adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
 episode, source, or verified alignment clears them.
+
+**Fill Space** fits visible waveforms vertically and adapts to resizing, layout changes, and
+collapsed groups. Waveforms stay at least 64 points tall; if the tracks and their actual headers
+or independent Ungrouped rows cannot fit, vertical scrolling remains available. Fitted heights
+can exceed the manual slider's maximum. Adjusting track height or turning the toggle off restores
+manual sizing. The toggle is remembered per episode.
+
+**Follow Playhead** starts on and remembers each episode's subsequent choice. At the visible
+right edge it pages the viewport to put the playhead at the left, including selection and cycle
+playback, without seeking or restarting audio. Panning turns following off; enabling it immediately
+returns to the current playhead. Drag the separate **Cycle range** strip below the ruler to make a
+loop, or use **Cycle selection** on an existing track selection. The icon-only **Cycle** control
+beside Play/Stop enables the same range. The upper ruler retains seeking, scrubbing, panning,
+zooming, and cycle-locator editing.
 
 Open a recording's settings button to choose its **Speaker** and **Channel** in the
 **Recording** inspector, then use **Align…** beside a non-reference track. These choices edit the same

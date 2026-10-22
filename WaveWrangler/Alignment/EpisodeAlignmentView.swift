@@ -157,7 +157,7 @@ struct AlignmentWorkspace: View {
             showTranscript: {
                 state.workspaceInspector = .transcript
                 state.inspectorPresented = true
-            }, showInspector: showInspector)
+            }, showInspector: showInspector, sourceEditingEnabled: state.canEdit, workspaceState: state)
         .safeAreaInset(edge: .top, spacing: 0) {
             AudioWorkspaceActions(state: state, alignment: model)
                 .padding(10).background(.bar)

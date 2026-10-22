@@ -7,6 +7,8 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
     var normalizeView = false
     var showProposedAlignment = true
     var laneHeight = 110.0
+    var fillSpace = false
+    var followPlayhead = true
     var startSeconds = 0.0
     var durationSeconds = 5.0
     var playheadSeconds = 0.0
@@ -18,6 +20,36 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
     var inspectorPresented = true
     var recordingsPresented = false
     var expandedManualCutID: UUID?
+
+    init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case layout, normalizeView, showProposedAlignment, laneHeight, fillSpace, followPlayhead
+        case startSeconds, durationSeconds, playheadSeconds, trackScrollOffset
+        case collapsedRecorders, collapsedSpeakers, destination, inspector, inspectorPresented
+        case recordingsPresented, expandedManualCutID
+    }
+
+    init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        layout = try values.decode(AlignmentWaveformLayout.self, forKey: .layout)
+        normalizeView = try values.decode(Bool.self, forKey: .normalizeView)
+        showProposedAlignment = try values.decode(Bool.self, forKey: .showProposedAlignment)
+        laneHeight = try values.decode(Double.self, forKey: .laneHeight)
+        fillSpace = try values.decodeIfPresent(Bool.self, forKey: .fillSpace) ?? false
+        followPlayhead = try values.decodeIfPresent(Bool.self, forKey: .followPlayhead) ?? true
+        startSeconds = try values.decode(Double.self, forKey: .startSeconds)
+        durationSeconds = try values.decode(Double.self, forKey: .durationSeconds)
+        playheadSeconds = try values.decode(Double.self, forKey: .playheadSeconds)
+        trackScrollOffset = try values.decode(Double.self, forKey: .trackScrollOffset)
+        collapsedRecorders = try values.decode(Set<RecorderGroupID>.self, forKey: .collapsedRecorders)
+        collapsedSpeakers = try values.decode(Set<SpeakerID>.self, forKey: .collapsedSpeakers)
+        destination = try values.decode(String.self, forKey: .destination)
+        inspector = try values.decode(String.self, forKey: .inspector)
+        inspectorPresented = try values.decode(Bool.self, forKey: .inspectorPresented)
+        recordingsPresented = try values.decode(Bool.self, forKey: .recordingsPresented)
+        expandedManualCutID = try values.decodeIfPresent(UUID.self, forKey: .expandedManualCutID)
+    }
 
     var isValid: Bool {
         startSeconds.isFinite && abs(startSeconds) <= 86_400

@@ -71,8 +71,8 @@ struct CleanupTranscriptionTimingTests {
         undo.endUndoGrouping()
         let historical = try #require(cleanup.fillerReviews.first)
         #expect(historical == adjusted.episodes[0].cleanup?.fillerReviews?.first)
-        #expect(cleanup.fillerIssue(historical) != nil)
-        #expect(cleanup.fillerReviews.count == 4, "Old adjusted judgments are retained beside new detections")
+        #expect(cleanup.fillerIssue(historical) == nil)
+        #expect(cleanup.fillerReviews.count == 2, "The adjusted judgment stays active at its exact timing; only undecided suggestions regenerate")
         let beforeLateResult = f.document.store.model
         #expect(try !cleanup.publishTranscripts(transcripts, expecting: snapshot))
         #expect(f.document.store.model == beforeLateResult, "An obsolete job cannot overwrite new reviews")
@@ -87,9 +87,9 @@ struct CleanupTranscriptionTimingTests {
         defer { reopenedCleanup.cancel() }
         await reopenedCleanup.refresh()
         try #require(reopenedCleanup.plan?.isReady == true, "\(reopenedCleanup.error ?? "")")
-        #expect(reopenedCleanup.fillerReviews.count == 4)
+        #expect(reopenedCleanup.fillerReviews.count == 2)
         #expect(reopenedCleanup.fillerReviews.first == historical)
-        #expect(reopenedCleanup.fillerIssue(historical) != nil)
+        #expect(reopenedCleanup.fillerIssue(historical) == nil)
         #expect(reopenedCleanup.fillerReviews.filter { reopenedCleanup.fillerIssue($0) == nil }.count == 2)
     }
 

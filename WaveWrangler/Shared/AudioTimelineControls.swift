@@ -15,6 +15,10 @@ struct AudioTimelineTransport: View {
     let forward: () -> Void
     let seek: (Double) -> Void
     var isEdited = false
+    var cycleEnabled: Bool? = nil
+    var toggleCycle: () -> Void = {}
+    var followPlayhead: Bool? = nil
+    var toggleFollowPlayhead: () -> Void = {}
 
     @State private var timeDraft = ""
     @FocusState private var editingTime: Bool
@@ -38,6 +42,25 @@ struct AudioTimelineTransport: View {
                 Button(action: forward) { Label("Forward 5 seconds", systemImage: "goforward.5") }
                     .disabled(!canNavigate)
                     .accessibilityIdentifier("\(prefix).transport.forward")
+                if let cycleEnabled {
+                    Button("Cycle", systemImage: "repeat", action: toggleCycle)
+                        .tint(cycleEnabled ? .yellow : .secondary)
+                        .disabled(!canNavigate)
+                        .accessibilityValue(cycleEnabled ? "On" : "Off")
+                        .accessibilityAddTraits(cycleEnabled ? [.isSelected] : [])
+                        .accessibilityIdentifier("ww.timeline.cycle")
+                        .help("Repeat the cycle range. Use the cycle strip or Cycle selection to set its bounds.")
+                }
+                if let followPlayhead {
+                    Button("Follow Playhead", systemImage: "play.rectangle.on.rectangle",
+                           action: toggleFollowPlayhead)
+                        .tint(followPlayhead ? .accentColor : .secondary)
+                        .disabled(!canNavigate)
+                        .accessibilityValue(followPlayhead ? "On" : "Off")
+                        .accessibilityAddTraits(followPlayhead ? [.isSelected] : [])
+                        .accessibilityIdentifier("\(prefix).followPlayhead")
+                        .help("Page at the right edge without interrupting audio. Panning turns Follow Playhead off; enable it to return to the current playhead.")
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(spacing: 1) {
@@ -86,6 +109,8 @@ struct AudioTimelineTransport: View {
 struct AudioTimelineAdaptiveRow: Layout {
     var horizontalSpacing: CGFloat = 12
     var verticalSpacing: CGFloat = 6
+    var alignsTrailing = false
+    var wraps = false
 
     struct Plan {
         let size: CGSize
@@ -123,12 +148,37 @@ struct AudioTimelineAdaptiveRow: Layout {
         let width = max(0, width.flatMap { $0.isFinite ? $0 : nil } ?? idealWidth)
         if let plan = cache.plans[width] { return plan }
         let horizontal = idealWidth <= width
+        if wraps && !horizontal {
+            var rows: [[CGRect]] = [[]]
+            var x: CGFloat = 0
+            for (index, subview) in subviews.enumerated() {
+                let childWidth = min(width, cache.ideal[index].width)
+                if x > 0, x + childWidth > width {
+                    rows.append([])
+                    x = 0
+                }
+                let size = subview.sizeThatFits(ProposedViewSize(width: childWidth, height: nil))
+                rows[rows.count - 1].append(CGRect(x: x, y: 0, width: childWidth, height: size.height))
+                x += childWidth + horizontalSpacing
+            }
+            var frames: [CGRect] = []
+            var y: CGFloat = 0
+            for row in rows {
+                let height = row.map(\.height).max() ?? 0
+                let offset = alignsTrailing ? max(0, width - (row.map(\.maxX).max() ?? 0)) : 0
+                frames += row.map { $0.offsetBy(dx: offset, dy: y + (height - $0.height) / 2) }
+                y += height + verticalSpacing
+            }
+            let plan = Plan(size: CGSize(width: width, height: max(0, y - verticalSpacing)), frames: frames)
+            cache.plans[width] = plan
+            return plan
+        }
         var frames: [CGRect] = []
-        var x: CGFloat = 0
+        var x: CGFloat = horizontal && alignsTrailing ? max(0, width - idealWidth) : 0
         var y: CGFloat = 0
         for (index, subview) in subviews.enumerated() {
             let childWidth = horizontal
-                ? (index == subviews.count - 1 ? max(0, width - x) : cache.ideal[index].width)
+                ? (index == subviews.count - 1 && !alignsTrailing ? max(0, width - x) : cache.ideal[index].width)
                 : width
             let size = subview.sizeThatFits(ProposedViewSize(width: childWidth, height: nil))
             frames.append(CGRect(x: x, y: y, width: childWidth, height: size.height))
@@ -156,20 +206,42 @@ struct AudioTimelineNavigation: View {
     let zoomEditing: (Bool) -> Void
     let fit: () -> Void
     let refresh: () -> Void
+    var fillSpace: Binding<Bool>? = nil
+    var showsRefresh = true
 
     var body: some View {
-        AudioTimelineAdaptiveRow {
-            HStack(spacing: 12) {
-                zoomControls
-                fitButton
-            }
-            HStack(spacing: 12) {
-                if showsLaneHeight { heightControls }
-                Spacer(minLength: 0)
-                refreshButton
-            }
+        AudioTimelineAdaptiveRow(alignsTrailing: true) {
+            zoomGroup.frame(maxWidth: .infinity, alignment: .trailing)
+            heightGroup.frame(maxWidth: .infinity, alignment: .trailing)
         }
         .controlSize(.small)
+    }
+
+    var zoomGroup: some View {
+        HStack(spacing: 12) {
+            zoomControls
+            fitButton
+        }
+    }
+
+    var heightGroup: some View {
+        HStack(spacing: 12) {
+            if showsLaneHeight { heightControls }
+            if let fillSpace {
+                Toggle(isOn: fillSpace) {
+                    Label("Fill Space", systemImage: "arrow.up.and.down")
+                }
+                .toggleStyle(.button)
+                .labelStyle(.iconOnly)
+                .help("Fit visible tracks to the available height, keeping waveforms at least 64 points tall. Adjusting track height exits Fill Space.")
+                .accessibilityIdentifier("\(prefix).fillSpace")
+            }
+            if showsRefresh {
+                Spacer(minLength: 0)
+                AudioTimelineRefresh(prefix: prefix, isLoading: isLoading,
+                                     canNavigate: canNavigate, refresh: refresh)
+            }
+        }
     }
 
     private var zoomControls: some View {
@@ -231,7 +303,15 @@ struct AudioTimelineNavigation: View {
         }
     }
 
-    private var refreshButton: some View {
+}
+
+struct AudioTimelineRefresh: View {
+    let prefix: String
+    let isLoading: Bool
+    let canNavigate: Bool
+    let refresh: () -> Void
+
+    var body: some View {
         Button(
             isLoading ? "Cancel" : "Refresh audio",
             systemImage: isLoading ? "xmark.circle" : "arrow.clockwise", action: refresh
@@ -265,6 +345,7 @@ struct AudioTimelineRuler: View {
     var cycleRange: ClosedRange<Double>? = nil
     var cycleEnabled = false
     var changeCycle: ((ClosedRange<Double>) -> Void)? = nil
+    var createCycle: ((ClosedRange<Double>) -> Void)? = nil
     var clicked: ((Double) -> Void)? = nil
     let previewSeek: (Double) -> Bool
     let resumePlayback: () -> Void
@@ -300,8 +381,73 @@ struct AudioTimelineRuler: View {
     @State private var scrub: Scrub?
     @State private var zoom: Zoom?
     @State private var cycleDrag: CycleEdge?
+    @State private var cycleCreation: (start: Double, duration: Double, width: Double)?
 
     var body: some View {
+        VStack(spacing: 2) {
+            timeRuler
+            if createCycle != nil { cycleCreationStrip }
+        }
+    }
+
+    private var cycleCreationStrip: some View {
+        HStack(spacing: 8) {
+            Text("CYCLE RANGE").font(.caption2).foregroundStyle(.secondary)
+                .frame(width: headerWidth, alignment: .leading)
+            GeometryReader { geometry in
+                ZStack(alignment: .leading) {
+                    Rectangle().fill(Color.yellow.opacity(0.08))
+                    if let cycleRange {
+                        let lo = max(0, (cycleRange.lowerBound - start) / duration * geometry.size.width)
+                        let hi = min(geometry.size.width, (cycleRange.upperBound - start) / duration * geometry.size.width)
+                        if hi > lo {
+                            Rectangle().fill(Color.yellow.opacity(cycleEnabled ? 0.4 : 0.16))
+                                .frame(width: hi - lo).offset(x: lo)
+                        }
+                    } else {
+                        Text("Drag to create a cycle range").font(.caption2).foregroundStyle(.secondary)
+                            .padding(.horizontal, 6)
+                    }
+                }
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 4)
+                    .onChanged { drag in
+                        guard canNavigate, geometry.size.width > 0 else { return }
+                        if cycleCreation == nil {
+                            cycleCreation = (start, duration, Double(geometry.size.width))
+                        }
+                        guard let creation = cycleCreation,
+                              let range = Self.cycleSelection(
+                                from: Double(drag.startLocation.x), to: Double(drag.location.x),
+                                width: creation.width, start: creation.start,
+                                duration: creation.duration, bounds: seekBounds) else { return }
+                        createCycle?(range)
+                    }
+                    .onEnded { _ in cycleCreation = nil })
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel("Create cycle range, " + (cycleRange.map {
+                    String(format: "%.3f to %.3f seconds", $0.lowerBound, $0.upperBound)
+                } ?? "No cycle range"))
+                .accessibilityValue(cycleRange.map {
+                    String(format: "%.3f to %.3f seconds", $0.lowerBound, $0.upperBound)
+                } ?? "No cycle range")
+                .accessibilityIdentifier("\(prefix).ruler.cycleArea")
+                .help("Drag here to create a loop. The ruler above still seeks, scrubs, pans, and edits cycle locators.")
+            }
+        }
+        .frame(height: 22)
+    }
+
+    static func cycleSelection(from: Double, to: Double, width: Double, start: Double,
+                               duration: Double, bounds: ClosedRange<Double>) -> ClosedRange<Double>? {
+        guard from.isFinite, to.isFinite, width.isFinite, width > 0,
+              start.isFinite, duration.isFinite, duration > 0 else { return nil }
+        let lo = max(bounds.lowerBound, start + min(max(0, from), max(0, to), width) / width * duration)
+        let hi = min(bounds.upperBound, start + max(min(width, from), min(width, to), 0) / width * duration)
+        return hi > lo ? lo...hi : nil
+    }
+
+    private var timeRuler: some View {
         HStack(spacing: 8) {
             Text(isEdited ? "EDITED SECONDS" : "ALIGNED SECONDS")
                 .font(.caption2).foregroundStyle(.secondary)

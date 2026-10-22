@@ -113,6 +113,19 @@ Each episode's last workspace view is stored in device-local preferences keyed b
 show and episode ID, not in the canonical document or its Undo history. Reopening
 restores layout, normalization, lane height, zoom, edited viewport/playhead,
 vertical track scroll position, collapsed groups, destination, and sidebar choices.
+It also stores Fill Space and Follow Playhead. Older view records decode these as
+off and on respectively, without changing canonical schemas. Fitted height is derived
+from the live viewport and measured content, never written over the bounded manual
+height. Fit mode measures all rows, including group chrome, transcript strips, errors,
+and metadata-only Ungrouped rows; ordinary manual mode retains lazy track stacks.
+Measurements carry the lane height they were produced from so stale geometry cannot
+drive a resize feedback loop. Minimum-height overflow remains scrollable.
+
+The selected-view menu retains all four serialized modes in By recorder, By speaker,
+Overlay, Speakers only order. Align Tracks and Transcribe Tracks sit beside it on the
+left; normalization, sizing/fitting, interaction tools, and the single refresh action
+form the trailing group. Refresh retains waveform cancellation and cleanup readiness
+refresh. Workflow guards and explicit alignment review/acceptance remain unchanged.
 Playback never resumes automatically. Solo/Mute choices are not restored; reopening
 **Speakers only** applies its non-primary mute policy again.
 The selected expanded-cut view is also remembered, provided that cut remains
@@ -235,9 +248,11 @@ can join a future transport boundary. Pending or unavailable sources are reporte
 without restarting the other tracks. A missed producer deadline stops playback
 with an explicit error instead of treating an underrun as successful listening.
 
-Bounded selection and marker auditions keep the current timeline viewport stable,
-including during repeats, so their Stop and review controls stay reachable. Ordinary
-unbounded playback continues following the playhead.
+Follow Playhead pages only the viewport at its right edge, or reacquires a playhead
+behind its left edge, for unrestricted, cycle, selection, and marker playback.
+There is no early 80-percent recenter. Manual panning disables follow until explicitly
+enabled again; enabling immediately reacquires without changing the audio clock.
+Transport and review controls remain pinned outside the track scroll area.
 
 Source resolution and accepted-map activation are batched once per window, not
 once per track. The runtime's ordinary audition cache is process-local, limited to
@@ -326,9 +341,40 @@ keyboard/VoiceOver adjustments remain.
 
 Above the tracks, Listen now presets sit beside Add. Their active state reflects current listening
 choices, and Restore listening choices returns to the pre-preset choices. These session-only
-presets preserve explicit Mutes, do not change roles or saved policy, and do not count as Begin
-editing. The separate After alignment menu still saves the policy applied only by the explicit
-Begin editing action, once per accepted revision.
+presets preserve explicit Mutes and do not change roles or the app default.
+**Preferences > General > After alignment** controls listening after newly accepted
+alignment is verified on disk. The initial default mutes non-primary tracks; Keep
+my playback choices, Solo primary tracks, and Solo non-primary tracks remain available.
+The policy runs once for that acceptance, never on refresh, reopening, preference
+changes, or Undo/Redo. Restore captures the mix immediately before the policy.
+Legacy serialized episode policy keys remain readable and are not rewritten.
+
+**Align Tracks** analyzes every eligible recorder epoch using explicitly identified
+shared speaker channels. A single review lists proposals, abstentions and missing
+prerequisites, with Recordings & Speakers and advanced/manual timing remedies.
+Each proposal names its reference recording and captured accepted timing revision;
+already aligned reference groups are historical evidence, not silently rebased to
+other proposals in the batch.
+Only checked measured proposals are accepted; unsupported/unselected epochs and
+unmeasured intervals remain unresolved. No proposal is automatically extended.
+Realignment warns before analysis and authorizes moving locked non-reference groups
+only for replacement acceptance. Existing timing and downstream work stay live during
+analysis/review. Accepting replacement alignment resets active transcription,
+revision-bound reviews/cuts, and episode IN/OUT in one undoable transaction; originals,
+assignments, raw transcript history and append-only timing history remain. Failed or
+canceled analysis/review does not reset work. Activation requires verified save.
+
+**Transcribe Tracks** requires verified accepted Primary timing, source identity,
+coverage and an available local model. Repeated transcription warns before running.
+Successful publication retains reviewed/adjusted/manual marks (including pending
+manual marks) at their exact captured positions and retains explicit rejections.
+Their immutable old transcript provenance is verified against retained raw history,
+never rebound to new words. Source/channel/identity/alignment and coverage guards
+still apply. Same-source overlapping source-frame events suppress duplicate suggestions
+independently of new word IDs. Undecided automatic suggestions regenerate only after
+successful transcription; failure/cancellation leaves them intact. Unchanged alignment
+preserves cuts and episode IN/OUT. Publication and Undo/Redo cover all speaker results
+and suggestions together.
 
 The decoding-boundary scan distinguishes in-memory nominal conversion from source decoding:
 only `WWDecode/PCMResampling.swift` and `WWSpeech/LocalWhisper.swift` may name
@@ -441,8 +487,8 @@ silently replaces an existing Primary.
 Selection, enabled cycle locators and persistent revision-bound episode IN/OUT are distinct.
 The anchored marquee toolbar auditions the selected interval or adds half a second of context,
 clamped to media bounds and honoring the current Solo/Mute choices. Cycle repeats separately;
-filler loops do not change it. Explicit Begin editing applies a named optional playback policy once
-per verified accepted revision, with a restore action; the default keeps deliberate listening choices.
+filler loops do not change it. Editing needs no Begin editing action; the app-level
+After alignment listening default applies only after a newly accepted alignment is verified.
 Transcript labels progress from hidden to sentences, phrases, individual words and words with
 start/end timing markers, in one stable row. Zoom and typical timed-word size determine detail;
 silence and the current viewport's word count do not inflate it. Adjacent words never merge back
@@ -614,6 +660,24 @@ refusal, exact viewport selection and mixed-rate aligned audio.
   Results are appended to `Packages/WaveWranglerKit/.build/persistence-evidence.log`.
 
 ## Build and test
+
+### Source onboarding
+
+Completing Import Review explicitly authorizes the included recordings on this Mac.
+Enumeration and review remain metadata-only; completion rechecks the selected identities
+and captures decoder-owned read-only witnesses before publishing device-local authorization.
+Original recordings remain immutable. A failed verification is reported explicitly and
+does not grant audio admission. Opening or restoring a show never upgrades source permissions.
+Older provisional recordings use **Review Recording Access…** in Recordings & Speakers:
+one list and one approval cover the affected episode recordings, with independent identity
+checks and named failures for any recording that cannot be authorized.
+
+The Recordings & Speakers sheet resizes in both dimensions; its existing adaptive details
+placement and Sources/Speakers divider remain in use. The editor includes a separate
+**Ungrouped** section in all four waveform layouts, even before any recorder group exists.
+Its metadata-only source references are neither timed nor playable. **Add to Group**
+uses existing groups or the shared new-recorder-group form and the normal named Undo/Redo
+commands; no waveform, epoch, or alignment is fabricated for a placeholder.
 
 The app icon is the complete macOS 16/32/128/256/512 pt, 1x/2x set in
 `WaveWrangler/Assets.xcassets/AppIcon.appiconset`, selected for both Debug and Release.

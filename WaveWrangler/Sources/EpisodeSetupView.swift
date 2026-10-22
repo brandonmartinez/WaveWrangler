@@ -170,6 +170,8 @@ struct EpisodeSetupView: View {
                 NumberSheet(model: model, context: context)
             case let .name(context):
                 NameSheet(model: model, context: context)
+            case let .originalAuthorization(sources):
+                OriginalAuthorizationSheet(model: model, sources: sources)
             }
         }
         .alert(confirmationTitle, isPresented: confirmationBinding, presenting: model.confirmation) { confirmation in
@@ -268,6 +270,20 @@ private struct SourcesSection: View {
             header(presentation)
             if let message = model.message {
                 InlineMessage(text: message) { model.message = nil }
+            }
+            if !model.originalsNeedingAuthorization.isEmpty {
+                HStack {
+                    Text("\(model.originalsNeedingAuthorization.count) older recordings need your approval before audio can be used.")
+                        .setupFont(.callout)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Button("Review Recording Access…") { model.reviewOriginalAuthorization() }
+                        .disabled(model.isAuthorizingOriginals)
+                        .accessibilityIdentifier("ww.setup.authorizeOriginals")
+                }
+            }
+            if model.isAuthorizingOriginals {
+                ProgressView("Verifying recording identities…").controlSize(.small)
             }
             if let explanation = model.offExplanation {
                 HStack(alignment: .firstTextBaseline) {

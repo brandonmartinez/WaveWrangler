@@ -1,4 +1,5 @@
 import Foundation
+import WWCore
 
 /// App-level `UserDefaults` keys. Persistence and source lanes read these; the Settings window writes them.
 ///
@@ -19,6 +20,7 @@ public enum PreferenceKey {
     public static let transcriptionWorkers = "WWTranscriptionWorkers"
     public static let transcriptionBackend = "WWTranscriptionBackend"
     public static let transcriptionThreads = "WWTranscriptionThreads"
+    public static let editingPlaybackPolicy = "WWEditingPlaybackPolicy"
 }
 
 /// Typed accessor over a `UserDefaults` store with the product defaults applied.
@@ -32,6 +34,7 @@ public struct AppPreferences {
             PreferenceKey.autosaveEnabled: defaultAutosaveEnabled,
             PreferenceKey.downloadSourcesAutomatically: defaultDownloadSourcesAutomatically,
             PreferenceKey.textSizePercent: TextSize.actual.percent,
+            PreferenceKey.editingPlaybackPolicy: EditingPlaybackPolicy.muteNonPrimaries.rawValue,
         ]
     }
 
@@ -57,6 +60,14 @@ public struct AppPreferences {
     public var textSize: TextSize {
         get { TextSize(storedPercent: defaults.object(forKey: PreferenceKey.textSizePercent) as? Int) }
         nonmutating set { defaults.set(newValue.percent, forKey: PreferenceKey.textSizePercent) }
+    }
+
+    public var editingPlaybackPolicy: EditingPlaybackPolicy {
+        get {
+            defaults.string(forKey: PreferenceKey.editingPlaybackPolicy)
+                .flatMap(EditingPlaybackPolicy.init(rawValue:)) ?? .muteNonPrimaries
+        }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: PreferenceKey.editingPlaybackPolicy) }
     }
 }
 

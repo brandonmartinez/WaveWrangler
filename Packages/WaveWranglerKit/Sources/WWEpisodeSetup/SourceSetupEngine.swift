@@ -28,9 +28,9 @@ public enum SourceEngineError: Error, Hashable, Sendable {
 /// downloads). The UI is engine-agnostic: every engine call goes through this protocol.
 ///
 /// Invariants for every conforming engine: originals are never written, moved, renamed or substituted;
-/// paths/names/bookmarks are hints, never identity; with downloads Off the import, observation and
-/// relink paths make zero content/hash/header/preview/decode/download requests; no provider I/O happens
-/// on the main thread.
+/// paths/names/bookmarks are hints, never identity; scanning and observation are metadata-only.
+/// Explicit import/relink confirmation may capture a guarded read-only identity witness, but never
+/// materializes cloud content with downloads Off. No provider I/O happens on the main thread.
 public protocol SourceSetupEngine: AnyObject, Sendable {
     /// Whether a transfer can genuinely be paused and resumed without losing progress.
     var pauseSupported: Bool { get }
@@ -40,7 +40,9 @@ public protocol SourceSetupEngine: AnyObject, Sendable {
     func scanForImport(_ urls: [URL], episodeSourceIDs: [SourceID]) async throws(SourceEngineError) -> ImportScan
 
     /// Creates device-local access records for imported sources from the scan identified by `token`
-    /// (called after the canonical import). Throws when the scan is unknown or a record is missing.
+    /// (called after the canonical import). Explicit completion authorizes only the accepted recordings,
+    /// after verifying their unchanged identities and capturing read-only witnesses.
+    /// Throws when authorization fails, the scan is unknown, or a record is missing.
     func commitImport(_ accepted: [UUID: SourceID], fromScan token: UUID) async throws(SourceEngineError)
 
     /// Forgets a scan the user canceled.

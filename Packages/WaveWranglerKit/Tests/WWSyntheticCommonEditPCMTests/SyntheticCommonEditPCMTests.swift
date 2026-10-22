@@ -34,10 +34,15 @@ struct SyntheticCommonEditPCMTests {
             plan, input: input, chunkFrames: 5
         ))
         #expect(plan.mapping.map.outputFrameCount == 22)
-        #expect(output[0] == [0, 0] + (1...4).map(Float.init) +
-                [0, 0] + (7...20).map(Float.init))
-        #expect(output[1] == (100...105).map(Float.init) +
-                [0, 0] + (108...121).map(Float.init))
+        var expectedFirst: [Float] = [0, 0]
+        expectedFirst += (1...4).map(Float.init)
+        expectedFirst += [0, 0]
+        expectedFirst += (7...20).map(Float.init)
+        var expectedSecond = (100...105).map(Float.init)
+        expectedSecond += [0, 0]
+        expectedSecond += (108...121).map(Float.init)
+        #expect(output[0] == expectedFirst)
+        #expect(output[1] == expectedSecond)
         #expect(output[2].allSatisfy { $0 == 0 })
     }
 

@@ -30,6 +30,8 @@ struct ImportReviewSheet: View {
                 .accessibilityAddTraits(.isHeader)
                 .accessibilityIdentifier("ww.import.title")
             Text(review.fromLine).setupFont(.callout).fixedSize(horizontal: false, vertical: true)
+            Text("Import authorizes WaveWrangler to use these recordings on this Mac after verifying their identities. Originals are never changed.")
+                .setupFont(.callout).fixedSize(horizontal: false, vertical: true)
             Text(ImportReview.suggestionsCaption).setupFont(.callout).fixedSize(horizontal: false, vertical: true)
 
             Table(review.rows, selection: $selection) {
@@ -364,15 +366,67 @@ struct NumberSheet: View {
     }
 }
 
+struct OriginalAuthorizationSheet: View {
+    let model: EpisodeSetupModel
+    let sources: [SourceRecord]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Approve Older Recordings").setupFont(.title3, weight: .semibold)
+            Text("These recordings were added before import included authorization. Approve them together to allow audio use on this Mac. WaveWrangler verifies each unchanged identity with a read-only witness; a changed or unavailable recording stays unauthorized. Originals are never changed.")
+                .setupFont(.body).fixedSize(horizontal: false, vertical: true)
+            List(sources) { source in
+                VStack(alignment: .leading) {
+                    Text(source.displayNameHint)
+                    Text(source.id.description).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .frame(minHeight: 140, idealHeight: 240)
+            .accessibilityIdentifier("ww.setup.originalAuthorization.list")
+            HStack {
+                Button("Cancel", role: .cancel) { model.sheet = nil }
+                    .keyboardShortcut(.cancelAction)
+                Spacer()
+                Button("Approve \(sources.count) Recordings") { model.authorizeOriginals(sources) }
+                    .keyboardShortcut(.defaultAction)
+                    .accessibilityIdentifier("ww.setup.originalAuthorization.approve")
+            }
+        }
+        .padding(16)
+        .frame(width: 560)
+    }
+}
+
 struct NameSheet: View {
     let model: EpisodeSetupModel
     let context: NameSheetContext
+
+    var body: some View {
+        SetupNameForm(context: context, cancel: { model.sheet = nil }, apply: apply)
+    }
+
+    private func apply(_ name: String) {
+        model.sheet = nil
+        switch context.kind {
+        case .newGroup: model.createGroup(named: name, assigning: context.assigning)
+        case .newSpeaker: model.createSpeaker(named: name, assigning: context.assigning)
+        case .renameGroup: if let id = context.groupID { model.renameGroup(id, to: name) }
+        case .renameSpeaker: if let id = context.speakerID { model.renameSpeaker(id, to: name) }
+        }
+    }
+}
+
+struct SetupNameForm: View {
+    let context: NameSheetContext
+    let cancel: () -> Void
+    let apply: (String) -> Void
     @State private var draft: String
     @FocusState private var focused: Bool
 
-    init(model: EpisodeSetupModel, context: NameSheetContext) {
-        self.model = model
+    init(context: NameSheetContext, cancel: @escaping () -> Void, apply: @escaping (String) -> Void) {
         self.context = context
+        self.cancel = cancel
+        self.apply = apply
         _draft = State(initialValue: context.initial)
     }
 
@@ -385,9 +439,11 @@ struct NameSheet: View {
                 .accessibilityIdentifier("ww.setup.nameField")
             HStack {
                 Spacer()
-                Button("Cancel", role: .cancel) { model.sheet = nil }
+                Button("Cancel", role: .cancel, action: cancel)
                     .keyboardShortcut(.cancelAction)
-                Button(context.confirmTitle, action: apply)
+                Button(context.confirmTitle) {
+                    apply(draft.trimmingCharacters(in: .whitespacesAndNewlines))
+                }
                     .keyboardShortcut(.defaultAction)
                     .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
@@ -395,17 +451,5 @@ struct NameSheet: View {
         .padding(16)
         .frame(minWidth: 340)
         .onAppear { focused = true }
-    }
-
-    private func apply() {
-        let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !name.isEmpty else { return }
-        model.sheet = nil
-        switch context.kind {
-        case .newGroup: model.createGroup(named: name, assigning: context.assigning)
-        case .newSpeaker: model.createSpeaker(named: name, assigning: context.assigning)
-        case .renameGroup: if let id = context.groupID { model.renameGroup(id, to: name) }
-        case .renameSpeaker: if let id = context.speakerID { model.renameSpeaker(id, to: name) }
-        }
     }
 }

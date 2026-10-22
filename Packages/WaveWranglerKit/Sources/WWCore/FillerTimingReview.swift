@@ -76,6 +76,20 @@ public struct FillerTimingReview: Sendable, Equatable, Codable, Identifiable {
 
     public var bounds: FillerTimingBounds { humanBounds ?? initialBounds }
     public var isAdjusted: Bool { humanBounds.map { $0 != initialBounds } ?? false }
+    public var retainsUserJudgment: Bool {
+        origin == .manual || decision != .pending || humanBounds != nil
+    }
+
+    /// Suppression identifies a source event, not a new transcript-word association.
+    public func coversSameEvent(as other: Self) -> Bool {
+        speaker == other.speaker && primary == other.primary && sourceRate == other.sourceRate
+            && sourceIdentity == other.sourceIdentity && alignmentRevision == other.alignmentRevision
+            && (Self.overlaps(initialBounds, other.initialBounds) || Self.overlaps(bounds, other.initialBounds))
+    }
+
+    private static func overlaps(_ a: FillerTimingBounds, _ b: FillerTimingBounds) -> Bool {
+        a.sourceStartFrame < b.sourceEndFrame && b.sourceStartFrame < a.sourceEndFrame
+    }
     public var status: String {
         if decision == .rejected { return "Not a filler" }
         if decision == .pending { return origin == .manual ? "Manual · pending" : "Pending" }
