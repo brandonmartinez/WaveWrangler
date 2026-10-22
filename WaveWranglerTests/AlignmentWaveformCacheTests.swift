@@ -19,6 +19,7 @@ struct AlignmentWaveformCacheTests {
         #expect(cache.tiles.first?.modelGeneration == 2)
         cache.removeAll()
         #expect(cache.tiles.isEmpty)
+        #expect(cache.retainedIndices.isEmpty)
     }
 
     @Test func staleSamplesNeedExplicitRetentionAndDoNotCountAsFreshCoverage() {
@@ -83,6 +84,8 @@ struct AlignmentWaveformCacheTests {
         #expect(cache.tiles[0].reprojected)
         #expect(cache.tracks[0].envelope.bins.withUnsafeBufferPointer { Int(bitPattern: $0.baseAddress) } == address)
         #expect(cache.retainedStrokes(for: source).count == 3)
+        let retainedID = cache.retainedIndices[source]?.id
+        #expect(cache.retainedIndices[source]?.visible(start: 0.25, duration: 0.5) == [originalStrokes[0]])
         #expect(cache.visibleSlices(start: 0, duration: 3, generation: 2,
                                     pendingMove: nil, canReuseSamples: true).isEmpty)
         let fresh = track([1000])
@@ -93,6 +96,16 @@ struct AlignmentWaveformCacheTests {
             gains: [source: 1], errors: [:]
         ))
         #expect(cache.retainedStrokes(for: source) == [originalStrokes[0], originalStrokes[2]])
+        #expect(cache.retainedIndices[source]?.id != retainedID)
+        #expect(cache.retainedIndices[source]?.strokes == cache.retainedStrokes(for: source))
+        let slice = cache.visibleSlices(start: 1.1, duration: 0.5, generation: 2,
+            pendingMove: nil, canReuseSamples: false).first
+        #expect(slice?.indices[source]?.id == cache.tiles.last?.indices[source]?.id)
+        try cache.reproject(map: nil, episode: nil, modelGeneration: 3)
+        #expect(cache.retainedIndices[source]?.id != retainedID)
+        #expect(cache.retainedIndices[source]?.strokes == cache.retainedStrokes(for: source))
+        cache.removeAll()
+        #expect(cache.retainedIndices.isEmpty)
     }
 
     private func tile(start: Double, generation: UInt64 = 1) -> AlignmentWaveformCache.Tile {

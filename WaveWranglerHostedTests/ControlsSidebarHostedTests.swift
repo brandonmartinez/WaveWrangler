@@ -197,10 +197,13 @@ struct ControlsSidebarHostedTests {
         model.selectFiller(detected.id, reveal: false)
         model.setWindow(start: 1.9, duration: 0.5)
         try #require(model.selectedFillerID == detected.id && model.canReviewFillers)
-        let host = HostedTimelineWindow(width: 744, height: 110,
+        let host = HostedTimelineWindow(width: 744, height: 154,
             content: ScrollView {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: 140).accessibilityHidden(true)
+                    AudioTimelineSelectionToolbar(listening: model.listening,
+                        start: model.windowStart, duration: model.visibleDuration,
+                        play: { model.auditionFiller(detected.id, context: $0) }, cleanup: model)
                     FillerTimingOverlay(model: model, reviews: [detected])
                         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary)
                             .allowsHitTesting(false).accessibilityHidden(true))
@@ -223,10 +226,10 @@ struct ControlsSidebarHostedTests {
             \(views)
             """.utf8), named: "compact-marker-native-view-tree.txt")
         func clickControl(_ identifier: String, index: Int, audition: Bool) async throws {
-            let frames = host.controlFrames.filter {
-                audition ? $0.height < 15 && $0.width < 30 : (19...21).contains($0.height) && $0.width >= 31
-            }.sorted { $0.minX < $1.minX }
-            try #require(frames.count == 4, "\(identifier): expected four visible native controls, got \(frames)")
+            let controls = host.controlFrames.filter { $0.height < 15 && $0.width < 30 }
+                .sorted { $0.minX < $1.minX }
+            try #require(controls.count == 10, "\(identifier): expected ten visible native controls, got \(controls)")
+            let frames = Array(audition ? controls.prefix(5) : controls.suffix(5))
             let frame = frames[index]
             let point = CGPoint(x: frame.midX, y: frame.midY)
             Attachment.record(Data("""
@@ -240,9 +243,9 @@ struct ControlsSidebarHostedTests {
         #expect(model.loopsFillerAudition)
         try await clickControl("ww.cleanup.filler.loop", index: 2, audition: true)
         #expect(!model.loopsFillerAudition)
-        try await clickControl("ww.cleanup.filler.reject", index: 1, audition: false)
+        try await clickControl("ww.cleanup.filler.reject", index: 2, audition: false)
         #expect(model.selectedFiller?.decision == .rejected)
-        try await clickControl("ww.cleanup.filler.clearReview", index: 2, audition: false)
+        try await clickControl("ww.cleanup.filler.clearReview", index: 3, audition: false)
         #expect(model.selectedFiller?.decision == .pending)
         try host.capture("Native compact marker action hit testing")
         let original = f.document.store.model

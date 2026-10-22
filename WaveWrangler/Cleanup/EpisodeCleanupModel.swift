@@ -22,7 +22,7 @@ final class EpisodeCleanupModel {
     private let standaloneListening: EpisodeListeningState
     var listening: EpisodeListeningState { workspaceAlignment?.listening ?? standaloneListening }
     var rendersWaveforms = true
-    @ObservationIgnored private weak var workspaceAlignment: EpisodeAlignmentModel?
+    @ObservationIgnored private(set) weak var workspaceAlignment: EpisodeAlignmentModel?
     var plan: PrimaryCleanupPlan?
     var identities: [SourceID: String] = [:]
     var windowStart = 0.0 {
@@ -43,6 +43,8 @@ final class EpisodeCleanupModel {
     }
     var overviewStrokes: [SpeakerID: [AlignmentWaveformStroke]] = [:]
     var windowStrokes: [SpeakerID: [AlignmentWaveformStroke]] = [:]
+    private var overviewIndices: [SpeakerID: AlignmentWaveformStrokeIndex] = [:]
+    private var windowIndices: [SpeakerID: AlignmentWaveformStrokeIndex] = [:]
     var waveformWindow: ClosedRange<Double>?
     var waveformSnapshot = UUID()
     var waveformMessage = "Loading measured Primary waveforms…"
@@ -69,6 +71,9 @@ final class EpisodeCleanupModel {
     var selectedSpeaker: SpeakerID?
     var selectedWord: TranscriptWord?
     var selectedFillerID: UUID?
+    var selectedManualCutID: UUID?
+    private var standaloneCutTimeline = ManualCutTimeline.unedited
+    var workspaceCutTimeline: ManualCutTimeline { workspaceAlignment?.cutTimeline ?? standaloneCutTimeline }
     var fillerStartText = ""
     var fillerEndText = ""
     var loopsFillerAudition = false
@@ -103,6 +108,7 @@ final class EpisodeCleanupModel {
     @ObservationIgnored private var playbackGeneration = UUID()
     @ObservationIgnored private var playbackStart = 0.0
     @ObservationIgnored private var scheduledDuration = 0.0
+    @ObservationIgnored private var playbackAppliesCuts = true
     @ObservationIgnored private var reviewGeneration: UInt64?
     @ObservationIgnored private var repetitionReviews: [UUID: Set<UUID>] = [:]
 
@@ -118,7 +124,7 @@ final class EpisodeCleanupModel {
         self.transcriptionSettings = transcriptionSettings
     }
 
-    private func resolveRuntime(for document: ShowDocument) async throws -> AlignmentRuntime {
+    func resolveRuntime(for document: ShowDocument) async throws -> AlignmentRuntime {
         if let suppliedRuntime { return suppliedRuntime }
         return try await AlignmentRuntimeProvider.runtime(for: document, episode: episodeID)
     }
@@ -136,6 +142,7 @@ final class EpisodeCleanupModel {
         state.store.document != nil
             && plan?.alignmentRevision != nil && plan?.lanes.isEmpty == false
             && plan?.lanes.allSatisfy({ identities[$0.primary.sourceID] != nil }) == true
+            && bounds.upperBound > bounds.lowerBound
     }
     var maximumDuration: Double { max(0.5, bounds.upperBound - bounds.lowerBound) }
     var canTranscribe: Bool {
@@ -145,9 +152,9 @@ final class EpisodeCleanupModel {
     }
     var bounds: ClosedRange<Double> {
         let regions = plan?.lanes.flatMap(\.regions) ?? []
-        let lo = regions.map(\.alignedStart).min() ?? 0
-        let hi = regions.map(\.alignedEnd).max() ?? 1
-        return lo...max(lo + 0.1, hi)
+        let lo = cutTimeline.editedTime(forAlignedTime: regions.map(\.alignedStart).min() ?? 0)
+        let hi = cutTimeline.editedTime(forAlignedTime: regions.map(\.alignedEnd).max() ?? 1)
+        return lo...max(lo, hi)
     }
 
     func transcript(for lane: CleanupSpeakerLane) -> SpeakerTranscript? {
@@ -165,7 +172,9 @@ final class EpisodeCleanupModel {
         guard windowStart.isFinite, visibleDuration.isFinite, visibleDuration > 0 else { return [] }
         return (transcript(for: lane)?.words ?? []).filter {
             guard let start = $0.alignedStart, let end = $0.alignedEnd else { return false }
-            return end > windowStart && start < windowStart + visibleDuration
+            return displayRange(start: start, end: end).map {
+                $0.upperBound > windowStart && $0.lowerBound < windowStart + visibleDuration
+            } == true
                 && end > lane.start && start < lane.end
         }
     }
@@ -183,6 +192,7 @@ final class EpisodeCleanupModel {
     }
 
     func modelDidChange() {
+        synchronizeCutTimeline()
         if isEditingFillerReview { return }
         if let readyInputs, let episode,
            readyInputs == EpisodeMediaInputs(episode, includingWorkingRange: true) { return }
@@ -192,6 +202,8 @@ final class EpisodeCleanupModel {
             cancelWaveforms()
             overviewStrokes = [:]
             windowStrokes = [:]
+            overviewIndices = [:]
+            windowIndices = [:]
             waveformWindow = nil
             waveformSnapshot = UUID()
         }
@@ -223,6 +235,7 @@ final class EpisodeCleanupModel {
     }
 
     func refresh(skippingReviewOnlyChange: Bool = false) async {
+        synchronizeCutTimeline()
         if skippingReviewOnlyChange, fillerPublicationGeneration == state.store.modelGeneration { return }
         fillerPublicationGeneration = nil
         transcriptionSettings.refreshAvailability()
@@ -243,6 +256,7 @@ final class EpisodeCleanupModel {
             identities = [:]
             return
         }
+
         if readyInputs != episode.map({ EpisodeMediaInputs($0, includingWorkingRange: true) }) {
             plan = PrimaryCleanupPlan.make(model: snapshot, episode: episodeID, map: map)
             identities = [:]
@@ -257,7 +271,9 @@ final class EpisodeCleanupModel {
             plan = prepared.plan
             identities = prepared.identities
             error = nil
-            if !bounds.contains(windowStart) { windowStart = plan?.lanes.map(\.start).min() ?? bounds.lowerBound }
+            if !bounds.contains(windowStart) {
+                windowStart = cutTimeline.editedTime(forAlignedTime: plan?.lanes.map(\.start).min() ?? bounds.lowerBound)
+            }
             playhead = min(bounds.upperBound, max(bounds.lowerBound, playhead))
             if let episode { listening.playback.retainScopes(in: episode) }
             waveformEpisode = episode
@@ -275,6 +291,44 @@ final class EpisodeCleanupModel {
             plan = nil
             identities = [:]
             readyInputs = nil
+            stopPlayback()
+        }
+    }
+
+    func synchronizeCutTimeline() {
+        if let id = listening.expandedManualCutID, !activeManualCuts.contains(where: { $0.id == id }) {
+            listening.expandedManualCutID = nil
+        }
+        workspaceAlignment?.load()
+        do {
+            let timeline = try episode?.manualCutTimeline(revealing: listening.expandedManualCutID) ?? .unedited
+            if timeline != standaloneCutTimeline {
+                if rendersWaveforms {
+                    stopPlayback()
+                    let aligned = standaloneCutTimeline.alignedTime(forEditedTime: playhead)
+                    let alignedStart = standaloneCutTimeline.alignedTime(forEditedTime: windowStart)
+                    playhead = timeline.editedTime(forAlignedTime: aligned)
+                    windowStart = timeline.editedTime(forAlignedTime: alignedStart)
+                    cancelWaveforms()
+                    overviewStrokes = [:]
+                    windowStrokes = [:]
+                    overviewIndices = [:]
+                    windowIndices = [:]
+                    waveformWindow = nil
+                }
+                standaloneCutTimeline = timeline
+                listening.selection = nil
+                listening.cycleRange = nil
+                listening.cycleEnabled = false
+                selectedFillerID = nil
+                if rendersWaveforms {
+                    loadWaveforms(force: true)
+                    loadWaveforms(overview: true, force: true)
+                }
+            }
+            refreshManualCutSelection()
+        } catch {
+            self.error = "Manual cut timing is unavailable: \(Self.describe(error))"
             stopPlayback()
         }
     }
@@ -389,9 +443,18 @@ final class EpisodeCleanupModel {
         return overviewStrokes[speaker] ?? []
     }
 
+    func waveformIndex(for speaker: SpeakerID) -> AlignmentWaveformStrokeIndex {
+        if let waveformWindow, windowStart >= waveformWindow.lowerBound,
+           windowStart + windowDuration <= waveformWindow.upperBound + 0.000_001,
+           windowDuration <= 30, let index = windowIndices[speaker] { return index }
+        return overviewIndices[speaker] ?? .empty
+    }
+
     func setWindow(start: Double, duration: Double) {
+        let bounds = workspaceAlignment?.waveformViewingBounds ?? self.bounds
+        let maximum = workspaceAlignment?.maximumWaveformDuration ?? max(30, maximumDuration)
         guard start.isFinite, duration.isFinite, duration >= 0.5,
-              duration <= max(30, maximumDuration), abs(start) <= 86_400 else {
+              duration <= maximum, abs(start) <= 86_400 else {
             error = "Choose a finite timeline window between 0.5 seconds and the episode span."
             return
         }
@@ -419,7 +482,7 @@ final class EpisodeCleanupModel {
 
     private func scheduleWaveforms() {
         waveformDebounce?.cancel()
-        guard windowStart.isFinite, windowDuration.isFinite, windowDuration > 0 else { return }
+        guard rendersWaveforms, windowStart.isFinite, windowDuration.isFinite, windowDuration > 0 else { return }
         waveformDebounce = Task { [weak self] in
             do { try await Task.sleep(for: .milliseconds(120)) }
             catch { return }
@@ -465,6 +528,8 @@ final class EpisodeCleanupModel {
         if overview { overviewGeneration = token; isLoadingOverview = true }
         else { waveformGeneration = token; isLoadingWaveforms = true }
         let snapshot = state.store.model
+        let revealingCut = listening.expandedManualCutID
+        let cuts = cutTimeline
         let task = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -474,29 +539,38 @@ final class EpisodeCleanupModel {
             do {
                 let runtime = try await resolveRuntime(for: document)
                 var projected: [SpeakerID: [AlignmentWaveformStroke]] = [:]
+                var indices: [SpeakerID: AlignmentWaveformStrokeIndex] = [:]
                 for lane in lanes {
                     let loaded = try await runtime.waveformTracks(
                         model: snapshot, episode: episodeID,
                         startSeconds: window?.start ?? 0, durationSeconds: window?.duration ?? 1,
                         overview: overview, onlySources: [lane.primary.sourceID],
-                        decodedChannels: lane.primary.channel.value.map { [lane.primary.sourceID: $0] } ?? [:])
+                        decodedChannels: lane.primary.channel.value.map { [lane.primary.sourceID: $0] } ?? [:],
+                        revealingCut: revealingCut)
                     guard loaded.map != nil, loaded.mapWarning == nil, loaded.refusals.isEmpty,
                           let track = loaded.tracks.first else {
                         let reason = loaded.mapWarning ?? loaded.refusals.map(\.reason).joined(separator: "; ")
                         throw NSError(domain: "CleanupWaveforms", code: 1,
                                       userInfo: [NSLocalizedDescriptionKey: "\(lane.name): \(reason)"])
                     }
-                    projected[lane.speaker] = try AlignmentWaveformProjection.strokes(
-                        track: track, map: loaded.map,
-                        correction: snapshot.episode(episodeID)?.alignment?.acceptedMap?.sourceCorrections?
-                            .first { $0.source == lane.primary.sourceID }).filter(\.mapped)
+                    let prepared = try await AlignmentWaveformProjection.prepare(
+                        load: loaded, episode: snapshot.episode(episodeID), cuts: cuts, mappedOnly: true)
+                    if let reason = prepared.errors[track.id] {
+                        throw ManualCutReviewFailure(reason: "\(lane.name): \(reason)")
+                    }
+                    projected[lane.speaker] = prepared.strokes[track.id] ?? []
+                    indices[lane.speaker] = prepared.indices[track.id]
                 }
                 try Task.checkCancellation()
                 guard (overview ? overviewGeneration : waveformGeneration) == token,
                       state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID) else { return }
-                if overview { overviewStrokes = projected }
+                if overview {
+                    overviewStrokes = projected
+                    overviewIndices = indices
+                }
                 else if let window {
                     windowStrokes = projected
+                    windowIndices = indices
                     waveformWindow = window.start...(window.start + window.duration)
                 }
                 waveformSnapshot = UUID()
@@ -548,11 +622,11 @@ final class EpisodeCleanupModel {
     }
 
     func markIn() {
-        saveRange(inValue: playhead, outValue: episode?.cleanup?.workingRange?.tracksOut)
+        saveRange(inValue: cutTimeline.alignedTime(forEditedTime: playhead), outValue: episode?.cleanup?.workingRange?.tracksOut)
     }
 
     func markOut() {
-        saveRange(inValue: episode?.cleanup?.workingRange?.tracksIn, outValue: playhead)
+        saveRange(inValue: episode?.cleanup?.workingRange?.tracksIn, outValue: cutTimeline.alignedTime(forEditedTime: playhead))
     }
 
     func setSpeaker(_ speaker: SpeakerID, enabled: Bool) {
@@ -589,17 +663,27 @@ final class EpisodeCleanupModel {
         play(interval: listening.cycleEnabled ? listening.cycleRange : nil, loop: listening.cycleEnabled)
     }
 
-    func play(interval: ClosedRange<Double>?, loop: Bool) {
-        guard canNavigate, let document = state.store.document else { return }
+    func play(interval: ClosedRange<Double>?, loop: Bool, applyingCuts: Bool = true) {
         if let workspaceAlignment {
             workspaceAlignment.playEnabledTracks(interval: interval, repeatInterval: loop,
-                repeatWhile: { [weak self] in self?.loopsFillerAudition == true })
+                repeatWhile: { [weak self] in self?.loopsFillerAudition == true }, applyingCuts: applyingCuts)
+            return
+        }
+        let regions = plan?.lanes.flatMap(\.regions) ?? []
+        let originalBounds = (regions.map(\.alignedStart).min() ?? 0)...(regions.map(\.alignedEnd).max() ?? 0)
+        guard let document = state.store.document,
+              applyingCuts ? canNavigate : plan?.lanes.isEmpty == false
+                && plan?.alignmentRevision == episode?.alignment?.acceptedRevision
+                && plan?.lanes.allSatisfy({ identities[$0.primary.sourceID] != nil }) == true else {
+            error = "Verify the sources and accepted alignment before auditioning this cut."
             return
         }
         stopPlayback()
-        let start = max(bounds.lowerBound, interval?.lowerBound
-            ?? (playhead >= bounds.upperBound ? bounds.lowerBound : max(bounds.lowerBound, playhead)))
-        let end = min(bounds.upperBound, interval?.upperBound ?? bounds.upperBound)
+        playbackAppliesCuts = applyingCuts
+        let playbackBounds = applyingCuts ? bounds : originalBounds
+        let start = max(playbackBounds.lowerBound, interval?.lowerBound
+            ?? (playhead >= playbackBounds.upperBound ? playbackBounds.lowerBound : max(playbackBounds.lowerBound, playhead)))
+        let end = min(playbackBounds.upperBound, interval?.upperBound ?? playbackBounds.upperBound)
         guard start.isFinite, end.isFinite, end > start else {
             error = "The selected interval does not overlap available aligned media."
             return
@@ -607,6 +691,7 @@ final class EpisodeCleanupModel {
         let cycling = listening.cycleEnabled && interval == listening.cycleRange
         let snapshot = state.store.model
         let token = UUID()
+        let revealingCut = listening.expandedManualCutID
         playbackGeneration = token
         isPreparingPlayback = true
         transportMessage = "Preparing aligned Primary audio…"
@@ -621,7 +706,8 @@ final class EpisodeCleanupModel {
                     try Task.checkCancellation()
                     let audio = try await runtime.cleanupPreview(
                         model: snapshot, episode: episodeID, start: cursor,
-                        duration: min(5, end - cursor), respectWorkingRange: false)
+                        duration: min(5, end - cursor), respectWorkingRange: false, applyingCuts: applyingCuts,
+                        revealingCut: revealingCut)
                     try Task.checkCancellation()
                     while started, scheduledDuration - elapsedPlayback >= 5 {
                         try await Task.sleep(for: .milliseconds(50))
@@ -646,11 +732,11 @@ final class EpisodeCleanupModel {
                     try await Task.sleep(for: .milliseconds(50))
                 }
                 guard playbackGeneration == token else { return }
-                playhead = end
+                playhead = applyingCuts ? end : cutTimeline.editedTime(forAlignedTime: end)
                 stopPlayback(updatePlayhead: false)
                 if loop, (cycling ? listening.cycleEnabled && listening.cycleRange == interval : loopsFillerAudition),
                    state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID) {
-                    play(interval: start...end, loop: true)
+                    play(interval: start...end, loop: true, applyingCuts: applyingCuts)
                 } else {
                     transportMessage = interval == nil
                         ? "Reached the end of the aligned Primary timeline." : "Finished filler timing audition."
@@ -683,7 +769,7 @@ final class EpisodeCleanupModel {
             try engine.start()
             playbackStart = audio.start
             scheduledDuration = 0
-            playhead = audio.start
+            playhead = playbackAppliesCuts ? audio.start : cutTimeline.editedTime(forAlignedTime: audio.start)
         }
         guard Set(audio.channels.keys) == Set(players.keys) else { throw WaveformWindowError.invalidSamples }
         for (speaker, samples) in audio.channels {
@@ -705,7 +791,8 @@ final class EpisodeCleanupModel {
             while !Task.isCancelled {
                 guard let self, playbackGeneration == token else { return }
                 let elapsed = elapsedPlayback
-                playhead = min(end, playbackStart + min(scheduledDuration, elapsed))
+                let time = min(end, playbackStart + min(scheduledDuration, elapsed))
+                playhead = playbackAppliesCuts ? time : cutTimeline.editedTime(forAlignedTime: time)
                 if elapsed > scheduledDuration + 0.15, playbackStart + scheduledDuration < end - 0.000_1 {
                     stopPlayback()
                     error = "Playback could not keep up with aligned audio rendering. Stopped at the last prepared audio; retry from here."
@@ -727,7 +814,8 @@ final class EpisodeCleanupModel {
             return
         }
         if updatePlayhead, isPlaying {
-            playhead = playbackStart + min(scheduledDuration, elapsedPlayback)
+            let time = playbackStart + min(scheduledDuration, elapsedPlayback)
+            playhead = playbackAppliesCuts ? time : cutTimeline.editedTime(forAlignedTime: time)
         }
         playbackGeneration = UUID()
         playbackJob?.cancel()
@@ -756,16 +844,17 @@ final class EpisodeCleanupModel {
 
     func select(_ word: TranscriptWord, speaker: SpeakerID) {
         stopPlayback()
+        listening.selectionToolsPresented = true
         selectedSpeaker = speaker
         selectedWord = word
         if let start = word.alignedStart, let end = word.alignedEnd, end > start {
-            listening.selection = start...end
+            listening.selection = displayRange(start: start, end: end)
         } else { listening.selection = nil }
         selectedFillerID = fillerReviews.first { $0.speaker == speaker && $0.word?.id == word.id
             && fillerIssue($0) == nil }?.id
         updateFillerDrafts()
         state.inspectorPresented = true
-        if let start = word.alignedStart { _ = previewSeek(to: start) }
+        if let start = word.alignedStart { _ = previewSeek(to: cutTimeline.editedTime(forAlignedTime: start)) }
     }
 
     func select(_ words: [TranscriptWord], speaker: SpeakerID) {
@@ -773,7 +862,8 @@ final class EpisodeCleanupModel {
         select(first, speaker: speaker)
         if let start = words.compactMap(\.alignedStart).min(),
            let end = words.compactMap(\.alignedEnd).max(), end > start {
-            listening.selection = start...end
+            if words.count > 1 { selectedFillerID = nil }
+            listening.selection = displayRange(start: start, end: end)
         }
         listening.selectedTranscriptText = words.map(\.text).joined(separator: " ")
     }

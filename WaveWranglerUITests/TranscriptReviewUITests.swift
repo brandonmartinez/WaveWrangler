@@ -116,10 +116,22 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 5), app.debugDescription)
         let originalStart = try XCTUnwrap(Double((start.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
         let originalEnd = try XCTUnwrap(Double((end.value as? String ?? "").split(separator: " ").first.map(String.init) ?? ""))
+        let waveformFrame = waveform.frame
+        let actions = app.descendants(matching: .any).matching(identifier: "ww.timeline.selection.actions")
         start.click()
         assertFillerToolbarCentered(over: region, within: waveform)
+        XCTAssertEqual(waveform.frame, waveformFrame, "Standalone marker tools must not shift the waveform.")
+        let ruler = app.staticTexts["ww.cleanup.ruler"]
+        let viewport = ruler.value as? String
+        ruler.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).click()
+        XCTAssertTrue(wait { !actions.firstMatch.exists })
+        XCTAssertEqual(waveform.frame, waveformFrame)
+        XCTAssertEqual(ruler.value as? String, viewport)
+        XCTAssertEqual(try handleTime(start), originalStart)
+        XCTAssertEqual(try handleTime(end), originalEnd)
         end.click()
         assertFillerToolbarCentered(over: region, within: waveform)
+        XCTAssertTrue(actions.firstMatch.exists, "A boundary click reopens the same marker's tools.")
         region.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2)).click()
         assertFillerToolbarCentered(over: region, within: waveform)
         let startPoint = start.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
@@ -371,6 +383,18 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, beforeDrag, accuracy: 0.001)
         app.buttons["ww.cleanup.fitTimeline"].click()
         XCTAssertTrue(wait { self.text(ruler).contains("0.000 to 12.000") })
+        let muteButtons = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.listening.mute.speaker.'"))
+        XCTAssertEqual(muteButtons.count, 2)
+        let identifiers = muteButtons.allElementsBoundByIndex.map(\.identifier)
+        for identifier in identifiers {
+            let mute = app.buttons[identifier]
+            revealInWorkspace(mute)
+            mute.click()
+            XCTAssertEqual(mute.value as? String, "On")
+        }
+        XCTAssertEqual(app.staticTexts.matching(identifier: "Muted").count, 2,
+                       "Both Primary lanes reflect the actual speaker mute state")
     }
 
     private func revealInWorkspace(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {

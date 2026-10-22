@@ -92,13 +92,16 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
     public var transcripts: [SpeakerTranscript]
     public var fillerReviews: [FillerTimingReview]?
     public var transcriptHistory: [SpeakerTranscript]?
+    public var manualCuts: [ManualEpisodeCut]?
 
     public init(workingRange: EpisodeWorkingRange? = nil, transcripts: [SpeakerTranscript] = [],
-                fillerReviews: [FillerTimingReview]? = nil, transcriptHistory: [SpeakerTranscript]? = nil) {
+                fillerReviews: [FillerTimingReview]? = nil, transcriptHistory: [SpeakerTranscript]? = nil,
+                manualCuts: [ManualEpisodeCut]? = nil) {
         self.workingRange = workingRange
         self.transcripts = transcripts
         self.fillerReviews = fillerReviews
         self.transcriptHistory = transcriptHistory
+        self.manualCuts = manualCuts
     }
 
     public var isValid: Bool {
@@ -112,6 +115,9 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
             && (fillerReviews?.count ?? 0) <= 100_000
             && fillerReviews?.allSatisfy(\.isValid) != false
             && Set((fillerReviews ?? []).map(\.id)).count == (fillerReviews?.count ?? 0)
+            && (manualCuts?.count ?? 0) <= 100_000
+            && manualCuts?.allSatisfy(\.isValid) != false
+            && Set((manualCuts ?? []).map(\.id)).count == (manualCuts?.count ?? 0)
     }
 
     public func replacingTranscripts(_ replacement: [SpeakerTranscript]) throws(DomainError) -> Self {

@@ -14,6 +14,7 @@ struct AudioTimelineTransport: View {
     let stop: () -> Void
     let forward: () -> Void
     let seek: (Double) -> Void
+    var isEdited = false
 
     @State private var timeDraft = ""
     @FocusState private var editingTime: Bool
@@ -40,8 +41,8 @@ struct AudioTimelineTransport: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(spacing: 1) {
-                Text("ALIGNED TIME").font(.caption2).foregroundStyle(.secondary)
-                TextField("Aligned seconds", text: $timeDraft)
+                Text(isEdited ? "EDITED TIME" : "ALIGNED TIME").font(.caption2).foregroundStyle(.secondary)
+                TextField(isEdited ? "Edited seconds" : "Aligned seconds", text: $timeDraft)
                     .textFieldStyle(.roundedBorder).monospacedDigit()
                     .frame(width: 104)
                     .focused($editingTime)
@@ -51,7 +52,7 @@ struct AudioTimelineTransport: View {
                         if !focused { commitTime() }
                     }
                     .accessibilityIdentifier("\(prefix).playhead")
-                    .accessibilityLabel("Aligned playhead time in seconds")
+                    .accessibilityLabel(isEdited ? "Edited playhead time in seconds" : "Aligned playhead time in seconds")
             }
             Text(status)
                 .font(.caption).foregroundStyle(.secondary)
@@ -80,6 +81,70 @@ struct AudioTimelineTransport: View {
     }
 }
 
+// Nested ViewThatFits repeatedly probes the entire native-control tree during timeline drags.
+// Measure each arrangement once per proposal, without constructing duplicate control hierarchies.
+struct AudioTimelineAdaptiveRow: Layout {
+    var horizontalSpacing: CGFloat = 12
+    var verticalSpacing: CGFloat = 6
+
+    struct Plan {
+        let size: CGSize
+        let frames: [CGRect]
+    }
+
+    struct Cache {
+        var ideal: [CGSize]
+        var plans: [CGFloat: Plan] = [:]
+    }
+
+    func makeCache(subviews: Subviews) -> Cache {
+        Cache(ideal: subviews.map { $0.sizeThatFits(.unspecified) })
+    }
+
+    func updateCache(_ cache: inout Cache, subviews: Subviews) {
+        cache = makeCache(subviews: subviews)
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) -> CGSize {
+        plan(width: proposal.width, subviews: subviews, cache: &cache).size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout Cache) {
+        let plan = plan(width: bounds.width, subviews: subviews, cache: &cache)
+        for (subview, frame) in zip(subviews, plan.frames) {
+            subview.place(at: CGPoint(x: bounds.minX + frame.minX, y: bounds.minY + frame.minY),
+                anchor: .topLeading, proposal: ProposedViewSize(frame.size))
+        }
+    }
+
+    private func plan(width: CGFloat?, subviews: Subviews, cache: inout Cache) -> Plan {
+        let gaps = CGFloat(max(0, subviews.count - 1))
+        let idealWidth = cache.ideal.reduce(0) { $0 + $1.width } + horizontalSpacing * gaps
+        let width = max(0, width.flatMap { $0.isFinite ? $0 : nil } ?? idealWidth)
+        if let plan = cache.plans[width] { return plan }
+        let horizontal = idealWidth <= width
+        var frames: [CGRect] = []
+        var x: CGFloat = 0
+        var y: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let childWidth = horizontal
+                ? (index == subviews.count - 1 ? max(0, width - x) : cache.ideal[index].width)
+                : width
+            let size = subview.sizeThatFits(ProposedViewSize(width: childWidth, height: nil))
+            frames.append(CGRect(x: x, y: y, width: childWidth, height: size.height))
+            if horizontal { x += childWidth + horizontalSpacing }
+            else { y += size.height + verticalSpacing }
+        }
+        let height = horizontal ? frames.map(\.height).max() ?? 0 : max(0, y - verticalSpacing)
+        if horizontal {
+            for index in frames.indices { frames[index].origin.y = (height - frames[index].height) / 2 }
+        }
+        let plan = Plan(size: CGSize(width: width, height: height), frames: frames)
+        cache.plans[width] = plan
+        return plan
+    }
+}
+
 struct AudioTimelineNavigation: View {
     let prefix: String
     let maximumDuration: Double
@@ -93,21 +158,15 @@ struct AudioTimelineNavigation: View {
     let refresh: () -> Void
 
     var body: some View {
-        ViewThatFits(in: .horizontal) {
+        AudioTimelineAdaptiveRow {
             HStack(spacing: 12) {
                 zoomControls
                 fitButton
+            }
+            HStack(spacing: 12) {
                 if showsLaneHeight { heightControls }
                 Spacer(minLength: 0)
                 refreshButton
-            }
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(spacing: 12) { zoomControls; fitButton }
-                HStack(spacing: 12) {
-                    if showsLaneHeight { heightControls }
-                    Spacer(minLength: 0)
-                    refreshButton
-                }
             }
         }
         .controlSize(.small)
@@ -115,7 +174,7 @@ struct AudioTimelineNavigation: View {
 
     private var zoomControls: some View {
         HStack(spacing: 5) {
-            Image(systemName: "minus.magnifyingglass")
+            zoomButton(increment: false)
             NativeTimelineSlider(
                 value: Binding(
                     get: {
@@ -131,10 +190,26 @@ struct AudioTimelineNavigation: View {
             )
             .frame(minWidth: 90, idealWidth: 120, maxWidth: 220)
             .disabled(!canNavigate)
-            Image(systemName: "plus.magnifyingglass")
+            zoomButton(increment: true)
             Text(AlignmentPresentation.formatTime(duration))
                 .font(.caption).monospacedDigit().frame(minWidth: 54)
         }
+    }
+
+    private func zoomButton(increment: Bool) -> some View {
+        Button(increment ? "Zoom in" : "Zoom out",
+               systemImage: increment ? "plus.magnifyingglass" : "minus.magnifyingglass") {
+            zoomEditing(true)
+            if let next = AlignmentWaveformProjection.steppedZoomDuration(
+                duration: duration, maximum: maximumDuration, zoomIn: increment) {
+                duration = next
+            }
+            zoomEditing(false)
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.plain)
+        .disabled(!canNavigate || (increment ? duration <= 0.5 : duration >= maximumDuration))
+        .accessibilityIdentifier("\(prefix).\(increment ? "zoomIn" : "zoomOut")")
     }
 
     private var fitButton: some View {
@@ -196,6 +271,7 @@ struct AudioTimelineRuler: View {
     let previewPan: (Double) -> Void
     let setWindow: (Double, Double) -> Void
     let commitWindow: () -> Void
+    var isEdited = false
 
     private struct Pan {
         let start: Double
@@ -227,12 +303,12 @@ struct AudioTimelineRuler: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Text("ALIGNED SECONDS")
+            Text(isEdited ? "EDITED SECONDS" : "ALIGNED SECONDS")
                 .font(.caption2).foregroundStyle(.secondary)
                 .frame(width: headerWidth, alignment: .leading)
                 .accessibilityLabel(
                     String(
-                        format: "Visible aligned time ruler: %.3f to %.3f seconds", start,
+                        format: "Visible %@ time ruler: %.3f to %.3f seconds", isEdited ? "edited" : "aligned", start,
                         start + duration)
                 )
                 .accessibilityIdentifier("\(prefix).ruler")
@@ -451,7 +527,7 @@ struct AudioTimelineRuler: View {
 
 struct AudioTimelineWaveformDrawing: View, Equatable {
     let snapshot: UUID
-    let strokes: [AlignmentWaveformStroke]
+    let index: AlignmentWaveformStrokeIndex
     let size: CGSize
     let start: Double
     let duration: Double
@@ -470,30 +546,32 @@ struct AudioTimelineWaveformDrawing: View, Equatable {
             && lhs.color == rhs.color && lhs.lineWidth == rhs.lineWidth
             && lhs.gain == rhs.gain && lhs.draftEpoch == rhs.draftEpoch
             && lhs.ghost == rhs.ghost
-            && (!lhs.ghost || lhs.strokes == rhs.strokes)
+            && lhs.index.id == rhs.index.id
             && (lhs.draftEpoch == nil
                 || (lhs.draftRatePPM == rhs.draftRatePPM
                     && lhs.draftOffsetMilliseconds == rhs.draftOffsetMilliseconds))
     }
 
     var body: some View {
-        let columns = AlignmentWaveformProjection.displayColumns(
-            strokes: strokes, start: start, duration: duration,
-            width: size.width, pixelsPerPoint: displayScale,
-            draftEpoch: draftEpoch, ratePPM: draftRatePPM,
-            offsetMilliseconds: draftOffsetMilliseconds)
-        let gradient = LinearGradient(
-            colors: [color.mix(with: .white, by: 0.16), color, color.mix(with: .black, by: 0.16)],
-            startPoint: .top, endPoint: .bottom)
-        ZStack {
+        Canvas(rendersAsynchronously: true) { context, _ in
+            let strokes = index.visible(start: start, duration: duration,
+                draftEpoch: draftEpoch, ratePPM: draftRatePPM, offsetMilliseconds: draftOffsetMilliseconds)
+            let columns = AlignmentWaveformProjection.displayColumns(
+                strokes: strokes, start: start, duration: duration,
+                width: size.width, pixelsPerPoint: displayScale,
+                draftEpoch: draftEpoch, ratePPM: draftRatePPM,
+                offsetMilliseconds: draftOffsetMilliseconds)
+            let gradient = GraphicsContext.Shading.linearGradient(
+                Gradient(colors: [color.mix(with: .white, by: 0.16), color, color.mix(with: .black, by: 0.16)]),
+                startPoint: .zero, endPoint: CGPoint(x: 0, y: size.height))
             if ghost {
-                path(columns: columns, mapped: true).stroke(
-                    gradient, style: StrokeStyle(lineWidth: lineWidth, dash: [4, 3]))
+                context.stroke(path(columns: columns, mapped: true), with: gradient,
+                    style: StrokeStyle(lineWidth: lineWidth, dash: [4, 3]))
             } else {
-                path(columns: columns, mapped: true).fill(gradient)
+                context.fill(path(columns: columns, mapped: true), with: gradient)
             }
-            path(columns: columns, mapped: false).stroke(
-                Color.orange, style: StrokeStyle(lineWidth: lineWidth, dash: [3, 2]))
+            context.stroke(path(columns: columns, mapped: false), with: .color(.orange),
+                style: StrokeStyle(lineWidth: lineWidth, dash: [3, 2]))
         }
         .frame(width: size.width, height: size.height)
     }
@@ -513,6 +591,38 @@ struct AudioTimelineWaveformDrawing: View, Equatable {
                 }
             }
         }
+    }
+}
+
+struct AudioTimelineWaveformProposalDrawing: View {
+    let input: AlignmentWaveformProjection.ProposalInput
+    let size: CGSize
+    let start: Double
+    let duration: Double
+    let normalized: Bool
+    let displayScale: Double
+    @State private var prepared: (input: AlignmentWaveformProjection.ProposalInput, index: AlignmentWaveformStrokeIndex)?
+
+    var body: some View {
+        Group {
+            if let prepared, prepared.input == input {
+                AudioTimelineWaveformDrawing(
+                    snapshot: prepared.index.id, index: prepared.index, size: size, start: start, duration: duration,
+                    color: .teal.opacity(0.65), lineWidth: 1.5,
+                    gain: normalized ? prepared.index.normalizedGain : 1,
+                    displayScale: displayScale, ghost: true)
+                    .equatable()
+            } else {
+                Color.clear.frame(width: size.width, height: size.height)
+            }
+        }
+        .task(id: input) {
+            let index = await input.prepare()
+            guard !Task.isCancelled else { return }
+            prepared = (input, index)
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 

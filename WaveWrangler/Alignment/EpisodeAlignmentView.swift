@@ -83,7 +83,8 @@ struct EpisodeAlignmentContent: View {
         }
         .onChange(of: state.cleanupModel?.selectedFillerID) { _, _ in
             guard let review = state.cleanupModel?.selectedFiller else { return }
-            model?.listening.selection = review.bounds.alignedStart...review.bounds.alignedEnd
+            model?.listening.selection = state.cleanupModel?.displayRange(
+                start: review.bounds.alignedStart, end: review.bounds.alignedEnd)
         }
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
             guard let document = state.store.document,
@@ -152,20 +153,15 @@ struct AlignmentWorkspace: View {
     let showInspector: () -> Void
 
     var body: some View {
-        ScrollView {
-            AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
-                showTranscript: {
-                    state.workspaceInspector = .transcript
-                    state.inspectorPresented = true
-                }, showInspector: showInspector)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
-        }
-        .accessibilityLabel("Alignment workspace scroll area")
-        .accessibilityIdentifier("ww.alignment.workspace")
+        AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
+            showTranscript: {
+                state.workspaceInspector = .transcript
+                state.inspectorPresented = true
+            }, showInspector: showInspector)
         .safeAreaInset(edge: .top, spacing: 0) {
             AudioWorkspaceActions(state: state, alignment: model)
                 .padding(10).background(.bar)
+                .overlay(alignment: .bottom) { Divider() }
         }
         .onAppear { AlignmentKeyHandler.install() }
         .onChange(of: model.requestedAnchorFocus) { _, anchor in

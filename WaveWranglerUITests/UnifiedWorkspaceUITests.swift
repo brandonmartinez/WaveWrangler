@@ -195,17 +195,14 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         XCTAssertEqual(muteHost.value as? String, "On")
         let soloHost = app.buttons["Solo Host"]
         soloHost.click()
-        let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
-        reveal(layout, in: app)
-        layout.radioButtons["By recorder"].click()
+        selectLayout("By recorder", in: app)
         let muteRecorder = app.buttons["Mute Studio recorder"]
         reveal(muteRecorder, in: app)
         muteRecorder.click()
         let sourceMute = app.buttons["Mute synthetic-studio.wav"]
         XCTAssertEqual(sourceMute.value as? String, "Off", "Group Mute does not erase or set member choices.")
         muteRecorder.click()
-        reveal(layout, in: app)
-        layout.radioButtons["By speaker"].click()
+        selectLayout("By speaker", in: app)
         reveal(muteHost, in: app)
         XCTAssertEqual(muteHost.value as? String, "On")
         XCTAssertEqual(soloHost.value as? String, "On")
@@ -220,7 +217,11 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         let playSelection = app.buttons["Play selection"].firstMatch
         XCTAssertTrue(playSelection.waitForExistence(timeout: 5), app.debugDescription)
         playSelection.click()
-        XCTAssertTrue(wait { app.buttons["alignment.waveforms.transport.play"].label == "Pause" }, app.debugDescription)
+        XCTAssertTrue(wait {
+            let status = app.staticTexts["alignment.waveforms.transport.status"]
+            return app.buttons["alignment.waveforms.transport.play"].label == "Pause"
+                || (status.value as? String ?? status.label) == "Finished selection audition."
+        }, app.debugDescription)
         let stop = app.buttons["alignment.waveforms.transport.stop"]
         reveal(stop, in: app)
         stop.click()
@@ -290,11 +291,27 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         XCTAssertTrue(addButton.waitForExistence(timeout: 10))
     }
 
+    private func selectLayout(_ title: String, in app: XCUIApplication) {
+        let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
+        reveal(layout, in: app)
+        let segment = layout.radioButtons[title]
+        if segment.exists {
+            segment.click()
+        } else {
+            layout.click()
+            app.menuItems[title].click()
+        }
+    }
+
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, scrollID: String = "ww.alignment.workspace") {
         let scroll = app.scrollViews[scrollID]
         for _ in 0..<12 {
-            if element.isHittable, scroll.frame.contains(element.frame) { return }
-            scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY > scroll.frame.midY ? -120 : 120)
+            let chrome = app.descendants(matching: .any)["alignment.waveforms.controls"]
+            if element.isHittable,
+               scroll.frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY))
+                || chrome.frame.contains(element.frame) { return }
+            let distance = element.frame.midY - scroll.frame.midY
+            scroll.scroll(byDeltaX: 0, deltaY: -min(120, max(-120, distance)))
         }
     }
 

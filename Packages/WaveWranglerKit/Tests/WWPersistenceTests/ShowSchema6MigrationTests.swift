@@ -12,7 +12,7 @@ struct ShowSchema6MigrationTests {
             try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Self.golden)
         }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(Self.golden)
-        #expect(upgraded.payload.schemaVersion == 7)
+        #expect(upgraded.payload.schemaVersion == SchemaVersion.show)
         #expect(upgraded.payload.show.profile == nil)
         #expect(upgraded.revision == 9)
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: upgraded.payload).isEmpty)

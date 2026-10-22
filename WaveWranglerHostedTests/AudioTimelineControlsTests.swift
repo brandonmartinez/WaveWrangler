@@ -8,6 +8,57 @@ import WWCore
 @MainActor
 @Suite("Shared timeline control layout and owned-window interaction", .serialized)
 struct AudioTimelineControlsTests {
+    @Test(arguments: [nil, .infinity, 200.0, 320.0] as [Double?])
+    func adaptiveRowHandlesFiniteIdealAndUnboundedProposals(_ width: Double?) throws {
+        let renderer = ImageRenderer(content: AudioTimelineAdaptiveRow {
+            Color.red.frame(width: 120, height: 20)
+            Color.blue.frame(width: 100, height: 30)
+        })
+        renderer.scale = 1
+        renderer.proposedSize = ProposedViewSize(width: width.map { CGFloat($0) }, height: nil)
+        let image = try #require(renderer.cgImage)
+        #expect(image.width == Int(width.flatMap { $0.isFinite ? $0 : nil } ?? 232))
+        #expect(image.height == (width == 200 ? 56 : 30))
+    }
+
+    @Test func adaptiveRowResizesWithoutDuplicatingControlsAndInvalidatesChangedContent() async throws {
+        func content(firstWidth: CGFloat) -> some View {
+            AudioTimelineAdaptiveRow(horizontalSpacing: 10, verticalSpacing: 6) {
+                NativeTimelineSlider(value: .constant(0.5), range: 0...1,
+                    label: "First", identifier: "test.adaptive.first", onEditingChanged: { _ in })
+                    .frame(width: firstWidth, height: 24)
+                NativeTimelineSlider(value: .constant(0.5), range: 0...1,
+                    label: "Second", identifier: "test.adaptive.second", onEditingChanged: { _ in })
+                    .frame(width: 180, height: 24)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        }
+        let host = HostedTimelineWindow(width: 520, height: 200, content: content(firstWidth: 180))
+        defer { host.close() }
+        func frames() throws -> [CGRect] {
+            let sliders = host.descendants.compactMap { $0 as? NativeTimelineSlider.Slider }
+                .sorted { ($0.accessibilityIdentifier() ?? "") < ($1.accessibilityIdentifier() ?? "") }
+            try #require(sliders.count == 2, "Responsive layout must retain just one copy of each control")
+            return sliders.map { host.view.convert($0.bounds, from: $0) }
+        }
+        try await host.settle()
+        var actual = try frames()
+        #expect(abs(actual[0].minY - actual[1].minY) < 1 && actual[1].minX > actual[0].maxX)
+        host.window.setContentSize(CGSize(width: 320, height: 200))
+        try await host.settle()
+        actual = try frames()
+        #expect(abs(actual[0].minX - actual[1].minX) < 1 && actual[1].minY > actual[0].maxY)
+        host.window.setContentSize(CGSize(width: 420, height: 200))
+        try await host.settle()
+        actual = try frames()
+        #expect(abs(actual[0].minY - actual[1].minY) < 1)
+        host.view.rootView = content(firstWidth: 260)
+        try await host.settle()
+        actual = try frames()
+        #expect(abs(actual[0].minX - actual[1].minX) < 1 && actual[1].minY > actual[0].maxY)
+        #expect(actual.allSatisfy { host.view.bounds.contains($0) })
+    }
+
     @Test(arguments: [320.0, 420.0, 720.0])
     func navigationFitsTheAvailableColumn(_ width: Double) throws {
         let renderer = ImageRenderer(
@@ -166,7 +217,7 @@ struct AudioTimelineControlsTests {
         try host.capture("Shared transport with real native controls")
     }
 
-    @Test func cleanupWorkspaceReceivesGraphicalMarkerZoomMuteAndPlaybackInput() async throws {
+    @Test func cleanupWorkspaceReceivesGraphicalMarkerZoomAndPlaybackInput() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }
         let originals = try f.files.map { try Data(contentsOf: $0) }
@@ -291,10 +342,10 @@ struct AudioTimelineControlsTests {
         try await host.click(
             CGPoint(x: sliders[1].minX + sliders[1].width * 0.2, y: sliders[1].midY))
         let fit = try #require(
-            host.controlFrames.first {
+            host.controlFrames.filter {
                 $0.width < 60 && abs($0.midY - sliderRow) < 3
                     && $0.minX > sliders[0].maxX && $0.maxX < sliders[1].minX
-            })
+            }.max(by: { $0.midX < $1.midX }))
         try await host.click(CGPoint(x: fit.midX, y: fit.midY))
         #expect(model.windowStart == 0 && model.windowDuration == 40)
         try await host.settle()
@@ -304,26 +355,11 @@ struct AudioTimelineControlsTests {
             abs($0.height - 21) < 0.75 && abs($0.width - fittedWordWidth) < 3 && $0.minY > waveTop
         }.sorted { $0.minY < $1.minY }
         try #require(fittedWords.count == 2, "Words remain time-positioned after zoom and Fit")
-        let fittedWaveTop = try #require(fittedWords.first).minY - model.laneHeight - 2
-        let listeningFrames = host.controlFrames.filter {
-            $0.maxX < 90 && (18...30).contains($0.width) && $0.height <= 20
-                && $0.minY > fittedWaveTop
-        }.sorted { $0.midY < $1.midY }
-        var listeningRows: [[CGRect]] = []
-        for frame in listeningFrames {
-            if let index = listeningRows.firstIndex(where: { abs($0[0].midY - frame.midY) < 2 }) {
-                listeningRows[index].append(frame)
-            } else { listeningRows.append([frame]) }
+        // Actual Solo/Mute hit targets are exercised through XCTest accessibility in TranscriptReviewUITests.
+        for transcript in transcripts {
+            model.listening.playback.setMuted(true, scope: .speaker(transcript.speaker))
         }
-        for (index, wordFrame) in fittedWords.enumerated() {
-            let laneTop = wordFrame.minY - model.laneHeight - 2
-            let row = try #require(listeningRows.first {
-                $0.count == 2 && $0[0].midY > laneTop && $0[0].midY < wordFrame.minY
-            }, "Native Solo/Mute row in speaker lane \(index): \(listeningRows)")
-            let mute = try #require(row.max(by: { $0.maxX < $1.maxX }), "Mute follows Solo in each speaker header.")
-            try await host.click(CGPoint(x: mute.midX, y: mute.midY))
-            #expect(model.mutedSpeakers.count == index + 1)
-        }
+        model.updateGains()
         #expect(model.mutedSpeakers == Set(transcripts.map(\.speaker)))
         #expect(
             model.plan?.isReady == true, "Mute never exempts a Primary from alignment readiness")

@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
 import WWAlignPipeline
 import WWCore
@@ -30,7 +31,7 @@ struct AlignmentWaveformRetentionHostedTests {
     }
 
     func fixture(cleanupPrimaries: Int = 0, durationSeconds: Int = 40,
-                 pauses: [Range<Double>] = []) async throws -> Fixture {
+                 pauses: [Range<Double>] = [], extraSources: Int = 0) async throws -> Fixture {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let referenceEpoch = RecordingEpoch(label: "Reference")
@@ -49,6 +50,10 @@ struct AlignmentWaveformRetentionHostedTests {
                     backups: [ChannelReference(sourceID: target.id, statedChannel: 0)])
             ])
         var speakers = [speaker]
+        for index in 0..<extraSources {
+            episode.sources.append(SourceRecord(displayNameHint: "extra-\(index).wav",
+                placement: .init(recorderGroupID: targetGroup.id, epochID: targetEpoch.id)))
+        }
         if cleanupPrimaries > 0 {
             episode.sources[0].role = .primary
             episode.sources[0].roleConfirmation = .userConfirmed
@@ -70,7 +75,7 @@ struct AlignmentWaveformRetentionHostedTests {
         let io = SystemSourceIO()
         let decoder = SourceDecoder(access: SourceAccessContext(io: io))
         var files: [URL] = []
-        for (index, source) in [reference, target].enumerated() {
+        for (index, source) in episode.sources.enumerated() {
             let file = folder.appendingPathComponent(source.displayNameHint)
             try Self.wave(target: index == 1, durationSeconds: durationSeconds, pauses: pauses).write(to: file)
             files.append(file)
@@ -96,9 +101,9 @@ struct AlignmentWaveformRetentionHostedTests {
         let model = EpisodeAlignmentModel(document: document, episodeID: episode.id, runtime: runtime)
         model.load()
         model.loadWaveforms()
-        try await wait { model.rows.count == 2 && model.waveformTracks.count == 2 && !model.isLoadingWaveforms }
+        try await wait { model.rows.count == 2 && model.waveformTracks.count == 2 + extraSources && !model.isLoadingWaveforms }
         model.ensureWaveformOverview()
-        try await wait { !model.isLoadingOverview && model.waveformOverviewTracks.count == 2 }
+        try await wait { !model.isLoadingOverview && model.waveformOverviewTracks.count == 2 + extraSources }
         return Fixture(folder: folder, document: document, model: model, runtime: runtime, target: target.id, files: files)
     }
 
@@ -112,6 +117,53 @@ struct AlignmentWaveformRetentionHostedTests {
         Dictionary(uniqueKeysWithValues: tracks.map { track in
             (track.id, track.envelope.bins.withUnsafeBufferPointer { Int(bitPattern: $0.baseAddress) })
         })
+    }
+
+    @Test(arguments: [false, true])
+    func coldZoomedOutWorkspaceLoadsTracksOverviewAndVerifiedPlayback(accepted: Bool) async throws {
+        let f = try await fixture(cleanupPrimaries: 1)
+        defer { f.close() }
+        if accepted {
+            f.model.placeGroupsAtSourceTime()
+            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        }
+        let original = f.document.store.model
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        let listening = EpisodeListeningState()
+        listening.workspace.layout = .speakersOnly
+        listening.workspace.startSeconds = -80
+        listening.workspace.durationSeconds = 568.749
+        listening.workspace.playheadSeconds = 20
+        let savedView = listening.workspace
+        let reopened = EpisodeAlignmentModel(document: f.document, episodeID: f.model.episodeID,
+            runtime: f.runtime, listening: listening)
+        defer { reopened.suspend() }
+        #expect(reopened.waveformTracks.isEmpty && reopened.waveformFitRange == nil)
+        reopened.load()
+        reopened.loadWaveforms(keepingSnapshot: true)
+        reopened.ensureWaveformOverview()
+        try await wait(reopened.waveformMessage) {
+            !reopened.isLoadingWaveforms && !reopened.isLoadingOverview
+                && reopened.waveformTracks.count == 2 && reopened.waveformOverviewTracks.count == 2
+        }
+        #expect(reopened.listening.workspace == savedView, "Loading must preserve the wide saved viewport and playhead")
+        #expect(reopened.primaryWaveformGroups.flatMap(\.tracks).count == 1)
+        #expect(reopened.waveformTracks.allSatisfy {
+            reopened.waveformOverviewIndices[$0.id]?.hasVisible(start: -80, duration: 568.749) == true
+        })
+        #expect(!reopened.waveformTileSlices.isEmpty)
+        #expect(reopened.waveformTileSlices.allSatisfy { $0.range.upperBound - $0.range.lowerBound <= 30 },
+                "The display span never becomes an oversized exact audio read")
+        #expect(!reopened.waveformMessage.contains("Choose a finite"))
+        #expect(reopened.lastError == nil)
+        #expect((reopened.waveformMap != nil) == accepted)
+        if accepted {
+            reopened.playEnabledTracks()
+            try await wait(reopened.auditionLabel) { reopened.isAuditioning }
+            reopened.stopAudition()
+        }
+        #expect(f.document.store.model == original)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
     @Test func acceptingAnalysisAndUndoRedoRetainMainTracksAndTheirDecodedBins() async throws {
@@ -373,6 +425,7 @@ struct AlignmentWaveformRetentionHostedTests {
             !cleanup.isLoadingWaveforms && !cleanup.isLoadingOverview
         }
         #expect(cleanup.overviewStrokes.count == 1 && cleanup.windowStrokes.count == 1)
+        #expect(cleanup.waveformIndex(for: lane.speaker).strokes == cleanup.strokes(for: lane.speaker))
         #expect(cleanup.identities.keys.contains(lane.primary.sourceID))
         #expect(!cleanup.identities.keys.contains(f.target))
         let snapshot = f.document.store.model
@@ -393,6 +446,168 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(abs(next.start + next.duration - (whole.start + whole.duration)) < 1 / 48_000)
         #expect(firstSamples.allSatisfy(\.isFinite) && firstSamples.contains { abs($0) > 0.001 })
         #expect(f.document.store.model == snapshot)
+    }
+
+    @Test func closeZoomGroupPreviewUsesShiftedCacheCoverageWithoutChangingSamples() async throws {
+        let f = try await fixture(durationSeconds: 12)
+        defer { f.close() }
+        let track = try #require(f.model.waveformTracks.first { $0.id == f.target })
+        f.model.selectWaveform(track)
+        f.model.waveformStartSeconds = 2
+        f.model.waveformDurationSeconds = 0.5
+        let before = f.model.waveformTileSlices(for: track.group)
+        f.model.groupDraftMilliseconds = 250
+        let shifted = f.model.waveformTileSlices(for: track.group)
+        let slice = try #require(shifted.first)
+        #expect(slice.range == 1.75...2.25)
+        #expect(slice.indices[track.id]?.id == before.first?.indices[track.id]?.id)
+        #expect(f.model.hasVisibleWaveformStrokes(for: track))
+        let clip = try #require(AlignmentWaveformProjection.viewportClip(
+            range: slice.range, start: 2, duration: 0.5, width: 640, shift: 0.25))
+        #expect(clip.origin == 0 && clip.width == 640)
+        #expect(f.document.store.model.episode(f.model.episodeID)?.alignment == nil)
+    }
+
+    @Test func offscreenTrackRowsAreLazyAndMaterializeWhenScrolled() async throws {
+        let f = try await fixture(durationSeconds: 3, extraSources: 30)
+        defer { f.close() }
+        f.model.listening.workspace.layout = .recorderGroup
+        var appeared: Set<SourceID> = []
+        var visible: Set<SourceID> = []
+        var scrollProxy: ScrollViewProxy?
+        let host = HostedTimelineWindow(width: 1_200, height: 650,
+            content: ScrollViewReader { proxy in
+                AlignmentWaveformView(model: f.model, showInspector: {},
+                    trackVisibilityChanged: { source, isVisible in
+                        if isVisible {
+                            appeared.insert(source)
+                            visible.insert(source)
+                        } else { visible.remove(source) }
+                    })
+                    .onAppear { scrollProxy = proxy }
+            })
+        defer { host.close() }
+        host.window.setContentSize(NSSize(width: 1_200, height: 650))
+        host.view.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(250))
+        let initial = appeared
+        #expect(!initial.isEmpty)
+        #expect(initial.count < 32, "Offscreen tracks must not instantiate every waveform row")
+        let last = try #require(f.model.waveformTracks.last)
+        try #require(scrollProxy).scrollTo(last.id, anchor: .bottom)
+        try await Task.sleep(for: .milliseconds(250))
+        host.view.layoutSubtreeIfNeeded()
+        let final = visible
+        #expect(!final.isEmpty)
+        #expect(!final.isSubset(of: initial), "Scrolling materializes previously offscreen tracks")
+        print("VERTICAL_VIRTUALIZATION tracks=32 initially_materialized=\(initial.count) after_scroll_visible=\(final.count)")
+    }
+
+    @Test func indexedViewportBenchmarkReportsEquivalentWorkAndBoundedSurfaces() async throws {
+        try await Self.benchmarkViewport()
+    }
+
+    enum TimelineDragWorkload: String, CaseIterable { case pan, zoom, move }
+
+    @Test(arguments: TimelineDragWorkload.allCases)
+    func timelineDragUpdateBenchmarkIncludesNavigationAndHostedLayout(_ workload: TimelineDragWorkload) async throws {
+        let f = try await fixture(durationSeconds: 40, extraSources: 4)
+        defer { f.close() }
+        f.model.listening.workspace.layout = .speaker
+        if workload == .move {
+            f.model.selectWaveform(try #require(f.model.waveformTracks.first { $0.id == f.target }))
+        }
+        let original = f.document.store.model
+        let snapshot = f.model.waveformOverviewSnapshotID
+        let host = HostedTimelineWindow(width: 1_200, height: 800,
+            content: AlignmentWaveformView(model: f.model, showInspector: {}))
+        defer { host.close() }
+        host.window.setContentSize(NSSize(width: 1_200, height: 800))
+        try await Task.sleep(for: .milliseconds(250))
+        let clock = ContinuousClock()
+        func milliseconds(since start: ContinuousClock.Instant) -> Double {
+            let elapsed = start.duration(to: clock.now).components
+            return Double(elapsed.seconds) * 1_000 + Double(elapsed.attoseconds) / 1e15
+        }
+        var navigation: [Double] = []
+        var updates: [Double] = []
+        for frame in 0..<60 {
+            let begin = clock.now
+            let bounds = f.model.waveformViewingBounds
+            let maximum = f.model.maximumWaveformDuration
+            let fit = try #require(f.model.waveformFitRange)
+            #expect(bounds.contains(fit.lowerBound) && maximum >= fit.upperBound - fit.lowerBound)
+            navigation.append(milliseconds(since: begin))
+            let update = clock.now
+            switch workload {
+            case .pan:
+                #expect(f.model.previewWaveformWindow(start: 2 + Double(frame) / 60))
+            case .zoom:
+                #expect(f.model.previewWaveformViewport(start: 2, duration: 20 - Double(frame) / 10))
+            case .move:
+                f.model.groupDraftMilliseconds = Double(frame + 1) * 5
+            }
+            try await Task.sleep(for: .milliseconds(1))
+            host.view.layoutSubtreeIfNeeded()
+            host.view.displayIfNeeded()
+            updates.append(milliseconds(since: update))
+        }
+        func percentile(_ values: [Double], _ fraction: Double) -> Double {
+            values.sorted()[min(values.count - 1, Int(Double(values.count - 1) * fraction))]
+        }
+        print("TIMELINE_DRAG_BENCHMARK workload=\(workload.rawValue) frames=60 tracks=6 bins=\(f.model.waveformOverviewIndices.values.reduce(0) { $0 + $1.count }) "
+            + "navigation_p50_ms=\(percentile(navigation, 0.5)) navigation_p95_ms=\(percentile(navigation, 0.95)) "
+            + "layout_p50_ms=\(percentile(updates, 0.5)) layout_p95_ms=\(percentile(updates, 0.95))")
+        #expect(f.model.waveformOverviewSnapshotID == snapshot)
+        #expect(f.document.store.model == original)
+    }
+
+    @concurrent
+    private static func benchmarkViewport() async throws {
+        let epoch = RecordingEpochID()
+        func bins(count: Int, duration: Double) -> [AlignmentWaveformStroke] {
+            (0..<count).map {
+                let start = Double($0) / Double(count) * duration
+                let end = Double($0 + 1) / Double(count) * duration
+                return AlignmentWaveformStroke(sourceSeconds: start, groupSeconds: start, displaySeconds: start,
+                    low: -0.5, high: 0.5, mapped: true, epoch: epoch,
+                    displayRange: start...end, groupRange: start...end)
+            }
+        }
+        let overview = bins(count: 120_000, duration: 1_200)
+        let index = AlignmentWaveformStrokeIndex(strokes: overview)
+        let clock = ContinuousClock()
+        func measure(_ draw: (Double) -> Int) -> (seconds: Double, count: Int) {
+            let begin = clock.now
+            var count = 0
+            for frame in 0..<60 { count += draw(600.125 + Double(frame) / 100) }
+            let elapsed = begin.duration(to: clock.now).components
+            return (Double(elapsed.seconds) + Double(elapsed.attoseconds) / 1e18, count)
+        }
+        let scan = measure {
+            AlignmentWaveformProjection.displayColumns(strokes: overview, start: $0, duration: 0.5,
+                width: 960, pixelsPerPoint: 2).count
+        }
+        let indexed = measure {
+            AlignmentWaveformProjection.displayColumns(strokes: index.visible(start: $0, duration: 0.5),
+                start: $0, duration: 0.5, width: 960, pixelsPerPoint: 2).count
+        }
+        #expect(scan.count == indexed.count && indexed.count == 60 * 1_920)
+        let tile = bins(count: 2_048, duration: 30)
+        let tileIndex = AlignmentWaveformStrokeIndex(strokes: tile)
+        let fullTile = measure { _ in
+            AlignmentWaveformProjection.displayColumns(strokes: tile, start: 0, duration: 30,
+                width: 960 * 60, pixelsPerPoint: 2).count
+        }
+        let viewport = measure { _ in
+            AlignmentWaveformProjection.displayColumns(strokes: tileIndex.visible(start: 10, duration: 0.5),
+                start: 10, duration: 0.5, width: 960, pixelsPerPoint: 2).count
+        }
+        #expect(fullTile.count == 60 * 115_200 && viewport.count == 60 * 1_920)
+        print("VIEWPORT_BENCHMARK frames=60 bins=120000 scan_seconds=\(scan.seconds) indexed_seconds=\(indexed.seconds) "
+            + "tile_seconds=\(fullTile.seconds) viewport_seconds=\(viewport.seconds) "
+            + "tile_width=57600 viewport_width=960 scale=2 visible_bins=\(index.visible(start: 600.125, duration: 0.5).count)")
+        try Task.checkCancellation()
     }
 
     private static func wave(target: Bool, durationSeconds: Int = 40, pauses: [Range<Double>] = []) -> Data {

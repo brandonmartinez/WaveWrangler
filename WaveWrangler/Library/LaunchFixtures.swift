@@ -437,7 +437,7 @@ enum LaunchFixtures {
                     primaryConfirmation: .userConfirmed,
                     backups: [ChannelReference(sourceID: target.id, statedChannel: 0)]),
             ]
-            if cleanupTimeline {
+            if cleanupTimeline, !UserDefaults.standard.bool(forKey: "WWUITestSinglePrimaryFixture") {
                 let guest = Speaker(name: "Guest")
                 speakers.append(guest)
                 episode.sources[1].role = .primary

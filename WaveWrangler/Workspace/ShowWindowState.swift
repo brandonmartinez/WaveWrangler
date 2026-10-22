@@ -25,14 +25,15 @@ final class ShowWindowState {
     }
     var destination: ShowDestination = .setup {
         didSet {
+            persistWorkspacePanels()
             // Leaving Review revokes pending handoffs even if a new Setup selects the same speaker.
             guard oldValue != destination, destination != .review else { return }
             reviewSelectionGeneration += 1
             invalidateBoundReview()
         }
     }
-    var inspectorPresented = true
-    var recordingsPresented = false
+    var inspectorPresented = true { didSet { persistWorkspacePanels() } }
+    var recordingsPresented = false { didSet { persistWorkspacePanels() } }
     enum WorkspaceInspector: String, CaseIterable {
         case recording = "Recording"
         case alignment = "Alignment"
@@ -57,7 +58,7 @@ final class ShowWindowState {
             }
         }
     }
-    var workspaceInspector = WorkspaceInspector.recording
+    var workspaceInspector = WorkspaceInspector.recording { didSet { persistWorkspacePanels() } }
 
     func toggleWorkspaceInspector(_ activity: WorkspaceInspector) {
         if inspectorPresented, workspaceInspector == activity {
@@ -92,8 +93,22 @@ final class ShowWindowState {
     func listeningState(for episode: EpisodeID) -> EpisodeListeningState {
         if let existing = listeningStates[episode] { return existing }
         let value = EpisodeListeningState()
+        value.restoreWorkspace(from: EpisodeWorkspaceViewStore(
+            defaults: PersistenceEnvironment.preferences, show: store.model.show.id, episode: episode,
+            namespace: PersistenceEnvironment.isUITestRun ? "ui-tests" : "standard"))
         listeningStates[episode] = value
         return value
+    }
+
+    private func persistWorkspacePanels() {
+        guard let episode = boundEpisodeID else { return }
+        let listening = listeningState(for: episode)
+        var view = listening.workspace
+        view.destination = destination.rawValue
+        view.inspector = workspaceInspector.rawValue
+        view.inspectorPresented = inspectorPresented
+        view.recordingsPresented = recordingsPresented
+        listening.workspace = view
     }
     /// Presentation-only Review selection shared by the linked transcript and inspector panes.
     private let reviewPresentationState = TranscriptReviewState()
@@ -119,7 +134,15 @@ final class ShowWindowState {
         self.store = store
         boundEpisodeID = episodeID
         sidebarSelection = (episodeID ?? store.model.episodes.first?.id).map { .episode($0) }
-        if episodeID != nil { destination = .alignment }
+        if let episodeID {
+            let view = listeningState(for: episodeID).workspace
+            destination = ShowDestination(rawValue: view.destination).flatMap {
+                $0.isAvailableInThisVersion ? $0 : nil
+            } ?? .alignment
+            workspaceInspector = WorkspaceInspector(rawValue: view.inspector) ?? .recording
+            inspectorPresented = view.inspectorPresented
+            recordingsPresented = view.recordingsPresented
+        }
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),

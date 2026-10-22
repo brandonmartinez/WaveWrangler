@@ -37,7 +37,8 @@ struct WaveformNavigationHostedTests {
                 mapped: true, epoch: epoch, displayRange: span, groupRange: span)
         }
         let renderer = ImageRenderer(content: AudioTimelineWaveformDrawing(
-            snapshot: UUID(), strokes: strokes, size: CGSize(width: 500, height: 100),
+            snapshot: UUID(), index: AlignmentWaveformStrokeIndex(strokes: strokes),
+            size: CGSize(width: 500, height: 100),
             start: 0, duration: 5, color: .white, lineWidth: 1, gain: 1, displayScale: scale)
             .background(.black))
         renderer.scale = scale

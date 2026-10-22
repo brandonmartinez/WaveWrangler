@@ -120,6 +120,38 @@ struct AlignedAuditionStartupTests {
         }
     }
 
+    @Test func adjacentAndOverlappingCachedWindowsServeIndexedSeeksWithoutAnotherDecode() async throws {
+        let fixture = try await Fixture()
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        let cache = AlignedAuditionPCMCache()
+        _ = try await fixture.read(0..<48_000, cache: cache)
+        _ = try await fixture.read(48_000..<72_000, cache: cache)
+        _ = try await fixture.read(72_000..<96_000, cache: cache)
+        let expected = try await fixture.read(24_000..<84_000)
+        #expect(try await fixture.read(24_000..<84_000, cache: cache) == expected)
+        #expect(await cache.statistics.hits == 1)
+        #expect(await cache.statistics.misses == 3)
+        let stitchedStats = await cache.statistics
+        #expect(stitchedStats.entries == 3 && stitchedStats.sampleBytes == 96_000 * 4)
+        let otherRevision = MapRevisionReference(episode: fixture.revision.episode, revision: 2)
+        _ = try await fixture.read(24_000..<84_000, cache: cache, revision: otherRevision)
+        #expect(await cache.statistics.misses == 4, "Stitching cannot cross accepted map revisions")
+        let gapped = AlignedAuditionPCMCache()
+        _ = try await fixture.read(0..<24_000, cache: gapped)
+        _ = try await fixture.read(48_000..<72_000, cache: gapped)
+        _ = try await fixture.read(0..<72_000, cache: gapped)
+        let gapStats = await gapped.statistics
+        #expect(gapStats.hits == 0 && gapStats.misses == 3,
+                "A gap requires a witnessed decode, never invented or bridged samples")
+        let changed = fixture.folder.appendingPathComponent("original.wav")
+        try FileManager.default.moveItem(at: fixture.url, to: changed)
+        try WaveformTestAudio.wave(rate: 48_000, samples: Array(repeating: 1, count: 48_000 * 8)).write(to: fixture.url)
+        await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            _ = try await fixture.read(24_000..<84_000, cache: cache)
+        }
+        #expect(await cache.statistics.hits == 1, "A stitched cache hit remains subject to source authorization")
+    }
+
     @Test func cacheEvictsWithinBothBoundsAndCanceledHitsDoNotEscape() async throws {
         let fixture = try await Fixture()
         defer { try? FileManager.default.removeItem(at: fixture.folder) }

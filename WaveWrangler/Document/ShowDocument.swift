@@ -830,6 +830,7 @@ final class ShowDocument: NSDocument {
     }
 
     override func close() {
+        EpisodeWorkspaceViewStore.flushPending()
         // Closing while still edited means the user chose Don't Save: drop this document's edit checkpoints.
         if isDocumentEdited {
             try? recovery.discardEditCheckpoints(for: documentKey)

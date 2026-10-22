@@ -4,8 +4,9 @@ import WWCore
 import WWSources
 import WWTimeMap
 
-enum AlignmentWaveformLayout: String, CaseIterable {
+enum AlignmentWaveformLayout: String, CaseIterable, Codable {
     case speaker = "By speaker"
+    case speakersOnly = "Speakers only"
     case recorderGroup = "By recorder"
     case overlay = "Overlay"
 
@@ -60,7 +61,7 @@ struct AlignmentWaveformPosition: Equatable {
     let mapped: Bool
 }
 
-struct AlignmentWaveformStroke: Equatable {
+struct AlignmentWaveformStroke: Equatable, Sendable {
     let sourceSeconds: Double
     let groupSeconds: Double
     let displaySeconds: Double
@@ -124,7 +125,84 @@ enum AlignmentTransportSelection {
 }
 
 enum AlignmentWaveformProjection {
+    struct ProposalInput: Sendable, Equatable {
+        let source: SourceID
+        let tilesVersion: UUID
+        let overviewVersion: UUID
+        let modelGeneration: UInt64?
+        let tracks: [AlignmentWaveformTrack]
+        let map: AlignedTimelineMap?
+        let adaptive: AdaptiveAnalysisRecord?
+        let group: RecorderGroupID?
+        let epoch: RecordingEpochID?
+        let segment: AffineClockSegment?
+        let cuts: ManualCutTimeline
+        let includeEstimated: Bool
+
+        // Publication IDs cover immutable track/map snapshots without per-frame envelope comparisons.
+        static func == (lhs: Self, rhs: Self) -> Bool {
+            lhs.source == rhs.source && lhs.tilesVersion == rhs.tilesVersion
+                && lhs.overviewVersion == rhs.overviewVersion && lhs.modelGeneration == rhs.modelGeneration
+                && lhs.adaptive == rhs.adaptive && lhs.group == rhs.group && lhs.epoch == rhs.epoch
+                && lhs.segment == rhs.segment && lhs.cuts == rhs.cuts && lhs.includeEstimated == rhs.includeEstimated
+        }
+
+        func strokes() -> [AlignmentWaveformStroke] {
+            if let adaptive {
+                return AlignmentWaveformProjection.applyingCuts(cuts, to: tracks.flatMap {
+                    AlignmentWaveformProjection.adaptiveStrokes(
+                        track: $0, record: adaptive, includeEstimated: includeEstimated)
+                })
+            }
+            guard let group, let epoch, let segment else { return [] }
+            return AlignmentWaveformProjection.applyingCuts(cuts, to: tracks.flatMap {
+                AlignmentWaveformProjection.proposedStrokes(
+                    track: $0, map: map, targetGroup: group, targetEpoch: epoch, segment: segment)
+            })
+        }
+
+        @concurrent
+        func prepare() async -> AlignmentWaveformStrokeIndex {
+            AlignmentWaveformStrokeIndex(strokes: strokes())
+        }
+    }
+
+    struct Prepared: Sendable {
+        var strokes: [SourceID: [AlignmentWaveformStroke]] = [:]
+        var indices: [SourceID: AlignmentWaveformStrokeIndex] = [:]
+        var gains: [SourceID: Double] = [:]
+        var errors: [SourceID: String] = [:]
+    }
+
+    @concurrent
+    static func prepare(load: AlignmentWaveformLoad, episode: Episode?,
+                        cuts: ManualCutTimeline, mappedOnly: Bool = false) async throws -> Prepared {
+        var result = Prepared()
+        for track in load.tracks {
+            try Task.checkCancellation()
+            do {
+                var projected = try strokes(track: track, map: load.map,
+                    correction: episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id },
+                    cuts: cuts)
+                if mappedOnly { projected.removeAll { !$0.mapped } }
+                result.strokes[track.id] = projected
+                let index = AlignmentWaveformStrokeIndex(strokes: projected)
+                result.indices[track.id] = index
+                result.gains[track.id] = index.normalizedGain
+            } catch {
+                result.errors[track.id] = error.localizedDescription
+            }
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
     static let overviewNavigationRange = -86_400.0...86_400.0
+
+    static func steppedZoomDuration(duration: Double, maximum: Double, zoomIn: Bool) -> Double? {
+        guard duration.isFinite, maximum.isFinite, duration > 0, maximum >= 0.5 else { return nil }
+        return min(maximum, max(0.5, duration * (zoomIn ? 0.8 : 1.25)))
+    }
 
     static func canReuseSamples(from loaded: Episode?, to current: Episode?) -> Bool {
         guard let loaded, let current else { return false }
@@ -295,7 +373,8 @@ enum AlignmentWaveformProjection {
               width.isFinite, width > 0, pixelsPerPoint.isFinite, pixelsPerPoint > 0 else { return [] }
         let pixelWidth = width * pixelsPerPoint
         guard pixelWidth.isFinite, pixelWidth > 0, pixelWidth < Double(Int.max / 4) else { return [] }
-        var columns: [Int: (low: Float, high: Float, mapped: Bool)] = [:]
+        let count = Int(ceil(pixelWidth))
+        var columns = [(low: Float, high: Float)?](repeating: nil, count: count * 2)
         for stroke in strokes {
             let first: Double
             let last: Double
@@ -313,24 +392,24 @@ enum AlignmentWaveformProjection {
                   upper >= 0, lower < pixelWidth,
                   stroke.low.isFinite, stroke.high.isFinite, stroke.low <= stroke.high else { continue }
             let firstColumn = Int(max(0, lower).rounded(.down))
-            let lastColumn = min(Int(ceil(pixelWidth)) - 1,
+            let lastColumn = min(count - 1,
                 max(firstColumn, Int(min(pixelWidth, upper).rounded(.up)) - 1))
             // A measured bin covers its entire span, not just its midpoint. Merge extrema only
             // where spans share a pixel; never interpolate across an uncovered source/timing gap.
             for column in firstColumn...lastColumn {
                 let key = column * 2 + (stroke.mapped ? 0 : 1)
                 if let prior = columns[key] {
-                    columns[key] = (min(prior.low, stroke.low), max(prior.high, stroke.high), stroke.mapped)
+                    columns[key] = (min(prior.low, stroke.low), max(prior.high, stroke.high))
                 } else {
-                    columns[key] = (stroke.low, stroke.high, stroke.mapped)
+                    columns[key] = (stroke.low, stroke.high)
                 }
             }
         }
-        return columns.keys.sorted().compactMap { key in
-            guard let bounds = columns[key] else { return nil }
+        return columns.enumerated().compactMap { key, bounds in
+            guard let bounds else { return nil }
             return DisplayColumn(
                 x: (Double(key / 2) + 0.5) / pixelsPerPoint,
-                low: bounds.low, high: bounds.high, mapped: bounds.mapped
+                low: bounds.low, high: bounds.high, mapped: key.isMultiple(of: 2)
             )
         }
     }
@@ -428,6 +507,19 @@ enum AlignmentWaveformProjection {
                 (range.upperBound - range.lowerBound) / tileDuration * tileWidth)
     }
 
+    static func viewportClip(
+        range: ClosedRange<Double>, start: Double, duration: Double, width: Double, shift: Double
+    ) -> (drawingStart: Double, origin: Double, width: Double)? {
+        let drawingStart = start - shift
+        guard drawingStart.isFinite, duration.isFinite, duration > 0,
+              (drawingStart + duration).isFinite, width.isFinite, width > 0,
+              range.lowerBound.isFinite, range.upperBound.isFinite else { return nil }
+        let lower = max(range.lowerBound, drawingStart)
+        let upper = min(range.upperBound, drawingStart + duration)
+        guard upper > lower else { return nil }
+        return (drawingStart, (lower - drawingStart) / duration * width, (upper - lower) / duration * width)
+    }
+
     static func moveMicroseconds(fromMilliseconds value: Double) -> Int64? {
         guard value.isFinite, abs(value) < Double(Int64.max) / 1_000 else { return nil }
         return Int64((value * 1_000).rounded())
@@ -464,6 +556,15 @@ enum AlignmentWaveformProjection {
               let last = strokes.map(\.displayRange.upperBound).max(),
               first.isFinite, last.isFinite, first < last
         else { return nil }
+        return first...last
+    }
+
+    static func overviewExtent(
+        indices: some Sequence<AlignmentWaveformStrokeIndex>, mappedOnly: Bool = false
+    ) -> ClosedRange<Double>? {
+        let ranges = indices.compactMap { mappedOnly ? $0.mappedDisplayExtent : $0.displayExtent }
+        guard let first = ranges.map(\.lowerBound).min(),
+              let last = ranges.map(\.upperBound).max(), first < last else { return nil }
         return first...last
     }
 
@@ -548,8 +649,9 @@ enum AlignmentWaveformProjection {
     }
 
     static func strokes(track: AlignmentWaveformTrack, map: AlignedTimelineMap?,
-                        correction: SourceTimingCorrection? = nil) throws -> [AlignmentWaveformStroke] {
-        try track.envelope.bins.compactMap { bin in
+                        correction: SourceTimingCorrection? = nil,
+                        cuts: ManualCutTimeline = .unedited) throws -> [AlignmentWaveformStroke] {
+        let original = try track.envelope.bins.compactMap { bin -> AlignmentWaveformStroke? in
             guard let first = try position(frame: bin.firstFrame, track: track, map: map, correction: correction),
                   let last = try position(frame: bin.endFrame - 1, track: track, map: map, correction: correction),
                   first.epoch == last.epoch, first.mapped == last.mapped
@@ -566,6 +668,31 @@ enum AlignmentWaveformProjection {
                 displayRange: first.displaySeconds...last.displaySeconds,
                 groupRange: first.groupSeconds...last.groupSeconds
             )
+        }
+        return applyingCuts(cuts, to: original)
+    }
+
+    static func applyingCuts(_ cuts: ManualCutTimeline,
+                             to strokes: [AlignmentWaveformStroke]) -> [AlignmentWaveformStroke] {
+        guard !cuts.removals.isEmpty else { return strokes }
+        return strokes.flatMap { stroke in
+            guard stroke.mapped else { return [stroke] }
+            return cuts.keptAlignedRanges(in: stroke.displayRange).map { span in
+                let full = stroke.displayRange.upperBound - stroke.displayRange.lowerBound
+                let groupScale = full > 0
+                    ? (stroke.groupRange.upperBound - stroke.groupRange.lowerBound) / full : 0
+                let groupStart = stroke.groupRange.lowerBound
+                    + (span.lowerBound - stroke.displayRange.lowerBound) * groupScale
+                let groupEnd = stroke.groupRange.lowerBound
+                    + (span.upperBound - stroke.displayRange.lowerBound) * groupScale
+                let source = stroke.sourceSeconds + (groupStart + groupEnd) / 2 - stroke.groupSeconds
+                let lo = cuts.editedTime(forAlignedTime: span.lowerBound)
+                let hi = cuts.editedTime(forAlignedTime: span.upperBound)
+                return AlignmentWaveformStroke(sourceSeconds: source,
+                    groupSeconds: (groupStart + groupEnd) / 2, displaySeconds: (lo + hi) / 2,
+                    low: stroke.low, high: stroke.high, mapped: stroke.mapped, epoch: stroke.epoch,
+                    displayRange: lo...hi, groupRange: groupStart...groupEnd)
+            }
         }
     }
 

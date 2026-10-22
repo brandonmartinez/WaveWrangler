@@ -12,6 +12,60 @@ struct AudioTimelineWordLayoutTests {
                        alignedStart: start, alignedEnd: end)
     }
 
+    @Test func indexedQueriesMatchScanningWithOverlapsCutsAndStableTies() throws {
+        let long = word("overlap", 0, 100)
+        let a = word("first", 50, 51), b = word("second", 50, 51)
+        let removed = word("removed", 10, 11)
+        let words = [b, long, a, removed, word("later", 120, 121)]
+        let cuts = try ManualCutTimeline(cuts: [
+            ManualEpisodeCut(alignmentRevision: 1, startFrame: 10 * 48_000, endFrame: 11 * 48_000)
+        ])
+        let index = AudioTimelineWordIndex(words: words, cuts: cuts)
+        #expect(index.words.map(\.id) == [long.id, b.id, a.id, words[4].id])
+        #expect(index.visible(start: 49.5, end: 49.6).map(\.id) == [long.id, b.id, a.id])
+        #expect(index.visible(start: 90, end: 91).map(\.id) == [long.id],
+                "Binary lookup must retain long overlapping words that begin before the viewport")
+        #expect(index.visible(start: 99, end: 119).isEmpty)
+        #expect(index.visible(start: 119, end: 120).map(\.id) == [words[4].id])
+    }
+
+    @Test func workingRangeFiltersOriginalWordsBeforeCutProjection() throws {
+        let crossing = word("crossing", 10.5, 11.5), inside = word("inside", 12, 12.5)
+        let words = [word("before", 9, 11), crossing, inside, word("after", 13, 14)]
+        let cuts = try ManualCutTimeline(cuts: [
+            ManualEpisodeCut(alignmentRevision: 1, startFrame: 10 * 48_000, endFrame: 11 * 48_000)
+        ])
+        let index = AudioTimelineWordIndex(words: words, cuts: cuts, sourceBounds: 11...13)
+        #expect(index.words.map(\.id) == [crossing.id, inside.id])
+        #expect(index.visible(start: 10, end: 12).map(\.id) == [crossing.id, inside.id])
+        #expect(index.words.first?.alignedStart == 10)
+    }
+
+    @Test func repeatedEpisodePansUseAnIndexInsteadOfScanningTheEntireTranscript() {
+        let words = (0..<30_000).map { word("word\($0)", Double($0) * 0.4, Double($0) * 0.4 + 0.3) }
+        let index = AudioTimelineWordIndex(words: words)
+        let clock = ContinuousClock()
+        var scanned: [[UUID]] = []
+        let beforeScan = clock.now
+        for position in 0..<100 {
+            let start = Double(position) * 50
+            scanned.append(words.filter {
+                ($0.alignedEnd ?? 0) > start && ($0.alignedStart ?? .infinity) < start + 5
+            }.map(\.id))
+        }
+        let scanDuration = beforeScan.duration(to: clock.now)
+        let beforeIndex = clock.now
+        var indexed: [[UUID]] = []
+        for position in 0..<100 {
+            indexed.append(index.visible(start: Double(position) * 50, end: Double(position) * 50 + 5).map(\.id))
+        }
+        let indexDuration = beforeIndex.duration(to: clock.now)
+        #expect(indexed == scanned)
+        #expect(indexDuration < scanDuration / 4,
+                "Indexed viewport selection must be at least four times faster than whole-episode scanning")
+        print("TIMELINE_WORD_INDEX words=30000 pans=100 scan=\(scanDuration) indexed=\(indexDuration)")
+    }
+
     @Test func wordsUseExactWaveformTimeCoordinatesAndCompactRows() {
         let a = word("hello", 12, 13), b = word("there", 16, 18)
         let layout = AudioTimelineWordLayout.make(words: [b, a], start: 10, duration: 10, width: 600)

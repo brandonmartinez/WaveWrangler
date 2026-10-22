@@ -14,8 +14,10 @@ extension EpisodeCleanupModel {
 
     func visibleFillers(for lane: CleanupSpeakerLane) -> [FillerTimingReview] {
         fillerReviews.filter {
-            $0.speaker == lane.speaker && $0.bounds.alignedEnd > windowStart
-                && $0.bounds.alignedStart < windowStart + visibleDuration && fillerIssue($0) == nil
+            $0.speaker == lane.speaker && cut(for: $0) == nil
+                && displayRange(start: $0.bounds.alignedStart, end: $0.bounds.alignedEnd).map {
+                    $0.upperBound > windowStart && $0.lowerBound < windowStart + visibleDuration
+                } == true && fillerIssue($0) == nil
         }
     }
 
@@ -92,17 +94,20 @@ extension EpisodeCleanupModel {
     func selectFiller(_ id: UUID, reveal: Bool = true, movePlayhead: Bool = true) {
         guard let review = fillerReviews.first(where: { $0.id == id }) else { return }
         stopPlayback()
+        listening.selectionToolsPresented = true
         selectedFillerID = id
+        selectedManualCutID = nil
         selectedSpeaker = review.speaker
         selectedWord = review.word
         updateFillerDrafts()
         if fillerIssue(review) == nil {
-            if movePlayhead { _ = previewSeek(to: review.bounds.alignedStart, revealing: false) }
-            if reveal, review.bounds.alignedStart < windowStart {
-                setWindow(start: review.bounds.alignedStart, duration: visibleDuration)
-            } else if reveal, review.bounds.alignedEnd > windowStart + visibleDuration {
-                setWindow(start: min(review.bounds.alignedStart,
-                    review.bounds.alignedEnd - visibleDuration), duration: visibleDuration)
+            let start = cutTimeline.editedTime(forAlignedTime: review.bounds.alignedStart)
+            let end = cutTimeline.editedTime(forAlignedTime: review.bounds.alignedEnd)
+            if movePlayhead { _ = previewSeek(to: start, revealing: false) }
+            if reveal, start < windowStart {
+                setWindow(start: start, duration: visibleDuration)
+            } else if reveal, end > windowStart + visibleDuration {
+                setWindow(start: min(start, end - visibleDuration), duration: visibleDuration)
             }
         }
     }
@@ -113,8 +118,8 @@ extension EpisodeCleanupModel {
             error = "Select a current filler interval before zooming to it."
             return
         }
-        let start = review.bounds.alignedStart
-        let end = review.bounds.alignedEnd
+        let start = cutTimeline.editedTime(forAlignedTime: review.bounds.alignedStart)
+        let end = cutTimeline.editedTime(forAlignedTime: review.bounds.alignedEnd)
         guard let window = AlignmentWaveformProjection.rulerZoom(
             duration: (end - start) * 2, playhead: start + (end - start) / 2,
             magnification: 1, bounds: bounds, maximumDuration: maximumDuration
@@ -205,8 +210,9 @@ extension EpisodeCleanupModel {
             error = "Select a speaker's waveform or word before marking a missed filler."
             return
         }
-        addManualFiller(speaker: speaker, start: selectedWord?.alignedStart ?? playhead,
-                        end: selectedWord?.alignedEnd ?? (playhead + 0.2))
+        addManualFiller(speaker: speaker,
+            start: selectedWord?.alignedStart ?? cutTimeline.alignedTime(forEditedTime: playhead),
+            end: selectedWord?.alignedEnd ?? cutTimeline.alignedTime(forEditedTime: playhead + 0.2))
     }
 
     func fillerAuditionRange(_ review: FillerTimingReview, context: Double) -> ClosedRange<Double>? {
@@ -237,7 +243,11 @@ extension EpisodeCleanupModel {
             return
         }
         error = nil
-        play(interval: interval, loop: loopsFillerAudition)
+        guard let display = displayRange(start: interval.lowerBound, end: interval.upperBound) else {
+            error = "This interval has been cut. Restore the cut to audition the original audio."
+            return
+        }
+        play(interval: display, loop: loopsFillerAudition)
     }
 
     private func editableFiller(_ id: UUID) -> FillerTimingReview? {
@@ -255,7 +265,7 @@ extension EpisodeCleanupModel {
         if saveFillerCleanup(cleanup, action: action) {
             selectFiller(id, reveal: false, movePlayhead: false)
             if let review = selectedFiller {
-                listening.selection = review.bounds.alignedStart...review.bounds.alignedEnd
+                listening.selection = displayRange(start: review.bounds.alignedStart, end: review.bounds.alignedEnd)
             }
         }
     }

@@ -99,8 +99,8 @@ struct AlignmentWaveformTests {
 
     @Test func speakerLayoutIsFirstAndDefault() {
         #expect(AlignmentWaveformLayout.defaultValue == .speaker)
-        #expect(AlignmentWaveformLayout.allCases == [.speaker, .recorderGroup, .overlay])
-        #expect(AlignmentWaveformLayout.allCases.map(\.rawValue) == ["By speaker", "By recorder", "Overlay"])
+        #expect(AlignmentWaveformLayout.allCases == [.speaker, .speakersOnly, .recorderGroup, .overlay])
+        #expect(AlignmentWaveformLayout.allCases.map(\.rawValue) == ["By speaker", "Speakers only", "By recorder", "Overlay"])
     }
 
     @Test func acceptedAdaptiveProjectionRetainsBinsAndUndoRestoresCoordinatesWithoutBridgingGaps() throws {

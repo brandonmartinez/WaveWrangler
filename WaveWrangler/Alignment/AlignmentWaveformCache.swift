@@ -2,18 +2,35 @@ import Foundation
 import WWCore
 import WWTimeMap
 
-struct AlignmentWaveformCache {
-    struct Tile {
+struct AlignmentWaveformCache: Sendable {
+    struct Tile: Sendable {
         var modelGeneration: UInt64
         var episode: Episode?
         let start: Double
         let duration: Double
         let load: AlignmentWaveformLoad
         let strokes: [SourceID: [AlignmentWaveformStroke]]
+        let indices: [SourceID: AlignmentWaveformStrokeIndex]
         let gains: [SourceID: Double]
         let errors: [SourceID: String]
         var reprojected = false
         let id = UUID()
+
+        init(modelGeneration: UInt64, episode: Episode?, start: Double, duration: Double,
+             load: AlignmentWaveformLoad, strokes: [SourceID: [AlignmentWaveformStroke]],
+             gains: [SourceID: Double], errors: [SourceID: String],
+             indices: [SourceID: AlignmentWaveformStrokeIndex]? = nil, reprojected: Bool = false) {
+            self.modelGeneration = modelGeneration
+            self.episode = episode
+            self.start = start
+            self.duration = duration
+            self.load = load
+            self.strokes = strokes
+            self.indices = indices ?? strokes.mapValues { AlignmentWaveformStrokeIndex(strokes: $0) }
+            self.gains = gains
+            self.errors = errors
+            self.reprojected = reprojected
+        }
     }
 
     struct Slice: Identifiable {
@@ -23,12 +40,14 @@ struct AlignmentWaveformCache {
         let duration: Double
         let range: ClosedRange<Double>
         let strokes: [SourceID: [AlignmentWaveformStroke]]
+        let indices: [SourceID: AlignmentWaveformStrokeIndex]
         let gains: [SourceID: Double]
 
         var id: String { "\(snapshot.uuidString):\(segment)" }
     }
 
     private(set) var tiles: [Tile] = []
+    private(set) var retainedIndices: [SourceID: AlignmentWaveformStrokeIndex] = [:]
     var tracks: [AlignmentWaveformTrack] { tiles.flatMap { $0.load.tracks } }
 
     mutating func insert(_ tile: Tile) {
@@ -38,9 +57,22 @@ struct AlignmentWaveformCache {
         }
         tiles.append(tile)
         if tiles.count > 8 { tiles.removeFirst() }
+        rebuildRetainedIndices()
     }
 
-    mutating func removeAll() { tiles.removeAll() }
+    mutating func removeAll() {
+        tiles.removeAll()
+        retainedIndices.removeAll()
+    }
+
+    @concurrent
+    func inserting(_ tile: Tile) async throws -> Self {
+        try Task.checkCancellation()
+        var copy = self
+        copy.insert(tile)
+        try Task.checkCancellation()
+        return copy
+    }
 
     mutating func adoptPresentation(of episode: Episode, generation: UInt64) {
         for index in tiles.indices {
@@ -71,12 +103,17 @@ struct AlignmentWaveformCache {
             segmentCounts[slice.id] = segment + 1
             return Slice(
                 snapshot: tile.id, segment: segment, start: tile.start, duration: tile.duration,
-                range: slice.range, strokes: tile.strokes, gains: tile.gains
+                range: slice.range, strokes: tile.strokes, indices: tile.indices, gains: tile.gains
             )
         }
     }
 
     func retainedStrokes(for source: SourceID) -> [AlignmentWaveformStroke] {
+        retainedIndices[source]?.strokes ?? []
+    }
+
+    private func makeRetainedStrokes(for source: SourceID) -> [AlignmentWaveformStroke] {
+        guard tiles.contains(where: \.reprojected) else { return [] }
         let fresh = tiles.filter { !$0.reprojected }.flatMap { tile in
             (tile.strokes[source] ?? []).reduce(into: [RecordingEpochID: ClosedRange<Double>]()) { ranges, stroke in
                 let prior = ranges[stroke.epoch] ?? stroke.groupRange
@@ -88,6 +125,13 @@ struct AlignmentWaveformCache {
         return tiles.filter(\.reprojected).flatMap { $0.strokes[source] ?? [] }.filter { stroke in
             !fresh.contains { $0.epoch == stroke.epoch && $0.range.contains(stroke.groupSeconds) }
         }
+    }
+
+    private mutating func rebuildRetainedIndices() {
+        let sources = Set(tiles.filter(\.reprojected).flatMap { $0.strokes.keys })
+        retainedIndices = Dictionary(uniqueKeysWithValues: sources.map { source in
+            (source, AlignmentWaveformStrokeIndex(strokes: makeRetainedStrokes(for: source)))
+        })
     }
 
     func firstUncoveredTime(
@@ -115,13 +159,17 @@ struct AlignmentWaveformCache {
     }
 
     mutating func reproject(
-        map: AlignedTimelineMap?, episode: Episode?, modelGeneration: UInt64
+        map: AlignedTimelineMap?, episode: Episode?, modelGeneration: UInt64,
+        revealingCut: UUID? = nil
     ) throws {
+        let cuts = try episode?.manualCutTimeline(revealing: revealingCut) ?? .unedited
         tiles = try tiles.map { tile in
+            try Task.checkCancellation()
             let projected = try Dictionary(uniqueKeysWithValues: tile.load.tracks.map { track in
                 (track.id, try AlignmentWaveformProjection.strokes(
                     track: track, map: map,
-                    correction: episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id }
+                    correction: episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id },
+                    cuts: cuts
                 ))
             })
             return Tile(
@@ -132,5 +180,16 @@ struct AlignmentWaveformCache {
                 strokes: projected, gains: tile.gains, errors: [:], reprojected: true
             )
         }
+        rebuildRetainedIndices()
+    }
+
+    @concurrent
+    func reprojected(map: AlignedTimelineMap?, episode: Episode?, modelGeneration: UInt64,
+                     revealingCut: UUID?) async throws -> Self {
+        var copy = self
+        try copy.reproject(map: map, episode: episode, modelGeneration: modelGeneration,
+                           revealingCut: revealingCut)
+        try Task.checkCancellation()
+        return copy
     }
 }

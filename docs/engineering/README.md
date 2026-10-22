@@ -57,6 +57,134 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 `WWCommonEdit` contains the provisional common episode edit-map implementation;
 its presence does not mean export or protected-cut acceptance is complete.
 
+### Manual cuts and editing layouts
+
+The current marker/selection toolbar provides **Cut across all aligned tracks**.
+This is an explicit manual operation, not automatic filler removal or protected-cut
+approval. It records an original-aligned, half-open interval on the shared 48 kHz
+listening grid in `EpisodeCleanup.manualCuts`; recordings, accepted alignment,
+marker provenance, and raw transcripts remain immutable. Every aligned track
+uses the same merged removal intervals, including hidden, muted, and backup
+tracks. Later audio ripples to the interval's start. Playback requests split into
+kept aligned windows before gateway reads; waveform and transcript presentation
+use the same shortened timeline. No export behavior is introduced.
+
+Applied markers become single red scissor rails. Selecting a rail shows the same
+compact, inline toolbar used for other markers above the clicked track, not the
+first track. Clicking an expanded interval or its handles also keeps that track
+as the editing context; the cut itself still applies across all aligned tracks.
+The toolbar is a window-level overlay anchored to the waveform, not a row in the
+track layout: showing or hiding it never resizes tracks or changes header wrapping.
+Clicking elsewhere in the window dismisses the tools without consuming the click,
+changing marker boundaries, or collapsing an expanded cut. Selecting the same
+marker, cut, or boundary reopens its tools.
+**Show cut** expands only that
+cut into the waveform/transcript timeline; every other cut stays applied, including
+during playback. Drag either boundary independently, or focus a handle and use
+Left/Right or accessibility adjustment for 1 ms changes. Each completed drag or nudge
+is one undoable edit across all tracks. **Hide cut** returns to the red seam.
+Showing/hiding is device-local view state, never a document edit or an Undo entry.
+**Zoom to cut** focuses the collapsed join, or the full editable interval when
+shown, with surrounding context and the existing zoom limits. Zooming does not
+toggle Show/Hide, seek, change the selected cut, or create an Undo entry. It also
+works on aligned tracks before transcription Primaries have been confirmed.
+Hear the removed interval, add context, or collapse it to compare the edited join
+using current Solo/Mute choices. **Restore interval markers**, the
+context menu, or Undo/Redo recovers audio. Linked markers retain their original
+provenance and restore with the adjusted boundaries. Fade/blend is deferred; no
+crossfade or smoothing is silently applied. Cuts retain their
+alignment revision and become inactive, with a warning, if accepted timing
+changes; they are never silently rebased. Schema 8 adds the optional cut records.
+Schema 1–7 shows require the existing consented migration and exact-byte backup;
+migration introduces no cuts.
+
+**Speakers only** shows confirmed Primary sources grouped by speaker and
+automatically mutes all non-primary sources when selected. Primary Solo/Mute
+choices and assignments stay unchanged. These session mutes remain when switching
+layouts; **Restore listening choices** recovers the previous listening state.
+The other comparison layouts remain available for alignment. Transport, editing
+tools, layout, zoom, and the time ruler are anchored to the top of the workspace
+as window-style chrome; only the tracks scroll. The outer waveform box is removed
+so lanes fill the available space. Selection controls float above their active
+lane, and the zoom icons step by a factor of 1.25 around the playhead using the
+existing zoom limits.
+
+Each episode's last workspace view is stored in device-local preferences keyed by
+show and episode ID, not in the canonical document or its Undo history. Reopening
+restores layout, normalization, lane height, zoom, edited viewport/playhead,
+vertical track scroll position, collapsed groups, destination, and sidebar choices.
+Playback never resumes automatically. Solo/Mute choices are not restored; reopening
+**Speakers only** applies its non-primary mute policy again.
+The selected expanded-cut view is also remembered, provided that cut remains
+active at the accepted alignment. Navigation preference writes are coalesced;
+closing a document or quitting flushes the latest view immediately.
+Cold reopening a zoomed-out view first loads a bounded exact audio tile, then
+builds the full overview without changing the saved viewport. The 30-second
+exact-read limit does not limit the visible timeline span or leave track rows
+and playback uninitialized.
+
+Waveform projection/reprojection runs off the main actor with cancellation and
+snapshot checks before publication. Waveform pixel aggregation and path drawing
+use an asynchronous Canvas. Transcript preparation projects and indexes words once
+per input/cut snapshot; pan/zoom queries use binary viewport lookup, preserving
+overlapping words and stable ordering. Marker neighbor distances use one sorted
+pass rather than pairwise scans. Listening reuses the existing bounded, witnessed
+PCM cache, including adjacent/overlapping cached windows for indexed seeks.
+Cache hits still require current source identity, format/channel, and map-revision
+verification; no full-file audio copies or source-authorization shortcuts are added.
+
+Waveform canvases are viewport-sized, including at close zoom; cached tiles are
+clipped in viewport coordinates rather than rendered into oversized surfaces and
+then translated. Immutable interval indexes select overlapping measured bins,
+including bins whose midpoints are offscreen, before pixel aggregation. Separate
+group-clock indexes preserve independent epoch drafts and hit-test ordering.
+Pixel extrema use dense, display-scale-aware storage with separate mapped and
+unmapped columns. Normalization, retained coverage, and proposal geometry are
+prepared on snapshot changes, not recomputed by each row's view evaluation.
+Recorder and speaker rows use lazy stacks; offscreen rows materialize on scroll,
+while the transport, ruler, and track controls remain anchored.
+Navigation bounds combine extents cached on each immutable waveform index rather
+than rescanning overview bins. Pointer-selection drags do not materialize the
+separate recorder-move hit-test strokes. Timeline chrome uses a cached responsive
+layout with one control hierarchy: nested `ViewThatFits` alternatives previously
+repeated native-control intrinsic sizing throughout every pan update. Row/column
+choices use measured content, not fixed window-width breakpoints, and invalidate
+their proposal caches when content or typography changes.
+
+The synthetic viewport benchmark on VM `ww-ui-2` (macOS 27, four vCPUs,
+Debug build, 960-point viewport at 2x scale) recorded:
+
+| Workload, 60 frames | Full scan / scaled tile | Indexed viewport |
+| --- | --- | --- |
+| 120,000 stored bins, 0.5-second pans | 0.628 seconds | 0.043 seconds |
+| 2,048-bin, 30-second tile at 0.5-second zoom | 2.305 seconds | 0.035 seconds |
+
+The close-zoom surface is 960 points wide instead of 57,600; the large-timeline
+query selects 51 bins rather than visiting all 120,000. A hosted 32-track
+recorder-layout check initially materialized three rows and showed five after
+scrolling to the end, including previously offscreen sources. These are CPU
+microbenchmarks and row-lifecycle checks, not end-to-end frame-rate, GPU, or
+physical-hardware qualification. The implementation keeps asynchronous SwiftUI
+Canvas and Apple's graphics stack; a custom Metal renderer is not justified by
+these demonstrated CPU-side bottlenecks.
+
+A subsequent full hosted pan-update comparison on the same VM used six synthetic
+tracks, 12,234 overview bins, a 1,200 x 800 window, and 60 updates:
+
+| Work per update | Before, p50 / p95 | Cached navigation and chrome, p50 / p95 |
+| --- | --- | --- |
+| Navigation bounds / fit | 5.703 / 6.357 ms | 0.041 / 0.086 ms |
+| Yield plus hosted layout / display | 175.158 / 266.268 ms | 16.157 / 19.661 ms |
+
+Removing navigation scans alone left hosted updates near 178 ms at the median.
+An eight-second main-thread sample then identified repeated SwiftUI adaptive
+layout and native-control sizing, not waveform decoding or a GPU wait, as the
+remaining dominant cost. The second row includes a 1 ms suspension, run-loop
+scheduling, and forced hosted layout/display; it is not an FPS measurement or a
+Logic Pro parity claim. The same final run measured zoom updates at 17.525 /
+22.090 ms and recorder placement previews at 8.244 / 11.184 ms (p50 / p95),
+without committing timing edits.
+
 Because app folders are `PBXFileSystemSynchronizedRootGroup`s, adding/removing files under
 `WaveWrangler/`, `WaveWranglerTests/` or `WaveWranglerUITests/` does **not** edit `project.pbxproj`.
 Only touch the project file for genuine target/build-setting changes and avoid

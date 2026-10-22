@@ -21,6 +21,8 @@
         "TranscriptReviewUITests/testUnalignedEpisodeCannotTranscribeOrFabricateWordsAndHasRecoveryNavigation()",
         "TranscriptReviewUITests/testManualFillerRailsHaveIndependentDragsCompactReviewAndUndo()",
         "ControlsSidebarUITests/testCommandReviewToolIsTemporaryAndMarkerUsesOneCenteredToolbar()",
+        "ControlsSidebarUITests/testManualCrossTrackCutSpeakerViewZoomUndoAndRestore()",
+        "ControlsSidebarUITests/testEpisodeReopensAtItsLastLayoutZoomPositionAndTrackHeight()",
         "WaveformNavigationUITests/testZoomCentersOnPlayheadAfterPanningWithoutSeeking()",
         "WaveformNavigationUITests/testNativeScrollAxesPanZoomResizeAndKeepVerticalScrolling()",
         "LibraryWorkspaceUITests/testLibraryReopensShowAfterRelaunchAndSaves()",

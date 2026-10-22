@@ -32,6 +32,11 @@ struct EpisodeCleanupContent: View {
                 transport
                 navigation
                 markerControls
+                if model.manualCuts.count > model.activeManualCuts.count {
+                    Label("Saved cuts are inactive because accepted alignment changed. Undo the timing change to recover their original alignment.",
+                          systemImage: "exclamationmark.triangle")
+                        .font(.caption).foregroundStyle(.orange)
+                }
                 VStack(alignment: .leading, spacing: 6) {
                     Button {
                         showsPrecisionRange.toggle()
@@ -72,7 +77,7 @@ struct EpisodeCleanupContent: View {
                         .wwFont(.caption)
                         .accessibilityIdentifier("ww.cleanup.status")
                 }
-                Text("Recognizer timing is approximate, not cut-qualified. Filler review captures audible-word bounds only; this view never applies a cut.")
+                Text("Recognizer timing is approximate. Cuts are manual: select a marker or interval, then use scissors to ripple every aligned track. Originals and raw transcripts remain unchanged.")
                     .wwFont(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -83,17 +88,31 @@ struct EpisodeCleanupContent: View {
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .accessibilityIdentifier("ww.cleanup.workspace")
+        .modifier(AudioTimelineFloatingToolbar(listening: model.listening,
+            start: model.windowStart, duration: model.visibleDuration,
+            play: { context in
+                if let review = model.selectedFiller {
+                    model.auditionFiller(review.id, context: context)
+                } else if let range = model.listening.auditionRange(context: context, within: model.bounds) {
+                    model.play(interval: range, loop: false)
+                }
+            }, cleanup: model))
         .wwFont(.body)
         .onAppear { state.cleanupModel = model }
         .task(id: model.episode.map { EpisodeMediaInputs($0, includingWorkingRange: true) }) {
             await model.refresh(skippingReviewOnlyChange: true)
         }
         .onChange(of: model.listening.playback) { _, _ in model.updateGains() }
+        .onChange(of: model.episode?.cleanup?.manualCuts) { _, _ in
+            model.modelDidChange()
+            model.loadWaveforms()
+            if model.overviewStrokes.isEmpty { model.loadWaveforms(overview: true) }
+        }
         .onDisappear {
             model.cancelTranscription()
             if state.cleanupModel === model { state.cleanupModel = nil }
         }
-        .accessibilityIdentifier("ww.cleanup.workspace")
     }
 
     private var readiness: some View {
@@ -264,7 +283,7 @@ struct EpisodeCleanupContent: View {
                 model.isPlaying || model.isPreparingPlayback ? model.stopPlayback() : model.play()
             },
             stop: { model.stop() }, forward: { model.seek(to: model.playhead + 5) },
-            seek: { model.seek(to: $0) }
+            seek: { model.seek(to: $0) }, isEdited: !model.cutTimeline.removals.isEmpty
         )
         .padding(8)
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -364,15 +383,15 @@ struct EpisodeCleanupContent: View {
             previewSeek: { model.previewSeek(to: $0) }, resumePlayback: { model.play() },
             previewPan: { model.setWindow(start: $0, duration: model.windowDuration) },
             setWindow: { _, duration in model.zoomTimeline(duration: duration) },
-            commitWindow: { model.loadWaveforms() }
+            commitWindow: { model.loadWaveforms() }, isEdited: !model.cutTimeline.removals.isEmpty
         )
     }
 
     private var rangeMarkers: [AudioTimelineMarker] {
         let range = model.episode?.cleanup?.workingRange
         return [
-            range?.tracksIn.map { AudioTimelineMarker(id: "in", time: $0, title: "IN", color: .yellow) },
-            range?.tracksOut.map { AudioTimelineMarker(id: "out", time: $0, title: "OUT", color: .yellow) },
+            range?.tracksIn.map { AudioTimelineMarker(id: "in", time: model.cutTimeline.editedTime(forAlignedTime: $0), title: "IN", color: .yellow) },
+            range?.tracksOut.map { AudioTimelineMarker(id: "out", time: model.cutTimeline.editedTime(forAlignedTime: $0), title: "OUT", color: .yellow) },
         ].compactMap { $0 }
     }
 
@@ -411,14 +430,15 @@ struct EpisodeCleanupContent: View {
             .padding(.vertical, 6)
         } content: {
             VStack(alignment: .leading, spacing: 2) {
-                CleanupWaveform(strokes: model.strokes(for: lane.speaker), snapshot: model.waveformSnapshot,
+                CleanupWaveform(index: model.waveformIndex(for: lane.speaker), snapshot: model.waveformSnapshot,
                     start: model.windowStart,
                     duration: model.visibleDuration,
                     playhead: model.playhead, range: model.episode?.cleanup?.workingRange,
                     selectedRange: model.selectedSpeaker == lane.speaker ? selectedWordRange : nil,
                     regions: lane.regions, normalized: model.normalizeView,
                     muted: model.mutedSpeakers.contains(lane.speaker), displayScale: displayScale,
-                    color: state.store.model.speakerAppearance(lane.speaker, in: model.episodeID)?.color.swiftUIColor ?? .accentColor) {
+                    color: state.store.model.speakerAppearance(lane.speaker, in: model.episodeID)?.color.swiftUIColor ?? .accentColor,
+                    cuts: model.cutTimeline) {
                     guard model.canNavigate else { return }
                     model.selectedSpeaker = lane.speaker
                     model.selectedWord = nil
@@ -427,19 +447,24 @@ struct EpisodeCleanupContent: View {
                 }
                 .frame(height: model.laneHeight)
                 .overlay {
+                    ManualCutMarkers(model: model) { model.selectedSpeaker = lane.speaker }
+                }
+                .overlay {
                     FillerTimingOverlay(model: model, reviews: model.visibleFillers(for: lane))
                 }
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("\(lane.name), aligned Primary waveform")
-                .accessibilityValue("Measured Primary channel; hatched intervals have no accepted timing. Click to seek or set In/Out. Dotted filler rails have independent timing handles; no track dragging or cuts.")
+                .accessibilityValue("Measured Primary channel; hatched intervals have no accepted timing. Click to seek or set In/Out. Dotted filler rails have independent timing handles; red scissors mark manual cross-track cuts.")
                 .accessibilityIdentifier("ww.cleanup.waveform.\(lane.id)")
+                .anchorPreference(key: AudioTimelineToolbarAnchor.self, value: .bounds) {
+                    (model.selectedSpeaker ?? model.plan?.lanes.first?.speaker) == lane.speaker
+                        && (model.listening.selection != nil || model.selectedManualCut != nil) ? $0 : nil
+                }
                 if let transcript = model.transcript(for: lane) {
-                    let visibleWords = model.visibleWords(for: lane)
-                    let untimed = transcript.words.filter { $0.alignedStart == nil }
-                    if !visibleWords.isEmpty {
-                        wordStrip(lane, words: visibleWords, uncertainIDs: uncertainIDs)
-                    }
-                    if (visibleWords + untimed).contains(where: { uncertainIDs.contains($0.id) }) {
+                    wordStrip(lane, words: transcript.words, uncertainIDs: uncertainIDs)
+                    if !uncertainIDs.isEmpty,
+                       (model.visibleWords(for: lane) + transcript.words.filter { $0.alignedStart == nil })
+                        .contains(where: { uncertainIDs.contains($0.id) }) {
                         Label("Uncertain recognition: repetitive output. Listen to verify; raw text is preserved.",
                               systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.orange)
@@ -455,6 +480,7 @@ struct EpisodeCleanupContent: View {
             }
             .padding(.vertical, 3)
         }
+        .zIndex(model.selectedFiller?.speaker == lane.speaker ? 1 : 0)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.cleanup.speaker.\(lane.id)")
     }
@@ -467,7 +493,7 @@ struct EpisodeCleanupContent: View {
             zoom: { time in
                 model.seek(to: time)
                 model.zoomTimeline(duration: min(5, model.maximumDuration))
-            }, uncertainWordIDs: uncertainIDs,
+            }, uncertainWordIDs: uncertainIDs, cuts: model.cutTimeline, sourceBounds: lane.start...lane.end,
             selectUnit: { model.select($0, speaker: lane.speaker) })
             .accessibilityIdentifier("ww.cleanup.words.\(lane.id)")
     }
@@ -475,12 +501,12 @@ struct EpisodeCleanupContent: View {
     private var selectedWordRange: ClosedRange<Double>? {
         guard let a = model.selectedWord?.alignedStart, let b = model.selectedWord?.alignedEnd,
               a.isFinite, b.isFinite, b > a else { return nil }
-        return a...b
+        return model.displayRange(start: a, end: b)
     }
 }
 
 private struct CleanupWaveform: View {
-    let strokes: [AlignmentWaveformStroke]
+    let index: AlignmentWaveformStrokeIndex
     let snapshot: UUID
     let start: Double
     let duration: Double
@@ -492,6 +518,7 @@ private struct CleanupWaveform: View {
     let muted: Bool
     let displayScale: Double
     var color: Color = .accentColor
+    var cuts: ManualCutTimeline = .unedited
     let seek: (Double) -> Void
 
     var body: some View {
@@ -499,10 +526,10 @@ private struct CleanupWaveform: View {
             ZStack {
                 color.opacity(0.045)
                 AudioTimelineWaveformDrawing(
-                    snapshot: snapshot, strokes: strokes, size: geometry.size,
+                    snapshot: snapshot, index: index, size: geometry.size,
                     start: start, duration: duration,
                     color: muted ? color.opacity(0.45) : color, lineWidth: 1,
-                    gain: AlignmentWaveformProjection.displayGain(for: strokes, normalized: normalized),
+                    gain: normalized ? index.normalizedGain : 1,
                     displayScale: displayScale
                 )
                 .equatable()
@@ -520,15 +547,17 @@ private struct CleanupWaveform: View {
                     baseline.move(to: CGPoint(x: 0, y: size.height / 2))
                     baseline.addLine(to: CGPoint(x: size.width, y: size.height / 2))
                     context.stroke(baseline, with: .color(.secondary.opacity(0.25)), lineWidth: 1)
-                    for marker in [range?.tracksIn, range?.tracksOut].compactMap({ $0 }) {
+                    for marker in [range?.tracksIn, range?.tracksOut].compactMap({ $0 }).map({ cuts.editedTime(forAlignedTime: $0) }) {
                         context.fill(Path(CGRect(x: x(marker), y: 0, width: 2, height: size.height)),
                                      with: .color(.yellow))
                     }
-                    if let markIn = range?.tracksIn {
+                    if let raw = range?.tracksIn {
+                        let markIn = cuts.editedTime(forAlignedTime: raw)
                         context.fill(Path(CGRect(x: 0, y: 0, width: max(0, min(size.width, x(markIn))), height: size.height)),
                                      with: .color(.secondary.opacity(0.15)))
                     }
-                    if let markOut = range?.tracksOut {
+                    if let raw = range?.tracksOut {
+                        let markOut = cuts.editedTime(forAlignedTime: raw)
                         let lower = max(0, min(size.width, x(markOut)))
                         context.fill(Path(CGRect(x: lower, y: 0, width: size.width - lower, height: size.height)),
                                      with: .color(.secondary.opacity(0.15)))
@@ -540,7 +569,8 @@ private struct CleanupWaveform: View {
                     var gaps = Path()
                     var cursor = start
                     for region in regions.sorted(by: { $0.alignedStart < $1.alignedStart }) {
-                        let lo = max(start, region.alignedStart), hi = min(start + duration, region.alignedEnd)
+                        let lo = max(start, cuts.editedTime(forAlignedTime: region.alignedStart))
+                        let hi = min(start + duration, cuts.editedTime(forAlignedTime: region.alignedEnd))
                         guard hi > lo else { continue }
                         if lo > cursor { gaps.addRect(CGRect(x: x(cursor), y: 0, width: x(lo) - x(cursor), height: size.height)) }
                         cursor = max(cursor, hi)

@@ -49,6 +49,9 @@ extension ShowDocumentModel {
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if expectedSchemaVersion < 8, episode.cleanup?.manualCuts != nil {
+                issues.append(.init(.invalidCleanup, "schemas before 8 cannot contain manual cuts"))
+            }
             if episode.cleanup?.isValid == false {
                 issues.append(.init(.invalidCleanup, "episode \(episode.id) has invalid cleanup state"))
             }

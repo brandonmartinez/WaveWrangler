@@ -89,6 +89,10 @@ final class WaveformNavigationUITests: XCTestCase {
         let track = tracks(in: app).firstMatch
         XCTAssertTrue(track.waitForExistence(timeout: 20), app.debugDescription)
         reveal(track, in: app)
+        let rulerSurface = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
+        XCTAssertEqual(rulerSurface.frame.minX, track.frame.minX, accuracy: 2)
+        XCTAssertEqual(rulerSurface.frame.width, track.frame.width, accuracy: 2,
+                       "The pinned ruler must use the tracks' measured width, excluding the native scroll gutter")
         let before = try viewport(in: app)
         let playhead = app.textFields["alignment.waveforms.playhead"].value as? String
         let height = track.frame.height
@@ -113,6 +117,16 @@ final class WaveformNavigationUITests: XCTestCase {
         let resized = track.frame.height
         XCTAssertEqual(try viewport(in: app).start, zoomed.start, accuracy: 0.002)
         XCTAssertEqual(try viewport(in: app).duration, zoomed.duration, accuracy: 0.002)
+        let controls = [
+            app.textFields["alignment.waveforms.playhead"],
+            app.sliders["alignment.waveforms.zoom"],
+            app.sliders["alignment.waveforms.laneHeight"],
+            app.descendants(matching: .any)["alignment.waveforms.layout"],
+            app.menuButtons["alignment.waveforms.tool"],
+            app.descendants(matching: .any)["alignment.waveforms.ruler.surface"],
+        ]
+        let fixedFrames = controls.map(\.frame)
+        XCTAssertTrue(controls.allSatisfy(\.isHittable), "Track controls are reachable before scrolling")
         let oldY = track.frame.minY
         track.scroll(byDeltaX: 0, deltaY: -100)
         XCTAssertTrue(wait { abs(track.frame.minY - oldY) > 5 },
@@ -121,7 +135,30 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(try viewport(in: app).start, zoomed.start, accuracy: 0.002)
         XCTAssertEqual(try viewport(in: app).duration, zoomed.duration, accuracy: 0.002)
         XCTAssertEqual(app.textFields["alignment.waveforms.playhead"].value as? String, playhead)
+        for (control, frame) in zip(controls, fixedFrames) {
+            XCTAssertTrue(control.isHittable, "\(control.identifier) stays reachable while tracks scroll")
+            XCTAssertEqual(control.frame.minY, frame.minY, accuracy: 1,
+                           "\(control.identifier) is anchored to the workspace chrome")
+            XCTAssertEqual(control.frame.minX, frame.minX, accuracy: 1)
+        }
         capture(app, name: "Native scroll axes preserve timeline and ordinary vertical scrolling")
+        let scrolledFrame = track.frame
+        let args = app.launchArguments
+        let folderIndex = try XCTUnwrap(args.firstIndex(of: "-WWUITestShowFolder"))
+        let file = "\(args[folderIndex + 1])/Native scroll.wwshow"
+        app.typeKey("s", modifierFlags: .command)
+        app.terminate()
+        app.launchArguments = [
+            "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES",
+            "-WWUITestCenterWindows", "YES", "-WWUITestMinimumShowWindow", "YES",
+            "-WWUITestOpenWithoutShowWindows", file,
+        ]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(track.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(wait { abs(track.frame.minY - scrolledFrame.minY) <= 2 },
+                      "Saved vertical position must be restored after waveform tracks finish loading")
+        XCTAssertEqual(track.frame.height, scrolledFrame.height, accuracy: 1)
     }
 
     func testEditingAnotherMarkersBoundaryKeepsItsSelectionZoomAndViewportThroughUndoRedo() throws {
@@ -129,6 +166,8 @@ final class WaveformNavigationUITests: XCTestCase {
         defer { app.terminate() }
         let track = tracks(in: app).firstMatch
         XCTAssertTrue(track.waitForExistence(timeout: 20), app.debugDescription)
+        app.menuBars.menuBarItems["Window"].click()
+        app.menuBars.menuItems["Zoom"].click()
         reveal(track, in: app)
         let recordingSidebar = app.buttons["ww.sidebar.recording"]
         if recordingSidebar.value as? String == "Shown" { recordingSidebar.click() }
@@ -240,8 +279,12 @@ final class WaveformNavigationUITests: XCTestCase {
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
         let scroll = app.scrollViews["ww.alignment.workspace"]
         for _ in 0..<12 {
-            if element.isHittable, scroll.frame.contains(element.frame) { return }
-            scroll.scroll(byDeltaX: 0, deltaY: element.frame.midY > scroll.frame.midY ? -100 : 100)
+            let chrome = app.descendants(matching: .any)["alignment.waveforms.controls"]
+            if element.isHittable,
+               scroll.frame.contains(CGPoint(x: element.frame.midX, y: element.frame.midY))
+                || chrome.frame.contains(element.frame) { return }
+            let distance = element.frame.midY - scroll.frame.midY
+            scroll.scroll(byDeltaX: 0, deltaY: -min(100, max(-100, distance)))
         }
         XCTAssertTrue(element.isHittable, element.debugDescription)
     }

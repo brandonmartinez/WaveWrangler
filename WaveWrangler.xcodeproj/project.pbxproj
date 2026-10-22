@@ -70,6 +70,7 @@
 				Alignment/AlignmentSourceAccess.swift,
 				Alignment/AlignmentWaveform.swift,
 				Alignment/AlignmentWaveformCache.swift,
+				Alignment/AlignmentWaveformStrokeIndex.swift,
 				Alignment/AnchorTimeEditing.swift,
 				Document/CopyElsewhereRetryGate.swift,
 				Document/FormatUpdate.swift,

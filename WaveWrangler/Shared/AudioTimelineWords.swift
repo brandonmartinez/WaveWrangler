@@ -1,6 +1,59 @@
 import SwiftUI
 import WWCore
 
+struct AudioTimelineWordIndex: Sendable {
+    let words: [TranscriptWord]
+    let averageDuration: Double
+    private let maximumEnds: [Double]
+
+    init(words: [TranscriptWord], cuts: ManualCutTimeline = .unedited,
+         sourceBounds: ClosedRange<Double>? = nil) {
+        let timed = words.enumerated().compactMap { offset, word -> (Int, TranscriptWord)? in
+            guard let start = word.alignedStart, let end = word.alignedEnd,
+                  start.isFinite, end.isFinite, end > start, (end - start).isFinite else { return nil }
+            if let sourceBounds, end <= sourceBounds.lowerBound || start >= sourceBounds.upperBound { return nil }
+            var projected = word
+            projected.alignedStart = cuts.editedTime(forAlignedTime: start)
+            projected.alignedEnd = cuts.editedTime(forAlignedTime: end)
+            guard let lo = projected.alignedStart, let hi = projected.alignedEnd, hi > lo else { return nil }
+            return (offset, projected)
+        }.sorted {
+            let a = $0.1.alignedStart ?? 0, b = $1.1.alignedStart ?? 0
+            return a == b ? $0.0 < $1.0 : a < b
+        }.map(\.1)
+        self.words = timed
+        averageDuration = timed.isEmpty ? 0 : timed.reduce(0) {
+            $0 + (($1.alignedEnd ?? 0) - ($1.alignedStart ?? 0)) / Double(timed.count)
+        }
+        var latest = -Double.infinity
+        maximumEnds = timed.map {
+            latest = max(latest, $0.alignedEnd ?? latest)
+            return latest
+        }
+    }
+
+    func visible(start: Double, end: Double) -> [TranscriptWord] {
+        var lo = 0, hi = words.count
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2
+            if maximumEnds[mid] <= start { lo = mid + 1 } else { hi = mid }
+        }
+        let first = lo
+        hi = words.count
+        while lo < hi {
+            let mid = lo + (hi - lo) / 2
+            if (words[mid].alignedStart ?? .infinity) < end { lo = mid + 1 } else { hi = mid }
+        }
+        return words[first..<lo].filter { ($0.alignedEnd ?? -.infinity) > start }
+    }
+
+    @concurrent
+    static func prepare(words: [TranscriptWord], cuts: ManualCutTimeline,
+                        sourceBounds: ClosedRange<Double>? = nil) async -> Self {
+        Self(words: words, cuts: cuts, sourceBounds: sourceBounds)
+    }
+}
+
 struct AudioTimelineWordLayout {
     enum Detail: Int {
         case hidden, sentence, phrase, word, timing
@@ -38,19 +91,16 @@ struct AudioTimelineWordLayout {
 
     static func make(words: [TranscriptWord], start: Double, duration: Double, width: Double,
                      uncertainWordIDs: Set<UUID> = []) -> Self {
+        make(index: AudioTimelineWordIndex(words: words), start: start, duration: duration, width: width,
+             uncertainWordIDs: uncertainWordIDs)
+    }
+
+    static func make(index: AudioTimelineWordIndex, start: Double, duration: Double, width: Double,
+                     uncertainWordIDs: Set<UUID> = []) -> Self {
         let empty = Self(placements: [], densityRanges: [], uncertainRanges: [], wordCount: 0, detail: .hidden)
         guard start.isFinite, duration.isFinite, duration > 0, (start + duration).isFinite,
               width.isFinite, width > 0 else { return empty }
-        let timed = words.enumerated().filter { _, word in
-            guard let a = word.alignedStart, let b = word.alignedEnd else { return false }
-            return a.isFinite && b.isFinite && b > a && (b - a).isFinite
-        }
-        let visible = timed.filter { _, word in
-            (word.alignedEnd ?? start) > start && (word.alignedStart ?? start + duration) < start + duration
-        }.sorted {
-            let a = $0.element.alignedStart ?? 0, b = $1.element.alignedStart ?? 0
-            return a == b ? $0.offset < $1.offset : a < b
-        }.map(\.element)
+        let visible = index.visible(start: start, end: start + duration)
         guard !visible.isEmpty else { return empty }
         func coordinates(_ words: [TranscriptWord]) -> (x: Double, width: Double) {
             let lo = max(0, ((words.compactMap(\.alignedStart).min() ?? start) - start) / duration * width)
@@ -69,10 +119,7 @@ struct AudioTimelineWordLayout {
             return result
         }
         let pixelsPerSecond = width / duration
-        let averageWordDuration = timed.reduce(0.0) {
-            $0 + (($1.element.alignedEnd ?? 0) - ($1.element.alignedStart ?? 0)) / Double(timed.count)
-        }
-        let wordWidth = averageWordDuration * pixelsPerSecond
+        let wordWidth = index.averageDuration * pixelsPerSecond
         let detail: Detail = pixelsPerSecond < 8 || wordWidth < 4 ? .hidden
             : wordWidth < 16 ? .sentence : wordWidth < 40 ? .phrase
             : wordWidth < 80 ? .word : .timing
@@ -144,11 +191,21 @@ struct AudioTimelineWords: View {
     let select: (TranscriptWord) -> Void
     let zoom: (Double) -> Void
     var uncertainWordIDs: Set<UUID> = []
+    var cuts: ManualCutTimeline = .unedited
+    var sourceBounds: ClosedRange<Double>? = nil
     var selectUnit: (([TranscriptWord]) -> Void)? = nil
     @State private var availableWidth = 0.0
+    private struct Input: Equatable {
+        let words: [TranscriptWord]
+        let cuts: ManualCutTimeline
+        let sourceBounds: ClosedRange<Double>?
+    }
+    @State private var prepared: (input: Input, index: AudioTimelineWordIndex)?
 
     var body: some View {
-        let layout = AudioTimelineWordLayout.make(words: words, start: start, duration: duration,
+        let input = Input(words: words, cuts: cuts, sourceBounds: sourceBounds)
+        let index = index(for: input)
+        let layout = AudioTimelineWordLayout.make(index: index, start: start, duration: duration,
             width: availableWidth, uncertainWordIDs: uncertainWordIDs)
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
@@ -162,10 +219,21 @@ struct AudioTimelineWords: View {
         .frame(height: layout.height)
         .contentShape(Rectangle())
         .onGeometryChange(for: Double.self) { $0.size.width } action: { availableWidth = $0 }
+        .task(id: input) {
+            let index = await AudioTimelineWordIndex.prepare(
+                words: input.words, cuts: input.cuts, sourceBounds: input.sourceBounds)
+            guard !Task.isCancelled else { return }
+            prepared = (input, index)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.transcript.timeline")
         .accessibilityLabel("Timeline transcript: \(layout.detail.title)."
             + (layout.isDense ? " Read the full transcript in the inspector." : ""))
+    }
+
+    private func index(for input: Input) -> AudioTimelineWordIndex {
+        if let prepared, prepared.input == input { return prepared.index }
+        return AudioTimelineWordIndex(words: words.count <= 512 ? words : [], cuts: cuts, sourceBounds: sourceBounds)
     }
 
     private func unitButton(_ item: AudioTimelineWordLayout.Placement,
@@ -181,7 +249,10 @@ struct AudioTimelineWords: View {
             item.words.compactMap(\.alignedEnd).max() ?? start,
             uncertain ? ". Uncertain repetitive recognition; listen to verify." : "")
         return Button {
-            if let selectUnit { selectUnit(item.words) } else { select(item.word) }
+            let ids = Set(item.words.map(\.id))
+            let originals = words.filter { ids.contains($0.id) }
+            if let selectUnit { selectUnit(originals) }
+            else if let first = originals.first { select(first) }
         } label: {
             RoundedRectangle(cornerRadius: 3)
                 .fill(fill)

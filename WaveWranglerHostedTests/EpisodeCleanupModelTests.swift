@@ -630,6 +630,128 @@ struct EpisodeCleanupModelTests {
         #expect(document.store.model == adjusted)
     }
 
+    @Test func cuttingTheEntirePrimaryDoesNotInventPaddingAudio() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        let originalBounds = model.bounds
+        var cleanup = model.episode?.cleanup ?? EpisodeCleanup()
+        cleanup.manualCuts = [ManualEpisodeCut(alignmentRevision: 1,
+            startFrame: Int64((originalBounds.lowerBound * 48_000).rounded()),
+            endFrame: Int64((originalBounds.upperBound * 48_000).rounded()))]
+        model.state.store.replaceLoadedModel(try model.state.store.model.settingCleanup(cleanup, in: model.episodeID))
+        model.synchronizeCutTimeline()
+        #expect(model.bounds.lowerBound == model.bounds.upperBound)
+        #expect(!model.canNavigate)
+    }
+
+    @Test func manualMarkerCutRipplesAndRestoresThroughDocumentUndoRedo() throws {
+        let base = try fillerFixture()
+        defer { base.cancel() }
+        let document = ShowDocument()
+        defer { document.updateChangeCount(.changeCleared); document.close() }
+        document.store.replaceLoadedModel(base.state.store.model)
+        let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
+        defer { model.cancel() }
+        model.plan = base.plan
+        model.identities = base.identities
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        let undo = try #require(document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.removeAllActions()
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        let original = document.store.model
+        model.activateFillerMarker(review.id)
+        try #require(model.canApplyManualCut)
+        undo.beginUndoGrouping()
+        model.applyManualCut()
+        undo.endUndoGrouping()
+        #expect(model.error == nil)
+        let edited = document.store.model
+        let cut = try #require(model.activeManualCuts.first)
+        #expect(cut.markerID == review.id)
+        #expect(cut.startFrame == 96_000 && cut.endFrame == 105_600)
+        #expect(model.fillerReviews.first == review && model.listening.selection == nil)
+        #expect(model.visibleFillers(for: try #require(model.plan?.lanes.first)).isEmpty)
+        #expect(model.episode?.alignment == original.episodes[0].alignment)
+        #expect(model.episode?.sources == original.episodes[0].sources)
+        #expect(model.episode?.cleanup?.transcripts == original.episodes[0].cleanup?.transcripts)
+        #expect(abs(model.cutTimeline.editedTime(forAlignedTime: 3) - 2.8) < 0.000_001)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        #expect(try coder.decode(coder.encode(edited, revision: 1)).payload == edited)
+        undo.undo()
+        model.modelDidChange()
+        #expect(document.store.model == original && model.cutTimeline == .unedited)
+        #expect(model.fillerReviews.first == review)
+        undo.redo()
+        model.modelDidChange()
+        #expect(document.store.model == edited && model.activeManualCuts == [cut])
+        undo.beginUndoGrouping()
+        model.restoreManualCut(cut.id)
+        undo.endUndoGrouping()
+        #expect(model.error == nil && model.activeManualCuts.isEmpty)
+        #expect(model.fillerReviews.first == review)
+        undo.undo()
+        model.modelDidChange()
+        #expect(model.activeManualCuts == [cut])
+    }
+
+    @Test func fineTuningACutPreservesProvenanceAndRestoresAdjustedMarkersWithUndo() throws {
+        let base = try fillerFixture()
+        defer { base.cancel() }
+        let document = ShowDocument()
+        defer { document.updateChangeCount(.changeCleared); document.close() }
+        document.store.replaceLoadedModel(base.state.store.model)
+        let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
+        defer { model.cancel() }
+        model.plan = base.plan
+        model.identities = base.identities
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        model.activateFillerMarker(review.id)
+        model.applyManualCut()
+        let original = document.store.model
+        let cut = try #require(model.activeManualCuts.first)
+        let undo = try #require(document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.removeAllActions()
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        undo.beginUndoGrouping()
+        let applied = model.adjustManualCut(cut, start: 2.005, end: 2.195)
+        undo.endUndoGrouping()
+        try #require(applied, "\(model.error ?? "")")
+        let adjusted = try #require(model.activeManualCuts.first)
+        #expect(adjusted.id == cut.id && adjusted.markerID == cut.markerID && adjusted.alignmentRevision == cut.alignmentRevision)
+        #expect(adjusted.startFrame == 96_240 && adjusted.endFrame == 105_360)
+        #expect(model.fillerReviews.first?.initialBounds == review.initialBounds)
+        #expect(model.fillerReviews.first?.word == review.word)
+        #expect(model.episode?.cleanup?.transcripts == original.episodes[0].cleanup?.transcripts)
+        let saved = document.store.model
+        #expect(!model.adjustManualCut(cut, start: 2.01, end: 2.19), "A stale edit cannot overwrite another boundary change")
+        #expect(!model.adjustManualCut(adjusted, start: .nan, end: 2.2))
+        #expect(!model.adjustManualCut(adjusted, start: 2.2, end: 2))
+        #expect(!model.adjustManualCut(adjusted, start: -3, end: 2.2))
+        #expect(document.store.model == saved)
+        undo.undo()
+        model.synchronizeCutTimeline()
+        #expect(document.store.model == original)
+        undo.redo()
+        model.synchronizeCutTimeline()
+        #expect(document.store.model == saved)
+        undo.beginUndoGrouping()
+        model.restoreManualCut(adjusted.id)
+        undo.endUndoGrouping()
+        #expect(model.activeManualCuts.isEmpty && model.selectedFillerID == review.id)
+        let restored = try #require(model.selectedFiller)
+        #expect(restored.bounds.alignedStart == adjusted.alignedStart && restored.bounds.alignedEnd == adjusted.alignedEnd)
+        #expect(model.listening.selection == adjusted.alignedStart...adjusted.alignedEnd)
+        undo.undo()
+        model.synchronizeCutTimeline()
+        #expect(document.store.model == saved && model.activeManualCuts == [adjusted])
+    }
+
     @Test func changedAcceptedRevisionPrimaryAndWorkingRangeDisableWithoutRebasing() throws {
         let model = try fillerFixture()
         defer { model.cancel() }

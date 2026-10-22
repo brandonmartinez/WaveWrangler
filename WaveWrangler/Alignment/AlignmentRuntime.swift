@@ -450,6 +450,7 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         startSeconds: Double, durationSeconds: Double, overview: Bool = false,
         onlySources: Set<SourceID>? = nil, decodedChannels: [SourceID: Int] = [:],
+        revealingCut: UUID? = nil,
         progress: @escaping @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> AlignmentWaveformLoad {
         guard let episode = model.episode(episodeID) else {
@@ -491,13 +492,31 @@ actor AlignmentRuntime {
                         $0.group == groupID && $0.placements.contains(where: { $0.occurrence.source == record.id })
                     })
                     let correction = episode.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == record.id }
-                    envelope = try await WaveformWindowReader.readWindow(
-                        sourceURL: admission.url, source: record.id,
-                        matching: admission.witness, decoder: pipeline.decoder,
-                        startSeconds: startSeconds, durationSeconds: durationSeconds,
-                        groupMap: sourceMap, sourceCorrection: correction,
-                        decodedChannel: decodedChannels[record.id]
-                    )
+                    guard startSeconds.isFinite, durationSeconds.isFinite, durationSeconds > 0,
+                          durationSeconds <= 30, abs(startSeconds) <= 86_400 else {
+                        throw WaveformWindowError.invalidWindow
+                    }
+                    let rate = Double(ManualEpisodeCut.frameRate)
+                    let first = Int64(floor(startSeconds * rate))
+                    let cuts = map == nil || (sourceMap == nil && correction == nil)
+                        ? .unedited : try episode.manualCutTimeline(revealing: revealingCut)
+                    let ranges = cuts.alignedRanges(
+                        forEditedFrames: first..<(first + Int64(ceil(durationSeconds * rate))))
+                    var pieces: [WaveformEnvelope] = []
+                    for range in ranges {
+                        pieces.append(try await WaveformWindowReader.readWindow(
+                            sourceURL: admission.url, source: record.id,
+                            matching: admission.witness, decoder: pipeline.decoder,
+                            startSeconds: Double(range.lowerBound) / rate,
+                            durationSeconds: Double(range.count) / rate,
+                            groupMap: sourceMap, sourceCorrection: correction,
+                            decodedChannel: decodedChannels[record.id]
+                        ))
+                    }
+                    guard let first = pieces.first else { throw WaveformWindowError.invalidWindow }
+                    envelope = WaveformEnvelope(source: first.source, sampleRate: first.sampleRate,
+                        channelCount: first.channelCount, totalFrames: first.totalFrames,
+                        bins: pieces.flatMap(\.bins))
                 }
                 try await reverify(admission)
                 admissions[record.id] = admission
@@ -733,12 +752,23 @@ actor AlignmentRuntime {
 
     func sourceAuditions(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
-        sources requested: [SourceID], outputFrames: Range<Int64>
+        sources requested: [SourceID], outputFrames: Range<Int64>, applyingCuts: Bool = true,
+        revealingCut: UUID? = nil
     ) async throws -> [SourceID: AuditionClip] {
         guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
         guard !requested.isEmpty, Set(requested).count == requested.count else {
             throw WaveformWindowError.invalidSamples
         }
+        guard !outputFrames.isEmpty,
+              outputFrames.lowerBound >= -ManualEpisodeCut.frameLimit,
+              outputFrames.upperBound <= ManualEpisodeCut.frameLimit,
+              outputFrames.count <= Int(Double(AlignedAuditionWindowReader.outputRate)
+                * AlignedAuditionWindowReader.maximumDurationSeconds) else {
+            throw WaveformWindowError.invalidWindow
+        }
+        let alignedRanges = applyingCuts
+            ? try episode.manualCutTimeline(revealing: revealingCut).alignedRanges(forEditedFrames: outputFrames)
+            : [outputFrames]
         let sources = try await resolveSources(episode.sources)
         try await pipeline.activate(model: model, episode: episodeID)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
@@ -752,26 +782,29 @@ actor AlignmentRuntime {
             do {
                 let admission = try await waveformSource(source, sources: sources)
                 let channel = episode.statedChannel(of: source) ?? 0
-                let samples: [Float]
-                if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
-                    let channels = try await pipeline.adaptiveAudioWindow(
-                        model: model, episode: episodeID, source: source,
-                        sourceURL: admission.url, matching: admission.witness, outputFrames: outputFrames
-                    )
-                    guard channels.indices.contains(channel) else { throw WaveformWindowError.invalidSamples }
-                    samples = channels[channel]
-                } else {
-                    guard let record = episode.source(source),
-                          let groupID = record.placement.recorderGroupID,
-                          let group = map.groups.first(where: { $0.group == groupID }),
-                          group.placements.contains(where: { $0.occurrence.source == source })
-                    else { throw WaveformWindowError.mapDoesNotMatchSource }
-                    samples = try await AlignedAuditionWindowReader.readWindow(
-                        sourceURL: admission.url, source: source, matching: admission.witness,
-                        decoder: pipeline.decoder, groupMap: group, decodedChannel: channel,
-                        outputFrames: outputFrames, cache: auditionPCM, revision: revision
-                    )
+                var samples: [Float] = []
+                for alignedFrames in alignedRanges {
+                    if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
+                        let channels = try await pipeline.adaptiveAudioWindow(
+                            model: model, episode: episodeID, source: source,
+                            sourceURL: admission.url, matching: admission.witness, outputFrames: alignedFrames
+                        )
+                        guard channels.indices.contains(channel) else { throw WaveformWindowError.invalidSamples }
+                        samples += channels[channel]
+                    } else {
+                        guard let record = episode.source(source),
+                              let groupID = record.placement.recorderGroupID,
+                              let group = map.groups.first(where: { $0.group == groupID }),
+                              group.placements.contains(where: { $0.occurrence.source == source })
+                        else { throw WaveformWindowError.mapDoesNotMatchSource }
+                        samples += try await AlignedAuditionWindowReader.readWindow(
+                            sourceURL: admission.url, source: source, matching: admission.witness,
+                            decoder: pipeline.decoder, groupMap: group, decodedChannel: channel,
+                            outputFrames: alignedFrames, cache: auditionPCM, revision: revision
+                        )
+                    }
                 }
+                guard samples.count == outputFrames.count else { throw WaveformWindowError.invalidSamples }
                 clips[source] = AuditionClip(
                     sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples
                 )
@@ -927,7 +960,7 @@ actor AlignmentRuntime {
 
     func cleanupPreview(
         model: ShowDocumentModel, episode episodeID: EpisodeID, start: Double, duration: Double,
-        respectWorkingRange: Bool = true
+        respectWorkingRange: Bool = true, applyingCuts: Bool = true, revealingCut: UUID? = nil
     ) async throws -> CleanupAudio {
         let prepared = try await prepareCleanup(model: model, episode: episodeID, requireReady: respectWorkingRange)
         guard (!respectWorkingRange || prepared.plan.isReady), !prepared.plan.lanes.isEmpty,
@@ -942,6 +975,21 @@ actor AlignmentRuntime {
         let start = first / 48_000, end = last / 48_000, duration = (last - first) / 48_000
         guard last > first, last - first <= 30 * 48_000 else {
             throw CleanupFailure(reason: "The preview window must contain between one frame and 30 seconds.")
+        }
+        let cuts = try episode.manualCutTimeline(revealing: revealingCut)
+        if applyingCuts, !cuts.removals.isEmpty {
+            var channels: [SpeakerID: [Float]] = [:]
+            for frames in cuts.alignedRanges(forEditedFrames: Int64(first)..<Int64(last)) {
+                let piece = try await cleanupPreview(model: model, episode: episodeID,
+                    start: Double(frames.lowerBound) / 48_000, duration: Double(frames.count) / 48_000,
+                    respectWorkingRange: respectWorkingRange, applyingCuts: false)
+                for (speaker, samples) in piece.channels { channels[speaker, default: []] += samples }
+            }
+            guard channels.count == prepared.plan.lanes.count,
+                  channels.values.allSatisfy({ $0.count == Int(last - first) }) else {
+                throw WaveformWindowError.invalidSamples
+            }
+            return CleanupAudio(start: start, duration: duration, channels: channels)
         }
         let sources = try await resolveSources(episode.sources)
         let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)

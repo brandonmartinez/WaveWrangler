@@ -91,7 +91,7 @@ struct AlignmentPersistenceTests {
     /// show schema bump (so an older build refuses the show as unknown-newer at the envelope), a C5 migration step
     /// and frozen golden fixtures of the previous show schema — update both pins together, never one alone.
     @Test func schemaVersionsArePinned() {
-        #expect(SchemaVersion.show == 7, "a show schema bump needs a C5 step and frozen goldens of the previous schema")
+        #expect(SchemaVersion.show == 8, "a show schema bump needs a C5 step and frozen goldens of the previous schema")
         #expect(TimeMapSchema.currentVersion == 1, "a time-map schema bump requires a show schema bump (see this test's doc comment)")
     }
 

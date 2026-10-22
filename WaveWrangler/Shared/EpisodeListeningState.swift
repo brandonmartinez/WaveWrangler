@@ -5,6 +5,18 @@ import WWCore
 @MainActor
 @Observable
 final class EpisodeListeningState {
+    var workspace = EpisodeWorkspaceViewState() {
+        didSet {
+            if workspace != oldValue { viewStore?.save(workspace) }
+        }
+    }
+    @ObservationIgnored private var viewStore: EpisodeWorkspaceViewStore?
+
+    func restoreWorkspace(from store: EpisodeWorkspaceViewStore) {
+        workspace = store.load() ?? EpisodeWorkspaceViewState()
+        viewStore = store
+    }
+
     enum Tool: String, CaseIterable {
         case select = "Pointer"
         case move = "Move recorder"
@@ -51,12 +63,27 @@ final class EpisodeListeningState {
         return (try? playback.applying(policy, in: episode)) == playback
     }
 
-    var selection: ClosedRange<Double>?
+    var selection: ClosedRange<Double>? {
+        didSet {
+            if selection != oldValue, selection != nil { selectionToolsPresented = true }
+        }
+    }
+    var selectionToolsPresented = true
     var selectedTranscriptText: String?
+    var expandedManualCutID: UUID? {
+        get { workspace.expandedManualCutID }
+        set { workspace.expandedManualCutID = newValue }
+    }
     var cycleRange: ClosedRange<Double>?
     var cycleEnabled = false
-    var collapsedRecorders: Set<RecorderGroupID> = []
-    var collapsedSpeakers: Set<SpeakerID> = []
+    var collapsedRecorders: Set<RecorderGroupID> {
+        get { workspace.collapsedRecorders }
+        set { workspace.collapsedRecorders = newValue }
+    }
+    var collapsedSpeakers: Set<SpeakerID> {
+        get { workspace.collapsedSpeakers }
+        set { workspace.collapsedSpeakers = newValue }
+    }
     var editingPolicyRevision: Int?
     var previousPlayback: EpisodePlaybackState?
 
@@ -65,6 +92,7 @@ final class EpisodeListeningState {
         let lo = max(bounds.lowerBound, min(start, end))
         let hi = min(bounds.upperBound, max(start, end))
         selection = hi > lo ? lo...hi : nil
+        selectionToolsPresented = true
         selectedTranscriptText = nil
     }
 
@@ -80,8 +108,6 @@ struct AudioTimelineSelectionOverlay: View {
     @Bindable var listening: EpisodeListeningState
     let start: Double
     let duration: Double
-    let play: (Double) -> Void
-    var cleanup: EpisodeCleanupModel? = nil
 
     var body: some View {
         GeometryReader { geometry in
@@ -89,18 +115,52 @@ struct AudioTimelineSelectionOverlay: View {
                 let lo = max(0, (range.lowerBound - start) / duration * geometry.size.width)
                 let hi = min(geometry.size.width, (range.upperBound - start) / duration * geometry.size.width)
                 if hi > lo {
-                    let toolbarWidth = min(geometry.size.width, cleanup?.selectedFiller == nil ? 148 : 330)
-                    let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= 320
-                    let layout = horizontal
-                        ? AnyLayout(HStackLayout(spacing: 6))
-                        : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                     Rectangle().fill(Color.accentColor.opacity(0.16))
                         .frame(width: hi - lo, height: geometry.size.height)
                         .offset(x: lo)
-                        .allowsHitTesting(false)
+                }
+            }
+        }
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
+    }
+}
+
+struct AudioTimelineSelectionToolbar: View {
+    @Bindable var listening: EpisodeListeningState
+    let start: Double
+    let duration: Double
+    let play: (Double) -> Void
+    var cleanup: EpisodeCleanupModel? = nil
+    var trackWidth = 400.0
+
+    private var rowHeight: Double {
+        Self.height(width: trackWidth, cleanup: cleanup)
+    }
+
+    static func height(width: Double, cleanup: EpisodeCleanupModel?) -> Double {
+        cleanup?.selectedManualCut == nil && cleanup?.selectedFiller != nil && width < 350 ? 76 : 44
+    }
+
+    var body: some View {
+        GeometryReader { geometry in
+            if let range = cleanup?.manualCutSelection ?? listening.selection, duration > 0 {
+                let lo = max(0, (range.lowerBound - start) / duration * geometry.size.width)
+                let hi = min(geometry.size.width, (range.upperBound - start) / duration * geometry.size.width)
+                if hi > lo || (cleanup?.selectedManualCut != nil && hi >= 0 && lo <= geometry.size.width) {
+                    let toolbarWidth = min(geometry.size.width,
+                        cleanup?.selectedManualCut != nil ? 252 : cleanup?.selectedFiller == nil ? 184 : 366)
+                    let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= 350
+                    let layout = horizontal
+                        ? AnyLayout(HStackLayout(spacing: 6))
+                        : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
                     layout {
-                        auditionButtons(range)
-                        if let cleanup, let review = cleanup.selectedFiller {
+                        if let cleanup, let cut = cleanup.selectedManualCut {
+                            ManualCutToolbar(model: cleanup, cut: cut)
+                        } else {
+                            auditionButtons(range)
+                        }
+                        if let cleanup, cleanup.selectedManualCut == nil, let review = cleanup.selectedFiller {
                             if horizontal {
                                 Divider().frame(height: 22)
                             } else {
@@ -113,6 +173,9 @@ struct AudioTimelineSelectionOverlay: View {
                     .padding(4)
                     .frame(width: toolbarWidth)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
+                    .background(AudioTimelineToolbarClickAway {
+                        listening.selectionToolsPresented = false
+                    })
                     .position(x: TimelineToolbarPlacement.center(
                         selectionStart: lo, selectionEnd: hi,
                         toolbarWidth: toolbarWidth, trackWidth: geometry.size.width),
@@ -124,6 +187,7 @@ struct AudioTimelineSelectionOverlay: View {
                 }
             }
         }
+        .frame(height: rowHeight)
     }
 
     private func auditionButtons(_ range: ClosedRange<Double>) -> some View {
@@ -151,6 +215,13 @@ struct AudioTimelineSelectionOverlay: View {
                 cleanup?.selectedFillerID = nil
                 listening.selection = nil
                 listening.selectedTranscriptText = nil
+            }
+            if let cleanup {
+                Button("Cut across all aligned tracks", systemImage: "scissors") { cleanup.applyManualCut() }
+                    .tint(.red)
+                    .disabled(!cleanup.canApplyManualCut)
+                    .help("Remove this interval from every aligned track and ripple following audio to its start. Originals remain unchanged; Undo restores it.")
+                    .accessibilityIdentifier("ww.timeline.selection.cut")
             }
         }
         .labelStyle(.iconOnly)
