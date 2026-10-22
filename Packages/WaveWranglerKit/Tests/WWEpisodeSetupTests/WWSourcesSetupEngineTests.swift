@@ -376,13 +376,13 @@ struct WWSourcesSetupEngineTests {
         do {
             try await engine.confirmCurrentOriginal(sourceID)
             Issue.record("A source still in the show must block duplicate confirmation")
-        } catch let error as SourceEngineError {
+        } catch {
             #expect(error.reason.contains("Earlier source"))
         }
         do {
             _ = try await engine.commitRelink(sourceID, to: candidate, identity: comparison.acceptedIdentity)
             Issue.record("Relink must not accept a second active source for the same original")
-        } catch let error as SourceEngineError {
+        } catch {
             #expect(error.reason.contains("Earlier source"))
         }
         #expect(await store.record(for: key) == original)
