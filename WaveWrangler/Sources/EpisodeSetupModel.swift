@@ -26,6 +26,7 @@ final class EpisodeSetupModel {
         case relink(RelinkContext)
         case number(NumberSheetContext)
         case name(NameSheetContext)
+        case originalAuthorization([SourceRecord])
 
         var id: String {
             switch self {
@@ -33,6 +34,7 @@ final class EpisodeSetupModel {
             case .relink: "relink"
             case let .number(context): "number-\(context.kind)"
             case let .name(context): "name-\(context.kind)"
+            case .originalAuthorization: "original-authorization"
             }
         }
     }
@@ -146,6 +148,17 @@ final class EpisodeSetupModel {
         return pendingInspectorFocus
     }
     var isScanning = false
+    private(set) var isAuthorizingOriginals = false
+
+    var originalsNeedingAuthorization: [SourceRecord] {
+        (episode?.sources ?? []).filter { status(of: $0.id).identity == .confirmationNeeded }
+    }
+
+    func reviewOriginalAuthorization() {
+        let sources = originalsNeedingAuthorization
+        guard !sources.isEmpty, !isAuthorizingOriginals else { return }
+        sheet = .originalAuthorization(sources)
+    }
 
     @ObservationIgnored private var observation: Task<Void, Never>?
     @ObservationIgnored private var observedIDs: Set<SourceID> = []
@@ -582,7 +595,7 @@ final class EpisodeSetupModel {
                 try await engine.commitImport(accepted, fromScan: token)
                 self.inspectMediaDetails(Set(accepted.values), explicitlyRequested: true)
             } catch {
-                self.message = "The sources were added, but WaveWrangler couldn't save permission to reach them on this Mac: \(Self.reason(error))."
+                self.message = "The sources were added, but their audio wasn't authorized: \(Self.reason(error)). Review recording access or relink the originals before using their audio."
             }
             self.startObserving()
             try? await Task.sleep(for: .milliseconds(200))
@@ -599,27 +612,33 @@ final class EpisodeSetupModel {
 
     // MARK: Relink / regrant (states §4)
 
-    func confirmCurrentOriginal(_ sourceID: SourceID) {
-        guard let source = episode?.source(sourceID),
-              let engine = engine as? WWSourcesSetupEngine else {
-            message = "Confirmation isn't available for this source. Choose Relink Source instead."
+    func authorizeOriginals(_ sources: [SourceRecord]) {
+        sheet = nil
+        guard !isAuthorizingOriginals, let engine = engine as? WWSourcesSetupEngine else {
+            message = "Recording authorization isn't available. Choose Relink Source instead."
             return
         }
+        isAuthorizingOriginals = true
         Task {
-            guard await Dialogs.confirm(
-                in: window(),
-                message: "Confirm this original recording?",
-                informative: "Confirm that “\(source.displayNameHint)” is the original you added. WaveWrangler checks its unchanged file details and a read-only source witness before enabling audio; it never changes the file.",
-                confirmTitle: "Confirm Original",
-                destructiveIsDefault: false
-            ) else { return }
-            do {
-                try await engine.confirmCurrentOriginal(sourceID)
-                message = "Original confirmed. Audio is available in the editor."
-                ensureConfirmedOverviews()
-            } catch {
-                message = "Original wasn't confirmed: \(Self.reason(error)). No audio was opened for playback."
+            var failures: [String] = []
+            var authorized = 0
+            for source in sources {
+                guard episode?.source(source.id) != nil else {
+                    failures.append("\(source.displayNameHint): no longer in this episode")
+                    continue
+                }
+                do {
+                    try await engine.confirmCurrentOriginal(source.id)
+                    authorized += 1
+                } catch {
+                    failures.append("\(source.displayNameHint): \(Self.reason(error))")
+                }
             }
+            isAuthorizingOriginals = false
+            message = failures.isEmpty
+                ? "Authorized \(authorized) recordings. Originals remain unchanged."
+                : "Authorized \(authorized) of \(sources.count) recordings. Not authorized: \(failures.joined(separator: "; ")). Relink these originals to review their access."
+            ensureConfirmedOverviews(force: true)
         }
     }
 

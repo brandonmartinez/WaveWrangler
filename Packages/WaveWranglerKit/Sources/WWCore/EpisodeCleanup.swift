@@ -129,26 +129,101 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
         }
         result.transcriptHistory = history.isEmpty ? nil : history
         result.transcripts = replacement
+        if replacement != transcripts {
+            result.fillerReviews = fillerReviews?.filter(\.retainsUserJudgment)
+        }
         guard result.isValid else { throw .invalidCleanup }
-        return result.proposingFillers()
+        result = result.proposingFillers()
+        guard result.isValid else { throw .invalidCleanup }
+        return result
+    }
+
+    /// Old reviews and cuts remain recoverable but cannot activate against the new alignment revision.
+    public func resettingForReplacementAlignment() throws(DomainError) -> Self {
+        var result = self
+        let history = (transcriptHistory ?? []) + transcripts
+        result.transcriptHistory = history.isEmpty ? nil : history
+        result.transcripts = []
+        result.workingRange = nil
+        guard result.isValid else { throw .invalidCleanup }
+        return result
+    }
+
+    public func capturedTranscript(for review: FillerTimingReview) -> SpeakerTranscript? {
+        let candidates = transcripts + (review.retainsUserJudgment ? transcriptHistory ?? [] : [])
+        return candidates.first { review.matches($0) }
     }
 
     /// Existing decisions, including rejections and stale history, are never overwritten by another scan.
     public func proposingFillers() -> Self {
         var result = self
         var reviews = fillerReviews ?? []
+        let validatedEvents = ValidatedFillerEvents(reviews)
         let existing = Set(reviews.compactMap { review -> String? in
             guard let transcript = review.transcriptID, let word = review.word?.id else { return nil }
             return "\(transcript)/\(word)"
         })
         for transcript in transcripts {
-            reviews += FillerTimingReview.detections(in: transcript).filter {
-                guard let word = $0.word else { return false }
+            reviews += FillerTimingReview.detections(in: transcript).filter { detection in
+                guard let word = detection.word else { return false }
                 return !existing.contains("\(transcript.id)/\(word.id)")
+                    && !validatedEvents.contains(detection)
             }
         }
         if !reviews.isEmpty { result.fillerReviews = reviews }
         return result
+    }
+}
+
+/// Merged source-frame intervals keep rescans bounded even with many retained user decisions.
+private struct ValidatedFillerEvents {
+    private struct Key: Hashable {
+        let speaker: SpeakerID
+        let primary: ChannelReference
+        let rate: Int
+        let identity: String
+        let revision: Int
+
+        init(_ review: FillerTimingReview) {
+            speaker = review.speaker
+            primary = review.primary
+            rate = review.sourceRate
+            identity = review.sourceIdentity
+            revision = review.alignmentRevision
+        }
+    }
+
+    private var intervals: [Key: [Range<Int64>]] = [:]
+
+    init(_ reviews: [FillerTimingReview]) {
+        for review in reviews where review.retainsUserJudgment {
+            for bounds in [review.initialBounds, review.bounds] {
+                intervals[Key(review), default: []].append(bounds.sourceStartFrame..<bounds.sourceEndFrame)
+            }
+        }
+        for key in Array(intervals.keys) {
+            var merged: [Range<Int64>] = []
+            for interval in intervals[key, default: []].sorted(by: { $0.lowerBound < $1.lowerBound }) {
+                if let prior = merged.last, prior.upperBound >= interval.lowerBound {
+                    merged[merged.count - 1] = prior.lowerBound..<max(prior.upperBound, interval.upperBound)
+                } else {
+                    merged.append(interval)
+                }
+            }
+            intervals[key] = merged
+        }
+    }
+
+    func contains(_ review: FillerTimingReview) -> Bool {
+        guard let ranges = intervals[Key(review)] else { return false }
+        let bounds = review.initialBounds
+        var lo = 0, hi = ranges.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if ranges[mid].upperBound <= bounds.sourceStartFrame { lo = mid + 1 }
+            else { hi = mid }
+        }
+        return lo < ranges.count && ranges[lo].lowerBound < bounds.sourceEndFrame
     }
 }
 

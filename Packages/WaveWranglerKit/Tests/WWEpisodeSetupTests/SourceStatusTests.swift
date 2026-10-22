@@ -46,7 +46,7 @@ struct SourceStatusTests {
         #expect(TransferStatus.noConnection.presentation.inspectorText == "Can't download — no network connection")
         #expect(TransferStatus.downloadsOff.presentation.inspectorText == "Downloads are off")
         #expect(IdentityStatus.notChecked.presentation.inspectorText == "Not checked")
-        #expect(IdentityStatus.confirmationNeeded.presentation.summaryText == "Confirm original")
+        #expect(IdentityStatus.confirmationNeeded.presentation.summaryText == "Approve audio")
         #expect(IdentityStatus.detailsMatch.presentation.inspectorText == "File details match what WaveWrangler recorded (audio not compared)")
     }
 
@@ -93,7 +93,7 @@ struct SourceStatusTests {
         #expect(state.audioAdmissionIssue?.contains("Confirm its new location") == true)
         state = ready
         state.identity = .confirmationNeeded
-        #expect(state.audioAdmissionIssue?.contains("Confirm original") == true)
+        #expect(state.audioAdmissionIssue?.contains("Review Recording Access") == true)
         state = ready
         state.identity = .mismatch(differences: "file ID differs")
         #expect(state.audioAdmissionIssue?.contains("different file") == true)
@@ -176,7 +176,7 @@ struct SourceStatusTests {
         s = base; s.location = .moved(newFolder: nil); #expect(attention(s))
         s = base; s.identity = .changed(differences: "x", acceptedByUser: true); #expect(!attention(s))
         s = base; s.identity = .confirmationNeeded
-        #expect(s.summary.text == "Confirm original")
+        #expect(s.summary.text == "Approve audio")
         #expect(attention(s))
     }
 

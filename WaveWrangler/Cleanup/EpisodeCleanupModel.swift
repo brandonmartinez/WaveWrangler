@@ -80,6 +80,8 @@ final class EpisodeCleanupModel {
     @ObservationIgnored var isEditingFillerReview = false
     @ObservationIgnored var fillerPublicationGeneration: UInt64?
     @ObservationIgnored var fillerWordIndexGeneration: UInt64?
+    @ObservationIgnored var fillerTranscriptIndex: [UUID: SpeakerTranscript] = [:]
+    @ObservationIgnored var fillerActiveTranscriptIDs: Set<UUID> = []
     @ObservationIgnored var fillerWordIndex: [UUID: [UUID: TranscriptWord]] = [:]
     var isBusy = false
     var isRefreshing = false
@@ -146,7 +148,7 @@ final class EpisodeCleanupModel {
     }
     var maximumDuration: Double { max(0.5, bounds.upperBound - bounds.lowerBound) }
     var canTranscribe: Bool {
-        !isBusy && !isRefreshing && state.canEdit && state.store.document != nil
+        !isBusy && !isRefreshing && workspaceAlignment?.isWorking != true && state.canEdit && state.store.document != nil
             && plan?.isReady == true && transcriptionSettings.selectedURL != nil
             && plan?.lanes.allSatisfy({ identities[$0.primary.sourceID] != nil }) == true
     }
@@ -367,7 +369,41 @@ final class EpisodeCleanupModel {
         saveRange(inValue: Double(a), outValue: Double(b))
     }
 
-    func transcribe() {
+    func requestTranscription() {
+        guard canTranscribe else {
+            error = transcriptionReadinessMessage
+            return
+        }
+        let snapshot = state.store.model
+        Task {
+            if episode?.cleanup?.transcripts.isEmpty == false || episode?.cleanup?.transcriptHistory?.isEmpty == false {
+                guard await Dialogs.confirm(
+                    in: state.window, message: "Transcribe Tracks Again?",
+                    informative: "Confirmed, reviewed and manually placed marks stay at their exact validated positions, and explicit rejections are retained. Undecided automatic suggestions will be removed and regenerated only after successful transcription. Timeline cuts and episode IN/OUT stay unchanged. Raw transcript history is retained; cancellation or failure leaves current work unchanged.",
+                    confirmTitle: "Transcribe Tracks"
+                ) else { return }
+            }
+            guard state.store.model == snapshot else {
+                error = "The episode changed while confirming transcription. Review current work and try again."
+                return
+            }
+            transcribe()
+        }
+    }
+
+    var transcriptionReadinessMessage: String {
+        if isBusy { return "Transcription is running. Cancel it before starting another workflow." }
+        if isRefreshing { return "Verifying accepted alignment and source access…" }
+        if let blocker = plan?.blockers.first { return blocker }
+        if plan?.isReady != true { return "Assign and confirm Primaries/channels, then accept and save alignment before transcription. Use Recordings & Speakers to resolve assignments or source access." }
+        if transcriptionSettings.selectedURL == nil { return "Choose an available local model in Transcription Settings." }
+        if plan?.lanes.allSatisfy({ identities[$0.primary.sourceID] != nil }) != true {
+            return "Refresh readiness to verify source identity and accepted timing."
+        }
+        return "Transcribe assigned Primaries locally. Mute/Solo affects listening only."
+    }
+
+    private func transcribe() {
         guard canTranscribe, let modelURL = transcriptionSettings.selectedURL,
               let document = state.store.document else { return }
         let configuration: TranscriptionConfiguration

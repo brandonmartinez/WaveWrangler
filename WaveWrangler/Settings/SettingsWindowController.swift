@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WWCore
 import WWOrganizer
 
 /// Settings window: non-customizable toolbar with General, Sources and Transcription panes, title
@@ -110,6 +111,15 @@ struct GeneralSettingsView: View {
             }
             Section {
                 LibraryLocationControl()
+            }
+            Section {
+                Picker("After alignment", selection: $settings.editingPlaybackPolicy) {
+                    ForEach(EditingPlaybackPolicy.allCases, id: \.self) { policy in
+                        Text(policy.title).tag(policy)
+                    }
+                }
+                .accessibilityIdentifier("ww.settings.afterAlignment")
+                caption("Applied once after newly accepted alignment is verified on disk. Restore listening choices returns to your previous mix. Changing this default does not change open episodes or saved episode preferences.")
             }
         }
         .formStyle(.grouped)

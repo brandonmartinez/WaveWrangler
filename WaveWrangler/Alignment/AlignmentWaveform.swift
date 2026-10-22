@@ -5,10 +5,10 @@ import WWSources
 import WWTimeMap
 
 enum AlignmentWaveformLayout: String, CaseIterable, Codable {
-    case speaker = "By speaker"
-    case speakersOnly = "Speakers only"
     case recorderGroup = "By recorder"
+    case speaker = "By speaker"
     case overlay = "Overlay"
+    case speakersOnly = "Speakers only"
 
     static let defaultValue: Self = .speaker
 }

@@ -18,6 +18,8 @@ struct EpisodeWorkspaceViewTests {
         view.normalizeView = true
         view.showProposedAlignment = false
         view.laneHeight = 172
+        view.fillSpace = true
+        view.followPlayhead = false
         view.startSeconds = -2.5
         view.durationSeconds = 12
         view.playheadSeconds = 3.25
@@ -38,6 +40,25 @@ struct EpisodeWorkspaceViewTests {
         let differentShow = ShowWindowState(store: ShowDocumentStore(model: ShowDocumentModel(
             show: Show(title: "Different"), episodes: [episode])), episodeID: episode.id)
         #expect(differentShow.listeningState(for: episode.id).workspace == EpisodeWorkspaceViewState())
+    }
+
+    @Test func legacyEpisodeViewsDefaultToFollowAndDoNotLoseOtherChoices() throws {
+        var view = EpisodeWorkspaceViewState()
+        view.layout = .overlay
+        view.laneHeight = 220
+        view.startSeconds = 18
+        let data = try JSONEncoder().encode(view)
+        var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        object.removeValue(forKey: "fillSpace")
+        object.removeValue(forKey: "followPlayhead")
+        let decoded = try JSONDecoder().decode(EpisodeWorkspaceViewState.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        #expect(decoded == view && decoded.followPlayhead && !decoded.fillSpace)
+        #expect(decoded.isValid)
+        view.fillSpace = true
+        view.followPlayhead = false
+        #expect(try JSONDecoder().decode(EpisodeWorkspaceViewState.self,
+            from: JSONEncoder().encode(view)) == view)
     }
 
     @Test func invalidViewsCannotOverwriteTheLastValidView() throws {

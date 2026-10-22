@@ -1,6 +1,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import WWCore
 import WWOrganizer
 
 /// Live, observable view of the app preferences. Writes go straight to `UserDefaults` under the
@@ -30,11 +31,20 @@ final class AppSettings {
         didSet { if preferences.textSize != textSize { preferences.textSize = textSize } }
     }
 
+    var editingPlaybackPolicy: EditingPlaybackPolicy {
+        didSet {
+            if preferences.editingPlaybackPolicy != editingPlaybackPolicy {
+                preferences.editingPlaybackPolicy = editingPlaybackPolicy
+            }
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         preferences = AppPreferences(defaults: defaults)
         autosaveEnabled = preferences.autosaveEnabled
         downloadSourcesAutomatically = preferences.downloadSourcesAutomatically
         textSize = preferences.textSize
+        editingPlaybackPolicy = preferences.editingPlaybackPolicy
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: defaults, queue: .main
         ) { [weak self] _ in
@@ -48,6 +58,9 @@ final class AppSettings {
             downloadSourcesAutomatically = preferences.downloadSourcesAutomatically
         }
         if textSize != preferences.textSize { textSize = preferences.textSize }
+        if editingPlaybackPolicy != preferences.editingPlaybackPolicy {
+            editingPlaybackPolicy = preferences.editingPlaybackPolicy
+        }
     }
 
     func makeTextBigger() { if let next = textSize.bigger { textSize = next } }

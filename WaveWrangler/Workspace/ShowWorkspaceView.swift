@@ -61,7 +61,9 @@ private struct ShowWindowContent: View {
                     }.padding(12)
                     SetupContainerView(state: state, episode: episode)
                 }
-                .frame(minWidth: 760, idealWidth: 1000, minHeight: 540, idealHeight: 680)
+                .frame(minWidth: 760, idealWidth: 1000, maxWidth: .infinity,
+                       minHeight: 540, idealHeight: 680, maxHeight: .infinity)
+                .presentationSizing(.fitted)
                 .wwAppEnvironment()
             }
         }
@@ -125,9 +127,10 @@ struct LibraryEpisodeList: View {
                     Button {
                         state.newEpisode()
                     } label: {
-                        Image(systemName: "plus")
+                        Label("New Episode", systemImage: "plus")
+                            .labelStyle(.titleAndIcon)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.bordered)
                     .help("New Episode (⇧⌘N)")
                     .disabled(!state.canEdit)
                     .accessibilityLabel("New Episode")
@@ -296,7 +299,7 @@ private struct ShowDetailContent: View {
         } else if let episode = state.selectedEpisode {
             if state.destination == .alignment {
                 VStack(spacing: 0) {
-                    if !episode.recorderGroups.isEmpty {
+                    if !episode.sources.isEmpty || !episode.recorderGroups.isEmpty {
                         EpisodeAlignmentContent(state: state, episodeID: episode.id)
                             .id(episode.id)
                     } else {
@@ -308,7 +311,7 @@ private struct ShowDetailContent: View {
                                 Text("Add recordings to begin")
                                     .wwFont(.title2)
                                     .accessibilityAddTraits(.isHeader)
-                                Text("Organize recordings into recorder groups and confirm their originals in Setup.")
+                                Text("Import recordings, then add them to recorder groups in the editor.")
                                     .wwFont(.body)
                                     .foregroundStyle(Color(nsColor: .textColor))
                                     .multilineTextAlignment(.center)
@@ -317,6 +320,7 @@ private struct ShowDetailContent: View {
                                 Button("Add recordings…", systemImage: "plus") {
                                     state.recordingsPresented = true
                                 }
+                                .accessibilityIdentifier("ww.show.empty.addRecordings")
                             }
                         }
                     }

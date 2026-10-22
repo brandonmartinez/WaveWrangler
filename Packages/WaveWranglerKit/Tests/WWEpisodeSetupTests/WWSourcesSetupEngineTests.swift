@@ -76,6 +76,86 @@ struct WWSourcesSetupEngineTests {
         return last
     }
 
+    @Test func explicitImportWitnessesOnlyAcceptedSourcesAndLeavesOriginalsUnchanged() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let store = InMemoryDeviceAccessStore()
+        let captures = Counter()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                captures.increment()
+                return try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        #expect(captures.value == 0, "Discovery/review never authorizes or opens audio")
+        #expect(await store.records(in: engine.showID).isEmpty)
+        let item = try #require(ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems().first)
+        let file = root.appending(path: "ZOOM0001/\(item.item.source.displayNameHint)")
+        let bytes = try Data(contentsOf: file)
+        try await engine.commitImport([item.candidateID: item.item.source.id], fromScan: scan.token)
+        let records = await store.records(in: engine.showID)
+        #expect(records.count == 1)
+        #expect(captures.value == 1)
+        #expect(records.first?.sourceID == item.item.source.id)
+        #expect(records.first?.recordedIdentity?.confirmation == .userConfirmed)
+        #expect(records.first?.recordedIdentity?.rawWitness?.isUsable == true)
+        #expect(try Data(contentsOf: file) == bytes)
+        await engine.shutdown()
+    }
+
+    @Test func importRefusesChangedOrMismatchedSelectionsWithoutAuthorizing() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let store = InMemoryDeviceAccessStore()
+        let captures = Counter()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: context, preference: FixedPreference(false),
+            captureRawIdentity: { url, fingerprint in
+                captures.increment()
+                return try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            }
+        )
+        let file = root.appending(path: "ZOOM0001/tr1.wav")
+        let scan = try await engine.scanForImport([file], episodeSourceIDs: [])
+        let candidate = try #require(scan.candidates.first)
+        await #expect(throws: SourceEngineError.self) {
+            try await engine.commitImport([candidate.id: SourceID()], fromScan: scan.token)
+        }
+        let changed = try await engine.scanForImport([file], episodeSourceIDs: [])
+        let item = try #require(changed.candidates.first)
+        try Data(repeating: 9, count: 65).write(to: file)
+        await #expect(throws: SourceEngineError.self) {
+            try await engine.commitImport([item.id: SourceID(item.id)], fromScan: changed.token)
+        }
+        #expect(captures.value == 0)
+        #expect(await store.records(in: engine.showID).isEmpty)
+        await engine.shutdown()
+    }
+
+    @Test func importWithoutWitnessCapabilityFailsRatherThanClaimingAuthorization() async throws {
+        let root = try makeTree()
+        defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
+        let store = InMemoryDeviceAccessStore()
+        let engine = WWSourcesSetupEngine(
+            showID: ShowID(), store: store, context: SourceAccessContext(io: SystemSourceIO()),
+            preference: FixedPreference(false)
+        )
+        let scan = try await engine.scanForImport([root], episodeSourceIDs: [])
+        let items = ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems()
+        await #expect(throws: SourceEngineError.self) {
+            try await engine.commitImport(
+                Dictionary(uniqueKeysWithValues: items.map { ($0.candidateID, $0.item.source.id) }),
+                fromScan: scan.token
+            )
+        }
+        #expect(await store.records(in: engine.showID).isEmpty)
+        await engine.shutdown()
+    }
+
     @Test func productionConfirmedUnchangedLocalRelinkStoresGuardedWitness() async throws {
         let root = try makeTree()
         defer { try? FileManager.default.removeItem(at: root.deletingLastPathComponent()) }
@@ -189,6 +269,14 @@ struct WWSourcesSetupEngineTests {
         let second = try #require(items.first { $0.item.source.displayNameHint == "tr2.wav" }?.item.source.id)
         let firstKey = DeviceAccessKey(showID: engine.showID, sourceID: first)
         let secondKey = DeviceAccessKey(showID: engine.showID, sourceID: second)
+        // Emulate older device-local records; importing now witnesses and authorizes explicitly.
+        for key in [firstKey, secondKey] {
+            var legacy = try #require(await store.record(for: key))
+            #expect(legacy.recordedIdentity?.confirmation == .userConfirmed)
+            legacy.recordedIdentity?.confirmation = .provisional
+            legacy.recordedIdentity?.rawWitness = nil
+            await store.save(legacy)
+        }
         let original = try #require(await store.record(for: firstKey))
         #expect(original.recordedIdentity?.confirmation == .provisional)
         let bytes = try Data(contentsOf: root.appending(path: "ZOOM0001/tr1.wav"))
@@ -221,7 +309,10 @@ struct WWSourcesSetupEngineTests {
         let item = try #require(ImportReview(scan: scan, episodeTitle: "E", knownSpeakerNames: []).importItems().first)
         try await engine.commitImport([item.candidateID: item.item.source.id], fromScan: scan.token)
         let key = DeviceAccessKey(showID: engine.showID, sourceID: item.item.source.id)
-        let original = try #require(await store.record(for: key))
+        var original = try #require(await store.record(for: key))
+        original.recordedIdentity?.confirmation = .provisional
+        original.recordedIdentity?.rawWitness = nil
+        await store.save(original)
         var inactive = original
         inactive.sourceID = SourceID()
         await store.save(inactive)
@@ -269,7 +360,10 @@ struct WWSourcesSetupEngineTests {
         )
         let sourceID = try #require(items.first { $0.item.source.displayNameHint == "tr1.wav" }?.item.source.id)
         let key = DeviceAccessKey(showID: engine.showID, sourceID: sourceID)
-        let original = try #require(await store.record(for: key))
+        var original = try #require(await store.record(for: key))
+        original.recordedIdentity?.confirmation = .provisional
+        original.recordedIdentity?.rawWitness = nil
+        await store.save(original)
         var duplicate = original
         duplicate.sourceID = SourceID()
         await store.save(duplicate)
@@ -344,7 +438,7 @@ struct WWSourcesSetupEngineTests {
             #expect(snapshot.access == .granted)
             #expect(snapshot.residency == .local)
             #expect(snapshot.identity == .confirmationNeeded)
-            #expect(snapshot.summary.text == "Confirm original")
+            #expect(snapshot.summary.text == "Approve audio")
         }
         #expect(io.downloads == 0, "downloads Off: zero download requests or progress queries")
 

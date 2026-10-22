@@ -97,10 +97,10 @@ struct AlignmentWaveformTests {
         #expect(AlignmentWaveformProjection.adaptiveMarkers(track: sibling, record: record).isEmpty)
     }
 
-    @Test func speakerLayoutIsFirstAndDefault() {
+    @Test func trackViewOrderRetainsTheSpeakerDefaultAndAllSerializedModes() {
         #expect(AlignmentWaveformLayout.defaultValue == .speaker)
-        #expect(AlignmentWaveformLayout.allCases == [.speaker, .speakersOnly, .recorderGroup, .overlay])
-        #expect(AlignmentWaveformLayout.allCases.map(\.rawValue) == ["By speaker", "Speakers only", "By recorder", "Overlay"])
+        #expect(AlignmentWaveformLayout.allCases == [.recorderGroup, .speaker, .overlay, .speakersOnly])
+        #expect(AlignmentWaveformLayout.allCases.map(\.rawValue) == ["By recorder", "By speaker", "Overlay", "Speakers only"])
     }
 
     @Test func acceptedAdaptiveProjectionRetainsBinsAndUndoRestoresCoordinatesWithoutBridgingGaps() throws {

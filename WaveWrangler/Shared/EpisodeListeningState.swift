@@ -76,6 +76,15 @@ final class EpisodeListeningState {
     }
     var cycleRange: ClosedRange<Double>?
     var cycleEnabled = false
+
+    func setCycleRange(_ range: ClosedRange<Double>, selecting: Bool = false) {
+        let updatesSelection = selecting || (cycleRange != nil && selection == cycleRange)
+        cycleRange = range
+        if updatesSelection {
+            selection = range
+            selectedTranscriptText = nil
+        }
+    }
     var collapsedRecorders: Set<RecorderGroupID> {
         get { workspace.collapsedRecorders }
         set { workspace.collapsedRecorders = newValue }
@@ -85,7 +94,20 @@ final class EpisodeListeningState {
         set { workspace.collapsedSpeakers = newValue }
     }
     var editingPolicyRevision: Int?
+    private var appliedEditingPolicies: Set<String> = []
     var previousPlayback: EpisodePlaybackState?
+
+    func applyAcceptedAlignmentPolicy(
+        _ policy: EditingPlaybackPolicy, in episode: Episode, identity: String, revision: Int
+    ) throws {
+        let acceptance = "\(revision):\(identity)"
+        guard !appliedEditingPolicies.contains(acceptance) else { return }
+        let updated = try playback.applying(policy, in: episode)
+        if policy != .keepChoices { previousPlayback = playback }
+        playback = updated
+        appliedEditingPolicies.insert(acceptance)
+        editingPolicyRevision = revision
+    }
 
     func select(from start: Double, to end: Double, within bounds: ClosedRange<Double>) {
         guard start.isFinite, end.isFinite else { return }
@@ -207,7 +229,7 @@ struct AudioTimelineSelectionToolbar: View {
                 }
             } else {
                 Button("Cycle selection", systemImage: "repeat") {
-                    listening.cycleRange = range
+                    listening.setCycleRange(range)
                     listening.cycleEnabled = true
                 }
             }

@@ -9,12 +9,27 @@ struct AudioWorkspaceActions: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            ViewThatFits(in: .horizontal) {
-                HStack { recordingActions; Spacer(minLength: 8); transcriptionActions }
-                VStack(alignment: .leading, spacing: 8) { recordingActions; transcriptionActions }
+            AudioTimelineAdaptiveRow {
+                recordingActions
+                if let cleanup = state.cleanupModel {
+                    HStack {
+                        Text(cleanup.transcriptionSettings.selection.title).font(.caption).lineLimit(1)
+                        Button("Transcription Settings…", systemImage: "gearshape") {
+                            SettingsWindowController.show(pane: .transcription)
+                        }.labelStyle(.iconOnly)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
             if alignment.isWorking {
-                ProgressView(alignment.message).controlSize(.small)
+                HStack {
+                    ProgressView(alignment.message).controlSize(.small)
+                    if alignment.isAnalyzingTracks {
+                        Button("Cancel alignment") { alignment.cancelTracksAnalysis() }
+                    }
+                }
+            } else {
+                Text(alignment.message).font(.caption).foregroundStyle(.secondary)
             }
             if let error = alignment.lastError {
                 Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
@@ -34,8 +49,8 @@ struct AudioWorkspaceActions: View {
                     }
                 } else if let error = cleanup.error {
                     Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
-                } else if cleanup.plan?.isReady != true {
-                    Text(cleanup.plan?.blockers.first ?? "Confirm originals and accept alignment before transcribing Primaries.")
+                } else if !cleanup.canTranscribe {
+                    Text(cleanup.transcriptionReadinessMessage)
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
@@ -43,6 +58,19 @@ struct AudioWorkspaceActions: View {
         .controlSize(.small)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.audioWorkspace.actions")
+        .sheet(isPresented: $alignment.tracksReviewPresented, onDismiss: {
+            alignment.discardTracksReview()
+        }) {
+            TracksAlignmentReviewView(model: alignment, setup: {
+                alignment.discardTracksReview()
+                state.recordingsPresented = true
+            }, advanced: { row in
+                alignment.discardTracksReview()
+                alignment.selection = row.epochID
+                state.workspaceInspector = .alignment
+                state.inspectorPresented = true
+            })
+        }
     }
 
     private var recordingActions: some View {
@@ -56,7 +84,7 @@ struct AudioWorkspaceActions: View {
                     alignment.restoreListeningChoices()
                 }
                 .labelStyle(.iconOnly)
-                .help("Restore the captured listening choices. Begin editing can establish a new restore point.")
+                .help("Restore listening choices captured before the last preset or newly accepted alignment.")
                 .accessibilityIdentifier("ww.listening.restore")
             }
             Divider().frame(height: 20)
@@ -102,28 +130,30 @@ struct AudioWorkspaceActions: View {
         .buttonStyle(.bordered)
         .tint(active ? .accentColor : .secondary)
         .disabled(episode.map { !alignment.listening.playback.canApply(policy, in: $0) } ?? true)
-        .help("\(policy.title). Listen now only; preserves explicit Mute choices and does not change the saved After alignment policy.")
+        .help("\(policy.title). Listen now only; does not change the app's After alignment preference.")
         .accessibilityLabel("Listen now: \(title)")
         .accessibilityValue(active ? "On" : "Off")
         .accessibilityAddTraits(active ? [.isSelected] : [])
         .accessibilityIdentifier("ww.listening.preset.\(policy.rawValue)")
     }
 
-    @ViewBuilder
-    private var transcriptionActions: some View {
-        if let cleanup = state.cleanupModel {
-            HStack {
-                Button("Refresh", systemImage: "arrow.clockwise") {
-                    Task { await cleanup.refresh() }
-                }
-                .disabled(cleanup.isBusy || cleanup.isRefreshing)
-                Button("Transcribe", systemImage: "waveform.badge.mic") { cleanup.transcribe() }
+}
+
+struct AudioWorkspaceWorkflowActions: View {
+    @Bindable var state: ShowWindowState
+    @Bindable var alignment: EpisodeAlignmentModel
+
+    var body: some View {
+        HStack {
+            Button("Align Tracks", systemImage: "waveform.path") { alignment.requestAlignTracks() }
+                .disabled(alignment.isWorking || !state.canEdit || state.cleanupModel?.isBusy == true)
+                .accessibilityIdentifier("ww.workflow.alignTracks")
+                .help("Analyze all eligible recorder groups using shared speaker channels, then review proposals before acceptance. Resolve grouping, channels and source access in Recordings & Speakers.")
+            if let cleanup = state.cleanupModel {
+                Button("Transcribe Tracks", systemImage: "waveform.badge.mic") { cleanup.requestTranscription() }
                     .disabled(!cleanup.canTranscribe || alignment.isWorking)
-                    .help("Local transcription of assigned Primaries. Solo/Mute only affects listening.")
-                Text(cleanup.transcriptionSettings.selection.title).font(.caption).lineLimit(1)
-                Button("Transcription Settings…", systemImage: "gearshape") {
-                    SettingsWindowController.show(pane: .transcription)
-                }.labelStyle(.iconOnly)
+                    .accessibilityIdentifier("ww.workflow.transcribeTracks")
+                    .help(cleanup.transcriptionReadinessMessage)
             }
         }
     }
