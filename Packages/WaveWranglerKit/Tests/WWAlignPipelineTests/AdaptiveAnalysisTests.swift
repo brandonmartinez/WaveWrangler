@@ -28,9 +28,10 @@ struct AdaptiveAnalysisTests {
     }
 
     static func fixture(_ signal: Signal = .scene(seed: 132, offset: 0.83, stepAt: 48, stepBy: 0.02),
-                        nativeAudio: Bool = false) async throws -> (PipelineFixture, SpeakerID) {
+                        nativeAudio: Bool = false, referenceChannels: Int = 2) async throws -> (PipelineFixture, SpeakerID) {
         let fixture = try await PipelineFixture([
-            .init(name: "Reference", sources: [.init(name: "ref", seconds: 96, signal: .scene(seed: 132), sampleRate: 8000)]),
+            .init(name: "Reference", sources: [.init(name: "ref", channels: referenceChannels, seconds: 96,
+                signal: .scene(seed: 132), sampleRate: 8000)]),
             .init(name: "Software backup", sources: [
                 .init(name: "backup", channels: 2, seconds: 96, signal: signal, sampleRate: 8000),
                 .init(name: "other file", seconds: 96, signal: .silence, sampleRate: 8000),

@@ -65,6 +65,66 @@ struct MapHistoryTests {
         #expect(show.episode(fixture.episodeID)?.alignment == nil)
     }
 
+    @Test func alignmentResetRetiresAllActiveTimingAndWorkWithoutRewritingHistory() throws {
+        let speaker = Speaker(name: "Synthetic")
+        let correction = SourceTimingCorrection(
+            source: fixture.guest, group: fixture.group, epoch: fixture.epoch, reference: fixture.host,
+            sourceRate: 48_000, sourceFrames: 96_000, channelCount: 1,
+            analysisDigest: String(repeating: "a", count: 64),
+            processing: "ww-native-time-pitch-multichannel/1",
+            segments: [.init(sourceStart: 0, sourceEnd: 2, alignedStart: 0.5, rateRatio: 1.0001)]
+        )
+        let (recorded, revision) = try fixture.show.recordingMap(
+            fixture.map(guestOffset: 3), in: fixture.episodeID, sourceCorrections: [correction]
+        )
+        var original = try recorded.acceptingMap(revision: revision.revision, in: fixture.episodeID)
+        original.speakers = [speaker]
+        original.episodes[0].recorderGroups[0].preferredAlignmentReference = true
+        original.episodes[0].workspace = .init(positionLocks: [.init(group: fixture.group, isLocked: true)])
+        let transcript = SpeakerTranscript(
+            speaker: speaker.id, primary: .init(sourceID: fixture.host, statedChannel: 0),
+            sourceRate: 48_000, sourceIdentity: String(repeating: "b", count: 64),
+            alignmentRevision: revision.revision, model: "synthetic",
+            workingRange: nil, words: [.init(text: "um", sourceStartFrame: 48_000,
+                sourceEndFrame: 60_000, alignedStart: 1, alignedEnd: 1.25)]
+        )
+        original.episodes[0].cleanup = EpisodeCleanup(
+            workingRange: .init(alignmentRevision: revision.revision, tracksIn: 0.5, tracksOut: 9),
+            transcripts: [transcript],
+            manualCuts: [.init(alignmentRevision: revision.revision, startFrame: 240_000, endFrame: 288_000)]
+        ).proposingFillers()
+        let reset = try original.resettingAlignment(in: fixture.episodeID)
+        let episode = try #require(reset.episode(fixture.episodeID))
+        #expect(episode.alignment?.acceptedRevision == nil && episode.alignment?.acceptedMap == nil)
+        #expect(episode.alignment?.maps == original.episodes[0].alignment?.maps)
+        #expect(episode.cleanup?.transcripts.isEmpty == true && episode.cleanup?.workingRange == nil)
+        #expect(episode.cleanup?.transcriptHistory == [transcript])
+        #expect(episode.cleanup?.fillerReviews == original.episodes[0].cleanup?.fillerReviews)
+        #expect(episode.cleanup?.manualCuts == original.episodes[0].cleanup?.manualCuts)
+        #expect(episode.activeManualCuts.isEmpty)
+        var expected = original
+        expected.episodes[0].alignment?.acceptedRevision = nil
+        expected.episodes[0].cleanup = try original.episodes[0].cleanup?.resettingForReplacementAlignment()
+        #expect(reset == expected, "Grouping, reference, locks, assignments, sources and other metadata stay exact")
+        #expect(try reset.resettingAlignment(in: fixture.episodeID) == reset)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        #expect(try coder.decode(try coder.encode(reset, revision: 1)).payload == reset)
+        let (next, nextRevision) = try reset.recordingMap(fixture.map(), in: fixture.episodeID)
+        #expect(nextRevision.revision > revision.revision)
+        #expect(try next.acceptingMap(revision: nextRevision.revision, in: fixture.episodeID)
+            .episode(fixture.episodeID)?.activeManualCuts.isEmpty == true)
+        #expect(original.episodes[0].alignment?.acceptedRevision == revision.revision)
+    }
+
+    @Test func alignmentResetRefusesAMissingEpisodeAndLeavesAnUnalignedShowAlone() throws {
+        let missing = EpisodeID()
+        let original = fixture.show
+        #expect(throws: MapHistoryError.episodeNotFound(missing)) {
+            try original.resettingAlignment(in: missing)
+        }
+        #expect(try original.resettingAlignment(in: fixture.episodeID) == original)
+    }
+
     @Test func currentMapIsApplicable() throws {
         let (model, _) = try fixture.show.recordingMap(try fixture.map(), in: fixture.episodeID)
         let applicability = try #require(model.episode(fixture.episodeID)).applicability(ofMapRevision: 1)

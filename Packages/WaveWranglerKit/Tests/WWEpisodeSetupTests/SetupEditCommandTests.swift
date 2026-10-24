@@ -73,6 +73,21 @@ struct SetupEditCommandTests {
         #expect(editor.showModel == after)
     }
 
+    @Test func selectingAnotherReferenceRestoresBothRecordersWithUndoAndRedo() {
+        let other = RecorderGroup(name: "Recorder B", preferredAlignmentReference: true)
+        let initial = ShowDocumentModel(show: Show(title: "Synthetic"), episodes: [
+            Episode(id: episodeID, title: "E", recorderGroups: [group, other], sources: [tr1, tr2]),
+        ])
+        let editor = UndoingEditor(initial)
+        let commands = SetupEditCommands(editor: editor, episodeID: episodeID)
+        #expect(commands.preferAlignmentReference(true, group: group.id))
+        let changed = editor.showModel
+        #expect(changed.episodes[0].preferredAlignmentReferenceGroupID == group.id)
+        #expect(changed.episodes[0].recorderGroup(other.id)?.preferredAlignmentReference == nil)
+        expectUndo(editor, "Set Timing Reference", restores: initial)
+        #expect(editor.showModel == changed)
+    }
+
     @Test func groupingCommandsAreNamed() {
         let (editor, commands) = make()
         var before = editor.showModel
@@ -81,11 +96,11 @@ struct SetupEditCommandTests {
 
         before = editor.showModel
         #expect(commands.setEpoch(2, for: [tr1.id]))
-        expectUndo(editor, "Set Epoch", restores: before)
+        expectUndo(editor, "Set Recording Segment", restores: before)
 
         before = editor.showModel
         #expect(commands.startNewEpoch(for: [tr1.id, tr2.id]))
-        expectUndo(editor, "Start New Epoch", restores: before)
+        expectUndo(editor, "Start New Recording Segment", restores: before)
 
         before = editor.showModel
         #expect(commands.setChannel(2, for: [tr1.id]))

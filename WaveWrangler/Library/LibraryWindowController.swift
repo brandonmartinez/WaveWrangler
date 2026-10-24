@@ -54,6 +54,7 @@ final class LibraryWindowController: NSWindowController, NSWindowRestoration {
         window.state = state
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
         window.title = "Library"
+        window.subtitle = AppBuildIdentity.current.subtitle()
         window.toolbarStyle = .unified
         window.setContentSize(NSSize(width: 1_000, height: 600))
         // Wide enough for the three columns' minimum widths (180 + 320 + 240) and dividers (#109).

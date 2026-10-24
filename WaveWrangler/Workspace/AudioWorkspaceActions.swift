@@ -149,6 +149,10 @@ struct AudioWorkspaceWorkflowActions: View {
                 .disabled(alignment.isWorking || !state.canEdit || state.cleanupModel?.isBusy == true)
                 .accessibilityIdentifier("ww.workflow.alignTracks")
                 .help("Analyze all eligible recorder groups using shared speaker channels, then review proposals before acceptance. Resolve grouping, channels and source access in Recordings & Speakers.")
+            Button("Reset Alignment…", systemImage: "arrow.counterclockwise") { alignment.requestResetAlignment() }
+                .disabled(!alignment.canResetAlignment || !state.canEdit || state.cleanupModel?.isBusy == true)
+                .accessibilityIdentifier("ww.workflow.resetAlignment")
+                .help("Return all recorder groups to zero offset and normal speed, removing active automatic, adaptive and manual timing. Also resets active transcription, reviews, cuts and episode IN/OUT. Requires confirmation; Undo restores the previous work.")
             if let cleanup = state.cleanupModel {
                 Button("Transcribe Tracks", systemImage: "waveform.badge.mic") { cleanup.requestTranscription() }
                     .disabled(!cleanup.canTranscribe || alignment.isWorking)

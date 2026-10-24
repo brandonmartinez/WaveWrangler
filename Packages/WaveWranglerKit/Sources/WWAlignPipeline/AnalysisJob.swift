@@ -242,7 +242,7 @@ struct AnalysisUnit: Sendable {
             record = EpochAnalysisRecord(
                 recipe: recipe(peers: peers).name, reference: referenceParticipant, target: targetParticipant, search: search,
                 abstention: .insufficientCoverage,
-                detail: "The search range cannot reach the reference recording from this epoch's excerpt."
+                detail: "The search range cannot reach the reference recording from this recording segment's excerpt."
             )
         } else {
             let bytes = try estimatedWorkingSetBytes(peers: peers) + retainedBytes
@@ -355,7 +355,7 @@ struct AnalysisUnit: Sendable {
             throw .estimator(error)
         }
         guard let estimate = report.epochs.first(where: { $0.epoch == targetEpoch }) else {
-            throw .estimator(.invalidParameter("the estimator returned no result for the target epoch"))
+            throw .estimator(.invalidParameter("the estimator returned no result for the target recording segment"))
         }
         var record = EpochAnalysisRecord(recipe: recipe ?? self.recipe.name, reference: referenceParticipant, target: targetParticipant, search: search, estimate: estimate)
         if record.proposal != nil, estimate.flags.contains(.coverageGap),
@@ -369,7 +369,7 @@ struct AnalysisUnit: Sendable {
             record.abstention = AbstentionRecord(
                 reason: (missingSilence ? AbstentionReason.discontinuous : .insufficientCoverage).rawValue,
                 detail: missingSilence
-                    ? "Internal coverage gap without matching silence in both recordings: declare an epoch boundary or place anchors manually; no inverse is available across the gap."
+                    ? "Internal coverage gap without matching silence in both recordings: declare a recording segment boundary or place anchors manually; no inverse is available across the gap."
                     : "Consecutive windows provide insufficient timing evidence. Weak or competing correlations do not establish a recorder restart; retry with a shared speaker or place anchors."
             )
         }

@@ -12,6 +12,29 @@ struct AcceptanceTests {
     static let truthRate = try! ExactRational(10_001, 10_000)
     static let truthOffset = try! ExactRational(5, 4)
 
+    @Test func acceptanceFailuresBridgeToNamedDescriptionsAndRecoverySuggestions() throws {
+        let epoch = RecordingEpochID()
+        let failures: [AlignmentAcceptanceError] = [
+            .episodeNotFound(EpisodeID()), .noReference, .referenceFactsUnavailable(SourceID()),
+            .unknownEpoch(epoch), .decisionForReferenceEpoch(epoch), .noCurrentProposal(epoch),
+            .proposalNotCurrent(epoch), .invalidNumericEntry(epoch, "Enter a finite offset."),
+            .insufficientAnchors(epoch), .invalidAnchors(epoch, "Use distinct source times."),
+            .noPlaceableSource(epoch), .priorMapHasClockApproval(epoch),
+            .priorMapUnreadable(.mapNotFound(revision: 1)), .invalidMap("The reference changed."),
+            .history(.mapNotFound(revision: 1)), .coordinatorShutDown,
+            .analysisStale([.dependenciesChanged]), .staleSnapshot, .supersededAcceptance, .mapContentMismatch,
+        ]
+        for failure in failures {
+            let description = try #require(failure.errorDescription)
+            let recovery = try #require(failure.recoverySuggestion)
+            let bridged = failure as NSError
+            #expect(!description.isEmpty && !recovery.isEmpty)
+            #expect(bridged.localizedDescription == description)
+            #expect(bridged.localizedRecoverySuggestion == recovery)
+            #expect(!description.contains("WWAlignPipeline"))
+        }
+    }
+
     static func provenances(_ map: AlignedTimelineMap) -> [RecordingEpochID: MapProvenance.Kind] {
         var result: [RecordingEpochID: MapProvenance.Kind] = [:]
         for group in map.groups {

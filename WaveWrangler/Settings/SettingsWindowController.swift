@@ -23,6 +23,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate {
         let window = NSWindow(contentViewController: tabs)
         window.styleMask = [.titled, .closable]
         window.toolbarStyle = .preference
+        window.subtitle = AppBuildIdentity.current.subtitle()
         window.setAccessibilityIdentifier("ww.settings.window")
         window.tabbingMode = .disallowed
         super.init(window: window)

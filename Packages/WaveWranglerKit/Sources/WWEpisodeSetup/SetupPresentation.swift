@@ -51,7 +51,7 @@ public enum SourceSortOrder: String, Sendable, CaseIterable {
         switch self {
         case .manual: "Manual Order"
         case .name: "Name"
-        case .epoch: "Epoch"
+        case .epoch: "Recording Segment"
         case .channel: "Channel"
         case .speaker: "Speaker"
         case .status: "Status"

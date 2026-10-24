@@ -238,18 +238,23 @@ actor AcceptanceLedger {
         let alignment: EpisodeAlignment?
     }
 
+    private struct IssuedAcceptance {
+        let token: UInt64
+        let result: Snapshot
+    }
+
     private var committed: [EpisodeID: Snapshot] = [:]
-    private var issued: [EpisodeID: UInt64] = [:]
+    private var issued: [EpisodeID: IssuedAcceptance] = [:]
     private var activated: [EpisodeID: UInt64] = [:]
     private var activatedHistory: Set<UInt64> = []
     private var nextToken: UInt64 = 0
 
     /// Records an acceptance built on `base`. Refused when `base` is not the state this pipeline last
     /// activated; supersedes any earlier acceptance of the episode that was not yet activated.
-    func issue(episode: EpisodeID, base: Snapshot) throws(AlignmentAcceptanceError) -> UInt64 {
+    func issue(episode: EpisodeID, base: Snapshot, result: Snapshot) throws(AlignmentAcceptanceError) -> UInt64 {
         if let known = committed[episode], known != base { throw .staleSnapshot }
         nextToken += 1
-        issued[episode] = nextToken
+        issued[episode] = IssuedAcceptance(token: nextToken, result: result)
         return nextToken
     }
 
@@ -263,7 +268,8 @@ actor AcceptanceLedger {
             return
         }
         if let known = committed[episode], known != base { throw .staleSnapshot }
-        guard issued[episode] == token else { throw .supersededAcceptance }
+        guard let pending = issued[episode], pending.token == token else { throw .supersededAcceptance }
+        guard pending.result == result else { throw .mapContentMismatch }
         committed[episode] = result
         issued[episode] = nil
         activated[episode] = token
@@ -271,8 +277,14 @@ actor AcceptanceLedger {
     }
 
     /// Reconciles intentional document history movement (open, undo or redo) with the acceptance base used
-    /// by the next correction. Any unpersisted issued acceptance is superseded by the coherent document.
+    /// by the next correction. Only the latest pending result, restored exactly, retains its activation token.
+    /// Any other pending acceptance is superseded by the coherent document.
     func reconcile(episode: EpisodeID, snapshot: Snapshot) {
+        if let pending = issued[episode], pending.result == snapshot {
+            // A verified saved-map reader may finish before the acceptance's save-completion callback.
+            activated[episode] = pending.token
+            activatedHistory.insert(pending.token)
+        }
         committed[episode] = snapshot
         issued[episode] = nil
     }

@@ -98,18 +98,27 @@ private struct SourceInspector: View {
         .focused($focus, equals: .group)
         .accessibilityIdentifier("ww.inspector.source.group")
 
+        if let group = source.placement.recorderGroupID {
+            TimingReferenceControls(
+                selection: model.timingReferenceSelection, group: group,
+                identifier: "ww.inspector.source.timingReference"
+            ) {
+                model.useAsTimingReference(group)
+            }
+        }
+
         numericRow(
-            title: "Epoch",
+            title: "Recording Segment",
             draft: $epochDraft,
             error: epochError,
             field: .epoch,
             identifier: "ww.inspector.source.epoch",
-            disabledReason: source.placement.recorderGroupID == nil ? "Choose a recorder group first. Epochs belong to a recorder group." : nil,
+            disabledReason: source.placement.recorderGroupID == nil ? "Choose a recorder group first. Recording segments belong to a recorder group." : nil,
             value: epoch,
             commit: commitEpoch,
             step: { delta in model.setEpoch(max(1, (epoch ?? 1) + delta), for: [source.id]) }
         )
-        .help("Start a new epoch when the recorder was stopped and started again, so its clock restarted.")
+        .help("A recording segment is one continuous-clock span of a recorder group. Start a new segment when that recorder stops and restarts.")
 
         VStack(alignment: .leading, spacing: 4) {
             numericRow(
@@ -483,6 +492,12 @@ private struct GroupInspector: View {
                 .accessibilityLabel("Recorder group name")
                 .accessibilityIdentifier("ww.inspector.group.name")
             Text(count == 1 ? "1 source" : "\(count) sources").setupFont(.body)
+            TimingReferenceControls(
+                selection: model.timingReferenceSelection, group: groupID,
+                identifier: "ww.inspector.group.timingReference"
+            ) {
+                model.useAsTimingReference(groupID)
+            }
             Picker("Recording origin icon", selection: Binding(
                 get: { model.episode?.recorderGroup(groupID)?.icon ?? .recorder },
                 set: { icon in
@@ -504,9 +519,9 @@ private struct GroupInspector: View {
             }
             .help("Stores reusable speaker, channel and recorder defaults in the show, without copying recordings.")
             .accessibilityIdentifier("workspace.recorder.saveDefinition")
-            Button("New Epoch for Selected Sources") { model.startNewEpoch() }
+            Button("New Recording Segment for Selected Sources") { model.startNewEpoch() }
                 .disabled(count == 0)
-                .help("Start a new epoch when the recorder was stopped and started again, so its clock restarted.")
+                .help("A recording segment is one continuous-clock span of a recorder group. Start a new segment when that recorder stops and restarts.")
             Button("Delete Recorder Group…") { model.confirmation = .deleteGroup(groupID) }
             Text("Deleting a recorder group never removes its sources; they become Ungrouped.")
                 .setupFont(.callout).fixedSize(horizontal: false, vertical: true)

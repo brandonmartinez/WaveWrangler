@@ -5,6 +5,34 @@ It proposes an offset and relative rate for review; it does not apply timing, pr
 every sample, or approve a recorder clock. Acceptance is still an explicit, undoable
 `manual(.acceptedAcousticProposal)` decision for the target recorder group, not just one speaker channel.
 
+After verified save, a waveform refresh may restore the exact accepted map before the acceptance
+completion callback runs. That ordering is idempotent only for the latest issued result's full alignment
+snapshot; a different restored snapshot still invalidates pending acceptance tokens. Source, format,
+placement, map-content, and supersession checks remain required. Acceptance failures expose named
+descriptions and recovery steps instead of opaque NSError codes; a saved alignment is not described as
+unchanged merely because its activation failed.
+
+## Reset Alignment
+
+**Reset Alignment…** sits immediately after **Align Tracks**. It is available only when the episode
+has accepted timing and no alignment or transcription operation or recorder move is in progress.
+Confirmation returns every recorder group, including locked groups, to its original source clock:
+zero offset, normal speed, and no active automatic timing, manual adjustments, anchors, or adaptive
+file corrections. No replacement analysis runs automatically.
+
+Like accepting replacement alignment, reset retires active transcription and transcript-linked
+reviews and cuts, and clears episode IN/OUT. The entire change is one **Reset Alignment** Undo step.
+Original recordings, grouping, assignments, reference preference, listening choices, position-lock
+preferences, and append-only timing and transcript history remain intact. Historical corrections and
+user judgments are not active on the reset timeline; new accepted revisions cannot reactivate old cuts.
+Analysis previews and pending reviews are discarded. Source-derived fingerprints and waveform samples
+may remain cached, but cannot apply timing without a new explicit analysis and acceptance.
+
+Reset is metadata-only and also works when the old timing is stale or a recording is unavailable.
+The reset timeline, its runtime identity, and subsequent analysis remain gated on independently
+verified save, including Redo and other windows sharing the show. Cancel or a concurrent show edit
+leaves the prior timing and downstream work unchanged.
+
 ## Version and authority boundaries
 
 The original `WWAlignEstimate` source and test trees remain byte-identical to
@@ -262,6 +290,37 @@ reason; no success-shaped map is returned.
 path. It does not change the affine estimator, frozen time-map/render contracts, or
 `EpochMapDecision`. A software/network recording can share strong speech matches
 while its delay changes locally; that is not automatically recorder drift or a physical restart.
+
+The normal global **Align Tracks** workflow now invokes this existing adaptive path automatically
+when a channel-specific affine result abstains as `inconsistent` or `discontinuous`. Individual
+**Align…** does the same and opens the existing adaptive preview. Successful affine fits, missing
+assignments, unresolved multichannel choices, weak/ambiguous evidence, and access failures do not trigger this
+fallback. Global analysis reuses its captured affine seed instead of repeating that analysis.
+No DSP threshold, estimator version, or stored evidence is promoted or relaxed.
+
+Channel-specific matching resolves an unknown channel only when fresh decoded source facts verify
+that the file is mono. Explicit choices are preserved and checked against the decoded channel count;
+stereo/multichannel recordings never default to channel zero. Metadata-only menus may use previously
+observed counts or already loaded waveform headers, but analysis rechecks both participants against
+its current authorized probes. This resolution neither rewrites saved assignments nor migrates legacy
+unknowns. Affine and adaptive paths share the same resolution helper. Missing choices are typed setup
+requirements naming the recording and channel count, not internal encoding failures.
+
+The global review exposes supported file timing separately from recorder timing. Estimated gaps
+remain a second, off-by-default choice; acceptance requires an additional warning. Selected affine
+and adaptive decisions publish in one verified-save/Undo transaction. Adaptive acceptance uses the
+shared cached-evidence and original-source checks, requires current authorization for both measured
+participants, and recomputes projection through the final accepted reference placement. When the
+selected root changes, analysis uses its original clock rather than its former accepted offset.
+With an unchanged root, unselected current recorder mappings and their proposal provenance survive
+replacement review. Existing unselected file corrections also survive only when their recorder and
+reference groups remain unchanged; an invalidating change refuses instead of silently deleting them.
+
+This integration preserves the selected timeline reference, not an inferred device-quality hierarchy:
+the chosen speaker pair still determines which file receives the curve. It does not automatically
+reverse a local-recorder-to-Teams comparison to repair Teams instead. References on other recorders
+must already be timed; newly proposed relay timing is not used as an unaccepted analysis authority.
+The historical real-pair measurements below are not new qualification of this workflow.
 
 The candidate reuses the current channel-specific fingerprints and coarse overlap/search seeds.
 It reads four-second target batches on a three-second stride, at most twelve batches in memory,

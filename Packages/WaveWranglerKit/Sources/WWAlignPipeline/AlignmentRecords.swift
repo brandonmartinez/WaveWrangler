@@ -194,6 +194,14 @@ public struct EpochAnalysisRecord: Sendable, Codable, Equatable {
     public var fingerprintSeconds: [Double]? = nil
     public var refinementRatePPM: Double? = nil
 
+    public var needsAdaptiveTiming: Bool {
+        guard proposal == nil else { return false }
+        switch abstention?.abstentionReason {
+        case .inconsistent, .discontinuous: return true
+        default: return false
+        }
+    }
+
     init(
         recipe: String,
         reference: AnalysisParticipant,

@@ -14,6 +14,49 @@ struct MapCurrencyTests {
 
     // MARK: Content identity (one snapshot, two maps)
 
+    @Test("Restoring the exact latest saved result before its acceptance callback is idempotent", arguments: [false, true])
+    func persistedActivationBeforeAcceptanceCallback(replacing: Bool) async throws {
+        let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "persisted-before-callback")
+        var report = try await fixture.analyze(preferredReference: "ref")
+        if replacing {
+            _ = try await fixture.acceptAndActivate(report, [fixture.epochs[1]: ConcurrencyTests.truth])
+            report = try await fixture.analyze(preferredReference: "ref")
+        }
+        let accepted = try await fixture.pipeline.accept(
+            model: fixture.model, episode: fixture.episodeID, report: report,
+            decisions: [fixture.epochs[1]: Self.other]
+        )
+        try await fixture.pipeline.activate(model: accepted.model, episode: fixture.episodeID)
+        do {
+            try await fixture.pipeline.activate(accepted)
+        } catch {
+            Issue.record("The latest exact persisted result rejected its acceptance callback: \(error); \((error as NSError).localizedDescription)")
+        }
+        #expect(await fixture.coordinator.state(of: accepted.identity.slot) == .ready(accepted.identity.key))
+        #expect(try await fixture.pipeline.verifiedAcceptedMap(model: accepted.model, episode: fixture.episodeID) == accepted.map)
+        await fixture.coordinator.shutdown()
+    }
+
+    @Test("Restoring another snapshot still invalidates pending acceptance tokens", arguments: [false, true])
+    func persistedDifferentSnapshotStillSupersedesAcceptance(restoringEarlierResult: Bool) async throws {
+        let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "persisted-other-snapshot")
+        let report = try await fixture.analyze(preferredReference: "ref")
+        let first = try await fixture.pipeline.accept(
+            model: fixture.model, episode: fixture.episodeID, report: report,
+            decisions: [fixture.epochs[1]: ConcurrencyTests.truth]
+        )
+        let latest = try await fixture.pipeline.accept(
+            model: fixture.model, episode: fixture.episodeID, report: report,
+            decisions: [fixture.epochs[1]: Self.other]
+        )
+        let restored = restoringEarlierResult ? first.model : fixture.model
+        try await fixture.pipeline.activate(model: restored, episode: fixture.episodeID)
+        let expected: AlignmentAcceptanceError = restoringEarlierResult ? .staleSnapshot : .supersededAcceptance
+        await #expect(throws: expected) { try await fixture.pipeline.activate(latest) }
+        await #expect(throws: expected) { try await fixture.pipeline.activate(first) }
+        await fixture.coordinator.shutdown()
+    }
+
     @Test("Repeating an activation keeps the exact ready identity continuously available", arguments: [false, true])
     func repeatedActivationDoesNotRepublishIdentity(persisted: Bool) async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "repeat-activation")

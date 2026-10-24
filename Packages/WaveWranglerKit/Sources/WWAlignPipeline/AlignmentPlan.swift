@@ -162,18 +162,26 @@ extension Episode {
 
 enum AlignmentPlanner {
     static func speakerMatches(
-        episode: Episode, plan: AlignmentPlan, accepted: AlignedTimelineMap?, targetEpoch: RecordingEpochID
+        episode: Episode, plan: AlignmentPlan, accepted: AlignedTimelineMap?, targetEpoch: RecordingEpochID,
+        replacingReference: Bool = false, channelCounts: [SourceID: Int]? = nil
     ) -> [SpeakerMatchOption] {
         guard let target = plan.epoch(targetEpoch), target.group != plan.reference?.group else { return [] }
         let available = Set(plan.eligiblePlacedSources)
         var result: [SpeakerMatchOption] = []
         for assignment in episode.speakerAssignments {
             let channels = ([assignment.primary].compactMap { $0 } + assignment.backups)
-                .filter { available.contains($0.sourceID) && $0.channel.value != nil }
+                .filter { available.contains($0.sourceID) }
+                .compactMap { reference -> ChannelReference? in
+                    let count = channelCounts == nil
+                        ? episode.source(reference.sourceID)?.observations.channelCount.value
+                        : channelCounts?[reference.sourceID]
+                    guard let index = reference.resolvedChannel(channelCount: count) else { return nil }
+                    return ChannelReference(sourceID: reference.sourceID, statedChannel: index)
+                }
             for targetChannel in channels where target.eligibleSources.contains(targetChannel.sourceID) {
                 guard let targetIndex = targetChannel.channel.value else { continue }
                 for referenceChannel in channels where referenceChannel.sourceID != targetChannel.sourceID {
-                    guard episode.alignment?.acceptedMap?.sourceCorrections?
+                    guard replacingReference || episode.alignment?.acceptedMap?.sourceCorrections?
                         .contains(where: { $0.source == referenceChannel.sourceID }) != true else { continue }
                     guard let refIndex = referenceChannel.channel.value,
                           let refEpoch = plan.epochs.first(where: {
@@ -214,11 +222,50 @@ enum AlignmentPlanner {
         }
     }
 
+    static func missingSpeakerMatchDetail(
+        episode: Episode, plan: AlignmentPlan, targetEpoch: RecordingEpochID,
+        channelCounts: [SourceID: Int]
+    ) -> String {
+        guard let target = plan.epoch(targetEpoch) else {
+            return "This recording segment is no longer available. Run Align Tracks again."
+        }
+        let assignments = episode.speakerAssignments.filter {
+            ([$0.primary].compactMap { $0 } + $0.backups).contains {
+                target.sources.contains($0.sourceID)
+            }
+        }
+        guard !assignments.isEmpty else {
+            return "Assign the same identified speaker to this recording and a reference recording in Recordings & Speakers, then run Align Tracks again."
+        }
+        var seen = Set<SourceID>()
+        let available = Set(plan.eligiblePlacedSources)
+        var unresolved: [String] = []
+        for assignment in assignments {
+            let channels = [assignment.primary].compactMap { $0 } + assignment.backups
+            for reference in channels {
+                guard available.contains(reference.sourceID), seen.insert(reference.sourceID).inserted,
+                      reference.resolvedChannel(channelCount: channelCounts[reference.sourceID]) == nil else { continue }
+                let name = episode.source(reference.sourceID)?.displayNameHint ?? "Recording"
+                if let count = channelCounts[reference.sourceID] {
+                    let unit = count == 1 ? "channel" : "channels"
+                    unresolved.append("\(name) (\(count) \(unit))")
+                } else {
+                    unresolved.append("\(name) (channel count unavailable)")
+                }
+            }
+        }
+        if !unresolved.isEmpty {
+            return "Choose the speaker's channel for \(unresolved.joined(separator: ", ")) in Recordings & Speakers, then run Align Tracks again. Verified mono files use their only channel automatically; multichannel files require a choice."
+        }
+        return "This speaker has no eligible recording with timing in the selected reference timeline. Check recording access in Recordings & Speakers. If another recorder connects this speaker to the reference, accept that recorder's timing first, then run Align Tracks again."
+    }
+
     static func plan(
         episode: Episode,
         eligibility: ContentEligibility,
         preferredReference: SourceID?,
-        priorReference: SourceID?
+        priorReference: SourceID?,
+        preferredRecorderGroup: RecorderGroupID? = nil
     ) -> AlignmentPlan {
         var placed: [RecordingEpochID: [SourceID]] = [:]
         var ineligible: [SourceID: SourceIneligibility] = [:]
@@ -240,8 +287,17 @@ enum AlignmentPlanner {
             guard let source, ineligible[source] == nil, let (group, epoch) = placementOf[source] else { return nil }
             return AlignmentReferenceChoice(group: group, epoch: epoch, source: source)
         }
-        var reference = referenceCandidate(preferredReference) ?? referenceCandidate(priorReference)
-        if reference == nil {
+        var reference = referenceCandidate(preferredReference)
+        if let preferredRecorderGroup {
+            let prior = referenceCandidate(priorReference)
+            reference = [reference, prior].compactMap { $0 }.first { $0.group == preferredRecorderGroup }
+                ?? episode.sources.lazy
+                    .filter { $0.placement.recorderGroupID == preferredRecorderGroup }
+                    .compactMap { referenceCandidate($0.id) }.first
+        } else if reference == nil {
+            reference = referenceCandidate(priorReference)
+        }
+        if reference == nil, preferredRecorderGroup == nil {
             for group in episode.recorderGroups where group.preferredAlignmentReference == true {
                 if let source = episode.sources.first(where: {
                     $0.placement.recorderGroupID == group.id && referenceCandidate($0.id) != nil
@@ -251,7 +307,7 @@ enum AlignmentPlanner {
                 }
             }
         }
-        if reference == nil {
+        if reference == nil, preferredRecorderGroup == nil {
             for assignment in episode.speakerAssignments {
                 if let candidate = referenceCandidate(assignment.primary?.sourceID) {
                     reference = candidate
@@ -259,7 +315,7 @@ enum AlignmentPlanner {
                 }
             }
         }
-        if reference == nil {
+        if reference == nil, preferredRecorderGroup == nil {
             search: for group in episode.recorderGroups {
                 for epoch in group.epochs {
                     if let first = placed[epoch.id]?.first(where: { ineligible[$0] == nil }) {

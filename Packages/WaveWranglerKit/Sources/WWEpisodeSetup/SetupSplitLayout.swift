@@ -82,7 +82,7 @@ public enum SetupSourceColumn: String, CaseIterable, Sendable {
     public func width(scale: Double) -> Double {
         switch self {
         case .name: 150 * scale
-        case .epoch: 46 * scale
+        case .epoch: 140 * scale
         case .channel: 34 * scale
         case .speaker: 84 * scale
         case .role: 84 * scale

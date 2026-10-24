@@ -142,15 +142,20 @@ actor AlignmentRuntime {
 
     func acceptTracks(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
-        report: AlignmentAnalysisReport, selected: Set<RecordingEpochID>
+        report: AlignmentAnalysisReport, selected: Set<RecordingEpochID>,
+        adaptive: Set<RecordingEpochID>, estimated: Set<RecordingEpochID>
     ) async throws -> AcceptedAlignment {
-        _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
+        let authorizations = sources.filter { $0.availability == .on }
+            .map { ContentWorkAuthorization.explicitUserRequest(for: $0.id) }
         let decisions = Dictionary(uniqueKeysWithValues: selected.map {
             ($0, EpochMapDecision.acceptProposal())
         })
         return try await pipeline.accept(
             model: model, episode: episodeID, report: report, decisions: decisions,
-            replacingAlignment: true
+            replacingAlignment: true,
+            adaptiveSelections: Dictionary(uniqueKeysWithValues: adaptive.map { ($0, estimated.contains($0)) }),
+            sources: sources, authorizations: authorizations
         )
     }
 
@@ -348,6 +353,7 @@ actor AlignmentRuntime {
             try await pipeline.activate(model: model, episode: episodeID)
             return
         }
+        if episode.alignment?.acceptedRevision == nil { reports[episodeID] = nil }
         let reconciler = publicationReconciler(for: episodeID)
         _ = try await reconciler.reconcile(
             resolve: { [self] in

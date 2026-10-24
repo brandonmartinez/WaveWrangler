@@ -699,6 +699,19 @@ scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only on the current host; use the VM lease pipeline instead on the development Mac
 ```
 
+The app target generates a UTC millisecond-based build number on every build, including direct Xcode
+and test builds. `scripts/build_number.py` writes a derived preprocessor header; Info.plist preprocessing
+puts that number in `CFBundleVersion` before signing. The marketing version remains `MARKETING_VERSION`.
+An existing derived header prevents repeated or backward clock readings from reusing that build number.
+No tracked version file or Git state changes during a build.
+
+Library, episode, and Settings window subtitles show the version/build read from the running bundle;
+the standard About panel uses the same metadata. `scripts/build.sh` prints the completed bundle's
+identity and exact path. On a build-and-launch handoff, report this number and verify it against the
+running window. Use stable window accessibility identifiers in UI tests rather than exact titles,
+which now include build identity. Run `PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-build-number.py`
+to check generation independently without creating source-tree bytecode.
+
 ### Source maintenance and historical qualification
 
 The [2026-10-20 source baselines](source-tree-baselines.json) pin the maintained

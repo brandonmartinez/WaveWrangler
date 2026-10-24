@@ -20,3 +20,8 @@ xcodebuild \
   CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM= \
   build
+
+APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/WaveWrangler.app"
+VERSION=$(/usr/bin/plutil -extract CFBundleShortVersionString raw -o - "$APP/Contents/Info.plist")
+BUILD=$(/usr/bin/plutil -extract CFBundleVersion raw -o - "$APP/Contents/Info.plist")
+printf '\nBuilt WaveWrangler %s (build %s)\nApp: %s\n' "$VERSION" "$BUILD" "$APP"

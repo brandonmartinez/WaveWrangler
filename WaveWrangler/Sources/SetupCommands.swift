@@ -22,6 +22,7 @@ import WWEpisodeSetup
     func setEpoch(_ sender: Any?)
     func startNewEpoch(_ sender: Any?)
     func setChannel(_ sender: Any?)
+    func useAsTimingReference(_ sender: Any?)
     func useAsPrimary(_ sender: Any?)
     func useAsBackup(_ sender: Any?)
     func downloadSource(_ sender: Any?)
@@ -127,6 +128,9 @@ final class EpisodeSetupViewController: NSObject, SetupCommandActions, NSMenuIte
     func relinkSource(_ sender: Any?) { if let id = singleSource { model.beginRelink(id) } }
     func grantSourceAccess(_ sender: Any?) { if let id = singleSource { model.beginRelink(id, mode: .grantAccess) } }
     func reviewChangedFile(_ sender: Any?) { if let id = singleSource { model.beginRelink(id, mode: .review) } }
+    func useAsTimingReference(_ sender: Any?) {
+        if let group = model.timingReferenceCandidate { model.useAsTimingReference(group) }
+    }
 
     func newRecorderGroup(_ sender: Any?) {
         model.sheet = .name(NameSheetContext(kind: .newGroup, initial: "", assigning: (sender as? NSMenuItem)?.representedObject == nil ? [] : sources))
@@ -245,6 +249,8 @@ final class EpisodeSetupViewController: NSObject, SetupCommandActions, NSMenuIte
         case #selector(startNewEpoch(_:)):
             return (!sources.isEmpty && sources.allSatisfy { model.episode?.source($0)?.placement.recorderGroupID != nil }) || groupID != nil
         case #selector(setChannel(_:)): return !sources.isEmpty
+        case #selector(useAsTimingReference(_:)):
+            return model.timingReferenceCandidate.map { model.timingReferenceSelection.canSelect($0) } ?? false
         case #selector(useAsPrimary(_:)):
             return model.selectedReference.map { !$0.isPrimary } ?? false
         case #selector(useAsBackup(_:)): return model.selectedReference != nil
@@ -384,12 +390,13 @@ enum SetupMenus {
     static func makeSourceMenu() -> NSMenu {
         let menu = NSMenu(title: "Source")
         menu.addItem(submenu("Assign to Recorder Group", delegate: groupsDelegate))
-        menu.addItem(item("Set Epoch…", #selector(SetupCommandActions.setEpoch(_:))))
-        menu.addItem(item("Start New Epoch", #selector(SetupCommandActions.startNewEpoch(_:))))
+        menu.addItem(item("Set Recording Segment…", #selector(SetupCommandActions.setEpoch(_:))))
+        menu.addItem(item("Start New Recording Segment", #selector(SetupCommandActions.startNewEpoch(_:))))
         menu.addItem(item("Set Channel…", #selector(SetupCommandActions.setChannel(_:))))
         menu.addItem(submenu("Assign Speaker", delegate: speakersDelegate))
         menu.addItem(item("Use as Primary", #selector(SetupCommandActions.useAsPrimary(_:))))
         menu.addItem(item("Use as Backup", #selector(SetupCommandActions.useAsBackup(_:))))
+        menu.addItem(item("Use as Timing Reference", #selector(SetupCommandActions.useAsTimingReference(_:))))
         menu.addItem(.separator())
         menu.addItem(item("Download", #selector(SetupCommandActions.downloadSource(_:))))
         menu.addItem(item("Pause Download", #selector(SetupCommandActions.pauseSourceDownload(_:))))

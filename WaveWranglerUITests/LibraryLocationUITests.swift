@@ -250,7 +250,7 @@ final class LibraryLocationUITests: XCTestCase {
                                                                      object: nil, userInfo: nil, deliverImmediately: true)
         Thread.sleep(forTimeInterval: 0.5)
         press(bar.buttons["Try Again"], step: "Tab to Try Again")
-        XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "library reachable again: \(texts(app.windows["Library"]))")
+        XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "library reachable again: \(texts(app.windows["ww.library.window"]))")
         XCTAssertTrue(libraryState().collectionNames.contains("Queued While Away"), "the queued edit was saved")
     }
 
@@ -271,7 +271,7 @@ final class LibraryLocationUITests: XCTestCase {
             notVerified.append("Grant Access… panel pre-pointed at the library folder: it opened at “\(startingFolder ?? "unknown")” (fixture folder is in the app container)")
         }
         choosePanelFolder(Self.permissionFixtureFolder, in: target)
-        XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "access granted: \(texts(app.windows["Library"]))")
+        XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "access granted: \(texts(app.windows["ww.library.window"]))")
         XCTAssertEqual(libraryState().shows, "12 shows")
     }
 
@@ -287,9 +287,9 @@ final class LibraryLocationUITests: XCTestCase {
         XCTAssertTrue(bar.buttons["Use Other Mac's Version"].exists)
         assertTabReachesMessageBarFirst(combine)
         press(combine, step: "Tab to Combine (Keep Everything)", alreadyFocused: true)
-        XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "resolved: \(texts(app.windows["Library"]))")
-        XCTAssertFalse(app.windows["Library"].staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Couldn' AND label CONTAINS 'update the library'")).firstMatch.exists,
-                       "no write failure left after Combine saved both changes: \(texts(app.windows["Library"]))")
+        XCTAssertTrue(bar.waitForNonExistence(timeout: 10), "resolved: \(texts(app.windows["ww.library.window"]))")
+        XCTAssertFalse(app.windows["ww.library.window"].staticTexts.matching(NSPredicate(format: "label BEGINSWITH 'Couldn' AND label CONTAINS 'update the library'")).firstMatch.exists,
+                       "no write failure left after Combine saved both changes: \(texts(app.windows["ww.library.window"]))")
         let names = libraryState().collectionNames
         XCTAssertTrue(names.contains("From Another Mac"), "the other Mac's change is kept: \(names)")
         XCTAssertTrue(names.contains("Made On This Mac"), "this Mac's change is kept: \(names)")
@@ -488,7 +488,7 @@ final class LibraryLocationUITests: XCTestCase {
     private func messageBar(heading: String, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
         app.typeKey("l", modifierFlags: [.command, .shift])
         let bar = app.descendants(matching: .any).matching(NSPredicate(format: "identifier == 'ww.library.messageBar' AND label == %@", heading)).firstMatch
-        XCTAssertTrue(bar.waitForExistence(timeout: 15), "library message bar “\(heading)”: \(texts(app.windows["Library"]))", file: file, line: line)
+        XCTAssertTrue(bar.waitForExistence(timeout: 15), "library message bar “\(heading)”: \(texts(app.windows["ww.library.window"]))", file: file, line: line)
         return bar
     }
 
@@ -501,7 +501,7 @@ final class LibraryLocationUITests: XCTestCase {
         app.typeKey("l", modifierFlags: [.command, .shift])
         guard Self.keyboardNavigation else {
             needsKeyboardNavigation.append("Tab reaches the message bar buttons first (\(button.label))")
-            let order = app.windows["Library"].descendants(matching: .any)
+            let order = app.windows["ww.library.window"].descendants(matching: .any)
                 .matching(NSPredicate(format: "identifier IN %@", ["ww.library.messageBar", "ww.library.entries"])).allElementsBoundByIndex
                 .map(\.identifier)
             XCTAssertEqual(order.first, "ww.library.messageBar", "message bar present and before the entry list in AX order: \(order)", file: file, line: line)

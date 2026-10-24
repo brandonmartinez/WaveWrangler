@@ -89,6 +89,20 @@ extension AlignmentPipeline {
             model: model, episode: episodeID, sources: sources, authorizations: authorizations,
             targetEpoch: targetEpoch, speaker: speaker, referenceSource: referenceSource, targetSource: targetSource
         )
+        return try await analyzeAdaptiveSpeaker(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations,
+            targetEpoch: targetEpoch, speaker: speaker, referenceSource: referenceSource,
+            targetSource: targetSource, initial: initial, progress: progress
+        )
+    }
+
+    func analyzeAdaptiveSpeaker(
+        model: ShowDocumentModel, episode episodeID: EpisodeID,
+        sources: [AlignmentSource], authorizations: [ContentWorkAuthorization],
+        targetEpoch: RecordingEpochID, speaker: SpeakerID, referenceSource: SourceID, targetSource: SourceID,
+        initial: AlignmentAnalysisReport, projectThroughAcceptedMap: Bool = true,
+        progress: @escaping @Sendable (Double) async -> Void = { _ in }
+    ) async throws -> AdaptiveAnalysisRecord {
         try Task.checkCancellation()
         await progress(0.1)
         if let failure = initial.epochFailures[targetEpoch] { throw failure }
@@ -101,7 +115,8 @@ extension AlignmentPipeline {
         func channel(_ source: SourceID) -> Int? {
             guard let assignment = model.episode(episodeID)?.assignment(for: speaker) else { return nil }
             return ([assignment.primary].compactMap { $0 } + assignment.backups)
-                .first { $0.sourceID == source && $0.channel.value != nil }?.channel.value
+                .first { $0.sourceID == source }?
+                .resolvedChannel(channelCount: initial.facts[source]?.channelCount)
         }
         let unit = AnalysisUnit(
             referenceChoice: choice, reference: reference, referenceFacts: referenceFacts,
@@ -110,12 +125,12 @@ extension AlignmentPipeline {
             referenceChannel: channel(referenceSource), targetChannel: channel(targetSource)
         )
         guard unit.referenceChannel != nil, unit.targetChannel != nil else {
-            throw AlignmentAcceptanceError.invalidMap("Both adaptive speaker channels must be explicitly stated.")
+            throw AlignmentAcceptanceError.invalidMap("Choose a speaker channel for each multichannel recording before adaptive review.")
         }
         var scale = 1.0, offset = 0.0
         var lower = 0.0, upper = Double(referenceFacts.frameCount) / Double(referenceFacts.sampleRate)
         var dependencies = dependency.sources
-        if initial.referenceRevision != nil {
+        if initial.referenceRevision != nil, projectThroughAcceptedMap {
             let map = try await verifiedAcceptedMap(model: model, episode: episodeID)
             let registered = await coordinator.inputs.sources
             for source in Set(map.groups.flatMap { $0.placements.map(\.occurrence.source) })

@@ -44,7 +44,6 @@ struct AlignmentWaveformView: View {
     @State private var hoveringMovableWaveform = false
     @State private var handCursorPushed = false
     @State private var confirmingExtension = false
-    @State private var confirmingReset = false
     @State private var confirmingAdaptiveAcceptance = false
     @State private var newGroupSource: SourceRecord?
 
@@ -586,7 +585,10 @@ struct AlignmentWaveformView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("Select \(track.groupName) recording: \(track.name), \(identity.label)")
                         .accessibilityIdentifier("alignment.waveforms.select.\(track.id)")
-                        listeningButtons(.source(track.id), name: track.name)
+                        HStack(spacing: 5) {
+                            listeningButtons(.source(track.id), name: track.name)
+                            recordingSettings(for: track)
+                        }
                         inlineMatchControls(for: track)
                     }
                 }
@@ -773,8 +775,11 @@ struct AlignmentWaveformView: View {
                         positionLock(track.group)
                     }.font(.caption).foregroundStyle(.secondary)
                 }
-                Text(identity.label + (model.trackEnabled(track.id) ? "" : " · Not heard (Solo/Mute)"))
-                    .font(.caption).foregroundStyle(.secondary)
+                HStack(spacing: 5) {
+                    recordingSettings(for: track)
+                    Text(identity.label + (model.trackEnabled(track.id) ? "" : " · Not heard (Solo/Mute)"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 inlineMatchControls(for: track)
                 if !model.sourceHasAcceptedTiming(track.id) {
                     Label("Not timed · not played", systemImage: "speaker.slash")
@@ -875,7 +880,7 @@ struct AlignmentWaveformView: View {
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("\(track.groupName), \(track.name), audio waveform. \(model.waveformMeasuredBinCount(for: track.id)) measured amplitude bins."
                     + (model.selectedWaveformSource == track.id
-                       ? " Stored offset \(model.numericEditorDefaults.offsetMilliseconds) milliseconds in the selected epoch."
+                       ? " Stored offset \(model.numericEditorDefaults.offsetMilliseconds) milliseconds in the selected recording segment."
                        : ""))
                 .accessibilityIdentifier("alignment.waveforms.track.\(track.id)")
                 .accessibilityAction { model.selectWaveform(track) }
@@ -967,17 +972,27 @@ struct AlignmentWaveformView: View {
         .help("Accepted positions are protected. Unlock deliberately before automatic alignment or an advanced timing correction; the reference stays fixed.")
     }
 
+    private func recordingSettings(for track: AlignmentWaveformTrack) -> some View {
+        Button("Recording settings", systemImage: "slider.horizontal.3") {
+            model.selectWaveform(track)
+            showInspector()
+        }
+        .labelStyle(.iconOnly)
+        .buttonStyle(.borderless)
+        .help("Assign a speaker or channel and adjust timing in Inspector.")
+        .accessibilityLabel("Recording settings for \(track.name)")
+        .accessibilityIdentifier("alignment.waveforms.settings.\(track.id)")
+    }
+
     private func inlineMatchControls(for track: AlignmentWaveformTrack) -> some View {
         VStack(alignment: .leading, spacing: 4) {
-            Button("Recording settings", systemImage: "slider.horizontal.3") {
-                model.selectWaveform(track)
-                showInspector()
+            if let status = model.timingReferenceSelection.status(for: track.group) {
+                Label(status, systemImage: model.timingReferenceSelection.currentGroup == track.group ? "pin.fill" : "flag.fill")
+                    .font(.caption)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(status)
+                    .accessibilityIdentifier("alignment.waveforms.referenceStatus.\(track.id)")
             }
-            .labelStyle(.iconOnly)
-            .buttonStyle(.borderless)
-            .help("Assign a speaker or channel and adjust timing in Inspector.")
-            .accessibilityLabel("Recording settings for \(track.name)")
-            .accessibilityIdentifier("alignment.waveforms.settings.\(track.id)")
             let options = model.matchOptions(for: track)
             if !options.isEmpty, model.selectedWaveformSource == track.id {
                 Menu("Adaptive review…") {
@@ -988,7 +1003,7 @@ struct AlignmentWaveformView: View {
                     }
                 }
                 .disabled(model.isWorking)
-                .help("Measure changing audio delay within this file. Experimental, visual review only; no playback or saved timing changes.")
+                .help("Measure changing audio delay within this file. Review and explicitly accept supported timing before pitch-preserving playback or saved timing changes.")
                 .accessibilityIdentifier("alignment.waveforms.adaptive.\(track.id)")
             }
             if options.count == 1, let option = options.first {
@@ -1010,11 +1025,9 @@ struct AlignmentWaveformView: View {
                 .disabled(model.isWorking)
                 .accessibilityLabel("Choose a speaker match for \(track.name)")
                 .accessibilityIdentifier("alignment.waveforms.align.\(track.id)")
-            } else {
+            } else if model.timingReferenceSelection.currentGroup != track.group {
                 Text(model.hasAcceptedRevision && model.waveformMap == nil
                      ? "Timing unavailable"
-                     : model.waveformMap?.reference.group == track.group
-                     ? "Reference recorder"
                      : model.trackSpeakerID(track.id) == nil
                          ? (model.availableSpeakers.isEmpty
                              ? "Create a speaker in Setup"
@@ -1204,7 +1217,7 @@ struct AlignmentWaveformView: View {
                             .accessibilityIdentifier("alignment.auto.showGhost")
                         Text("Dashed teal is the proposal; solid waveforms keep their current timing. Preview only, not played.")
                             .font(.caption).foregroundStyle(.secondary)
-                        Text("Proposed for \(model.selectedRow?.epochLabel ?? "selected epoch"): \(AlignmentPresentation.offsetLabel(proposal.segment.alignedOffset.approximateDouble * 1_000)); \(AlignmentPresentation.rateLabel(proposal.ppm)).")
+                        Text("Proposed for \(model.selectedRow?.epochLabel ?? "selected recording segment"): \(AlignmentPresentation.offsetLabel(proposal.segment.alignedOffset.approximateDouble * 1_000)); \(AlignmentPresentation.rateLabel(proposal.ppm)).")
                             .accessibilityIdentifier("alignment.auto.timing")
                         Text("Measured source interval \(AlignmentPresentation.formatTime(proposal.segment.groupClockStart.approximateDouble))–\(AlignmentPresentation.formatTime(proposal.segment.groupClockEnd.approximateDouble)); \(analysis.coverage.eligibleCount)/\(analysis.coverage.windowCount) windows, peak \(proposal.provenance.evidenceScore.map { String(format: "%.3f", $0) } ?? "unavailable"), residual p95 \(String(format: "%.3f", proposal.acousticResidualP95Milliseconds)) ms. These are evidence measures, not a probability or clock proof.")
                             .font(.caption).foregroundStyle(.secondary)
@@ -1223,14 +1236,14 @@ struct AlignmentWaveformView: View {
                                 .disabled(!model.canAcceptProposal)
                                 .accessibilityIdentifier("alignment.auto.accept")
                             if model.proposalNeedsExtension {
-                                Button("Extend to whole epoch…") { confirmingExtension = true }
+                                Button("Extend to whole recording segment…") { confirmingExtension = true }
                                     .disabled(!model.canAcceptProposal)
                                     .accessibilityIdentifier("alignment.auto.extend")
                             }
                         }
                         Text(model.proposalNeedsExtension
                              ? "Only measured frames align automatically. The rest stays unplaced unless you explicitly extend this rate and offset beyond the measured audio."
-                             : "Accepting maps only the measured epoch; restarted epochs and gaps remain separate.")
+                             : "Accepting maps only the measured recording segment; restarted recording segments and gaps remain separate.")
                             .font(.caption).foregroundStyle(.secondary)
                     } else if let abstention = analysis.abstention {
                         Label("No reliable match: \(abstention.detail)", systemImage: "exclamationmark.triangle")
@@ -1268,10 +1281,10 @@ struct AlignmentWaveformView: View {
             }
             Button("Keep preview only", role: .cancel) {}
         } message: {
-            Text("\(model.includeEstimatedAdaptiveTiming ? "Bounded gaps will play using ESTIMATED timing. These gaps have no acoustic confirmation and may contain misaligned speech." : "Only independently measured runs, anchor-guided acoustic matches and verified quiet-only transitions will play. Unmatched intervals will be silent.") Unmeasured ends and larger unsupported gaps remain silent. Quiet timing is inferred, not an extra speech match. All channels in this file share one correction; other files and originals stay unchanged. This is saved and undoable.")
+            Text(AlignmentPresentation.adaptiveAcceptanceWarning(includeEstimated: model.includeEstimatedAdaptiveTiming))
         }
         .confirmationDialog("Extend the measured timing beyond its evidence?", isPresented: $confirmingExtension) {
-            Button("Extend rate and offset to whole epoch") { model.extendProposalToEpoch() }
+            Button("Extend rate and offset to whole recording segment") { model.extendProposalToEpoch() }
             Button("Keep measured interval", role: .cancel) {}
         } message: {
             Text("This extrapolates the proposed time stretch into unmeasured audio. It cannot establish continuity, drift or clock accuracy outside the measured interval. Review playback; the decision is undoable and originals remain unchanged.")
@@ -1279,16 +1292,9 @@ struct AlignmentWaveformView: View {
     }
 
     private var resetAction: some View {
-        Button("Start fresh alignment…") { confirmingReset = true }
-            .disabled(model.isWorking)
+        Button("Reset Alignment…") { model.requestResetAlignment() }
+            .disabled(!model.canResetAlignment)
             .accessibilityIdentifier("alignment.auto.startFresh")
-            .confirmationDialog("Stop using the accepted timing and start fresh?",
-                                isPresented: $confirmingReset) {
-                Button("Start fresh alignment") { model.clearAcceptedTiming() }
-                Button("Keep accepted timing", role: .cancel) {}
-            } message: {
-                Text("This removes the accepted timing from the current timeline after the show is saved. The old map stays in history, and Undo can restore its selection, but it may remain unusable if its original source revision cannot be verified. You must place the groups again; original recordings are untouched.")
-            }
     }
 
     private func dragGroup(

@@ -11,6 +11,40 @@ extension AlignmentPipeline {
         model: ShowDocumentModel, episode episodeID: EpisodeID, record: AdaptiveAnalysisRecord,
         sources: [AlignmentSource], authorizations: [ContentWorkAuthorization], includeEstimated: Bool = false
     ) async throws -> AcceptedAlignment {
+        let preparation = try await prepareManual(
+            model: model, episode: episodeID, sources: sources, authorizations: authorizations
+        )
+        let map: AlignedTimelineMap
+        if model.episode(episodeID)?.alignment?.acceptedRevision != nil {
+            map = try await verifiedAcceptedMap(model: model, episode: episodeID)
+        } else {
+            map = try MapAcceptance.build(
+                plan: preparation.plan, facts: preparation.facts, analyses: [:], decisions: [:], prior: nil
+            ).map
+        }
+        let correction = try await adaptiveCorrection(
+            model: model, episode: episodeID, record: record, sources: sources,
+            authorizations: authorizations, facts: preparation.facts, map: map,
+            includeEstimated: includeEstimated
+        )
+        var corrections = model.episode(episodeID)?.alignment?.acceptedMap?.sourceCorrections ?? []
+        corrections.removeAll { $0.source == correction.source }
+        guard !corrections.contains(where: { $0.source == correction.reference || $0.reference == correction.source }) else {
+            throw AlignmentAcceptanceError.invalidMap("Use an unchanged reference, not another adaptively corrected file.")
+        }
+        corrections.append(correction)
+        return try await recordAdaptive(
+            map: map, corrections: corrections, model: model, episode: episodeID,
+            expectedSources: preparation.facts.mapValues(\.revisionToken)
+        )
+    }
+
+    func adaptiveCorrection(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, record: AdaptiveAnalysisRecord,
+        sources: [AlignmentSource], authorizations: [ContentWorkAuthorization],
+        facts sourceFacts: [SourceID: SourceFacts],
+        map: AlignedTimelineMap, includeEstimated: Bool
+    ) async throws -> SourceTimingCorrection {
         guard let episode = model.episode(episodeID), let key = record.analysisKey,
               record.version == AdaptiveAlignment.version, record.estimator == AdaptiveAlignment.identifier,
               record.referenceRevision == episode.alignment?.acceptedRevision,
@@ -28,22 +62,11 @@ extension AlignmentPipeline {
               !record.timing.regions.isEmpty else {
             throw AlignmentAcceptanceError.invalidMap("Adaptive evidence does not match its measured result.")
         }
-        let preparation = try await prepareManual(
-            model: model, episode: episodeID, sources: sources, authorizations: authorizations
-        )
-        let map: AlignedTimelineMap
-        if episode.alignment?.acceptedRevision != nil {
-            map = try await verifiedAcceptedMap(model: model, episode: episodeID)
-        } else {
-            map = try MapAcceptance.build(
-                plan: preparation.plan, facts: preparation.facts, analyses: [:], decisions: [:], prior: nil
-            ).map
-        }
-        guard let facts = preparation.facts[record.target.source],
+        guard let facts = sourceFacts[record.target.source],
               facts.sampleRate == record.target.sourceRate, facts.frameCount == record.target.sourceFrames,
               facts.channelCount == record.target.channelCount,
               facts.revisionToken == record.target.revisionToken,
-              preparation.facts[record.reference.source]?.revisionToken == record.reference.revisionToken,
+              sourceFacts[record.reference.source]?.revisionToken == record.reference.revisionToken,
               let reference = map.groups.first(where: { $0.group == record.reference.group }),
               let placement = reference.placements.first(where: { $0.occurrence.source == record.reference.source }),
               let span = placement.spans.first(where: { $0.epoch == record.reference.epoch }),
@@ -77,14 +100,16 @@ extension AlignmentPipeline {
             analysisDigest: key.digest, processing: PitchPreservingAudio.identifier, segments: curve
         )
         guard correction.isValid else { throw AlignmentAcceptanceError.invalidMap("No valid adaptive interval remains.") }
-        var corrections = episode.alignment?.acceptedMap?.sourceCorrections ?? []
-        corrections.removeAll { $0.source == correction.source }
-        guard !corrections.contains(where: { $0.source == correction.reference || $0.reference == correction.source }) else {
-            throw AlignmentAcceptanceError.invalidMap("Use an unchanged reference, not another adaptively corrected file.")
+        let eligibility = ContentEligibility(
+            sources: sources, authorizations: authorizations, registered: await coordinator.inputs.sources
+        )
+        guard [record.reference, record.target].allSatisfy({
+            eligibility.admitted($0.source)?.token == $0.revisionToken
+        }) else {
+            throw AlignmentAcceptanceError.invalidMap("Both measured sources must be available and authorized before applying adaptive timing.")
         }
-        corrections.append(correction)
         for participant in [record.reference, record.target] {
-            guard let source = sources.first(where: { $0.id == participant.source }) else {
+            guard let source = eligibility.admitted(participant.source)?.source else {
                 throw AlignmentAcceptanceError.invalidMap("A measured source is unavailable.")
             }
             try await decoder.withDecodingCursor(source.url, source: participant.source) { cursor in
@@ -98,9 +123,7 @@ extension AlignmentPipeline {
               await coordinator.readyPayload(for: DerivedSlot("adaptive/\(record.target.source)"), matching: key) != nil else {
             throw AlignmentAcceptanceError.invalidMap("Adaptive evidence changed during acceptance. Analyze again.")
         }
-        let measuredTokens = preparation.facts.mapValues(\.revisionToken)
-        return try await recordAdaptive(map: map, corrections: corrections, model: model, episode: episodeID,
-                                        expectedSources: measuredTokens)
+        return correction
     }
 
     public func removeAdaptiveCorrection(
@@ -149,9 +172,10 @@ extension AlignmentPipeline {
         }
         let base = AcceptanceLedger.Snapshot(alignment: episode.alignment)
         let identity = try mapIdentity(revision: recorded.revision, version: version, map: map, registered: registered.sources)
-        let token = try await ledger.issue(episode: episodeID, base: base)
+        let result = AcceptanceLedger.Snapshot(alignment: updated.episode(episodeID)?.alignment)
+        let token = try await ledger.issue(episode: episodeID, base: base, result: result)
         return AcceptedAlignment(model: updated, revision: recorded.revision, map: map, sourcesOutsideCoverage: [],
             identity: identity, token: token, base: base,
-            result: AcceptanceLedger.Snapshot(alignment: updated.episode(episodeID)?.alignment))
+            result: result)
     }
 }

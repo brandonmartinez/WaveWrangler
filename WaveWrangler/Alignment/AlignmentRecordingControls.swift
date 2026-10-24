@@ -1,6 +1,35 @@
 import SwiftUI
 import WWCore
 
+struct TimingReferenceControls: View {
+    let selection: TimingReferenceSelection
+    let group: RecorderGroupID
+    let identifier: String
+    let select: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let status = selection.status(for: group) {
+                Label(status, systemImage: selection.currentGroup == group ? "pin.fill" : "flag.fill")
+                    .setupFont(.caption1)
+                    .accessibilityElement(children: .combine)
+                    .accessibilityLabel(status)
+                    .accessibilityIdentifier("\(identifier).status")
+            }
+            Button("Use as Timing Reference", action: select)
+                .setupFont(.body)
+                .disabled(!selection.canSelect(group))
+                .help("Use this recorder for the next Align Tracks operation. Existing timing and edits stay unchanged until replacement alignment is accepted.")
+                .accessibilityIdentifier(identifier)
+            Text(selection.detail)
+                .setupFont(.caption1)
+                .foregroundStyle(selection.error == nil ? Color.secondary : Color.red)
+                .fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("\(identifier).detail")
+        }
+    }
+}
+
 struct AlignmentTrackAssignmentControls: View {
     @Bindable var model: EpisodeAlignmentModel
     let track: AlignmentWaveformTrack
@@ -45,13 +74,12 @@ struct AlignmentTrackAssignmentControls: View {
                 .accessibilityLabel("Speaker channel in \(track.name)")
                 .accessibilityIdentifier("alignment.waveforms.channel.\(track.id)")
             }
-            Toggle("Prefer this recorder as timing reference", isOn: Binding(
-                get: { model.prefersTimingReference(track.group) },
-                set: { model.preferTimingReference($0, group: track.group) }
-            ))
-            .toggleStyle(.checkbox)
-            .help("Your preference, not clock certification. Already accepted timeline references stay fixed. Multiple preferred recorders may be used once aligned.")
-            .accessibilityIdentifier("alignment.waveforms.preferredReference.\(track.id)")
+            TimingReferenceControls(
+                selection: model.timingReferenceSelection, group: track.group,
+                identifier: "alignment.waveforms.preferredReference.\(track.id)"
+            ) {
+                model.useAsTimingReference(track.group)
+            }
         }
         .disabled(model.isWorking || model.pendingWaveformMove != nil)
     }
@@ -91,7 +119,7 @@ struct AlignmentAnchorControls: View {
                 .disabled(model.waveformDraftAnchors.count < 2 || !model.canCorrect)
                 .accessibilityIdentifier("alignment.waveforms.anchor.apply.\(track.id)")
             if model.waveformDraftAnchors.count < 2 {
-                Text("Link a second point on this epoch to calculate offset and drift.")
+                Text("Link a second point on this recording segment to calculate offset and drift.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -126,7 +154,7 @@ struct AlignmentTimingControls: View {
                 VStack(alignment: .leading, spacing: 8) {
                     numberField("Offset (ms)", value: $model.waveformOffsetMilliseconds, identifier: "offset")
                     numberField("Rate (ppm)", value: $model.waveformRatePPM, identifier: "rate")
-                    Button("Apply epoch timing") {
+                    Button("Apply recording segment timing") {
                         model.applyNumeric(
                             ratePPM: model.waveformRatePPM,
                             offsetMilliseconds: model.waveformOffsetMilliseconds

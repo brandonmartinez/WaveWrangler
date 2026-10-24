@@ -86,7 +86,8 @@ public struct ChannelLabel: Sendable, Equatable, Codable {
 ///
 /// Since show schema 2 the channel is an explicit `Knowledge<Int>`: `.known(n)` is a zero-based channel
 /// index a person stated (or the generic API recorded), and `.unknown` means "this source, channel not
-/// yet stated". `.unknown` is never encoded as, or treated as, channel 0. Schema 1 stored a bare index and
+/// yet stated". `.unknown` is never encoded as channel 0. A consumer may resolve the sole channel of
+/// verified mono media without changing this stored knowledge. Schema 1 stored a bare index and
 /// used 0 as a placeholder; `ShowSchemaMigration` (WWPersistence) converts that placeholder to `.unknown`.
 public struct ChannelReference: Sendable, Hashable, Codable, CustomStringConvertible {
     public var sourceID: SourceID
@@ -101,6 +102,14 @@ public struct ChannelReference: Sendable, Hashable, Codable, CustomStringConvert
     /// A reference to a stated zero-based channel, or to an unknown channel of the source when `nil`.
     public init(sourceID: SourceID, statedChannel: Int?) {
         self.init(sourceID: sourceID, channel: statedChannel.map { .known($0) } ?? .unknown)
+    }
+
+    public func resolvedChannel(channelCount: Int?) -> Int? {
+        if let index = channel.value {
+            guard index >= 0, channelCount.map({ index < $0 }) != false else { return nil }
+            return index
+        }
+        return channelCount == 1 ? 0 : nil
     }
 
     /// `<source>#<zero-based index>` or `<source>#unknown`; for diagnostics, never shown to people.

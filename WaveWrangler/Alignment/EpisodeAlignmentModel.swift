@@ -4,6 +4,7 @@ import Observation
 import SwiftUI
 import WWAlignPipeline
 import WWCore
+import WWDerived
 import WWEpisodeSetup
 import WWOrganizer
 import WWTimeMap
@@ -31,23 +32,33 @@ final class EpisodeAlignmentModel {
     private(set) var tracksReviewRows: [AlignmentRow] = []
     private(set) var tracksReviewProposals: Set<RecordingEpochID> = []
     var selectedTracksProposals: Set<RecordingEpochID> = []
+    var selectedTracksAdaptive: Set<RecordingEpochID> = []
+    var estimatedTracksAdaptive: Set<RecordingEpochID> = []
     private var tracksReport: AlignmentAnalysisReport?
     private var tracksSnapshot: ShowDocumentModel?
+    var tracksReviewReferenceName: String? {
+        guard let group = tracksReport?.plan.reference?.group else { return nil }
+        return tracksSnapshot?.episode(episodeID)?.recorderGroup(group)?.name
+    }
+    func tracksAdaptiveRecord(for epoch: RecordingEpochID) -> AdaptiveAnalysisRecord? {
+        tracksReport?.adaptiveRecords[epoch]
+    }
     @ObservationIgnored private var tracksAnalysisTask: Task<Void, Never>?
     @ObservationIgnored private var tracksAcceptanceTask: Task<Void, Never>?
     @ObservationIgnored private var publicationGeneration = UUID()
     var isAnalyzingTracks: Bool { tracksAnalysisTask != nil }
     var canAcceptTracksReview: Bool {
         guard !isWorking, let report = tracksReport, report.plan.reference != nil else { return false }
-        return !selectedTracksProposals.isEmpty || report.plan.epochs.count == 1
+        return !selectedTracksProposals.isEmpty || !selectedTracksAdaptive.isEmpty || report.plan.epochs.count == 1
     }
     private var adaptiveAnalysis: AdaptiveAnalysisRecord?
     private var adaptiveEpisode: Episode?
     private var adaptivePair: SpeakerMatchOption?
     @ObservationIgnored private var adaptiveTask: Task<Void, Never>?
     private(set) var adaptiveProgress = 0.0
+    private var isMeasuringAdaptiveTiming = false
     var includeEstimatedAdaptiveTiming = false
-    var isAnalyzingAdaptively: Bool { isWorking && adaptiveTask != nil }
+    var isAnalyzingAdaptively: Bool { isWorking && adaptiveTask != nil && isMeasuringAdaptiveTiming }
     var currentAdaptiveAnalysis: AdaptiveAnalysisRecord? {
         guard let record = adaptiveAnalysis, let snapshot = adaptiveEpisode,
               let live = document?.store.model.episode(episodeID),
@@ -64,6 +75,7 @@ final class EpisodeAlignmentModel {
     private(set) var analysisStates: [RecordingEpochID: EpochAlignmentState] = [:]
     private(set) var speakerMatches: [RecordingEpochID: [SpeakerMatchOption]] = [:]
     private var inspectedEpisode: Episode?
+    private var inspectionSnapshot: AlignmentInspectionSnapshot?
     private var inspectedStates: [EpochAlignmentState] = []
     var selectedMatchSpeaker: SpeakerID?
     var selectedMatchOption: SpeakerMatchOption?
@@ -459,6 +471,12 @@ final class EpisodeAlignmentModel {
 
     var hasAcceptedRevision: Bool { document?.store.model.episode(episodeID)?.alignment?.acceptedRevision != nil }
 
+    var canResetAlignment: Bool {
+        guard let document else { return false }
+        return hasAcceptedRevision && !isWorking && pendingWaveformMove == nil
+            && FormatUpdatePolicy.allowsEdits(document.status.formatUpdate)
+    }
+
     func statedChannel(for source: SourceID) -> Int? {
         document?.store.model.episode(episodeID)?.statedChannel(of: source)
     }
@@ -521,23 +539,33 @@ final class EpisodeAlignmentModel {
         load()
     }
 
-    func prefersTimingReference(_ group: RecorderGroupID) -> Bool {
-        document?.store.model.episode(episodeID)?.recorderGroup(group)?.preferredAlignmentReference == true
+    var timingReferenceSelection: TimingReferenceSelection {
+        if loadedWaveformMap == nil, acceptedMap == nil, hasAcceptedRevision {
+            return TimingReferenceSelection.read(model: document?.store.model, episodeID: episodeID)
+        }
+        return TimingReferenceSelection(
+            episode: document?.store.model.episode(episodeID),
+            currentGroup: loadedWaveformMap?.reference.group ?? acceptedMap?.reference.group
+        )
     }
 
-    func preferTimingReference(_ preferred: Bool, group: RecorderGroupID) {
+    func useAsTimingReference(_ group: RecorderGroupID) {
+        guard !isWorking, pendingWaveformMove == nil else {
+            lastError = "Finish the current alignment operation before choosing its next reference."
+            return
+        }
         guard let document else {
             lastError = "The show document is no longer open."
             return
         }
         guard SetupEditCommands(editor: document.store, episodeID: episodeID)
-            .preferAlignmentReference(preferred, group: group) else {
+            .preferAlignmentReference(true, group: group) else {
             lastError = document.store.lastError.map(String.init(describing:))
-                ?? "Reference preference is unavailable while this show is read-only."
+                ?? "The timing reference cannot be changed while this show is read-only."
             return
         }
         invalidateMatchAfterSetupEdit()
-        message = "Timing reference preference changed. Existing accepted timing was not rebased or approved."
+        message = timingReferenceSelection.detail
     }
 
     func align(_ track: AlignmentWaveformTrack, with option: SpeakerMatchOption) {
@@ -706,9 +734,9 @@ final class EpisodeAlignmentModel {
         document?.store.model.episode(episodeID)?.recorderGroup(group)?.icon ?? .recorder
     }
     var referenceGroup: RecorderGroupID? {
-        loadedWaveformMap?.reference.group
-            ?? document?.store.model.episode(episodeID)?.recorderGroups.first(where: { $0.preferredAlignmentReference == true })?.id
-            ?? document?.store.model.episode(episodeID)?.recorderGroups.first?.id
+        let reference = timingReferenceSelection
+        if hasAcceptedRevision { return reference.currentGroup }
+        return reference.nextGroup ?? document?.store.model.episode(episodeID)?.recorderGroups.first?.id
     }
     func positionIsLocked(_ group: RecorderGroupID) -> Bool {
         group == referenceGroup || document?.store.model.episode(episodeID)?.positionIsLocked(group) != false
@@ -800,7 +828,7 @@ final class EpisodeAlignmentModel {
                 waveformMessage = "Saving timing; the moved waveform is a visual preview until the verified audio refresh completes."
             } catch {
                 groupDraftMilliseconds = 0
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "The recorder group was not moved: \(error)."
             }
             isWorking = false
@@ -851,7 +879,7 @@ final class EpisodeAlignmentModel {
                 rows = Self.makeRows(model: accepted.model, episodeID: episodeID, states: [], map: accepted.map)
                 message = "Source-time placement accepted. Move recorder groups to align them; the show is being verified."
             } catch {
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "Initial manual placement was refused: \(error)."
             }
             isWorking = false
@@ -885,7 +913,10 @@ final class EpisodeAlignmentModel {
     }
 
     private func timingIsVerified(_ model: ShowDocumentModel) -> Bool {
-        if !pendingResetVerification, model.episode(episodeID)?.alignment?.acceptedRevision == nil { return true }
+        let alignment = model.episode(episodeID)?.alignment
+        if !pendingResetVerification, alignment?.acceptedRevision == nil, alignment?.maps.isEmpty != false {
+            return true
+        }
         return document?.verifiedModel?.hasSameMediaInputs(as: model, in: episodeID) == true
     }
 
@@ -992,7 +1023,7 @@ final class EpisodeAlignmentModel {
         waveformTargetPoint = point.sourceSeconds
         waveformReferencePoint = marker.alignedSeconds
         addWaveformAnchor()
-        waveformMessage = "\(waveformDraftAnchors.count) linked anchor\(waveformDraftAnchors.count == 1 ? "" : "s") staged. Place at least two pairs on this epoch, then apply; nothing has changed yet."
+        waveformMessage = "\(waveformDraftAnchors.count) linked anchor\(waveformDraftAnchors.count == 1 ? "" : "s") staged. Place at least two pairs on this recording segment, then apply; nothing has changed yet."
     }
 
     func loadWaveforms(keepingSnapshot: Bool = false, preload: Bool = false) {
@@ -1156,7 +1187,7 @@ final class EpisodeAlignmentModel {
                 waveformMessage = "Waveforms unavailable: \(error.localizedDescription)"
                     + (pendingWaveformMove == nil
                         ? "" : " The moved waveform remains an unverified visual preview; refresh audio to retry.")
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
             }
         }
     }
@@ -1247,7 +1278,7 @@ final class EpisodeAlignmentModel {
                 cancelWaveforms()
                 cancelWaveformOverview()
                 waveformMessage = "Waveform positions could not be verified: \(error.localizedDescription)"
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
             }
         }
     }
@@ -1283,6 +1314,7 @@ final class EpisodeAlignmentModel {
         waveformRefusals = tile.load.refusals
         loadedWaveformMap = tile.load.map
         loadedWaveformEpisode = tile.episode
+        refreshMeasuredSpeakerMatches()
         if pendingWaveformMove?.expectedGeneration == tile.modelGeneration {
             pendingWaveformMove = nil
         }
@@ -1402,7 +1434,7 @@ final class EpisodeAlignmentModel {
             } catch {
                 guard generation == overviewGeneration else { return }
                 waveformOverviewMessage = "Overview unavailable: \(error.localizedDescription)"
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
             }
         }
     }
@@ -1611,7 +1643,7 @@ final class EpisodeAlignmentModel {
                 stopPlayback(updatePlayhead: false)
                 isPreparingAudition = false
                 transportTask = nil
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 auditionLabel = "Playback unavailable: \(error.localizedDescription)"
                 return
             }
@@ -1721,7 +1753,7 @@ final class EpisodeAlignmentModel {
                 } catch {
                     guard generation == auditionGeneration else { return }
                     isPreparingAudition = false
-                    lastError = String(describing: error)
+                    lastError = AlignmentPresentation.errorDescription(error)
                     stopPlayback(updatePlayhead: true)
                     transportTask = nil
                     let reason = error is LocalizedError ? error.localizedDescription : String(describing: error)
@@ -1851,7 +1883,7 @@ final class EpisodeAlignmentModel {
                 guard generation == auditionGeneration else { return }
                 stopPlayback(updatePlayhead: false)
                 if Task.isCancelled { return }
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 let reason = error is LocalizedError ? error.localizedDescription : String(describing: error)
                 auditionLabel = "Aligned comparison unavailable: \(reason). No partial audio was played."
             }
@@ -1987,9 +2019,9 @@ final class EpisodeAlignmentModel {
     func goToRegionRemedy(_ remedy: String) {
         guard let region = selectedRegion else { return }
         switch remedy {
-        case "Go to Epoch Before":
+        case "Go to Recording Segment Before":
             if let epoch = region.precedingEpoch { selection = epoch }
-        case "Go to Epoch After":
+        case "Go to Recording Segment After":
             if let epoch = region.followingEpoch { selection = epoch }
         case "Go to Nearest Mapped Time":
             if let time = region.nearestSourceSeconds {
@@ -2021,7 +2053,7 @@ final class EpisodeAlignmentModel {
               let groupIndex = model.episodes[episodeIndex].recorderGroups.firstIndex(where: { $0.id == row.groupID })
         else { return }
         let next = model.episodes[episodeIndex].recorderGroups[groupIndex].epochs.count + 1
-        let epoch = RecordingEpoch(label: "Epoch \(next)", note: "Started at a manual anchor")
+        let epoch = RecordingEpoch(label: "Recording Segment \(next)", note: "Started at a manual anchor")
         model.episodes[episodeIndex].recorderGroups[groupIndex].epochs.append(epoch)
         isWorking = true
         lastError = nil
@@ -2053,7 +2085,7 @@ final class EpisodeAlignmentModel {
                         map: accepted.map
                     )
                     requestedEpochFocus = epoch.id
-                    message = "Started \(epoch.label) at the selected anchor. The new epoch is unsupported until you time it."
+                    message = "Started \(epoch.label) at the selected anchor. The new recording segment is unsupported until you time it."
                 } else {
                     anchorSelection = keptAnchorSelection
                     // `accepted.model` replaces the whole show, and every window shares this store: the
@@ -2065,7 +2097,7 @@ final class EpisodeAlignmentModel {
                 }
             } catch {
                 anchorSelection = keptAnchorSelection
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "The occurrence was not split."
             }
             isWorking = false
@@ -2097,21 +2129,21 @@ final class EpisodeAlignmentModel {
     /// Explains why the selected anchor cannot start a new epoch, so the refusal is never silent.
     private func reportSplitRefusal() {
         guard let row = selectedRow else {
-            message = "Select an epoch before starting a new epoch at an anchor."
+            message = "Select a recording segment before starting a new recording segment at an anchor."
             return
         }
         guard let selectedAnchorID = anchorSelection,
               let anchor = selectedAnchors.first(where: { $0.id == selectedAnchorID })
         else {
-            message = "Select an anchor in the Anchors table before starting a new epoch."
+            message = "Select an anchor in the Anchors table before starting a new recording segment."
             return
         }
         guard acceptedMap != nil else {
-            message = "Time this epoch before starting a new epoch at an anchor."
+            message = "Time this recording segment before starting a new recording segment at an anchor."
             return
         }
         message = "The anchor at \(AlignmentPresentation.formatTime(anchor.sourceSeconds)) is an endpoint of "
-            + "\(row.epochLabel)'s recorded span. Select an anchor inside the span to start a new epoch there."
+            + "\(row.epochLabel)'s recorded span. Select an anchor inside the span to start a new recording segment there."
     }
 
     private struct AnchorSplit {
@@ -2160,7 +2192,7 @@ final class EpisodeAlignmentModel {
                 if generation == auditionGeneration { stopPlayback(updatePlayhead: true) }
             } catch {
                 guard generation == auditionGeneration else { return }
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 auditionLabel = (error as? LocalizedError)?.errorDescription
                     ?? "Audition unavailable for this source."
             }
@@ -2258,7 +2290,7 @@ final class EpisodeAlignmentModel {
             observedRevision = episode?.alignment?.acceptedRevision
             clearWaveformMarkers()
             staleAcceptedTiming = false
-            analysisStates = [:]
+            discardAlignmentAnalysis()
             speakerMatches = [:]
             selectedMatchOption = nil
             analyzedInputs = nil
@@ -2308,8 +2340,9 @@ final class EpisodeAlignmentModel {
                       document.store.model.hasSameMediaInputs(as: model, in: episodeID) else { return }
                 let snapshot = prepared.snapshot
                 acceptedMap = snapshot?.acceptedMap
-                speakerMatches = snapshot?.speakerMatches ?? [:]
+                inspectionSnapshot = snapshot
                 inspectedEpisode = episode
+                refreshMeasuredSpeakerMatches()
                 inspectedStates = snapshot?.states ?? []
                 hasAnalysis = snapshot?.acceptedMap != nil
                 rows = Self.makeRows(
@@ -2351,7 +2384,7 @@ final class EpisodeAlignmentModel {
             if hasAcceptedRevision {
                 guard await Dialogs.confirm(
                     in: document.windowControllers.first?.window, message: "Align Tracks Again?",
-                    informative: "Current timing, transcription and edits stay in place while you analyze and review. Accepting replacement alignment resets active transcription, transcript-linked reviews, cuts and episode IN/OUT as one undoable change. Original recordings, assignments and recoverable history remain. This operation may reposition locked non-reference groups; the reference stays fixed.",
+                    informative: "Current timing, transcription and edits stay in place while you analyze and review. Accepting replacement alignment resets active transcription, transcript-linked reviews, cuts and episode IN/OUT as one undoable change. Original recordings, assignments and recoverable history remain. This operation may reposition locked non-reference groups. \(timingReferenceSelection.detail)",
                     confirmTitle: "Analyze Tracks"
                 ) else { return }
             }
@@ -2388,6 +2421,13 @@ final class EpisodeAlignmentModel {
                     lastError = "Sources, assignments or timing changed during analysis. Run Align Tracks again."
                     return
                 }
+                let priorReference = try snapshot.episode(episodeID)?.alignment?.acceptedRevision.map {
+                    try snapshot.timeMap(revision: $0, in: episodeID).reference
+                }
+                let replacesReference = priorReference.map {
+                    report.plan.reference?.group != $0.group || report.plan.reference?.epoch != $0.epoch
+                        || report.plan.reference?.occurrence != $0.occurrence
+                } ?? false
                 tracksReport = report
                 // Capture current downstream work only after analysis; later changes must not be discarded.
                 tracksSnapshot = document.store.model
@@ -2395,12 +2435,23 @@ final class EpisodeAlignmentModel {
                 for index in tracksReviewRows.indices {
                     let epoch = tracksReviewRows[index].epochID
                     if let failure = report.epochFailures[epoch] {
-                        tracksReviewRows[index].state.details = String(describing: failure)
+                        switch failure {
+                        case let .setupRequired(detail):
+                            tracksReviewRows[index].state = AlignmentPresentation.copy(
+                                for: .unsupported(.notAttempted, .analysisFailed(.setupRequired(detail)))
+                            )
+                        case let .encoding(detail):
+                            tracksReviewRows[index].state.details = detail
+                        default:
+                            tracksReviewRows[index].state.details = String(describing: failure)
+                        }
                     } else if let record = report.records[epoch] {
                         let reference = snapshot.episode(episodeID)?.source(record.reference.source)?.displayNameHint
                             ?? "\(record.reference.source)"
-                        let referenceTiming = report.referenceRevision.map { "previously accepted timing revision \($0)" }
-                            ?? "the fixed timeline reference"
+                        let referenceTiming = replacesReference
+                            ? "the newly selected reference's original recording clock"
+                            : report.referenceRevision.map { "previously accepted timing revision \($0)" }
+                                ?? "the fixed timeline reference"
                         let proposal = record.proposal.map {
                             String(format: "Measured interval %.3f-%.3f s; proposed offset at center %.6f s; drift %.3f ppm.",
                                    $0.segment.groupClockStart.approximateDouble,
@@ -2413,15 +2464,30 @@ final class EpisodeAlignmentModel {
                             AlignmentPresentation.automaticEvidence(record),
                         ].compactMap { $0 }.joined(separator: "\n")
                     }
+                    if let adaptive = report.adaptiveRecords[epoch] {
+                        tracksReviewRows[index].state.heading = adaptive.timing.regions.isEmpty
+                            ? "Adaptive timing unavailable" : "Adaptive file timing proposed"
+                        tracksReviewRows[index].state.evidence = AlignmentPresentation.adaptiveEvidence(adaptive)
+                        tracksReviewRows[index].state.details = [
+                            "A single offset/rate could not fit this recording. Local timing was measured automatically.",
+                            adaptive.refusal,
+                            "Only this file's channels use the adaptive curve; sibling recordings and the fixed reference are not moved by it.",
+                        ].compactMap { $0 }.joined(separator: "\n")
+                    }
                 }
                 tracksReviewProposals = Set(states.filter { $0.analysis?.proposal != nil }.map(\.epoch))
                 selectedTracksProposals = []
+                selectedTracksAdaptive = []
+                estimatedTracksAdaptive = []
                 tracksReviewPresented = true
-                message = "Analysis finished. Review measured intervals and explicitly select proposals to accept. Unmeasured audio remains unresolved."
+                message = "Analysis finished. Review recorder and adaptive file timing before accepting. Estimated gaps require a separate opt-in."
             } catch is CancellationError {
                 message = "Alignment analysis canceled. Current timing and downstream work are unchanged."
+            } catch AlignmentAcceptanceError.invalidMap(let reason) {
+                lastError = reason
+                message = "Alignment analysis could not use the selected reference. Current timing and downstream work are unchanged."
             } catch {
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "Alignment analysis failed. Current timing and downstream work are unchanged. Check source authorization, grouping and speaker channels in Recordings & Speakers."
             }
         }
@@ -2429,18 +2495,39 @@ final class EpisodeAlignmentModel {
 
     func cancelTracksAnalysis() { tracksAnalysisTask?.cancel() }
 
+    private func refreshMeasuredSpeakerMatches() {
+        guard let inspectionSnapshot, let inspectedEpisode,
+              let live = document?.store.model.episode(episodeID),
+              EpisodeMediaInputs(live) == EpisodeMediaInputs(inspectedEpisode) else {
+            speakerMatches = [:]
+            return
+        }
+        let counts: [SourceID: Int]
+        if loadedWaveformEpisode.map({ EpisodeMediaInputs($0) }) == EpisodeMediaInputs(inspectedEpisode) {
+            counts = Dictionary(uniqueKeysWithValues: waveformTracks.map { ($0.id, $0.envelope.channelCount) })
+        } else {
+            counts = [:]
+        }
+        speakerMatches = inspectionSnapshot.speakerMatches(in: inspectedEpisode, channelCounts: counts)
+    }
+
     func discardTracksReview() {
         tracksReviewPresented = false
         tracksReport = nil
         tracksSnapshot = nil
+        tracksReviewRows = []
+        tracksReviewProposals = []
         selectedTracksProposals = []
+        selectedTracksAdaptive = []
+        estimatedTracksAdaptive = []
     }
 
     func acceptTracksReview() {
         guard let document, canAcceptTracksReview, let report = tracksReport, let snapshot = tracksSnapshot else { return }
         if let episode = snapshot.episode(episodeID), episode.alignment?.acceptedRevision == nil,
            tracksReviewRows.contains(where: {
-               selectedTracksProposals.contains($0.epochID) && episode.positionIsLocked($0.groupID)
+               (selectedTracksProposals.contains($0.epochID) || selectedTracksAdaptive.contains($0.epochID))
+                    && episode.positionIsLocked($0.groupID)
            }) {
             lastError = "A selected recorder position is locked. Unlock it in advanced timing, then run Align Tracks again. No work was changed."
             return
@@ -2448,6 +2535,8 @@ final class EpisodeAlignmentModel {
         isWorking = true
         lastError = nil
         let selected = selectedTracksProposals
+        let adaptive = selectedTracksAdaptive
+        let estimated = estimatedTracksAdaptive
         tracksAcceptanceTask = Task {
             defer { isWorking = false; tracksAcceptanceTask = nil }
             do {
@@ -2457,7 +2546,8 @@ final class EpisodeAlignmentModel {
                     return
                 }
                 let accepted = try await runtime.acceptTracks(
-                    model: snapshot, episode: episodeID, report: report, selected: selected
+                    model: snapshot, episode: episodeID, report: report, selected: selected,
+                    adaptive: adaptive, estimated: estimated
                 )
                 try Task.checkCancellation()
                 guard publishAlignment(
@@ -2468,11 +2558,11 @@ final class EpisodeAlignmentModel {
                     return
                 }
                 discardTracksReview()
-                message = "Alignment accepted. New timing activates only after verified save. Unselected and unsupported intervals remain unresolved; use advanced timing or assign missing speaker channels."
+                message = "Alignment accepted. Timing activates only after verified save. With the same reference, unselected recordings keep their saved timing. Adaptive gaps play only where supported or explicitly accepted as estimates."
             } catch is CancellationError {
                 message = "Alignment acceptance canceled. Current timing and downstream work are unchanged."
             } catch {
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "Alignment was not accepted. Current timing and downstream work are unchanged."
             }
         }
@@ -2491,24 +2581,50 @@ final class EpisodeAlignmentModel {
         }
         guard let epoch = selection,
               let pair = selectedMatchOption ?? selectedSpeakerPairs.first else {
-            message = "Select an epoch with the same identified speaker on an already aligned recorder. State the speaker's channels in Setup, or place this epoch manually."
+            message = "Select a recording segment with the same identified speaker on an already aligned recorder. State the speaker's channels in Setup, or place this recording segment manually."
             return
         }
         isWorking = true
         adaptiveAnalysis = nil
         adaptiveEpisode = nil
+        adaptivePair = nil
+        selectedMatchSpeaker = pair.speaker
+        selectedMatchOption = pair
+        includeEstimatedAdaptiveTiming = false
+        adaptiveProgress = 0
         lastError = nil
         analysisStates = [:]
         analysisSourceEndByEpoch = [:]
         analyzedInputs = nil
         message = "Indexing full speaker recordings and matching passages… The first scan can take a while; unchanged fingerprints are cached."
         let model = document.store.model
-        Task {
+        isMeasuringAdaptiveTiming = false
+        adaptiveTask = Task {
+            defer {
+                isWorking = false
+                adaptiveTask = nil
+                adaptiveProgress = 0
+                isMeasuringAdaptiveTiming = false
+            }
             do {
                 let report = try await runtime.analyzeSpeaker(
                     model: model, episode: episodeID, targetEpoch: epoch, speaker: pair.speaker,
                     referenceSource: pair.reference.source, targetSource: pair.target
                 )
+                var adaptive: AdaptiveAnalysisRecord?
+                if report.records[epoch]?.needsAdaptiveTiming == true {
+                    isMeasuringAdaptiveTiming = true
+                    message = "A single offset/rate does not fit. Measuring local timing for adaptive review; nothing will be applied."
+                    adaptive = try await runtime.analyzeAdaptiveSpeaker(
+                        model: model, episode: episodeID, targetEpoch: epoch, pair: pair
+                    ) { value in
+                        await MainActor.run {
+                            guard self.isWorking, self.selectedMatchOption == pair else { return }
+                            self.adaptiveProgress = value
+                        }
+                    }
+                }
+                try Task.checkCancellation()
                 let states = await runtime.states(model: model, episode: episodeID)
                 guard document.store.model.hasSameMediaInputs(as: model, in: episodeID),
                       selection == epoch, (selectedMatchOption ?? selectedSpeakerPairs.first) == pair
@@ -2518,6 +2634,10 @@ final class EpisodeAlignmentModel {
                     return
                 }
                 analyzedInputs = model.episode(episodeID).map { EpisodeMediaInputs($0) }
+                adaptiveAnalysis = adaptive
+                adaptiveEpisode = adaptive == nil ? nil : model.episode(episodeID)
+                adaptivePair = adaptive == nil ? nil : pair
+                includeEstimatedAdaptiveTiming = false
                 inspectedStates = states
                 analysisStates = Dictionary(uniqueKeysWithValues: states.map { ($0.epoch, $0) })
                 analysisSourceEndByEpoch = Dictionary(uniqueKeysWithValues: report.plan.epochs.map { epoch in
@@ -2532,16 +2652,20 @@ final class EpisodeAlignmentModel {
                 )
                 selection = selection ?? rows.first?.epochID
                 let proposals = report.records.values.filter { $0.proposal != nil }.count
-                message = "Analysis finished: \(proposals) acoustic proposal\(proposals == 1 ? "" : "s"). Review each epoch's evidence; nothing was applied. Uncertain or unavailable matches stay manual."
+                message = adaptive.map(AlignmentPresentation.adaptiveEvidence)
+                    ?? "Analysis finished: \(proposals) acoustic proposal\(proposals == 1 ? "" : "s"). Review each recording segment's evidence; nothing was applied. Uncertain or unavailable matches stay manual."
+            } catch is CancellationError {
+                message = "Alignment analysis canceled. No timing was applied."
+            } catch AlignmentWorkFailure.canceled {
+                message = "Alignment analysis canceled. No timing was applied."
             } catch AlignmentAcceptanceError.analysisStale(let changes) where changes.contains(.dependenciesChanged) {
                 staleAcceptedTiming = true
-                lastError = "Accepted timing no longer matches the recorded source revisions. No new alignment was applied. Confirm and restore changed originals in Setup, or use Start fresh alignment to retire the old timing before placing groups again."
+                lastError = "Accepted timing no longer matches the recorded source revisions. No new alignment was applied. Confirm and restore changed originals in Setup, or use Reset Alignment to retire the old timing before placing groups again."
                 message = "Stored timing is stale. Analysis did not run."
             } catch {
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "Analysis did not complete. No partial result was accepted."
             }
-            isWorking = false
         }
     }
 
@@ -2561,6 +2685,7 @@ final class EpisodeAlignmentModel {
         isWorking = true
         lastError = nil
         adaptiveProgress = 0
+        isMeasuringAdaptiveTiming = true
         includeEstimatedAdaptiveTiming = false
         message = "Measuring local speaker timing throughout the overlap… Full-length review can take several minutes; nothing will be applied."
         let model = document.store.model
@@ -2569,6 +2694,7 @@ final class EpisodeAlignmentModel {
                 isWorking = false
                 adaptiveTask = nil
                 adaptiveProgress = 0
+                isMeasuringAdaptiveTiming = false
             }
             do {
                 let record = try await runtime.analyzeAdaptiveSpeaker(
@@ -2596,7 +2722,7 @@ final class EpisodeAlignmentModel {
             } catch AlignmentWorkFailure.canceled {
                 message = "Adaptive review canceled. No timing was applied."
             } catch {
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "Adaptive analysis did not complete. No timing was applied."
             }
         }
@@ -2646,7 +2772,7 @@ final class EpisodeAlignmentModel {
                 adaptivePair = nil
                 message = "File-local timing revision \(accepted.revision.revision) will activate after save verification. Unsupported intervals are silent; other files remain unchanged."
             } catch {
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "Adaptive timing was not changed."
             }
         }
@@ -2880,7 +3006,7 @@ final class EpisodeAlignmentModel {
             guard await Dialogs.confirm(
                 in: document?.windowControllers.first?.window,
                 message: "Delete Anchor?",
-                informative: "Deleting this anchor leaves fewer than two anchors, so this epoch will become unsupported until you add another anchor.",
+                informative: "Deleting this anchor leaves fewer than two anchors, so this recording segment will become unsupported until you add another anchor.",
                 confirmTitle: "Delete Anchor",
                 destructiveIsDefault: true
             ) else { return }
@@ -2907,7 +3033,7 @@ final class EpisodeAlignmentModel {
             self?.anchorsByEpoch[epoch] = anchors.count >= 2 ? anchors : []
             self?.anchorSelection = anchors.first?.id
             if anchors.count < 2 {
-                self?.message = "Fewer than two anchors remain. Add at least one more anchor to time this epoch."
+                self?.message = "Fewer than two anchors remain. Add at least one more anchor to time this recording segment."
             }
         }
     }
@@ -2977,34 +3103,50 @@ final class EpisodeAlignmentModel {
                     resetWaveformTiming()
                     onAccepted()
                     if actionName == UndoActionName.acceptProposal {
-                        announce("Accepted proposal for \(selectedRow?.epochLabel ?? "selected epoch")")
+                        announce("Accepted proposal for \(selectedRow?.epochLabel ?? "selected recording segment")")
                     } else if actionName == UndoActionName.rejectProposal {
-                        announce("Rejected proposal for \(selectedRow?.epochLabel ?? "selected epoch")")
+                        announce("Rejected proposal for \(selectedRow?.epochLabel ?? "selected recording segment")")
                     }
                 } else {
                     message = SharedModelPublication.supersededCorrectionMessage
                 }
             } catch {
-                lastError = String(describing: error)
+                lastError = AlignmentPresentation.errorDescription(error)
                 message = "The correction was not accepted."
             }
             isWorking = false
         }
     }
 
-    func clearAcceptedTiming() {
-        guard let document, !isWorking, hasAcceptedRevision else { return }
+    func requestResetAlignment() {
+        guard let document, canResetAlignment else { return }
         let prior = document.store.model
-        guard let episode = prior.episode(episodeID),
-              !episode.recorderGroups.contains(where: { $0.id != referenceGroup && episode.positionIsLocked($0.id) }) else {
-            lastError = "Unlock non-reference recorder positions before starting fresh alignment. Timing history is retained."
+        Task {
+            guard await Dialogs.confirm(
+                in: document.windowControllers.first?.window,
+                message: "Reset Alignment?",
+                informative: "Return every recorder group to zero offset and normal speed, including locked groups. This removes active automatic alignment, adaptive file timing, manual offsets, drift and anchors. Active transcription, transcript-linked reviews, cuts and episode IN/OUT reset together, just as when accepting replacement alignment. Original recordings, speaker assignments, recorder groups, reference selection and recoverable history remain. Undo restores the previous timing and work.",
+                confirmTitle: "Reset Alignment"
+            ) else { return }
+            resetAlignment(expecting: prior)
+        }
+    }
+
+    func resetAlignment(expecting prior: ShowDocumentModel) {
+        guard let document else { return }
+        guard document.store.model == prior else {
+            lastError = "The show changed while confirming reset. Nothing was reset. Review the current episode and try Reset Alignment again."
+            return
+        }
+        guard canResetAlignment else {
+            lastError = "Finish the current operation before resetting an aligned episode. This show must be editable."
             return
         }
         do {
-            let cleared = try prior.clearingAcceptedMap(in: episodeID)
+            let cleared = try prior.resettingAlignment(in: episodeID)
             pendingResetVerification = true
             guard document.store.applyReplacement(
-                "Start Fresh Alignment", expecting: prior, model: cleared,
+                "Reset Alignment", expecting: prior, model: cleared,
                 afterChange: persistenceCallback(document: document, accepted: nil)
             ) else {
                 pendingResetVerification = false
@@ -3015,13 +3157,37 @@ final class EpisodeAlignmentModel {
             }
             staleAcceptedTiming = false
             lastError = nil
-            cancelWaveforms()
-            cancelWaveformOverview()
-            message = "Previous timing is no longer accepted. Its history remains; save verification must finish before new alignment."
+            stopAudition()
+            discardAlignmentAnalysis()
+            clearWaveformMarkers()
+            acceptedMap = nil
+            anchorsByEpoch = [:]
+            rows = Self.makeRows(model: cleared, episodeID: episodeID, states: [])
+            resetWaveformTiming()
+            message = "Alignment reset. Recorder groups return to zero offset and normal speed after verified save. Active transcription, reviews, cuts and IN/OUT were reset; Undo restores the previous work. Original recordings are unchanged."
             load()
+            synchronizeWaveforms()
         } catch {
-            lastError = String(describing: error)
+            lastError = AlignmentPresentation.errorDescription(error)
         }
+    }
+
+    private func discardAlignmentAnalysis() {
+        tracksAnalysisTask?.cancel()
+        adaptiveTask?.cancel()
+        discardTracksReview()
+        adaptiveAnalysis = nil
+        adaptiveEpisode = nil
+        adaptivePair = nil
+        adaptiveProgress = 0
+        includeEstimatedAdaptiveTiming = false
+        selectedMatchSpeaker = nil
+        selectedMatchOption = nil
+        analysisStates = [:]
+        analysisSourceEndByEpoch = [:]
+        analyzedInputs = nil
+        inspectedStates = []
+        hasAnalysis = false
     }
 
     @discardableResult

@@ -7,6 +7,102 @@ import WWTimeMap
 
 @Suite("Alignment presentation")
 struct AlignmentPresentationTests {
+    @Test func acceptanceFailureExplainsTheCurrentTimingAndRecoveryWithoutAnOpaqueErrorCode() {
+        let error = AlignmentAcceptanceError.staleSnapshot
+        let message = AlignmentPresentation.errorDescription(error)
+        #expect(message.contains("no longer matches the current timing"))
+        #expect(message.contains("Refresh audio"))
+        #expect(!message.contains("WWAlignPipeline") && !message.contains("error 17"))
+        let detail = "The speaker channel changed. Run Align Tracks again."
+        #expect(AlignmentPresentation.errorDescription(AlignmentAcceptanceError.invalidMap(detail)).contains(detail))
+    }
+
+    @Test func missingSpeakerChannelsAreSetupRequirementsNotInternalEncodingErrors() {
+        let detail = "Choose the speaker's channel for Teams.aiff (2 channels) in Recordings & Speakers."
+        let copy = AlignmentPresentation.copy(for: .unsupported(.notAttempted, .analysisFailed(.setupRequired(detail))))
+        #expect(copy.heading == "Alignment needs setup" && copy.evidence == detail)
+        #expect(copy.remedies.contains("Recordings & Speakers…"))
+        #expect(!copy.evidence.contains("encoding("))
+    }
+
+    @Test func varyingDelayDoesNotClaimPhysicalRecorderDrift() {
+        let copy = AlignmentPresentation.copy(for: .unsupported(.nonlinear, .analysisPending))
+        #expect(copy.heading == "Unsupported — no single offset/rate")
+        #expect(copy.evidence.contains("adaptive timing"))
+        #expect(copy.evidence.contains("without claiming recorder-clock drift"))
+    }
+
+    @Test func adaptiveConsentSeparatesSupportedPlaybackFromUnverifiedGapEstimates() {
+        let supported = AlignmentPresentation.adaptiveAcceptanceWarning(includeEstimated: false)
+        #expect(supported.contains("independently measured"))
+        #expect(supported.contains("anchor-guided acoustic matches"))
+        #expect(supported.contains("verified quiet-only transitions"))
+        #expect(supported.contains("Unmatched intervals will be silent"))
+        #expect(!supported.contains("gaps will play"))
+        let estimated = AlignmentPresentation.adaptiveAcceptanceWarning(includeEstimated: true)
+        #expect(estimated.contains("ESTIMATED timing"))
+        #expect(estimated.contains("no acoustic confirmation"))
+        #expect(estimated.contains("misaligned speech"))
+        for warning in [supported, estimated] {
+            #expect(warning.contains("Unmeasured ends and larger unsupported gaps remain silent"))
+            #expect(warning.contains("All channels"))
+            #expect(warning.contains("originals stay unchanged"))
+            #expect(warning.contains("fixed reference is not moved"))
+            #expect(warning.contains("saved and undoable"))
+        }
+    }
+
+    @Test func selectingANextReferenceDoesNotLabelItAsTheCurrentReference() {
+        let current = RecorderGroup(name: "Current recorder")
+        var next = RecorderGroup(name: "Next recorder")
+        next.preferredAlignmentReference = true
+        let episode = Episode(title: "References", recorderGroups: [current, next])
+        let selection = TimingReferenceSelection(episode: episode, currentGroup: current.id)
+        #expect(selection.currentGroup == current.id && selection.nextGroup == next.id)
+        #expect(selection.status(for: current.id) == "Current timing reference")
+        #expect(selection.status(for: next.id) == "Next alignment reference")
+        #expect(selection.changesReference && !selection.canSelect(next.id) && selection.canSelect(current.id))
+        #expect(selection.detail.contains("Current reference: Current recorder. Next alignment: Next recorder."))
+        #expect(selection.detail.contains("stay unchanged until acceptance"))
+    }
+
+    @Test func anAcceptedReferenceRemainsTheDefaultUntilAnotherRecorderIsSelected() {
+        let current = RecorderGroup(name: "Current recorder")
+        let other = RecorderGroup(name: "Other recorder")
+        let episode = Episode(title: "References", recorderGroups: [current, other])
+        let selection = TimingReferenceSelection(episode: episode, currentGroup: current.id)
+        #expect(selection.nextGroup == current.id && !selection.changesReference)
+        #expect(selection.status(for: current.id) == "Timing reference")
+        #expect(selection.status(for: other.id) == nil && selection.canSelect(other.id))
+        #expect(!selection.canSelect(current.id))
+    }
+
+    @Test func aFirstSelectionAndUnavailableTimingAreNotPresentedAsAcceptedTiming() {
+        var next = RecorderGroup(name: "Selected recorder")
+        next.preferredAlignmentReference = true
+        let episode = Episode(title: "References", recorderGroups: [next])
+        let selection = TimingReferenceSelection(episode: episode)
+        #expect(selection.currentGroup == nil && selection.nextGroup == next.id)
+        #expect(selection.status(for: next.id) == "Next alignment reference")
+        let unreadable = TimingReferenceSelection(episode: episode, error: "Saved timing is unreadable.")
+        #expect(unreadable.detail == "Saved timing is unreadable." && !unreadable.canSelect(RecorderGroupID()))
+        let missing = TimingReferenceSelection.read(model: nil, episodeID: episode.id)
+        #expect(missing.error != nil && !missing.canSelect(next.id))
+    }
+
+    @Test func recordingSegmentWordingPreservesGapRemediesAndEvidence() {
+        let reference = AlignmentPresentation.copy(for: .reference)
+        let unresolved = AlignmentPresentation.copy(for: .unsupported(.notAttempted, .analysisPending))
+        let disconnected = AlignmentPresentation.copy(for: .disconnected(.analysisPending))
+        for copy in [reference, unresolved, disconnected, AlignmentPresentation.gap] {
+            #expect(copy.evidence.contains("recording segment"))
+            #expect(!copy.evidence.localizedCaseInsensitiveContains("epoch"))
+        }
+        #expect(AlignmentPresentation.gap.remedies == [
+            "Go to Recording Segment Before", "Go to Recording Segment After",
+        ])
+    }
+
     @Test func wholeTrackIndexingIsNotPresentedAsContinuousFineVerification() {
         let copy = AlignmentPresentation.automaticMethod(fingerprintSeconds: [4500, 4400])
         #expect(copy.contains("both complete speaker channels"))

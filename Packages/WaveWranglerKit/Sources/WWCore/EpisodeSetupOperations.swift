@@ -33,6 +33,10 @@ public enum MoveDirection: Sendable, Equatable {
 }
 
 extension Episode {
+    public var preferredAlignmentReferenceGroupID: RecorderGroupID? {
+        recorderGroups.first { $0.preferredAlignmentReference == true }?.id
+    }
+
     /// 1-based epoch number of a grouped source, or `nil` when the source is ungrouped or has no epoch.
     public func epochNumber(of sourceID: SourceID) -> Int? {
         guard let source = source(sourceID),
@@ -91,7 +95,13 @@ extension ShowDocumentModel {
             guard let index = episode.recorderGroups.firstIndex(where: { $0.id == groupID }) else {
                 throw .recorderGroupNotFound(groupID)
             }
-            episode.recorderGroups[index].preferredAlignmentReference = preferred ? true : nil
+            if preferred {
+                for candidate in episode.recorderGroups.indices {
+                    episode.recorderGroups[candidate].preferredAlignmentReference = candidate == index ? true : nil
+                }
+            } else {
+                episode.recorderGroups[index].preferredAlignmentReference = nil
+            }
         }
     }
 

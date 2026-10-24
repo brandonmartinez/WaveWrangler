@@ -312,12 +312,12 @@ struct NumberSheet: View {
         _unknown = State(initialValue: context.kind == .channel && context.initial == nil)
     }
 
-    private var title: String { context.kind == .epoch ? "Set Epoch" : "Set Channel" }
+    private var title: String { context.kind == .epoch ? "Set Recording Segment" : "Set Channel" }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text(title).setupFont(.title3, weight: .semibold).accessibilityAddTraits(.isHeader)
-            TextField(context.kind == .epoch ? "Epoch" : "Channel", text: $draft)
+            TextField(context.kind == .epoch ? "Recording Segment" : "Channel", text: $draft)
                 .setupFont(.body)
                 .focused($focused)
                 .disabled(unknown)
@@ -328,7 +328,7 @@ struct NumberSheet: View {
                 Text("WaveWrangler doesn't check this against the file in this version.")
                     .setupFont(.caption1).fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("Start a new epoch when the recorder was stopped and started again, so its clock restarted.")
+                Text("A recording segment is one continuous-clock span of a recorder group. Start a new segment when that recorder stops and restarts.")
                     .setupFont(.caption1).fixedSize(horizontal: false, vertical: true)
             }
             if let error {

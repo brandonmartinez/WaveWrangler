@@ -428,8 +428,8 @@ private struct SourcesTable: View {
             .width(min: SetupSourceColumn.nameMinimum(scale: scale), ideal: SetupColumnPlan.idealWidth(.name, scale: scale))
             .customizationID(SetupSourceColumn.name.rawValue)
             .disabledCustomizationBehavior([.visibility, .reorder])
-            TableColumn("Epoch") { row in SourceCell(row: row, cell: row.epoch, label: "Epoch", column: "epoch") }
-                .width(min: 36 * scale, ideal: SetupColumnPlan.idealWidth(.epoch, scale: scale))
+            TableColumn("Recording Segment") { row in SourceCell(row: row, cell: row.epoch, label: "Recording Segment", column: "epoch") }
+                .width(min: 140 * scale, ideal: SetupColumnPlan.idealWidth(.epoch, scale: scale))
                 .customizationID(SetupSourceColumn.epoch.rawValue)
                 .disabledCustomizationBehavior([.visibility, .reorder])
             TableColumn("Ch") { row in SourceCell(row: row, cell: row.channel, label: "Channel", column: "channel") }
@@ -513,7 +513,7 @@ private struct NameCell: View {
     private var hiddenSummary: String? {
         guard case .source = row.id else { return nil }
         var parts: [String] = []
-        if hidden.contains(.epoch) { parts.append("epoch \(row.epoch.accessibilityValue)") }
+        if hidden.contains(.epoch) { parts.append("recording segment \(row.epoch.accessibilityValue)") }
         if hidden.contains(.channel) { parts.append("channel \(row.channel.accessibilityValue)") }
         if hidden.contains(.speaker) { parts.append("speaker \(row.speaker.accessibilityValue)") }
         if hidden.contains(.role) { parts.append("role \(row.role.accessibilityValue)") }
@@ -716,7 +716,7 @@ private struct SourceContextMenu: View {
         let sources = ids.compactMap(\.sourceID)
         if ids.count == 1, case let .group(groupID?) = ids.first {
             Button("Rename") { model.sheet = .name(NameSheetContext(kind: .renameGroup, initial: model.groupName(groupID), groupID: groupID)) }
-            Button("Start New Epoch") { model.selection = [.group(groupID)]; model.startNewEpoch() }
+            Button("Start New Recording Segment") { model.selection = [.group(groupID)]; model.startNewEpoch() }
             Divider()
             Button("New Recorder Group…") { model.sheet = .name(NameSheetContext(kind: .newGroup, initial: "")) }
         } else if !sources.isEmpty {

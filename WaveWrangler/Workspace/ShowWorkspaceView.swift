@@ -65,6 +65,16 @@ private struct ShowWindowContent: View {
                        minHeight: 540, idealHeight: 680, maxHeight: .infinity)
                 .presentationSizing(.fitted)
                 .wwAppEnvironment()
+                .onCommand(
+                    Selector(("undo:")),
+                    perform: store.document?.undoManager?.canUndo == true
+                        ? { store.document?.undoManager?.undo() } : nil
+                )
+                .onCommand(
+                    Selector(("redo:")),
+                    perform: store.document?.undoManager?.canRedo == true
+                        ? { store.document?.undoManager?.redo() } : nil
+                )
             }
         }
     }

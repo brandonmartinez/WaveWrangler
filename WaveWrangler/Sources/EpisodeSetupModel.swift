@@ -183,6 +183,18 @@ final class EpisodeSetupModel {
 
     var episode: Episode? { store.model.episode(episodeID) }
 
+    var timingReferenceSelection: TimingReferenceSelection {
+        TimingReferenceSelection.read(model: store.model, episodeID: episodeID)
+    }
+
+    var timingReferenceCandidate: RecorderGroupID? {
+        switch inspectorSubject {
+        case let .group(id): id
+        case let .source(id): episode?.source(id)?.placement.recorderGroupID
+        default: nil
+        }
+    }
+
     var presentation: SetupPresentation {
         SetupPresentation(model: store.model, episodeID: episodeID, statuses: statuses, onlyNeedingAttention: onlyNeedingAttention, sortOrder: sortOrder)
     }
@@ -453,6 +465,18 @@ final class EpisodeSetupModel {
 
     func renameGroup(_ groupID: RecorderGroupID, to name: String) {
         edit { $0.renameGroup(groupID, to: name) }
+    }
+
+    func useAsTimingReference(_ group: RecorderGroupID) {
+        if let error = timingReferenceSelection.error {
+            message = error
+            return
+        }
+        guard edit({ $0.preferAlignmentReference(true, group: group) }) else {
+            if message == nil { message = "The timing reference could not be changed. Check whether this show is read-only." }
+            return
+        }
+        message = timingReferenceSelection.detail
     }
 
     func deleteGroup(_ groupID: RecorderGroupID) {
@@ -735,8 +759,8 @@ final class EpisodeSetupModel {
         switch error {
         case let .invalidWorkspace(reason): reason
         case .emptyTitle: "A name can't be empty."
-        case let .invalidEpochNumber(n): "Epoch \(n) isn't valid. Enter a whole number of 1 or more."
-        case .sourceNotInRecorderGroup: "Choose a recorder group first. Epochs belong to a recorder group."
+        case let .invalidEpochNumber(n): "Recording segment \(n) isn't valid. Enter a whole number of 1 or more."
+        case .sourceNotInRecorderGroup: "Choose a recorder group first. Recording segments belong to a recorder group."
         case .channelIsPrimaryOfAnotherSpeaker: "That channel is already another speaker's primary. Set a different channel first."
         case .channelNotAssignedToSpeaker: "Assign the speaker to this source first."
         case .invalidChannel: "Enter a whole number of 1 or more, or choose Unknown."

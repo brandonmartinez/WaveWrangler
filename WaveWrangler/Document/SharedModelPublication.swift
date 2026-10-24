@@ -23,8 +23,8 @@ enum SharedModelPublication {
 
     /// Shown instead of a silent refusal, naming both what was kept and how to retry.
     static let supersededSplitMessage =
-        "This show changed in another window while the new epoch was being prepared, so nothing was "
-        + "split and that change is intact. Select the anchor again and choose Start New Epoch at Anchor."
+        "This show changed in another window while the new recording segment was being prepared, so nothing was "
+        + "split and that change is intact. Select the anchor again and choose Start New Recording Segment at Anchor."
 
     /// The same refusal for an accepted or rejected correction, which is prepared across one await.
     static let supersededCorrectionMessage =

@@ -158,14 +158,14 @@ final class AlignmentInspectionUITests: XCTestCase {
 
     func testTM205CorrectEpochNumericallyReturnAndEscape() {
         selectTargetEpoch()
-        chooseEpisodeMenu("Edit Epoch Timing Numerically…")
+        chooseEpisodeMenu("Edit Recording Segment Timing Numerically…")
         let rate = app.textFields["alignment.numeric.rate"]
         XCTAssertTrue(rate.waitForExistence(timeout: 2))
         rate.typeKey("a", modifierFlags: .command)
         rate.typeText("12.5")
         app.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(stateHeading("Set by you").waitForExistence(timeout: 5))
-        chooseEpisodeMenu("Edit Epoch Timing Numerically…")
+        chooseEpisodeMenu("Edit Recording Segment Timing Numerically…")
         let preserved = app.textFields["alignment.numeric.rate"]
         XCTAssertTrue(preserved.waitForExistence(timeout: 2))
         XCTAssertEqual(preserved.value as? String, "12.500")
@@ -202,18 +202,18 @@ final class AlignmentInspectionUITests: XCTestCase {
         XCTAssertEqual(
             app.staticTexts["ww.alignment.anchor.1.sourceTime"].value as? String,
             Self.formatTime(0.5),
-            "Anchor 1 must be the interior 0.500 anchor before Start New Epoch at Anchor"
+            "Anchor 1 must be the interior 0.500 anchor before Start New Recording Segment at Anchor"
         )
-        chooseEpisodeMenu("Start New Epoch at Anchor")
+        chooseEpisodeMenu("Start New Recording Segment at Anchor")
         XCTAssertTrue(
-            waitForText("Started Epoch 3", in: app.staticTexts["alignment.status"], timeout: 15),
+            waitForText("Started Recording Segment 3", in: app.staticTexts["alignment.status"], timeout: 15),
             "Split error: \(app.descendants(matching: .any)["alignment.error"].debugDescription)"
         )
         let epoch = app.descendants(matching: .any).matching(NSPredicate(
-            format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Epoch 3", "Epoch 3"
+            format: "label BEGINSWITH %@ OR value BEGINSWITH %@", "Recording Segment 3", "Recording Segment 3"
         )).firstMatch
         XCTAssertTrue(epoch.waitForExistence(timeout: 5))
-        XCTAssertTrue(waitForSelectedEpoch("Epoch 3"))
+        XCTAssertTrue(waitForSelectedEpoch("Recording Segment 3"))
         XCTAssertTrue(waitForKeyboardFocus(app.outlines["ww.alignment.groups"]))
     }
 
@@ -232,7 +232,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         let heading = app.staticTexts["ww.alignment.region.heading"]
         XCTAssertTrue(heading.waitForExistence(timeout: 2))
         XCTAssertEqual(heading.value as? String, "Gap — clock restarted")
-        XCTAssertTrue(app.buttons["Go to Epoch After"].exists)
+        XCTAssertTrue(app.buttons["Go to Recording Segment After"].exists)
     }
 
     func testTM211DependentsNoticeIsReadableWithoutFocusMove() {

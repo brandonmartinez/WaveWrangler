@@ -84,6 +84,21 @@ extension ShowDocumentModel {
         return copy
     }
 
+    /// Retires all active timing and downstream work together. Map revisions and user judgment remain
+    /// recoverable, but no automatic, adaptive, or manual timing is active until a new map is accepted.
+    public func resettingAlignment(in episodeID: EpisodeID) throws(MapHistoryError) -> ShowDocumentModel {
+        var copy = try clearingAcceptedMap(in: episodeID)
+        guard let index = copy.episodes.firstIndex(where: { $0.id == episodeID }) else {
+            throw .episodeNotFound(episodeID)
+        }
+        do {
+            copy.episodes[index].cleanup = try copy.episodes[index].cleanup?.resettingForReplacementAlignment()
+        } catch {
+            throw .invalidMap("Active transcription and edits could not be reset: \(error)")
+        }
+        return copy
+    }
+
     public func timeMap(revision: Int, in episodeID: EpisodeID) throws(MapHistoryError) -> AlignedTimelineMap {
         guard let episode = episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let version = episode.alignment?.map(revision: revision) else { throw .mapNotFound(revision: revision) }

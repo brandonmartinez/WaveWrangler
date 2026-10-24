@@ -196,16 +196,16 @@ struct AlignmentDetailInspector: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                 Text("Alignment").font(.headline).accessibilityAddTraits(.isHeader)
-                Text("Recorder groups, epochs, timing, and anchors. Scroll tables horizontally for all columns.")
+                Text("Recorder groups, recording segments, timing, and anchors. Scroll tables horizontally for all columns.")
                     .font(.caption).foregroundStyle(.secondary)
                 VStack(alignment: .leading, spacing: 12) {
                 ScrollView(.horizontal) {
                     AlignmentOutlineTable(model: model)
-                        .frame(width: 820, height: 240)
+                        .frame(width: 880, height: 240)
                 }
                 .id("ww.alignment.groupSection")
 
-                GroupBox("Anchors for \(model.selectedRow?.epochLabel ?? "selected epoch")") {
+                GroupBox("Anchors for \(model.selectedRow?.epochLabel ?? "selected recording segment")") {
                     ScrollView(.horizontal) {
                     Table(model.selectedAnchors, selection: $model.anchorSelection) {
                         TableColumn("Source time") { anchor in
@@ -244,22 +244,22 @@ struct AlignmentDetailInspector: View {
                         .accessibilityIdentifier("alignment.acceptProposal")
                     Button("Reject") { model.rejectProposal() }
                         .disabled(!model.canAcceptProposal)
-                        .help("Reject this proposal and leave the epoch unsupported.")
+                        .help("Reject this proposal and leave the recording segment unsupported.")
                         .accessibilityIdentifier("alignment.rejectProposal")
                     Button("Edit Numerically…") { model.requestNumericEditor() }
                         .disabled(!model.canCorrect)
-                        .help(model.canCorrect ? "Type a signed rate and offset correction." : "Select an epoch that can be timed manually.")
+                        .help(model.canCorrect ? "Type a signed rate and offset correction." : "Select a recording segment that can be timed manually.")
                         .accessibilityIdentifier("alignment.editNumeric")
                     Button("Place Anchors…") { model.requestAnchorEditor() }
                         .disabled(!model.canCorrect)
-                        .help(model.canCorrect ? "Type source and aligned time anchors." : "Select an epoch that can be timed manually.")
+                        .help(model.canCorrect ? "Type source and aligned time anchors." : "Select a recording segment that can be timed manually.")
                         .accessibilityIdentifier("alignment.placeAnchors")
                     Button("Place Anchor at Playhead") { model.placeAnchorAtPlayhead() }
                         .disabled(!model.canPlaceAnchorAtPlayhead)
                         .help(
                             model.canPlaceAnchorAtPlayhead
                                 ? "Append an anchor at the stopped audition position."
-                                : "Stop audition on an epoch that already has a persisted anchor map."
+                                : "Stop audition on a recording segment that already has a persisted anchor map."
                         )
                         .accessibilityIdentifier("alignment.placeAnchorAtPlayhead")
                     Button("Delete Anchor") { model.requestDeleteSelectedAnchor() }
@@ -272,7 +272,7 @@ struct AlignmentDetailInspector: View {
                               ? "Select an anchor first."
                               : "Type the selected anchor's aligned time.")
                         .accessibilityIdentifier("alignment.editAnchor")
-                    Button("Start New Epoch at Anchor") { model.startNewEpochAtSelectedAnchor() }
+                    Button("Start New Recording Segment at Anchor") { model.startNewEpochAtSelectedAnchor() }
                         .disabled(!model.canStartNewEpoch)
                         .help(model.canStartNewEpoch
                               ? "Split this occurrence at the selected anchor."
@@ -301,7 +301,7 @@ struct AlignmentDetailInspector: View {
                             model.canStopAudition ? model.stopAudition() : model.auditionSelection()
                         }
                         .disabled(!model.canAudition && !model.canStopAudition)
-                        .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped epoch with an available source.")
+                        .help(model.canAudition ? "Play the selected source range. Nothing is exported." : "Select a mapped recording segment with an available source.")
                         .accessibilityIdentifier("ww.alignment.audition.play")
                     }
                     .frame(maxWidth: 240, alignment: .leading)
@@ -393,10 +393,10 @@ private struct AlignmentOutlineTable: View {
                     )
             }
             .width(ideal: 170)
-            TableColumn("Epoch") { row in
+            TableColumn("Recording Segment") { row in
                 Text(row.epochLabel)
             }
-            .width(ideal: 80)
+            .width(ideal: 140)
             TableColumn("Sources") { row in
                 Text(row.sourceNames)
             }
@@ -427,7 +427,7 @@ private struct AlignmentOutlineTable: View {
             }
         }
         .tableStyle(.inset(alternatesRowBackgrounds: true))
-        .accessibilityLabel("Recorder groups and alignment epochs")
+        .accessibilityLabel("Recorder groups and recording segments")
         .accessibilityIdentifier("ww.alignment.groups")
         .onAppear {
             selection = model.selection.map(AlignmentOutlineRow.ID.epoch)
@@ -452,7 +452,7 @@ private struct AlignmentOutlineTable: View {
             return AlignmentOutlineRow(
                 id: .group(groupID),
                 groupName: first.groupName,
-                epochLabel: "\(epochs.count) epoch\(epochs.count == 1 ? "" : "s")",
+                epochLabel: "\(epochs.count) recording segment\(epochs.count == 1 ? "" : "s")",
                 sourceNames: "\(Set(epochs.flatMap { $0.sourceNames.split(separator: ",").map(String.init) }).count) sources",
                 state: nil,
                 ratePPM: nil,
@@ -821,7 +821,7 @@ private struct NumericTimingSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Edit Epoch Timing")
+            Text("Edit Recording Segment Timing")
                 .font(.title2.weight(.semibold))
             LabeledContent("Rate correction (ppm)") {
                 TextField("Rate", value: $rate, format: .number.precision(.fractionLength(3)))

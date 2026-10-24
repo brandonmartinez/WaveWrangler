@@ -29,6 +29,12 @@ private struct Fixture {
 struct SetupPresentationTests {
     let ready = SourceStatusSnapshot(location: .known, access: .granted, residency: .local, transfer: .idle, identity: .notChecked)
 
+    @Test func recordingSegmentTitlePreservesStoredKeys() {
+        #expect(SourceSortOrder.epoch.title == "Recording Segment")
+        #expect(SourceSortOrder.epoch.rawValue == "epoch")
+        #expect(SetupSourceColumn.epoch.rawValue == "epoch")
+    }
+
     @Test func groupsSourcesWithUngroupedAlwaysPresent() throws {
         let f = try Fixture()
         let p = SetupPresentation(model: f.model, episodeID: f.episodeID, statuses: [:])

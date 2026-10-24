@@ -199,10 +199,10 @@ struct SpeakerMatchTests {
         #expect(fixture.content.openReaders == 0)
     }
 
-    @Test("Unknown channels and unsupported reference epochs never become a speaker match")
+    @Test("Unknown multichannel assignments and unsupported reference epochs never become a speaker match")
     func unknownAndUnsupported() async throws {
         let fixture = try await PipelineFixture([
-            GroupSpec(name: "One", sources: [.init(name: "one", seconds: 22, signal: .scene(seed: 1))]),
+            GroupSpec(name: "One", sources: [.init(name: "one", channels: 2, seconds: 22, signal: .scene(seed: 1))]),
             GroupSpec(name: "Two", sources: [.init(name: "two", seconds: 22, signal: .scene(seed: 1))]),
         ])
         let speaker = SpeakerID()

@@ -19,6 +19,35 @@ struct EpisodeWindowTests {
         return document
     }
 
+    @Test func buildIdentityIsVisibleAndSurvivesDocumentAndSettingsTitleChanges() async throws {
+        let identity = AppBuildIdentity.current
+        let number = try #require(identity.buildNumber)
+        #expect(number.range(of: "^[0-9]{17}$", options: .regularExpression) != nil)
+        #expect(identity.version == Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)
+        let document = document()
+        defer { document.close() }
+        let episode = document.store.model.episodes[0]
+        let controller = try #require(document.openEpisode(episode.id))
+        let window = try #require(controller.window)
+        let deadline = Date().addingTimeInterval(5)
+        while controller.state.window == nil, Date() < deadline { try await Task.sleep(for: .milliseconds(10)) }
+        try #require(controller.state.window === window)
+        controller.synchronizeWindowTitleWithDocumentName()
+        #expect(window.title == ShowSidebarPresentation.episodeRowTitle(episode))
+        #expect(window.subtitle == identity.subtitle(context: "Synthetic Show"))
+        document.store.replaceLoadedModel(try document.store.model.renamingShow(to: "Renamed Show"))
+        controller.synchronizeWindowTitleWithDocumentName()
+        #expect(window.subtitle == identity.subtitle(context: "Renamed Show"))
+        #expect(LibraryWindowController.shared.window?.subtitle == identity.label)
+        SettingsWindowController.show(pane: .general)
+        let settings = try #require(NSApp.windows.first { $0.accessibilityIdentifier() == "ww.settings.window" })
+        defer { settings.close() }
+        #expect(settings.subtitle == identity.label)
+        SettingsWindowController.show(pane: .sources)
+        #expect(settings.title == SettingsPane.sources.title)
+        #expect(settings.subtitle == identity.label)
+    }
+
     @Test func editorIdentitySurvivesOtherSelectionAndDeletion() throws {
         let document = document()
         defer { document.close() }

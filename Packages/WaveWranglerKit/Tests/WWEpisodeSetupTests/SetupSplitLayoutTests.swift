@@ -84,6 +84,15 @@ struct SetupDefaultLayoutTests {
         }
     }
 
+    @Test func recordingSegmentHeaderFitsOnlyWhenItsFullColumnFits() {
+        for scale in [1.0, 1.5, 2.0] {
+            #expect(SetupSourceColumn.epoch.width(scale: scale) == 140 * scale)
+            let required = SetupColumnPlan.requiredWidth(SetupSourceColumn.allCases, scale: scale)
+            #expect(SetupColumnPlan.columns(forWidth: required, scale: scale).contains(.epoch))
+            #expect(!SetupColumnPlan.columns(forWidth: required - 1, scale: scale).contains(.epoch))
+        }
+    }
+
     /// #129: ideal widths are constants per text size, so resizing never feeds back into them.
     @Test func idealWidthsDoNotDependOnTableWidth() {
         for scale in [1.0, 1.5, 2.0] {

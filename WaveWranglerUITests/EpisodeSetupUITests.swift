@@ -225,7 +225,7 @@ final class EpisodeSetupUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         XCTAssertTrue(text("Zoom H6 — recorder group · 1 source").waitForExistence(timeout: 3))
 
-        menu("Source", "Set Epoch…")
+        menu("Source", "Set Recording Segment…")
         let field = element("ww.setup.numberField")
         XCTAssertTrue(field.waitForExistence(timeout: 2))
         field.click()
@@ -234,6 +234,7 @@ final class EpisodeSetupUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
         let epoch = element("ww.inspector.source.epoch")
         XCTAssertTrue(epoch.waitForExistence(timeout: 2))
+        XCTAssertEqual(epoch.label, "Recording Segment")
         XCTAssertEqual(epoch.value as? String, "2")
 
         menu("Source", "Set Channel…")
@@ -248,7 +249,7 @@ final class EpisodeSetupUITests: XCTestCase {
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
 
         app.menuBars.menuBarItems["Edit"].click()
-        XCTAssertTrue(app.menuItems["Undo Set Epoch"].exists)
+        XCTAssertTrue(app.menuItems["Undo Set Recording Segment"].exists)
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
@@ -352,7 +353,7 @@ final class EpisodeSetupUITests: XCTestCase {
         let set = expectation(for: NSPredicate(format: "value == '3'"), evaluatedWith: epoch)
         wait(for: [set], timeout: 3)
         app.menuBars.menuBarItems["Edit"].click()
-        XCTAssertTrue(app.menuItems["Undo Set Epoch"].exists, "typed into Epoch and committed with Return")
+        XCTAssertTrue(app.menuItems["Undo Set Recording Segment"].exists, "typed into Recording Segment and committed with Return")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }
 
@@ -467,6 +468,8 @@ final class EpisodeSetupUITests: XCTestCase {
         importFixture()
         let outline = app.outlines["ww.setup.sources"]
         let status = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.status'")).firstMatch
+        let epochCell = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND identifier ENDSWITH '.epoch'")).firstMatch
+        let epochInName = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'recording segment'")).firstMatch
         // AppKit's column autoresizing may re-spread width a little between cycles; what must hold is that
         // the columns never outgrow the table: Status stays fully inside it, at least its minimum width.
         func assertFits(_ context: String) {
@@ -476,20 +479,24 @@ final class EpisodeSetupUITests: XCTestCase {
             let column = row.cells.allElementsBoundByIndex.last?.frame ?? .zero
             XCTAssertGreaterThanOrEqual(column.width, 95, "\(context): Status column keeps its minimum width (\(column))")
             XCTAssertLessThanOrEqual(column.maxX, outline.frame.maxX + 1, "\(context): no horizontal overflow (\(column) vs \(outline.frame))")
+            // A small VM display may keep both window sizes in the same tier.
+            // Check the actual column against its VoiceOver fallback, not the Zoom toggle.
+            if epochCell.exists && epochCell.frame.width > 0 {
+                XCTAssertGreaterThanOrEqual(epochCell.frame.minX, outline.frame.minX - 1, "\(context): Recording Segment inside the table")
+                XCTAssertLessThanOrEqual(epochCell.frame.maxX, outline.frame.maxX + 1, "\(context): Recording Segment not clipped")
+                XCTAssertTrue(epochInName.waitForNonExistence(timeout: 2), "\(context): visible Recording Segment has no hidden-column fallback")
+            } else {
+                XCTAssertTrue(epochInName.waitForExistence(timeout: 2), "\(context): hidden Recording Segment remains in the row's VoiceOver value")
+            }
         }
         // Ten cycles: the invariant holds every time, and the layout doesn't compound (see below).
         var offsets: [Double] = []
         var widths: [Double] = []
-        // Each cycle crosses a column tier (#129): at the default size Epoch and Ch are hidden (their values
-        // move into the Name cell's VoiceOver value); zoomed, every column shows again.
-        let epochInName = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.setup.source.' AND value CONTAINS 'epoch'")).firstMatch
         for cycle in 1...10 {
             menu("Window", "Zoom")  // default size
             assertFits("zoom cycle \(cycle), default size")
-            XCTAssertTrue(epochInName.waitForExistence(timeout: 2), "zoom cycle \(cycle): default size hides Epoch (tier change)")
             menu("Window", "Zoom")  // zoomed
             assertFits("zoom cycle \(cycle), zoomed")
-            XCTAssertTrue(epochInName.waitForNonExistence(timeout: 2), "zoom cycle \(cycle): zoomed shows Epoch again (tier change)")
             offsets.append(status.frame.minX - outline.frame.minX)
             widths.append(outline.frame.width)
         }
@@ -512,11 +519,11 @@ final class EpisodeSetupUITests: XCTestCase {
 
         // #104: columns follow the width plan only; the header offers no show/hide/reorder menu.
         outline.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: 60, dy: -10)).rightClick()
-        // Only on-screen menu items count: the menu bar's View › Sort By also has Name/Epoch/Speaker/Status
+        // Only on-screen menu items count: the menu bar's View › Sort By also has Name/Recording Segment/Speaker/Status
         // items, with zero-size frames while closed.
         Thread.sleep(forTimeInterval: 1)
         let shown = app.menuItems.allElementsBoundByIndex.filter { $0.frame.width > 0 && $0.frame.height > 0 }
-        let columnItems = shown.filter { ["Epoch", "Ch", "Speaker", "Role", "Status", "Name"].contains($0.title) }
+        let columnItems = shown.filter { ["Recording Segment", "Ch", "Speaker", "Role", "Status", "Name"].contains($0.title) }
         XCTAssertTrue(columnItems.isEmpty, "no header menu to show/hide columns: \(columnItems.map(\.title))")
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
     }

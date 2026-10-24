@@ -31,7 +31,8 @@ struct AlignmentWaveformRetentionHostedTests {
     }
 
     func fixture(cleanupPrimaries: Int = 0, durationSeconds: Int = 40,
-                 pauses: [Range<Double>] = [], extraSources: Int = 0) async throws -> Fixture {
+                 pauses: [Range<Double>] = [], extraSources: Int = 0,
+                 targetStepSeconds: Double = 0) async throws -> Fixture {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let referenceEpoch = RecordingEpoch(label: "Reference")
@@ -77,7 +78,8 @@ struct AlignmentWaveformRetentionHostedTests {
         var files: [URL] = []
         for (index, source) in episode.sources.enumerated() {
             let file = folder.appendingPathComponent(source.displayNameHint)
-            try Self.wave(target: index == 1, durationSeconds: durationSeconds, pauses: pauses).write(to: file)
+            try Self.wave(target: index == 1, durationSeconds: durationSeconds,
+                          pauses: pauses, stepSeconds: targetStepSeconds).write(to: file)
             files.append(file)
             guard case let .success(metadata) = io.metadata(at: file) else { throw DecodeFailure.notFound }
             let witness = try await decoder.captureRawIdentity(file, matching: metadata.fingerprint)
@@ -610,7 +612,8 @@ struct AlignmentWaveformRetentionHostedTests {
         try Task.checkCancellation()
     }
 
-    private static func wave(target: Bool, durationSeconds: Int = 40, pauses: [Range<Double>] = []) -> Data {
+    private static func wave(target: Bool, durationSeconds: Int = 40,
+                             pauses: [Range<Double>] = [], stepSeconds: Double = 0) -> Data {
         let rate = 8000, frames = rate * durationSeconds
         var data = Data()
         func put<T: FixedWidthInteger>(_ value: T) {
@@ -632,7 +635,7 @@ struct AlignmentWaveformRetentionHostedTests {
         }
         for frame in 0..<frames {
             let u = Double(frame) / Double(rate)
-            let t = target ? 1.00012 * u + 0.18 : u
+            let t = target ? 1.00012 * u + 0.18 + (u >= Double(durationSeconds) / 2 ? stepSeconds : 0) : u
             let x = t * 2000, index = Int64(floor(x)), fraction = x - floor(x)
             let value = pauses.contains { $0.contains(u) } ? 0 : noise(index) * (1 - fraction) + noise(index + 1) * fraction
             put(Int16((value * 20_000).rounded()))

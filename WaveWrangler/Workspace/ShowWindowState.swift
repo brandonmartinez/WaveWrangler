@@ -617,14 +617,16 @@ final class ShowWindowState {
         })
     }
 
-    /// IA-06: subtitle = selected episode's title.
+    /// IA-06: retain show/episode context alongside the running app's version and build.
     func updateSubtitle() {
         if boundEpisodeID != nil {
             window?.title = selectedEpisode.map(ShowSidebarPresentation.episodeRowTitle) ?? "Episode Unavailable"
-            window?.subtitle = store.model.show.title
+            window?.subtitle = AppBuildIdentity.current.subtitle(context: store.model.show.title)
             return
         }
-        window?.subtitle = ShowSidebarPresentation.windowSubtitle(model: store.model, selectedEpisode: selectedEpisodeID)
+        window?.subtitle = AppBuildIdentity.current.subtitle(
+            context: ShowSidebarPresentation.windowSubtitle(model: store.model, selectedEpisode: selectedEpisodeID)
+        )
     }
 }
 

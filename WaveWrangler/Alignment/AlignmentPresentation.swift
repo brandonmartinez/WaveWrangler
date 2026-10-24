@@ -2,7 +2,55 @@ import Foundation
 import WWAlignPipeline
 import WWCore
 import WWDecode
+import WWDerived
 import WWTimeMap
+
+struct TimingReferenceSelection: Equatable {
+    let currentGroup: RecorderGroupID?
+    let nextGroup: RecorderGroupID?
+    let currentName: String?
+    let nextName: String?
+    let error: String?
+
+    init(episode: Episode?, currentGroup: RecorderGroupID? = nil, error: String? = nil) {
+        self.currentGroup = currentGroup
+        nextGroup = episode?.preferredAlignmentReferenceGroupID ?? currentGroup
+        currentName = currentGroup.flatMap { episode?.recorderGroup($0)?.name }
+        nextName = nextGroup.flatMap { episode?.recorderGroup($0)?.name }
+        self.error = error ?? (episode == nil ? "The episode is no longer available." : nil)
+    }
+
+    static func read(model: ShowDocumentModel?, episodeID: EpisodeID) -> Self {
+        guard let model, let episode = model.episode(episodeID) else { return Self(episode: nil) }
+        guard let revision = episode.alignment?.acceptedRevision else { return Self(episode: episode) }
+        do {
+            let map = try model.timeMap(revision: revision, in: episodeID)
+            return Self(episode: episode, currentGroup: map.reference.group)
+        } catch {
+            return Self(episode: episode, error: "The current timing reference could not be read: \(error)")
+        }
+    }
+
+    var changesReference: Bool { currentGroup != nil && currentGroup != nextGroup }
+
+    func canSelect(_ group: RecorderGroupID) -> Bool { error == nil && nextGroup != group }
+
+    func status(for group: RecorderGroupID) -> String? {
+        if currentGroup == group { return nextGroup == group ? "Timing reference" : "Current timing reference" }
+        return nextGroup == group ? "Next alignment reference" : nil
+    }
+
+    var detail: String {
+        if let error { return error }
+        if changesReference, let currentName, let nextName {
+            return "Current reference: \(currentName). Next alignment: \(nextName). Run Align Tracks and accept replacement alignment to switch. Current timing and edits stay unchanged until acceptance."
+        }
+        if let nextName {
+            return "\(nextName) will be used as the reference for the next Align Tracks operation. Selecting a reference does not move current timing or edits."
+        }
+        return "Choose a recorder for the next Align Tracks operation. Current timing and edits stay unchanged until you accept alignment."
+    }
+}
 
 struct AlignmentStateCopy: Equatable {
     var heading: String
@@ -41,6 +89,25 @@ struct AlignmentRegionPresentation: Equatable {
 }
 
 extension AlignmentPresentation {
+    static func errorDescription(_ error: any Error) -> String {
+        guard let localized = error as? any LocalizedError else { return String(describing: error) }
+        return [error.localizedDescription, localized.recoverySuggestion].compactMap { $0 }.joined(separator: "\n\n")
+    }
+
+    static func adaptiveEvidence(_ record: AdaptiveAnalysisRecord) -> String {
+        let measured = String(format: "%.1f", record.timing.supportedSeconds)
+        let guided = String(format: "%.1f", record.timing.anchoredRecovery?.supportedSeconds ?? 0)
+        let quiet = String(format: "%.1f", record.timing.quietSeconds)
+        return "Local timing: \(measured) s independently measured, \(guided) s anchor-guided, \(quiet) s quiet-derived. Review before applying; unmatched intervals remain silent unless bounded estimated gaps are explicitly enabled."
+    }
+
+    static func adaptiveAcceptanceWarning(includeEstimated: Bool) -> String {
+        let coverage = includeEstimated
+            ? "Bounded gaps will play using ESTIMATED timing. These gaps have no acoustic confirmation and may contain misaligned speech."
+            : "Only independently measured runs, anchor-guided acoustic matches and verified quiet-only transitions will play. Unmatched intervals will be silent."
+        return "\(coverage) Unmeasured ends and larger unsupported gaps remain silent. Quiet timing is inferred, not an extra speech match. All channels of each selected file share its correction; sibling recordings and originals stay unchanged. The fixed reference is not moved. This is saved and undoable."
+    }
+
     static func automaticMethod(fingerprintSeconds: [Double]?, refinementRatePPM: Double? = nil) -> String {
         if let durations = fingerprintSeconds, durations.count == 2 {
             if let rate = refinementRatePPM, rate.isFinite {
@@ -463,8 +530,8 @@ enum AlignmentPresentation {
 
     static let gap = AlignmentStateCopy(
         heading: "Gap — clock restarted",
-        evidence: "The recording stopped and restarted here. WaveWrangler never bridges or guesses across a gap; the epoch on each side is timed separately.",
-        remedies: ["Go to Epoch Before", "Go to Epoch After"],
+        evidence: "The recording stopped and restarted here. WaveWrangler never bridges or guesses across a gap; the recording segment on each side is timed separately.",
+        remedies: ["Go to Recording Segment Before", "Go to Recording Segment After"],
         isBlocked: true,
         symbol: "arrow.triangle.branch"
     )
@@ -482,7 +549,7 @@ enum AlignmentPresentation {
         case .reference:
             return AlignmentStateCopy(
                 heading: "Reference",
-                evidence: "This is the timeline's reference epoch. Every other epoch is measured against it.",
+                evidence: "This is the timeline's reference recording segment. Every other recording segment is measured against it.",
                 remedies: [],
                 symbol: "flag.checkered"
             )
@@ -530,10 +597,18 @@ enum AlignmentPresentation {
         case .disconnected:
             return AlignmentStateCopy(
                 heading: "Disconnected — no timing evidence",
-                evidence: "WaveWrangler found no usable timing evidence for this epoch (for example, an acoustic delay made the evidence unreliable, or there's no shared content). Set the timing yourself.",
+                evidence: "WaveWrangler found no usable timing evidence for this recording segment (for example, an acoustic delay made the evidence unreliable, or there's no shared content). Set the timing yourself.",
                 remedies: ["Edit Numerically…", "Place Anchors…"],
                 isBlocked: true,
                 symbol: "bolt.slash"
+            )
+        case let .unsupported(_, .analysisFailed(.setupRequired(detail))):
+            return AlignmentStateCopy(
+                heading: "Alignment needs setup",
+                evidence: detail,
+                remedies: ["Recordings & Speakers…", "Edit Numerically…", "Place Anchors…"],
+                isBlocked: true,
+                symbol: "person.crop.circle.badge.questionmark"
             )
         case let .unsupported(reason, _):
             return AlignmentStateCopy(
@@ -546,7 +621,7 @@ enum AlignmentPresentation {
         case let .clockApprovalRefused(revision):
             return AlignmentStateCopy(
                 heading: "Unsupported",
-                evidence: "Map revision \(revision) claims clock approval, but this build has no holdout-qualified clock evaluator. Re-time this epoch manually.",
+                evidence: "Map revision \(revision) claims clock approval, but this build has no holdout-qualified clock evaluator. Re-time this recording segment manually.",
                 remedies: ["Edit Numerically…", "Place Anchors…"],
                 isBlocked: true,
                 symbol: "questionmark.circle"
@@ -677,11 +752,11 @@ enum AlignmentPresentation {
 
     private static func unsupported(_ reason: WWTimeMap.UnsupportedReason) -> String {
         switch reason {
-        case .notAttempted: "No timing has been set for this epoch. This is not a claim that the audio format is unsupported. You can try manual numeric timing or anchors without running the estimator."
+        case .notAttempted: "No timing has been set for this recording segment. This is not a claim that the audio format is unsupported. You can try manual numeric timing or anchors without running the estimator."
         case .estimatorAbstained: "WaveWrangler's estimator abstained — it couldn't produce a reliable result."
         case .insufficientOverlap: "Not enough shared recording time to estimate timing."
-        case .nonlinear: "The drift isn't a simple constant rate, which WaveWrangler doesn't model."
-        case .disconnected: "WaveWrangler found no usable timing evidence for this epoch."
+        case .nonlinear: "The measured delays do not fit one offset and constant rate. Software or conferencing audio can have changing delay; adaptive timing can measure local relationships without claiming recorder-clock drift."
+        case .disconnected: "WaveWrangler found no usable timing evidence for this recording segment."
         case .acousticOnly: "Only acoustic evidence exists, below the threshold WaveWrangler uses for even a proposal."
         }
     }
@@ -691,7 +766,7 @@ enum AlignmentPresentation {
         case .notAttempted: "Timing not set — not attempted"
         case .estimatorAbstained: "Unsupported — estimator abstained"
         case .insufficientOverlap: "Unsupported — insufficient overlap"
-        case .nonlinear: "Unsupported — nonlinear drift"
+        case .nonlinear: "Unsupported — no single offset/rate"
         case .disconnected: "Disconnected — no timing evidence"
         case .acousticOnly: "Unsupported — acoustic evidence only"
         }

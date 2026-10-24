@@ -218,6 +218,7 @@ enum AlignmentStateResolver {
         case let .manual(basis, _):
             [.editNumerically, .placeAnchors, .audition] + (basis == .acceptedAcousticProposal && currentProposal ? [.revertToProposal] : [])
         case .externalEvidence: [.editNumerically, .audition]
+        case .unsupported(_, .analysisFailed(.setupRequired)): [.goToSetup, .editNumerically, .placeAnchors]
         case .unsupported(_, .analysisPending), .unsupported(_, .analysisFailed): [.retryAnalysis, .editNumerically, .placeAnchors]
         // A proposal measured since the map left (or set) this epoch unsupported can still be accepted.
         case .unsupported(_, .acceptedMap), .disconnected(.acceptedMap): (currentProposal ? [.acceptAsManual] : []) + [.editNumerically, .placeAnchors]

@@ -45,6 +45,21 @@ struct EpisodeSetupOperationTests {
         }
     }
 
+    @Test func choosingAnotherReferenceIsExclusiveAndSurvivesRoundTrip() throws {
+        let other = RecorderGroup(name: "Recorder B")
+        let original = try f.model.addingRecorderGroup(other, to: f.episode.id)
+            .preferringAlignmentReference(true, group: f.group.id, in: f.episode.id)
+        let changed = try original.preferringAlignmentReference(true, group: other.id, in: f.episode.id)
+        let restored = try JSONDecoder().decode(ShowDocumentModel.self, from: JSONEncoder().encode(changed))
+        let episode = try f.ep(restored)
+        #expect(episode.preferredAlignmentReferenceGroupID == other.id)
+        #expect(episode.recorderGroup(f.group.id)?.preferredAlignmentReference == nil)
+        #expect(episode.recorderGroups.filter { $0.preferredAlignmentReference == true }.count == 1)
+        #expect(episode.sources == f.episode.sources)
+        #expect(episode.alignment == f.episode.alignment)
+        #expect(episode.recorderGroups.map(\.clockNote) == original.episodes[0].recorderGroups.map(\.clockNote))
+    }
+
     @Test func deletingAGroupKeepsItsSourcesAsUngrouped() throws {
         let result = try f.model.removingRecorderGroup(f.group.id, in: f.episode.id)
         let episode = try f.ep(result)

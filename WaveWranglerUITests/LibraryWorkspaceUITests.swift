@@ -173,7 +173,12 @@ final class LibraryWorkspaceUITests: XCTestCase {
         launch(["-WWUITestLibraryFixture", "lib100"])
         let sidebar = element("ww.library.sidebar")
         waitFor(sidebar)
-        XCTAssertEqual(app.windows.firstMatch.title, "Library")
+        XCTAssertEqual(app.windows.firstMatch.identifier, "ww.library.window")
+        XCTAssertTrue(app.windows.firstMatch.title.hasPrefix("Library"))
+        XCTAssertNotNil(app.windows.firstMatch.title.range(
+            of: "WaveWrangler [0-9]+\\.[0-9]+\\.[0-9]+ \\(build [0-9]{17}\\)",
+            options: .regularExpression
+        ))
 
         let shows = element("ww.library.sidebar.shows")
         waitFor(shows)
@@ -213,7 +218,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
     /// window and back, and at 200% text; columns hide by priority (Episodes, Last Opened, Location) instead.
     func testEntryColumnsKeepStatusVisibleAtDefaultSizeZoomAnd200Percent() throws {
         launch(["-WWUITestLibraryFixture", "lib100"])
-        let window = app.windows["Library"]
+        let window = app.windows["ww.library.window"]
         waitFor(element("ww.library.sidebar"))
         let entries = app.outlines["ww.library.entries"]
         waitFor(entries)
@@ -376,7 +381,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
     /// bar (in the content column, #59) and the entry list are below the title bar and reachable.
     func testLibraryAt200PercentTextStaysInsideTheWindow() throws {
         launch(["-WWUITestLibraryFixture", "lib100"])
-        let window = app.windows["Library"]
+        let window = app.windows["ww.library.window"]
         waitFor(element("ww.library.sidebar"))
         let bar = element("ww.library.messageBar.inMemory")
         waitFor(bar)
@@ -534,7 +539,7 @@ final class LibraryWorkspaceUITests: XCTestCase {
         try audit("Settings › Sources")
 
         // K23: ⌘+ up to 200%, ⌘0 resets.
-        app.windows["Sources"].typeKey(.escape, modifierFlags: [])
+        app.windows["ww.settings.window"].typeKey(.escape, modifierFlags: [])
         app.typeKey("w", modifierFlags: .command)
         app.typeKey("l", modifierFlags: [.command, .shift])
         waitFor(element("ww.library.sidebar"))

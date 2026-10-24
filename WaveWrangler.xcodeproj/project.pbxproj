@@ -72,6 +72,7 @@
 				Alignment/AlignmentWaveformCache.swift,
 				Alignment/AlignmentWaveformStrokeIndex.swift,
 				Alignment/AnchorTimeEditing.swift,
+				App/AppBuildIdentity.swift,
 				Document/CopyElsewhereRetryGate.swift,
 				Document/FormatUpdate.swift,
 				Document/SharedModelPublication.swift,
@@ -206,6 +207,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = A4088373D38CFDABBD03C967 /* Build configuration list for PBXNativeTarget "WaveWrangler" */;
 			buildPhases = (
+				B613D147C3924E67A0010001 /* Generate Build Number */,
 				AAB7809FDD800D85FD674343 /* Sources */,
 				7A97177AA63486BAD0277083 /* Frameworks */,
 				584CDAD16254870A468AC22D /* Resources */,
@@ -398,6 +400,26 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		B613D147C3924E67A0010001 /* Generate Build Number */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/scripts/build_number.py",
+			);
+			name = "Generate Build Number";
+			outputPaths = (
+				"$(DERIVED_FILE_DIR)/WaveWranglerBuildNumber.h",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/usr/bin/python3 \"$SRCROOT/scripts/build_number.py\" \"$SCRIPT_OUTPUT_FILE_0\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		AAB7809FDD800D85FD674343 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -496,14 +518,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WaveWrangler/WaveWrangler.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WaveWrangler/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = WaveWrangler;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSPrincipalClass = WaveWranglerApplication;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/WaveWranglerBuildNumber.h";
+				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",
@@ -521,14 +540,11 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_ENTITLEMENTS = WaveWrangler/WaveWrangler.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_HARDENED_RUNTIME = YES;
-				GENERATE_INFOPLIST_FILE = YES;
+				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = WaveWrangler/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = WaveWrangler;
-				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.music";
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INFOPLIST_KEY_NSPrincipalClass = WaveWranglerApplication;
+				INFOPLIST_PREFIX_HEADER = "$(DERIVED_FILE_DIR)/WaveWranglerBuildNumber.h";
+				INFOPLIST_PREPROCESS = YES;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
 					"@executable_path/../Frameworks",

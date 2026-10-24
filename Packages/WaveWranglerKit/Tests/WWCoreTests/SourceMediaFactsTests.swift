@@ -4,6 +4,22 @@ import WWCore
 
 @Suite("Observed recording metadata")
 struct SourceMediaFactsTests {
+    @Test func onlyVerifiedMonoResolvesAnUnknownChannelWithoutRewritingItsKnowledge() throws {
+        let unknown = ChannelReference(sourceID: SourceID(), statedChannel: nil)
+        #expect(unknown.resolvedChannel(channelCount: 1) == 0)
+        for count in [nil, 0, 2, 8] as [Int?] {
+            #expect(unknown.resolvedChannel(channelCount: count) == nil)
+        }
+        #expect(unknown.channel == .unknown)
+        #expect(try JSONDecoder().decode(ChannelReference.self, from: JSONEncoder().encode(unknown)) == unknown)
+        let explicit = ChannelReference(sourceID: unknown.sourceID, statedChannel: 1)
+        #expect(explicit.resolvedChannel(channelCount: 2) == 1)
+        #expect(explicit.resolvedChannel(channelCount: 1) == nil)
+        #expect(explicit.resolvedChannel(channelCount: nil) == 1)
+        #expect(ChannelReference(sourceID: unknown.sourceID, statedChannel: -1)
+            .resolvedChannel(channelCount: 1) == nil)
+    }
+
     @Test func observationsAreHonestCompleteAndRetainKnownFactsWhenUnavailable() throws {
         let source = SourceRecord(displayNameHint: "synthetic.wav")
         let episode = Episode(title: "Synthetic", sources: [source])

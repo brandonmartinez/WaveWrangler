@@ -76,7 +76,7 @@ public enum EpochMapDecision: Sendable, Hashable {
     case unmapped
 }
 
-public enum AlignmentAcceptanceError: Error, Sendable, Equatable {
+public enum AlignmentAcceptanceError: Error, LocalizedError, Sendable, Equatable {
     case episodeNotFound(EpisodeID)
     case noReference
     /// The reference (or a decided epoch's sources) has no probed facts; analyze it first.
@@ -109,6 +109,52 @@ public enum AlignmentAcceptanceError: Error, Sendable, Equatable {
     case supersededAcceptance
     /// The persisted map revision is not the map this acceptance built.
     case mapContentMismatch
+
+    public var errorDescription: String? {
+        switch self {
+        case .episodeNotFound: "This episode is no longer available for alignment."
+        case .noReference: "Choose a timing reference before aligning tracks."
+        case .referenceFactsUnavailable: "The timing reference has not been verified."
+        case .unknownEpoch: "The selected recording segment is no longer part of this episode."
+        case .decisionForReferenceEpoch: "The timing reference defines the timeline and cannot be moved by an alignment proposal."
+        case .noCurrentProposal: "There is no current alignment proposal for this recording segment."
+        case .proposalNotCurrent: "This proposal was measured against different timing or recordings."
+        case let .invalidNumericEntry(_, reason): "The manual timing values are invalid. \(reason)"
+        case .insufficientAnchors: "Place at least two valid anchors before applying anchor-based timing."
+        case let .invalidAnchors(_, reason): "The timing anchors cannot be applied. \(reason)"
+        case .noPlaceableSource: "No verified recording can be placed using the selected timing."
+        case .priorMapHasClockApproval: "The saved clock-approved timing requires an explicit replacement decision."
+        case .priorMapUnreadable: "The previously accepted timing could not be read."
+        case let .invalidMap(reason): "The alignment could not be verified. \(reason)"
+        case .history: "The show's alignment history could not be verified."
+        case .coordinatorShutDown: "Alignment processing is no longer available in this session."
+        case .analysisStale: "The recordings or timing inputs changed after this alignment was analyzed."
+        case .staleSnapshot: "The alignment result no longer matches the current timing."
+        case .supersededAcceptance: "A newer alignment result replaced this one."
+        case .mapContentMismatch: "The saved timing does not match the alignment result being activated."
+        }
+    }
+
+    public var recoverySuggestion: String? {
+        switch self {
+        case .noReference, .referenceFactsUnavailable, .noPlaceableSource:
+            "Check the timing reference, source access, and speaker channels in Recordings & Speakers, then run Align Tracks."
+        case .invalidNumericEntry, .insufficientAnchors, .invalidAnchors:
+            "Review the manual timing values or anchors before applying them again."
+        case .decisionForReferenceEpoch:
+            "Choose a target recording other than the timing reference."
+        case .priorMapHasClockApproval:
+            "Review an explicit replacement for this recording segment before accepting new timing."
+        case .coordinatorShutDown:
+            "Save the show, then close and reopen its episode window before trying alignment again."
+        case .priorMapUnreadable, .history, .mapContentMismatch:
+            "Reopen the show to reload its verified alignment history before accepting more timing changes."
+        case .staleSnapshot, .supersededAcceptance:
+            "Refresh audio to reload the saved timing. If needed, run Align Tracks again and review its results."
+        case .episodeNotFound, .unknownEpoch, .noCurrentProposal, .proposalNotCurrent, .analysisStale, .invalidMap:
+            "Refresh the episode and run Align Tracks again. Review the current recordings and results before accepting."
+        }
+    }
 }
 
 /// The result of accepting a map: the new document value (persist it), the new accepted revision and map.
