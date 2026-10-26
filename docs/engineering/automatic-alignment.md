@@ -498,23 +498,34 @@ NCC and PHAT witnesses are persisted; deterministic replay rebuilds the separate
 No old failed observation is promoted. Admission reserves 80 MiB for the combined quiet profiles,
 recovery metadata, bounded slices and serialization (32 MiB above V13).
 
-An explicit, **default-off** option keeps remaining bounded gaps using **estimated timing**.
-It interpolates only between neighboring confirmed intervals, never before the first or after
-the last. Each source gap is 10 ms to five minutes, endpoint delay change at most 50 ms and
-projected rate within 1%. Estimates are constructed after clipping/projecting through the actual
-accepted reference, preserving all confirmed geometry and avoiding floating-point overlap at joins.
-The minimum gap prevents three join crossfades from overlapping. Estimates do not certify
-missing audio, speech identity, continuity, recorder-clock accuracy or
-millisecond alignment. Gaps that cannot meet those bounds remain silent even with the option on.
-The option is an explicit acceptance argument, never an alteration of the cached analysis.
+Adaptive acceptance now **retains all source audio by default** using **estimated timing** wherever
+measured, anchor-guided or quiet-derived support is absent. `SourceTimingSegment.preservingAudio`
+interpolates every interior source gap after clipping/projecting the confirmed evidence through the
+actual accepted reference. It extrapolates the nearest supported rate to source frame zero and the
+exclusive end. Safe joins preserve confirmed geometry. A gap too steep for native playback becomes
+an explicitly estimated transition ramp, widening into adjacent support only as needed. If the two
+adjacent runs cannot bound a safe ramp, the neighborhood expands until its endpoints can, or refuses
+when the complete available curve cannot. Trimmed support keeps its exact original transform; any
+replaced support is labeled estimated, never retained as measured. Every added interval is `estimated`, including
+short gaps, gaps longer than five minutes, and ends. Rates must stay within the native processor's
+0.98–1.02 range, and the complete curve must remain monotone, bounded and non-overlapping.
+If full coverage cannot meet those constraints, acceptance refuses rather than muting audio.
+These estimates do not certify speech identity, continuity, recorder-clock accuracy or
+millisecond alignment. The cached analysis and its measured-support counts remain unchanged.
+The lower-level measured-only argument remains available for explicit evidence-only callers and
+legacy regression fixtures; the app's individual and batch acceptance always retain audio.
+Existing partial corrections remain unchanged until **Restore unmatched audio…** records a new,
+undoable revision through the existing verified-save ledger; restoration does not reanalyze audio.
 
 Green markers identify anchor-guided acoustic matches; purple question marks identify estimates.
 Counts, duration, proposed ghost, accepted markers, accessibility labels and acceptance confirmation
 retain that distinction. Filling estimated playback must never be reported as recovered speech.
 Version-3 contiguous boundaries use an eight-millisecond linear overlap crossfade rather than
-two fades to silence. Identical weights apply to every channel; unsupported boundaries retain
-their existing four-millisecond fade and silence. Legacy version-1/2 rendering is unchanged.
-The native render recipe is revision 3 so tiles and derived audio cannot reuse the older recipe.
+two fades to silence. Each boundary's half-width is bounded by half of both neighboring interval
+durations so very short restored gaps do not overlap adjacent crossfades and attenuate audio.
+Identical weights apply to every channel; unsupported legacy boundaries retain their existing
+four-millisecond fade and silence. Legacy version-1/2 rendering is unchanged.
+The native render recipe is revision 5 so tiles and derived audio cannot reuse older output-grid handling.
 
 Independent measured support remains deliberately conservative:
 
@@ -575,8 +586,11 @@ identity, shared listening/derived-audio caches, persistence and Undo/Redo.
 Older shows require explicit C5 migration with an original-byte backup; older apps refuse schema 4
 before silently ignoring its corrections. Acceptance/removal use the existing save-before-activate
 ledger and native Undo/Redo. Waveform reprojection retains source-coordinate buffers; solid applied
-strokes never bridge unsupported spans. Blue clock markers identify measured timing, orange waveform
-markers identify quiet-only timing.
+strokes split measured bins at timing boundaries rather than dropping bins that straddle two
+intervals. Unsupported legacy pieces remain visibly unplaced, not falsely aligned. Blue clock
+markers identify measured timing, orange waveform markers identify quiet-only timing, and purple
+question marks identify estimated gaps and ends. Historical measurements below retain their original
+measured-only/default-off terminology; they do not describe the current acceptance default.
 
 `ww-native-time-pitch-multichannel/1` uses one offline `AVAudioUnitTimePitch` at zero pitch shift
 for all channels together, with the inverse of the source-to-aligned rate. Direct AudioUnit
@@ -588,7 +602,66 @@ source/file access; all actual media reads still use the witnessed read-only gat
 pitch unit then operates at the destination rate, separately from the ordinary affine SRC path.
 
 Canonical global five-second cache tiles, including negative time, are witness-bound,
-revision-keyed and memory-admitted. Processing origins are anchored to each supported source
+revision-keyed and memory-admitted. `AdaptiveAudioPCMCache` retains at most sixteen decoded
+multichannel tiles within a 64 MiB sample budget. Its keys include the complete derived-asset
+identity and raw-source witness. A hit avoids another disk payload read, JSON decode, finite-sample
+scan and native render, but still rechecks the active accepted-map content, source witness and
+current dependencies before returning audio. Shutdown releases the decoded cache. Map/curve,
+source, output-rate and recipe changes cannot reuse an incompatible entry; Undo may reuse an
+identical prior identity only after it is active and verified again.
+
+Tile copy ranges use half-open aligned output-frame intervals. A fractional source endpoint can cover
+one more grid frame than duration rounding returns from the native pitch processor. The tile renderer
+therefore requests enough processed samples for its actual last copied frame. The native API bounds
+this minimum to at most one sample beyond the ceiling of the duration-derived length; it renders the
+sample using the existing processor context and padding. It does not clamp the copy index, skip a frame
+or invent fallback audio. Ordinary standalone stretches retain their rounded-duration result shape.
+Input shape, native processing and output coverage failures remain typed; transcription identifies the
+affected Primary and aligned window instead of displaying `encoding("invalidSamples")` or implying
+that a valid original is corrupt.
+
+The derived coordinator indexes ready upstream digests as slots change state, with reference counts
+for a key shared by multiple slots. Dependency checks do not rebuild and rehash the entire rendered-tile
+history for every key. Registering an unchanged source, map, format, recipe or asset revision is a no-op,
+not another full invalidation pass. Genuine changes still cascade through ready and running dependents
+in the same actor turn, and cached results only become ready again through explicit verified restoration.
+This prevents long adaptive transcription from spending progressively more time in cache bookkeeping
+as more five-second tiles accumulate; source authorization, accepted-map currency and inference settings
+are unchanged. Regression coverage includes a large ready history, duplicate-key slots, cancellation,
+late publication, and Undo/Redo restoration.
+
+Adaptive transport primes one full five-second window before starting the engine and permits
+ten seconds of queued look-ahead, rather than letting a one-second start and three-second queue
+compete with cold five-second tile preparation. Individual gateway reads remain bounded to five
+output seconds. Ordinary affine-only playback retains its one-second startup and three-second
+look-ahead. Muted-track warming waits until at least half of the configured look-ahead is safely
+queued; live joins retain the existing shared clock. A genuinely missed deadline remains an
+explicit failure, never raw-audio substitution, skipped frames or fabricated silence.
+
+Individual correction acceptance/removal/restoration leaves the shared recorder map unchanged.
+It therefore carries a working range that belongs to the immediately prior accepted revision
+to the new revision without moving either aligned-time boundary. Transcripts, word reviews and
+cuts keep their original revision and are not rebased. Publication refuses a concurrent cleanup
+edit rather than overwriting it. An already-stale working range is not automatically carried:
+the workspace offers snapshot-checked **Review episode IN/OUT…**, with explicit keep/reset
+choices and native Undo. Replacement recorder alignment retains its existing downstream reset.
+
+Transcription does not require episode boundary markers. An omitted IN/OUT includes the entire
+available range of each Primary independently; the implied episode bounds are their union, not their
+intersection. `PrimaryCleanupPlan.alignedRange` reports this union after applying any explicit
+one-sided or two-sided limits. No source audio is discarded merely because it precedes or outlasts
+another recording. Actual unsupported/unplaced source intervals remain blockers, not nominal-timing
+fallbacks. Legacy working-range records with both bounds omitted are semantically automatic even
+when their revision is older; they remain serialized unchanged, and newly produced transcripts use
+`nil` working range. Explicit stale boundaries retain their review requirement.
+
+The Transcribe control shares one blocker computation with its readiness message and uses a native
+AppKit button so both its tooltip and accessibility help remain available while disabled. Running alignment,
+read-only documents, source/map-verification failures, missing assignments/channels and unavailable
+local models report their actual reason. The ready-state message and range summary identify
+automatic boundaries; absence of IN/OUT never becomes an instruction to create them.
+
+Processing origins are anchored to each supported source
 region in bounded twelve-source-second blocks, not reset to each transport/cache window.
 Adjacent processing blocks share a 120 ms complementary crossfade; each has 120 ms input context.
 This avoids the measured 0.09-0.12 amplitude jumps at five-second cache cuts in the earlier
@@ -596,8 +669,9 @@ per-tile implementation. Separate source reads never retain a long hull across u
 each native input remains below 15 seconds. Supported-region edges have 4 ms fades.
 Render recipe/asset revision 2 invalidates the earlier mixer/per-tile audio without changing the
 portable processing family or silently reusing its cached output.
-Unsupported intervals are explicit silence, **not approximate or extrapolated timing**. Acceptance
-requires a confirmation warning about this limitation. Listening and adaptive aligned segments
+Unsupported intervals in explicitly measured-only legacy corrections remain silence. The current
+audio-preserving acceptance labels interpolated/extrapolated intervals as estimates instead.
+Listening and adaptive aligned segments
 reuse exactly these tiles; adaptive segments have a distinct asset kind and explicit processing
 identity, never a misleading ordinary-renderer label. Public export remains blocked by the existing M4 boundary.
 

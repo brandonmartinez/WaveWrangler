@@ -24,6 +24,8 @@ struct EpisodeWorkspaceViewTests {
         view.durationSeconds = 12
         view.playheadSeconds = 3.25
         view.trackScrollOffset = 220
+        view.reviewPanelPresented = true
+        view.reviewPanelHeight = 280
         view.collapsedSpeakers = [SpeakerID()]
         view.collapsedRecorders = [RecorderGroupID()]
         listening.workspace = view
@@ -51,10 +53,16 @@ struct EpisodeWorkspaceViewTests {
         var object = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
         object.removeValue(forKey: "fillSpace")
         object.removeValue(forKey: "followPlayhead")
+        object.removeValue(forKey: "reviewPanelPresented")
+        object.removeValue(forKey: "reviewPanelHeight")
         let decoded = try JSONDecoder().decode(EpisodeWorkspaceViewState.self,
             from: JSONSerialization.data(withJSONObject: object))
         #expect(decoded == view && decoded.followPlayhead && !decoded.fillSpace)
         #expect(decoded.isValid)
+        object["inspector"] = "Transcript & review"
+        let legacyReview = try JSONDecoder().decode(EpisodeWorkspaceViewState.self,
+            from: JSONSerialization.data(withJSONObject: object))
+        #expect(legacyReview.reviewPanelPresented && legacyReview.reviewPanelHeight == 240)
         view.fillSpace = true
         view.followPlayhead = false
         #expect(try JSONDecoder().decode(EpisodeWorkspaceViewState.self,
@@ -78,6 +86,10 @@ struct EpisodeWorkspaceViewTests {
         #expect(store.load() == view)
         invalid = view
         invalid.trackScrollOffset = -.infinity
+        store.save(invalid)
+        #expect(store.load() == view)
+        invalid = view
+        invalid.reviewPanelHeight = .nan
         store.save(invalid)
         #expect(store.load() == view)
     }

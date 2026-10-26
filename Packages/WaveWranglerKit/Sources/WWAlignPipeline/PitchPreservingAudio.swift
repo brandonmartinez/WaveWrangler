@@ -5,25 +5,37 @@ import WWDecode
 
 public enum PitchPreservingAudio {
     public static let identifier = "ww-native-time-pitch-multichannel/1"
-    public static let renderRecipeVersion = 3
+    public static let renderRecipeVersion = 5
 
-    public enum Failure: Error {
+    public enum Failure: Error, Sendable, Equatable, LocalizedError {
         case invalidPCM
         case allocation
         case renderFailed
         case nativeRender(Int32)
+
+        public var errorDescription: String? {
+            switch self {
+            case .invalidPCM: "Pitch-preserving rendering received unsupported audio or an invalid output-frame request."
+            case .allocation: "The pitch-preserving audio processor could not allocate its buffers."
+            case .renderFailed: "The pitch-preserving audio processor did not return complete, finite audio."
+            case let .nativeRender(status): "The native pitch-preserving audio processor failed (status \(status))."
+            }
+        }
     }
 
     /// Bounded offline processing: every channel passes through the same pitch-preserving unit.
     @concurrent
     public static func stretch(_ channels: [[Float]], sampleRate: Int, rateRatio: Double,
-                               outputRate: Int? = nil) async throws -> [[Float]] {
+                               outputRate: Int? = nil, minimumOutputFrames: Int = 0) async throws -> [[Float]] {
         let destinationRate = outputRate ?? sampleRate
         guard let frames = channels.first?.count, frames > 0, channels.count <= 32,
               (8000...192000).contains(sampleRate), (8000...192000).contains(destinationRate),
               frames <= sampleRate * 15,
               rateRatio.isFinite, (0.98...1.02).contains(rateRatio),
+              minimumOutputFrames >= 0,
               channels.allSatisfy({ $0.count == frames && $0.allSatisfy(\.isFinite) }) else { throw Failure.invalidPCM }
+        let exactFrames = Double(frames) * rateRatio * Double(destinationRate) / Double(sampleRate)
+        guard Double(minimumOutputFrames) <= ceil(exactFrames) + 1 else { throw Failure.invalidPCM }
         try Task.checkCancellation()
         let pcm = try await PCMResampling.convert(channels, inputRate: sampleRate, outputRate: destinationRate)
         let nativeFrames = pcm[0].count
@@ -67,7 +79,8 @@ public enum PitchPreservingAudio {
             &callback, UInt32(MemoryLayout<AURenderCallbackStruct>.size)))
         try check(AudioUnitInitialize(unit))
         defer { AudioUnitUninitialize(unit) }
-        let wanted = Int((Double(frames) * rateRatio * Double(destinationRate) / Double(sampleRate)).rounded())
+        // A canonical tile may need the next native sample to cover its fractional output-grid boundary.
+        let wanted = max(Int(exactFrames.rounded()), minimumOutputFrames)
         let latency = Int((pitch.latency * Double(destinationRate)).rounded())
         var collected = channels.map { _ in [Float]() }
         var remaining = wanted + latency, position = 0

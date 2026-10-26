@@ -18,6 +18,8 @@ public struct EpisodeWorkingRange: Sendable, Equatable, Codable {
             && [tracksIn, tracksOut].compactMap { $0 }.allSatisfy { $0.isFinite && abs($0) <= 86_400 }
             && (tracksIn == nil || tracksOut == nil || tracksIn! < tracksOut!)
     }
+
+    public var hasExplicitBounds: Bool { tracksIn != nil || tracksOut != nil }
 }
 
 /// Engine-produced approximate timing, not supported cut boundaries or an assertion that a word is correct.
@@ -93,6 +95,10 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
     public var fillerReviews: [FillerTimingReview]?
     public var transcriptHistory: [SpeakerTranscript]?
     public var manualCuts: [ManualEpisodeCut]?
+
+    public var explicitWorkingRange: EpisodeWorkingRange? {
+        workingRange.flatMap { $0.hasExplicitBounds ? $0 : nil }
+    }
 
     public init(workingRange: EpisodeWorkingRange? = nil, transcripts: [SpeakerTranscript] = [],
                 fillerReviews: [FillerTimingReview]? = nil, transcriptHistory: [SpeakerTranscript]? = nil,

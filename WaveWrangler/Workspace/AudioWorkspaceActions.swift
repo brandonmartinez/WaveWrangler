@@ -6,6 +6,9 @@ struct AudioWorkspaceActions: View {
     @Bindable var state: ShowWindowState
     @Bindable var alignment: EpisodeAlignmentModel
     @State private var listeningPresetError: String?
+    @State private var reviewingWorkingRange = false
+    @State private var workingRangeToReview: EpisodeWorkingRange?
+    @State private var workingRangeRevision: Int?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -50,8 +53,19 @@ struct AudioWorkspaceActions: View {
                 } else if let error = cleanup.error {
                     Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
                 } else if !cleanup.canTranscribe {
-                    Text(cleanup.transcriptionReadinessMessage)
+                    Text("Transcription: \(cleanup.transcriptionReadinessMessage)")
                         .font(.caption).foregroundStyle(.secondary)
+                }
+                if cleanup.hasStaleWorkingRange {
+                    Button("Review episode IN/OUT…") {
+                        guard let range = cleanup.episode?.cleanup?.workingRange,
+                              let revision = cleanup.episode?.alignment?.acceptedRevision else { return }
+                        workingRangeToReview = range
+                        workingRangeRevision = revision
+                        reviewingWorkingRange = true
+                    }
+                        .disabled(cleanup.isBusy || alignment.isWorking || !state.canEdit)
+                        .accessibilityIdentifier("ww.audioWorkspace.reviewWorkingRange")
                 }
             }
         }
@@ -71,6 +85,24 @@ struct AudioWorkspaceActions: View {
                 state.inspectorPresented = true
             })
         }
+        .confirmationDialog("Use these episode boundaries with the current alignment?",
+                            isPresented: $reviewingWorkingRange) {
+            Button("Keep existing IN/OUT") { resolveWorkingRange(keeping: true) }
+            Button("Reset IN/OUT to include all available audio") {
+                resolveWorkingRange(keeping: false)
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            if let range = workingRangeToReview {
+                Text("IN: \(range.tracksIn.map(AlignmentPresentation.formatTime) ?? "Recording start"); OUT: \(range.tracksOut.map(AlignmentPresentation.formatTime) ?? "Recording end"). These markers belong to alignment revision \(range.alignmentRevision). Keeping them preserves those exact aligned times on the current revision; it does not revalidate old transcripts, word marks or cuts. This change is saved and undoable.")
+            }
+        }
+    }
+
+    private func resolveWorkingRange(keeping: Bool) {
+        guard let range = workingRangeToReview, let revision = workingRangeRevision else { return }
+        state.cleanupModel?.resolveStaleWorkingRange(
+            keeping: keeping, expectedRange: range, expectedRevision: revision)
     }
 
     private var recordingActions: some View {
@@ -154,11 +186,52 @@ struct AudioWorkspaceWorkflowActions: View {
                 .accessibilityIdentifier("ww.workflow.resetAlignment")
                 .help("Return all recorder groups to zero offset and normal speed, removing active automatic, adaptive and manual timing. Also resets active transcription, reviews, cuts and episode IN/OUT. Requires confirmation; Undo restores the previous work.")
             if let cleanup = state.cleanupModel {
-                Button("Transcribe Tracks", systemImage: "waveform.badge.mic") { cleanup.requestTranscription() }
-                    .disabled(!cleanup.canTranscribe || alignment.isWorking)
-                    .accessibilityIdentifier("ww.workflow.transcribeTracks")
-                    .help(cleanup.transcriptionReadinessMessage)
+                let help = alignment.isWorking
+                    ? "Alignment is running. Wait for accepted timing to finish saving before transcription."
+                    : cleanup.transcriptionReadinessMessage
+                TranscriptionActionButton(help: help) {
+                    cleanup.requestTranscription()
+                }
+                .disabled(!cleanup.canTranscribe || alignment.isWorking)
             }
         }
+    }
+}
+
+@MainActor
+struct TranscriptionActionButton: NSViewRepresentable {
+    let help: String
+    let action: @MainActor () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(action: action) }
+
+    func makeNSView(context: Context) -> NSButton {
+        let button = NSButton(title: "Transcribe Tracks", target: context.coordinator,
+            action: #selector(Coordinator.performAction(_:)))
+        button.controlSize = .small
+        button.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        button.bezelStyle = .rounded
+        button.image = NSImage(systemSymbolName: "waveform.badge.mic", accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.setAccessibilityIdentifier("ww.workflow.transcribeTracks")
+        button.setAccessibilityLabel("Transcribe Tracks")
+        updateNSView(button, context: context)
+        return button
+    }
+
+    func updateNSView(_ button: NSButton, context: Context) {
+        context.coordinator.action = action
+        button.isEnabled = context.environment.isEnabled
+        button.toolTip = help
+        button.setAccessibilityHelp(help)
+    }
+
+    @MainActor
+    final class Coordinator: NSObject {
+        var action: @MainActor () -> Void
+
+        init(action: @escaping @MainActor () -> Void) { self.action = action }
+
+        @objc func performAction(_ sender: NSButton) { action() }
     }
 }

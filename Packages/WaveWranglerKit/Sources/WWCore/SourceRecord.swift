@@ -112,6 +112,12 @@ public struct ChannelReference: Sendable, Hashable, Codable, CustomStringConvert
         return channelCount == 1 ? 0 : nil
     }
 
+    public func resolvedChannel(in episode: Episode) -> Int? {
+        guard let source = episode.source(sourceID) else { return nil }
+        return resolvedChannel(channelCount: source.observations.channelCount.value
+            ?? episode.alignment?.acceptedMap?.sourceCorrections?.first(where: { $0.source == sourceID })?.channelCount)
+    }
+
     /// `<source>#<zero-based index>` or `<source>#unknown`; for diagnostics, never shown to people.
     public var description: String {
         "\(sourceID)#\(channel.value.map(String.init) ?? "unknown")"

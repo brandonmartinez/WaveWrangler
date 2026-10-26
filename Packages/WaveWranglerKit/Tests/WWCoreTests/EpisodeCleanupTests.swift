@@ -4,6 +4,22 @@ import WWCore
 
 @Suite("Episode cleanup range and transcript state")
 struct EpisodeCleanupTests {
+    @Test func omittedBoundariesMeanAutomaticFullRangeWithoutRewritingLegacyRecords() throws {
+        let empty = EpisodeWorkingRange(alignmentRevision: 7)
+        let automatic = EpisodeCleanup(workingRange: empty)
+        #expect(!empty.hasExplicitBounds && automatic.explicitWorkingRange == nil)
+        #expect(automatic.workingRange == empty)
+        #expect(try JSONDecoder().decode(EpisodeCleanup.self, from: JSONEncoder().encode(automatic)) == automatic)
+        for range in [
+            EpisodeWorkingRange(alignmentRevision: 7, tracksIn: -2),
+            EpisodeWorkingRange(alignmentRevision: 7, tracksOut: 12),
+            EpisodeWorkingRange(alignmentRevision: 7, tracksIn: -2, tracksOut: 12),
+        ] {
+            #expect(range.hasExplicitBounds)
+            #expect(EpisodeCleanup(workingRange: range).explicitWorkingRange == range)
+        }
+    }
+
     @Test func markersAreSharedNondestructiveAndResettable() throws {
         let episode = Episode(title: "Episode", sources: [SourceRecord(displayNameHint: "Original")])
         let original = ShowDocumentModel(show: Show(title: "Show"), episodes: [episode])

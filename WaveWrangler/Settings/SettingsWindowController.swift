@@ -122,6 +122,15 @@ struct GeneralSettingsView: View {
                 .accessibilityIdentifier("ww.settings.afterAlignment")
                 caption("Applied once after newly accepted alignment is verified on disk. Restore listening choices returns to your previous mix. Changing this default does not change open episodes or saved episode preferences.")
             }
+            Section("Timeline keyboard controls") {
+                Picker("Jump interval", selection: $settings.timelineJumpInterval) {
+                    ForEach(TimelineJumpInterval.allCases, id: \.self) { interval in
+                        Text(interval == .one ? "1 second" : "\(interval.rawValue) seconds").tag(interval)
+                    }
+                }
+                .accessibilityIdentifier("ww.settings.timelineJump")
+                caption("Space plays or pauses when another control is not focused. Left/Right jump by this interval in the track area. Text fields, review lists and 1 ms boundary-handle adjustments keep their normal keys.")
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)

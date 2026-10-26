@@ -267,6 +267,24 @@ enum AlignmentWaveformProjection {
         })
     }
 
+    static func playableSources(
+        in map: AlignedTimelineMap, corrections: [SourceTimingCorrection]
+    ) -> Set<SourceID> {
+        var sources = timedSources(in: map)
+        for correction in corrections {
+            sources.remove(correction.source)
+            guard correction.isValid,
+                  let group = map.groups.first(where: { $0.group == correction.group }),
+                  group.epochs.contains(where: { $0.epoch == correction.epoch }),
+                  let placement = group.placements.first(where: { $0.occurrence.source == correction.source }),
+                  placement.occurrence.frameCount == correction.sourceFrames,
+                  placement.occurrence.nominalRate.framesPerSecond == correction.sourceRate,
+                  placement.spans.contains(where: { $0.epoch == correction.epoch }) else { continue }
+            sources.insert(correction.source)
+        }
+        return sources
+    }
+
     static func hasAcceptedTiming(
         source: SourceID, epoch: RecordingEpochID, group: RecorderGroupID, map: AlignedTimelineMap?
     ) -> Bool {
@@ -611,19 +629,51 @@ enum AlignmentWaveformProjection {
         track: AlignmentWaveformTrack, record: AdaptiveAnalysisRecord, includeEstimated: Bool = false
     ) -> [AlignmentWaveformStroke] {
         guard track.id == record.target.source, track.epoch == record.target.epoch else { return [] }
+        let intervals: [SourceTimingSegment]
+        if includeEstimated {
+            switch record.audioPreservation {
+            case let .success(preserved): intervals = preserved
+            case .failure: return [] // The review displays the refusal and disables acceptance.
+            }
+        } else { intervals = record.playbackIntervals() }
+        return fileTimingStrokes(track: track, intervals: intervals)
+    }
+
+    private static func fileTimingStrokes(
+        track: AlignmentWaveformTrack, intervals: [SourceTimingSegment], includeUnmapped: Bool = false
+    ) -> [AlignmentWaveformStroke] {
         let rate = Double(track.envelope.sampleRate)
-        let intervals = record.playbackIntervals(includeEstimated: includeEstimated)
-        return track.envelope.bins.compactMap { bin in
-            let first = Double(bin.firstFrame) / rate, last = Double(bin.endFrame - 1) / rate
-            guard let interval = intervals.first(where: { first >= $0.sourceStart && last < $0.sourceEnd }) else { return nil }
-            let start = interval.alignedStart + (first - interval.sourceStart) * interval.rateRatio
-            let end = interval.alignedStart + (last - interval.sourceStart) * interval.rateRatio
-            guard start.isFinite, end.isFinite, end >= start else { return nil }
-            return AlignmentWaveformStroke(
-                sourceSeconds: (first + last) / 2, groupSeconds: (first + last) / 2,
-                displaySeconds: (start + end) / 2, low: bin.minimum, high: bin.maximum,
-                mapped: true, epoch: track.epoch, displayRange: start...end, groupRange: first...last
-            )
+        var intervalIndex = 0
+        return track.envelope.bins.flatMap { bin -> [AlignmentWaveformStroke] in
+            let binStart = Double(bin.firstFrame) / rate, binEnd = Double(bin.endFrame) / rate
+            while intervalIndex < intervals.count, intervals[intervalIndex].sourceEnd <= binStart {
+                intervalIndex += 1
+            }
+            var strokes: [AlignmentWaveformStroke] = []
+            var cursor = binStart
+            func appendUnmapped(until end: Double) {
+                guard includeUnmapped, end > cursor else { return }
+                strokes.append(AlignmentWaveformStroke(
+                    sourceSeconds: (cursor + end) / 2, groupSeconds: (cursor + end) / 2,
+                    displaySeconds: (cursor + end) / 2, low: bin.minimum, high: bin.maximum,
+                    mapped: false, epoch: track.epoch, displayRange: cursor...end, groupRange: cursor...end))
+            }
+            for interval in intervals[intervalIndex...].prefix(while: { $0.sourceStart < binEnd }) {
+                let first = max(binStart, interval.sourceStart), last = min(binEnd, interval.sourceEnd)
+                guard last > first else { continue }
+                appendUnmapped(until: first)
+                let start = interval.alignedStart + (first - interval.sourceStart) * interval.rateRatio
+                let end = interval.alignedStart + (last - interval.sourceStart) * interval.rateRatio
+                guard start.isFinite, end.isFinite, end >= start else { continue }
+                strokes.append(AlignmentWaveformStroke(
+                    sourceSeconds: (first + last) / 2, groupSeconds: (first + last) / 2,
+                    displaySeconds: (start + end) / 2, low: bin.minimum, high: bin.maximum,
+                    mapped: true, epoch: track.epoch, displayRange: start...end, groupRange: first...last
+                ))
+                cursor = last
+            }
+            appendUnmapped(until: binEnd)
+            return strokes
         }
     }
 
@@ -640,7 +690,13 @@ enum AlignmentWaveformProjection {
         track: AlignmentWaveformTrack, record: AdaptiveAnalysisRecord, includeEstimated: Bool = false
     ) -> [AdaptiveMarker] {
         guard track.id == record.target.source, track.epoch == record.target.epoch else { return [] }
-        let intervals = record.playbackIntervals(includeEstimated: includeEstimated)
+        let intervals: [SourceTimingSegment]
+        if includeEstimated {
+            switch record.audioPreservation {
+            case let .success(preserved): intervals = preserved
+            case .failure: return [] // The review displays the refusal and disables acceptance.
+            }
+        } else { intervals = record.playbackIntervals() }
         return intervals.map { region in
             let source = region.sourceStart, aligned = region.alignedStart
             return AdaptiveMarker(sourceSeconds: source, alignedSeconds: aligned,
@@ -651,15 +707,21 @@ enum AlignmentWaveformProjection {
     static func strokes(track: AlignmentWaveformTrack, map: AlignedTimelineMap?,
                         correction: SourceTimingCorrection? = nil,
                         cuts: ManualCutTimeline = .unedited) throws -> [AlignmentWaveformStroke] {
+        if let correction {
+            guard correction.isValid, correction.source == track.id,
+                  correction.group == track.group,
+                  correction.sourceRate == track.envelope.sampleRate,
+                  correction.sourceFrames == track.envelope.totalFrames else {
+                throw WaveformWindowError.mapDoesNotMatchSource
+            }
+            return applyingCuts(cuts, to: fileTimingStrokes(
+                track: track, intervals: correction.segments, includeUnmapped: true))
+        }
         let original = try track.envelope.bins.compactMap { bin -> AlignmentWaveformStroke? in
             guard let first = try position(frame: bin.firstFrame, track: track, map: map, correction: correction),
                   let last = try position(frame: bin.endFrame - 1, track: track, map: map, correction: correction),
                   first.epoch == last.epoch, first.mapped == last.mapped
             else { return nil }
-            if let correction, first.mapped,
-               !correction.segments.contains(where: { first.sourceSeconds >= $0.sourceStart && last.sourceSeconds < $0.sourceEnd }) {
-                return nil
-            }
             return AlignmentWaveformStroke(
                 sourceSeconds: (first.sourceSeconds + last.sourceSeconds) / 2,
                 groupSeconds: (first.groupSeconds + last.groupSeconds) / 2,

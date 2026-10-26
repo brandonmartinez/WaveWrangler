@@ -28,16 +28,18 @@ extension EpisodeCleanupModel {
               let identity = identities[lane.primary.sourceID] else {
             return "Source and accepted timing must be verified."
         }
-        guard review.alignmentRevision == plan?.alignmentRevision,
+        guard let currentEpisode = episode, review.alignmentRevision == plan?.alignmentRevision,
               review.alignmentRevision == episode?.alignment?.acceptedRevision,
               review.primary == lane.primary, review.sourceRate == lane.sourceRate,
               review.sourceIdentity == identity,
-              episode?.speakerAssignments.contains(where: {
-                  $0.speakerID == review.speaker && $0.primary == review.primary && $0.primaryConfirmation == .userConfirmed
-              }) == true,
+              currentEpisode.speakerAssignments.contains(where: {
+                  $0.speakerID == review.speaker && $0.primary?.sourceID == review.primary.sourceID
+                      && $0.primary?.resolvedChannel(in: currentEpisode) == review.primary.channel.value
+                      && $0.primaryConfirmation == .userConfirmed
+              }),
               episode?.source(review.primary.sourceID)?.role == .primary,
               episode?.source(review.primary.sourceID)?.roleConfirmation == .userConfirmed,
-              episode?.cleanup?.workingRange.map({ $0.alignmentRevision == review.alignmentRevision }) != false else {
+              episode?.cleanup?.explicitWorkingRange.map({ $0.alignmentRevision == review.alignmentRevision }) != false else {
             return "Source, Primary/channel or alignment changed. Original review retained; no automatic rebase."
         }
         if let transcriptID = review.transcriptID {
@@ -131,8 +133,9 @@ extension EpisodeCleanupModel {
         let start = cutTimeline.editedTime(forAlignedTime: review.bounds.alignedStart)
         let end = cutTimeline.editedTime(forAlignedTime: review.bounds.alignedEnd)
         guard let window = AlignmentWaveformProjection.rulerZoom(
-            duration: (end - start) * 2, playhead: start + (end - start) / 2,
-            magnification: 1, bounds: bounds, maximumDuration: maximumDuration
+            duration: max(1, (end - start) * 3), playhead: start + (end - start) / 2,
+            magnification: 1, bounds: workspaceAlignment?.waveformViewingBounds ?? bounds,
+            maximumDuration: workspaceAlignment?.maximumWaveformDuration ?? maximumDuration
         ) else {
             error = "The selected filler interval cannot be shown within the available timeline."
             return
