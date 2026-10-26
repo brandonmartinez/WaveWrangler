@@ -28,6 +28,7 @@ struct NativeAudioUnitTests {
             try unit.setParameter(address: cutoff.address, value: 1700)
             let captured = try unit.capture()
             #expect(captured.isValid)
+            #expect(try unit.capture().documentState == captured.documentState)
             let recalled = try await NativeAudioUnit.load(captured, channels: channels, policy: .init())
             let recalledParameters = try recalled.parameters()
             #expect(try #require(recalledParameters.first { $0.address == cutoff.address }).value == 1700)

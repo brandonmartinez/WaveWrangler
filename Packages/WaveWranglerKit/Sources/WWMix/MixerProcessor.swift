@@ -181,10 +181,13 @@ public actor MixerProcessor {
     }
 
     /// Drain latency and the declared tail in bounded windows. Call until nil; no device/file output.
-    public func finishNext() throws -> MixerPCMOutput? {
+    public func finishNext(maximumFrames: Int = MixerRecipe.maximumWindowFrames) throws -> MixerPCMOutput? {
         if let failure { throw failure }
         if terminal { return nil }
         try Task.checkCancellation()
+        guard (1...MixerRecipe.maximumWindowFrames).contains(maximumFrames) else {
+            throw MixerFailure.incompletePCM
+        }
         guard nextInput == recipe.programFrames.upperBound else { throw MixerFailure.incompletePCM }
         if flushRemaining == nil { flushRemaining = latencyFrames + tailFrames }
         guard let remaining = flushRemaining else { throw MixerFailure.incompletePCM }
@@ -194,7 +197,7 @@ public actor MixerProcessor {
             terminal = true
             return nil
         }
-        let count = min(MixerRecipe.maximumWindowFrames, remaining)
+        let count = min(maximumFrames, remaining)
         let zeros = Dictionary(uniqueKeysWithValues: recipe.routes.map {
             ($0.reference, [Float](repeating: 0, count: count))
         })

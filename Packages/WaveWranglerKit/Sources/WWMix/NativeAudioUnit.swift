@@ -275,15 +275,7 @@ final class NativeAudioUnit: @unchecked Sendable {
         guard samples.count == channels, frames > 0, frames <= MixerRecipe.blockFrames,
               samples.allSatisfy({ $0.count == frames }) else { throw MixerFailure.incompletePCM }
         if slot.bypassed { return samples }
-        guard abs(unit.latency * Double(MixerRecipe.sampleRate) - Double(latencyFrames)) < 0.000_1 else {
-            throw MixerFailure.changedLatency(slot.id)
-        }
-        if includesTail {
-            let tail = unit.tailTime * Double(MixerRecipe.sampleRate)
-            guard tail.isFinite, tail >= 0, ceil(tail) == Double(tailFrames) else {
-                throw MixerFailure.changedTail(slot.id)
-            }
-        }
+        try verifyTiming()
         guard let inputChannels = input.buffer.floatChannelData else { throw MixerFailure.incompletePCM }
         input.buffer.frameLength = AVAudioFrameCount(frames)
         input.frames = frames
@@ -318,6 +310,7 @@ final class NativeAudioUnit: @unchecked Sendable {
             if attempt == 3 { throw MixerFailure.noProgress }
         }
         guard status == noErr else { throw MixerFailure.render(slot.id, status) }
+        try verifyTiming()
         sampleTime += Double(frames)
         let buffers = UnsafeMutableAudioBufferListPointer(output.mutableAudioBufferList)
         guard buffers.count == channels else { throw MixerFailure.incompletePCM }
@@ -330,6 +323,18 @@ final class NativeAudioUnit: @unchecked Sendable {
                 : Array(UnsafeBufferPointer(start: data, count: frames))
             guard result.allSatisfy(\.isFinite) else { throw MixerFailure.nonfinitePCM }
             return result
+        }
+    }
+
+    private func verifyTiming() throws {
+        guard abs(unit.latency * Double(MixerRecipe.sampleRate) - Double(latencyFrames)) < 0.000_1 else {
+            throw MixerFailure.changedLatency(slot.id)
+        }
+        if includesTail {
+            let tail = unit.tailTime * Double(MixerRecipe.sampleRate)
+            guard tail.isFinite, tail >= 0, ceil(tail) == Double(tailFrames) else {
+                throw MixerFailure.changedTail(slot.id)
+            }
         }
     }
 }

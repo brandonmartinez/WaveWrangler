@@ -68,6 +68,22 @@ struct AlignedAuditionStartupTests {
         }
     }
 
+    @Test func mixerFormatInspectionUsesTheListeningWitnessAndRefusesAReplacedFile() async throws {
+        let fixture = try await Fixture(channels: 2)
+        defer { try? FileManager.default.removeItem(at: fixture.folder) }
+        let format = try await AlignedAuditionWindowReader.inspectFormat(
+            sourceURL: fixture.url, source: fixture.source, matching: fixture.witness, decoder: fixture.decoder)
+        #expect(format.source == fixture.source && format.channelCount == 2 && format.sourceSampleRate == 48_000)
+        #expect(format.frames.validFrames == 8 * 48_000)
+        try FileManager.default.moveItem(at: fixture.url, to: fixture.folder.appendingPathComponent("prior.wav"))
+        try WaveformTestAudio.wave(rate: 48_000, samples: Array(repeating: 1, count: 8 * 48_000))
+            .write(to: fixture.url)
+        await #expect(throws: DecodeFailure.sourceIdentityMismatch) {
+            try await AlignedAuditionWindowReader.inspectFormat(
+                sourceURL: fixture.url, source: fixture.source, matching: fixture.witness, decoder: fixture.decoder)
+        }
+    }
+
     @Test func adaptiveSchedulePrimesOneTileAndKeepsTwoTilesOfPreparationAhead() throws {
         for interval in [-0.25...0.1, 0.0...16.0, 4.75...20.0] {
             var schedule = try AlignedAuditionSchedule(

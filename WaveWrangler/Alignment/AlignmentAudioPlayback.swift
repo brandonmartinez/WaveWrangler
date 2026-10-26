@@ -172,7 +172,7 @@ final class AlignmentAudioPlayback {
             player.scheduleBuffer(buffer)
             do { try engine.start() }
             catch { stop(); throw error }
-            let lead = 0.1
+            let lead = Double(MixerLiveTiming.startLeadFrames) / Double(MixerRecipe.sampleRate)
             player.play(at: AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)))
             clock = AlignmentPlaybackClock(startSeconds: start, duration: clip.duration,
                 startedAt: Date().addingTimeInterval(lead))

@@ -838,9 +838,8 @@ actor AlignmentRuntime {
             try Task.checkCancellation()
             do {
                 let admission = try await waveformSource(source, sources: sources)
-                let interpretation = try await pipeline.decoder.withWitnessBoundDecodingCursor(
-                    admission.url, source: source, matching: admission.witness
-                ) { cursor in cursor.interpretation }
+                let interpretation = try await AlignedAuditionWindowReader.inspectFormat(
+                    sourceURL: admission.url, source: source, matching: admission.witness, decoder: pipeline.decoder)
                 if !frozenSources.isEmpty {
                     guard frozenSources.contains(MixerSourceSnapshot(
                         source: source, witness: admission.witness, interpretation: interpretation
@@ -924,9 +923,8 @@ actor AlignmentRuntime {
             }
             if snapshots.contains(where: { $0.source == primary.sourceID }) { continue }
             let admission = try await waveformSource(primary.sourceID, sources: resolved)
-            let interpretation = try await pipeline.decoder.withWitnessBoundDecodingCursor(
-                admission.url, source: primary.sourceID, matching: admission.witness
-            ) { cursor in cursor.interpretation }
+            let interpretation = try await AlignedAuditionWindowReader.inspectFormat(
+                sourceURL: admission.url, source: primary.sourceID, matching: admission.witness, decoder: pipeline.decoder)
             try await reverify(admission)
             snapshots.append(.init(source: primary.sourceID, witness: admission.witness, interpretation: interpretation))
         }

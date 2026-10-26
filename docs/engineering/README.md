@@ -1098,12 +1098,22 @@ change invalidates already-prepared diagnostic windows; restart that audition.
 production listening. `playEnabledTracks` remains diagnostic/source audition;
 neither pane visibility nor source Solo/Mute implicitly changes that choice.
 The production adapter schedules already-rendered stereo on the existing owned
-`AlignmentAudioPlayback` engine, with no second playback engine. Production uses
-quarter-second input windows and bounded half-second producer look-ahead
-(up to one additional prepared window). Effects render on the serial worker,
-not in the hardware callback. This is **buffered monitoring**, not a claim of
-hardware-input low-latency processing; live control response includes the queued
-PCM. Missed deadlines stop explicitly instead of scheduling substitute silence.
+`AlignmentAudioPlayback` engine, with no second playback engine. Production
+separates one-second **raw** source-preparation windows (one bounded prefetch)
+from 512-frame DSP blocks. `preparePCM` never bakes gains or effects into that
+long window. `renderPrepared` reads current controls on **every** 512-frame
+block, including latency drain. The processed scheduling horizon is 4096 frames
+plus at most one in-flight block: at most 4608 frames / 96 ms of prepared audio,
+not seconds of producer buffering. The start lead is 2048 frames.
+The generated responsiveness assertion changes a fader after source preparation,
+observes its ramp on the very next block's first sample without resetting the
+processor, and verifies the horizon stays below 100 ms.
+Effects render on the serial worker, not in the hardware callback. This is
+**buffered monitoring**, not a claim of immediate/hardware-input low-latency
+processing: audible control response includes that bounded prepared horizon,
+the 10 ms ramp, scheduling jitter, and device latency. Meters describe prepared
+PCM, not a sample-synchronized hardware tap. Missed deadlines stop explicitly
+instead of scheduling substitute silence.
 Playback engine/device behavior has not been exercised on the user's desktop.
 
 `MixerOfflineRenderer.render(recipe:isCurrent:input:sink:)` uses independent
@@ -1166,8 +1176,10 @@ offline rendering instead freezes every gain and opaque state byte.
 Generic edits go through
 `setParameter(slot:address:value:coalescing:)`, which captures
 `AUAudioUnit.fullStateForDocument` and commits the validated opaque state through
-the existing document store. Start `beginEditorObservation(coalescing:)`
-**before** displaying a vendor editor. It polls the complete document state every
+the existing document store. Await `beginEditorObservation(coalescing:)`
+**before** displaying a vendor editor. It establishes an unchanged-state baseline
+so opening an editor does not dirty default/nil state or rewrite unchanged
+serialized slot bytes, then polls the complete document state every
 200 ms, including opaque changes with no parameter notification. The Audio Unit
 parameter observer only increments an atomic revision; it never calls an actor,
 allocates a task, does I/O, or writes the document from the callback.
@@ -1191,6 +1203,11 @@ Generated PCM plus Apple-unit headless tests live in `WWMixTests`.
 Docking, detachment, native editor interaction, sandboxed host behavior, and
 full transport/device qualification require the later leased VM/approved host
 gates; these package tests do not authorize UI launches or user-media access.
+The user-approved integration correction in `ForbiddenAPITests` distinguishes
+the labeled in-memory `.remove(at:)` operation from forbidden unlabeled POSIX/
+file-store `remove` calls. It does not exempt a cache file or relax any content,
+gateway, mutation, hook, or thread token. Its regression scans the actual
+`AdaptiveAudioPCMCache` and injects forbidden probes into that same source.
 
 ## Conventions
 

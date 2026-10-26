@@ -364,6 +364,7 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private var auditionStopTask: Task<Void, Never>?
     @ObservationIgnored private var auditionUsesOriginalTime = false
     @ObservationIgnored private var productionTimeline: ManualCutTimeline?
+    @ObservationIgnored private var productionPreparationTask: Task<MixerPCMWindow, any Error>?
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime,
          listening: EpisodeListeningState = EpisodeListeningState()) {
@@ -1643,7 +1644,7 @@ final class EpisodeAlignmentModel {
                 guard generation == auditionGeneration else { throw CancellationError() }
                 productionTimeline = timeline
                 var next = recipe.programFrames.lowerBound
-                func enqueue(_ output: MixerPCMOutput, final: Bool) throws {
+                @MainActor func enqueue(_ output: MixerPCMOutput, final: Bool) throws {
                     guard generation == auditionGeneration else { throw CancellationError() }
                     guard output.frameCount > 0 else { return }
                     try audioPlayback.enqueueProduction(output, final: final) { [weak self] in
@@ -1657,27 +1658,56 @@ final class EpisodeAlignmentModel {
                     isAuditioning = true
                     isPreparingAudition = false
                     auditionLabel = "Playing the Primary-speaker production mix; source audition choices are unchanged."
+                    if transportProgressTask == nil {
+                        transportProgressTask = Task { [weak self] in
+                            while let self, generation == auditionGeneration, !Task.isCancelled,
+                                  let clock = audioPlayback.clock {
+                                waveformPlayheadSeconds = cutTimeline.editedTime(
+                                    forAlignedTime: timeline.alignedTime(forEditedTime: clock.playhead()))
+                                followPlayheadIfNeeded()
+                                do { try await Task.sleep(for: .milliseconds(50)) }
+                                catch { return }
+                            }
+                        }
+                    }
                 }
+                @MainActor func prepare(_ start: Int64) -> Task<MixerPCMWindow, any Error> {
+                    let range = start..<min(start + Int64(MixerLiveTiming.sourceWindowFrames),
+                        recipe.programFrames.upperBound)
+                    return Task { try await mixer.preparePCM(range) }
+                }
+                productionPreparationTask = prepare(next)
                 while next < recipe.programFrames.upperBound {
                     try Task.checkCancellation()
-                    let range = next..<min(next + 12_000, recipe.programFrames.upperBound)
-                    let output = try await mixer.render(range)
-                    let lastInput = range.upperBound == recipe.programFrames.upperBound
-                    try enqueue(output, final: lastInput && mixer.processor?.latencyFrames == 0)
-                    next = range.upperBound
-                    // Keep rendered control latency bounded. This is buffered monitoring, not a
-                    // hardware-input low-latency path; effects never run on the device callback.
-                    while let clock = audioPlayback.clock,
-                          clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow > 0.5 {
-                        let time = timeline.alignedTime(forEditedTime: clock.playhead())
-                        waveformPlayheadSeconds = cutTimeline.editedTime(forAlignedTime: time)
-                        followPlayheadIfNeeded()
-                        try await Task.sleep(for: .milliseconds(20))
+                    guard let preparation = productionPreparationTask else { throw MixerFailure.incompletePCM }
+                    let input = try await preparation.value
+                    guard generation == auditionGeneration else { throw CancellationError() }
+                    productionPreparationTask = input.frames.upperBound < recipe.programFrames.upperBound
+                        ? prepare(input.frames.upperBound) : nil
+                    while next < input.frames.upperBound {
+                        let end = min(next + Int64(MixerLiveTiming.processingBlockFrames), input.frames.upperBound)
+                        let range = next..<end
+                        let offset = Int(next - input.frames.lowerBound)
+                        let samples = input.channels.mapValues { Array($0[offset..<(offset + range.count)]) }
+                        let output = try await mixer.renderPrepared(.init(frames: range, channels: samples))
+                        let lastInput = range.upperBound == recipe.programFrames.upperBound
+                        try enqueue(output, final: lastInput && mixer.processor?.latencyFrames == 0)
+                        next = range.upperBound
+                        let horizon = Double(MixerLiveTiming.maximumScheduledAheadFrames) / Double(MixerRecipe.sampleRate)
+                        while let clock = audioPlayback.clock,
+                              clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow > horizon {
+                            try await Task.sleep(for: .milliseconds(5))
+                        }
                     }
                 }
                 while let output = try await mixer.finishNext() {
                     let final = output.firstFrame + Int64(output.frameCount) == recipe.programFrames.upperBound
                     try enqueue(output, final: final)
+                    let horizon = Double(MixerLiveTiming.maximumScheduledAheadFrames) / Double(MixerRecipe.sampleRate)
+                    while let clock = audioPlayback.clock,
+                          clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow > horizon {
+                        try await Task.sleep(for: .milliseconds(5))
+                    }
                 }
                 while let clock = audioPlayback.clock,
                       clock.startedAt.addingTimeInterval(clock.duration) > Date() {
@@ -2991,6 +3021,8 @@ final class EpisodeAlignmentModel {
         auditionGeneration += 1
         transportTask?.cancel()
         transportTask = nil
+        productionPreparationTask?.cancel()
+        productionPreparationTask = nil
         transportProgressTask?.cancel()
         transportProgressTask = nil
         transportWarmupTask?.cancel()
@@ -3016,6 +3048,10 @@ final class EpisodeAlignmentModel {
         }
         audioPlayback.stop()
         mixer.stop()
+        productionPreparationTask?.cancel()
+        productionPreparationTask = nil
+        transportProgressTask?.cancel()
+        transportProgressTask = nil
         productionTimeline = nil
         transportWarmupTask?.cancel()
         transportWarmupTask = nil

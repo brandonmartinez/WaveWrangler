@@ -1197,7 +1197,9 @@ struct ForbiddenAPITests {
     /// WWAlignPipeline reaches source content only through `SourceDecoder` and writes only through the
     /// WWDerived coordinator: no file in it may use any of these, with no exceptions.
     static func pipelineViolations(in source: String, fileName: String) -> [String] {
-        let code = maskingInMemoryContentsOf(code(source))
+        // The collection's labeled member is not the unlabeled POSIX/file-store remove operation.
+        let code = maskingInMemoryContentsOf(code(source)).replacingOccurrences(
+            of: #"\.remove\(\s*at\s*:"#, with: ".removeElement(at:", options: .regularExpression)
         let tokens = Set(forbidden + decodeMutationTokens + derivedStoreTokens + decodeTokens + contentGatewayAPITokens + pipelineTokens)
         return tokens.filter { token in
             token == "AVAudioPlayer"
@@ -1230,6 +1232,32 @@ struct ForbiddenAPITests {
         #expect(Self.pipelineViolations(in: "samples.append(contentsOf: chunk)", fileName: "AnalysisJob.swift").isEmpty)
         #expect(Self.pipelineViolations(in: "let player = AVAudioPlayerNode()", fileName: "PitchPreservingAudio.swift").isEmpty)
         #expect(Self.pipelineViolations(in: "let samples = try await decoder.withDecodingCursor(url, source: id) { try await $0.next() }", fileName: "AnalysisJob.swift").isEmpty)
+    }
+
+    @Test func pipelineScannerAllowsArrayRemovalButStillRejectsForbiddenAPIsInTheActualCache() throws {
+        let path = Self.packageRoot.appendingPathComponent("Sources/WWAlignPipeline/AdaptiveAudioPCMCache.swift")
+        let source = try String(contentsOf: path, encoding: .utf8)
+        #expect(Self.matches(#"\.remove\(\s*at\s*:"#, in: source).count == 2)
+        #expect(Self.pipelineViolations(in: source, fileName: "AdaptiveAudioPCMCache.swift").isEmpty)
+        for collection in ["entries.remove(at: index)", "entries.remove(\n at : index).bytes"] {
+            #expect(Self.pipelineViolations(in: collection, fileName: "AnyCache.swift").isEmpty)
+        }
+        let forbidden: [(String, String)] = [
+            ("Darwin.remove(path)", "remove("),
+            ("remove(path)", "remove("),
+            ("files.remove(url)", "remove("),
+            ("FileManager.default.removeItem(at: url)", "removeItem"),
+            ("let d = try Data(contentsOf: url)", "Data(contentsOf"),
+            ("let c = SystemSourceContentIO()", "SystemSourceContentIO"),
+            ("content.openForDecoding(url)", "openForDecoding"),
+            ("DerivedCoordinatorTestHooks(skipCurrencyCheck: true)", "skipCurrencyCheck"),
+            ("DispatchQueue.main.async {}", "DispatchQueue"),
+            ("Thread.sleep(forTimeInterval: 1)", "Thread"),
+        ]
+        for (probe, token) in forbidden {
+            let found = Self.pipelineViolations(in: source + "\n" + probe, fileName: "AdaptiveAudioPCMCache.swift")
+            #expect(found.contains("AdaptiveAudioPCMCache.swift: \(token)"), "\(probe)")
+        }
     }
 
     @Test func wwAlignPipelineHasNoFileContentHookOrThreadAPIs() throws {

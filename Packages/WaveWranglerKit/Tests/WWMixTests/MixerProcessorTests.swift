@@ -155,6 +155,30 @@ struct MixerProcessorTests {
         #expect(throws: MixerFailure.self) { try invalid.capture() }
     }
 
+    @Test func changedNonfiniteFractionalAndOverBudgetLatencyOrTailRefuse() throws {
+        let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+            manufacturer: kAudioUnitManufacturer_Apple))
+        for latency in [Double.nan, .infinity, -1, 0.5 / 48_000, 3] {
+            let unit = try GeneratedUnit(channels: 1, operation: .identity, latency: 0, tail: 0)
+            unit.reportedLatency = latency
+            #expect(throws: MixerFailure.latencyLimit) {
+                try NativeAudioUnit(slot: slot, unit: unit, channels: 1, policy: .init())
+            }
+        }
+        let unit = try GeneratedUnit(channels: 1, operation: .identity, latency: 0, tail: 0)
+        let host = try NativeAudioUnit(slot: slot, unit: unit, channels: 1, policy: .init(tail: .includeReported))
+        unit.reportedLatency = 1.0 / 48_000
+        #expect(throws: MixerFailure.changedLatency(slot.id)) { try host.render([[0.1]]) }
+        unit.reportedLatency = 0
+        unit.reportedTail = 1.0 / 48_000
+        #expect(throws: MixerFailure.changedTail(slot.id)) { try host.render([[0.1]]) }
+        let oversized = try GeneratedUnit(channels: 1, operation: .identity, latency: 0, tail: 100)
+        #expect(throws: MixerFailure.tailLimit) {
+            try NativeAudioUnit(slot: slot, unit: oversized, channels: 1,
+                policy: .init(maximumTailFrames: 99, tail: .includeReported))
+        }
+    }
+
     @Test func persistentAppleEffectsAreChunkContinuous() async throws {
         let f = MixFixture()
         var episode = f.episode
@@ -242,6 +266,27 @@ struct MixerProcessorTests {
         #expect(processor.recipe.routes[0].strip.gainDB == 0)
     }
 
+    @Test func liveUpdateAffectsTheNextShortBlockNotTheLongPreparedSourceWindow() async throws {
+        let f = MixFixture()
+        let recipe = try f.recipe(frames: 0..<Int64(MixerLiveTiming.sourceWindowFrames))
+        let processor = try await MixerProcessor.load(recipe: recipe)
+        let ref = recipe.routes[0].reference
+        let raw = [Float](repeating: 0.5, count: MixerLiveTiming.sourceWindowFrames)
+        let block = MixerLiveTiming.processingBlockFrames
+        let before = try await processor.process(.init(frames: 0..<Int64(block),
+            channels: [ref: Array(raw[0..<block])]))
+        var controls = MixerLiveControls(recipe: recipe)
+        controls.speakers[recipe.routes[0].speaker]?.gainDB = -12
+        try await processor.setLiveControls(controls)
+        let after = try await processor.process(.init(frames: Int64(block)..<Int64(2 * block),
+            channels: [ref: Array(raw[block..<(2 * block)])]))
+        #expect(after.channels[0][0] < before.channels[0][block - 1])
+        #expect(abs(after.channels[0][479] - Float(0.5 / sqrt(2) * pow(10, -12.0 / 20))) < 0.000_001)
+        #expect(after.firstFrame == Int64(block))
+        #expect(MixerLiveTiming.maximumPreparedControlFrames <= MixerRecipe.sampleRate / 10)
+        #expect(MixerLiveTiming.processingBlockFrames == 512)
+    }
+
     @Test func frozenRecipeIncludesIdentityGainCutsAndDeclaredPolicy() throws {
         let f = MixFixture(), episode = MixFixture().episode
         let recipe = try f.recipe()
@@ -320,6 +365,8 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     private var cursor = 0
     private var failures: Int
     private var documentState: [String: Any]? = ["generated": true]
+    var reportedLatency: TimeInterval?
+    var reportedTail: TimeInterval?
 
     init(channels: Int, operation: Operation, latency: Int, tail: Int, failures: Int = 0) throws {
         delay = latency
@@ -337,8 +384,8 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     }
     override var inputBusses: AUAudioUnitBusArray { inputs }
     override var outputBusses: AUAudioUnitBusArray { outputs }
-    override var latency: TimeInterval { Double(delay) / 48_000 }
-    override var tailTime: TimeInterval { Double(tail) / 48_000 }
+    override var latency: TimeInterval { reportedLatency ?? Double(delay) / 48_000 }
+    override var tailTime: TimeInterval { reportedTail ?? Double(tail) / 48_000 }
     override var fullStateForDocument: [String: Any]? {
         get { documentState }
         set { documentState = newValue }
