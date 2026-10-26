@@ -227,6 +227,7 @@ extension ShowDocumentModel {
             guard let index = episode.speakerAssignments.firstIndex(where: { $0.speakerID == speakerID }) else { throw .speakerNotFound(speakerID) }
             let removed = episode.speakerAssignments.remove(at: index)
             episode.speakerAppearanceOverrides?.removeAll { $0.speaker == speakerID }
+            episode.mix?.speakers.removeAll { $0.speaker == speakerID }
             let channels = (removed.primary.map { [$0] } ?? []) + removed.backups
             for sourceID in Set(channels.map(\.sourceID)) where episode.references(to: sourceID).isEmpty {
                 Self.setRole(.unassigned, .provisional, of: sourceID, in: &episode)
@@ -331,6 +332,7 @@ extension ShowDocumentModel {
             guard let index = episode.sources.firstIndex(where: { $0.id == sourceID }) else { throw .sourceNotFound(sourceID) }
             Self.removeReferences(to: sourceID, in: &episode)
             episode.sources.remove(at: index)
+            episode.mix?.inputGains.removeAll { $0.source == sourceID }
         }
     }
 

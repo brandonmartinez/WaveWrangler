@@ -26,6 +26,10 @@ final class ShowWindowState {
     var destination: ShowDestination = .setup {
         didSet {
             persistWorkspacePanels()
+            if oldValue == .alignment, destination != .alignment, let alignmentModel,
+               alignmentModel.listeningMode == .sourceAudition || !mixerPresentation.isDetached {
+                alignmentModel.stopAudition()
+            }
             // Leaving Review revokes pending handoffs even if a new Setup selects the same speaker.
             guard oldValue != destination, destination != .review else { return }
             reviewSelectionGeneration += 1
@@ -61,11 +65,28 @@ final class ShowWindowState {
     var workspaceInspector = WorkspaceInspector.recording { didSet { persistWorkspacePanels() } }
 
     var reviewPanelPresented: Bool {
+        get { bottomPanePresented && bottomPaneContent == .review }
+        set {
+            if newValue { bottomPaneContent = .review }
+            bottomPanePresented = newValue
+        }
+    }
+
+    var bottomPanePresented: Bool {
         get { selectedEpisodeID.map { listeningState(for: $0).workspace.reviewPanelPresented } ?? false }
         set {
             if let episode = selectedEpisodeID { listeningState(for: episode).workspace.reviewPanelPresented = newValue }
         }
     }
+
+    var bottomPaneContent: EpisodeBottomPaneContent {
+        get { selectedEpisodeID.map { listeningState(for: $0).workspace.bottomPaneContent } ?? .review }
+        set {
+            if let episode = selectedEpisodeID { listeningState(for: episode).workspace.bottomPaneContent = newValue }
+        }
+    }
+
+    @ObservationIgnored lazy var mixerPresentation = EpisodeMixerPresentation(state: self)
 
     func toggleWorkspaceInspector(_ activity: WorkspaceInspector) {
         if inspectorPresented, workspaceInspector == activity {
@@ -97,6 +118,13 @@ final class ShowWindowState {
     var alignmentModel: EpisodeAlignmentModel?
     var cleanupModel: EpisodeCleanupModel?
     private var listeningStates: [EpisodeID: EpisodeListeningState] = [:]
+
+    func alignmentWorkspaceDidDisappear() {
+        let active = alignmentModel
+        let keepsProduction = mixerPresentation.isDetached && active?.listeningMode == .productionMix
+        cleanupModel?.cancel(preservingWorkspacePlayback: keepsProduction)
+        if active?.listeningMode == .sourceAudition { active?.stopAudition() }
+    }
 
     func listeningState(for episode: EpisodeID) -> EpisodeListeningState {
         if let existing = listeningStates[episode] { return existing }
@@ -413,6 +441,9 @@ final class ShowWindowState {
         cleanupModel?.cancel()
         cleanupModel = nil
         invalidateBoundReview()
+        mixerPresentation.originDidClose()
+        alignmentModel?.suspend()
+        alignmentModel = nil
     }
 
     /// The only handoff point for a future source-bound, in-process transcript producer.
@@ -582,8 +613,11 @@ final class ShowWindowState {
     private func observeClosing(_ window: NSWindow) {
         closingObserver = NotificationObservation(NotificationCenter.default.addObserver(
             forName: NSWindow.willCloseNotification, object: window, queue: .main
-        ) { [weak self] _ in
-            MainActor.assumeIsolated { self?.reviewWindowDidClose() }
+        ) { [weak self, weak window] _ in
+            MainActor.assumeIsolated {
+                self?.reviewWindowDidClose()
+                if let window { ShowWindowRegistry.unregister(window) }
+            }
         })
     }
 
@@ -661,6 +695,10 @@ enum ShowWindowRegistry {
         states[ObjectIdentifier(window)] = WeakState(state: state)
     }
 
+    static func unregister(_ window: NSWindow) {
+        states.removeValue(forKey: ObjectIdentifier(window))
+    }
+
     static func state(for window: NSWindow?) -> ShowWindowState? {
         guard let window else { return nil }
         return states[ObjectIdentifier(window)]?.state
@@ -672,7 +710,10 @@ enum ShowWindowRegistry {
 
     static func states(for store: ShowDocumentStore) -> [ShowWindowState] {
         states = states.filter { $0.value.state != nil }
-        return states.values.compactMap(\.state).filter { $0.store === store }
+        var seen: Set<ObjectIdentifier> = []
+        return states.values.compactMap(\.state).filter {
+            $0.store === store && seen.insert(ObjectIdentifier($0)).inserted
+        }
     }
 }
 

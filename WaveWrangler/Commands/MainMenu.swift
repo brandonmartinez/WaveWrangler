@@ -168,6 +168,8 @@ enum MainMenu {
         menu.addItem(routed("Hide Sidebar", #selector(CommandRouter.toggleWWSidebar(_:)), .toggleSidebar))
         menu.addItem(routed("Hide Inspector", #selector(CommandRouter.toggleInspector(_:)), .toggleInspector))
         menu.addItem(routed("Show Save Status", #selector(CommandRouter.showSaveStatus(_:))))
+        menu.addItem(routed("Show Mixer", #selector(CommandRouter.showMixer(_:))))
+        menu.addItem(routed("Pop Out Mixer", #selector(CommandRouter.detachMixer(_:))))
         menu.addItem(.separator())
         let commands: [MenuCommand] = [.destinationSetup, .destinationAlignment, .destinationReview, .destinationExport]
         for (index, destination) in ShowDestination.allCases.enumerated() {

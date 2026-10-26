@@ -54,4 +54,21 @@ struct SourceMediaFactsTests {
     ]) func invalidMeasurementsCannotEnterCanonicalState(_ observations: SourceObservations) {
         #expect(!observations.isValid)
     }
+
+    @Test func observedChannelCountCannotCorruptAStoredInputGain() throws {
+        let source = SourceRecord(displayNameHint: "Generated recording")
+        let episode = Episode(title: "Synthetic", sources: [source])
+        let channel = ChannelReference(sourceID: source.id, statedChannel: 3)
+        let original = try ShowDocumentModel(show: Show(title: "Synthetic"), episodes: [episode])
+            .settingInputGain(6, for: channel, in: episode.id)
+        #expect(throws: DomainError.channelOutOfRange(channel, channelCount: 2)) {
+            try original.recordingMediaObservations(.init(channelCount: .known(2)), source: source.id, in: episode.id)
+        }
+        #expect(original.episodes[0].sources[0].observations.channelCount == .unknown)
+        #expect(original.episodes[0].mix?.inputGainDB(for: source.id, channel: 3) == 6)
+        let observed = try original.recordingMediaObservations(.init(channelCount: .known(4)),
+                                                              source: source.id, in: episode.id)
+        #expect(observed.episodes[0].mix == original.episodes[0].mix)
+        #expect(observed.validationIssues().isEmpty)
+    }
 }

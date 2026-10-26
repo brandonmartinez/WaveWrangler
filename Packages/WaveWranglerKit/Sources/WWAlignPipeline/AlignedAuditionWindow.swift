@@ -11,6 +11,18 @@ public enum AlignedAuditionWindowReader {
     public static let outputRate = 48_000
     public static let maximumDurationSeconds = 5.0
 
+    /// The same witnessed cursor as listening, for freezing actual format/channel facts before
+    /// graph construction. This grants no access and never exposes a content reader to the caller.
+    @concurrent
+    public static func inspectFormat(
+        sourceURL: URL, source: SourceID, matching witness: RawSourceIdentity, decoder: SourceDecoder
+    ) async throws -> FormatInterpretation {
+        try await decoder.withWitnessBoundDecodingCursor(sourceURL, source: source, matching: witness) { cursor in
+            try await cursor.verifyUnchanged()
+            return cursor.interpretation
+        }
+    }
+
     @concurrent
     public static func readWindow(
         sourceURL: URL, source: SourceID, matching witness: RawSourceIdentity,

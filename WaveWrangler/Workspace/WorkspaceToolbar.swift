@@ -19,6 +19,20 @@ struct WorkspaceInspectorToggles: View {
             .accessibilityValue(state.reviewPanelPresented ? "Shown" : "Hidden")
             .accessibilityIdentifier("ww.review.toggle")
             .help("\(state.reviewPanelPresented ? "Hide" : "Show") the resizable bottom review list")
+            Button {
+                if state.bottomPanePresented, state.bottomPaneContent == .mixer, !state.mixerPresentation.isDetached {
+                    state.bottomPanePresented = false
+                } else {
+                    state.mixerPresentation.showDocked()
+                }
+            } label: {
+                Image(systemName: "slider.vertical.3").frame(width: 24, height: 24)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Mixer")
+            .accessibilityValue(state.bottomPanePresented && state.bottomPaneContent == .mixer ? "Shown" : "Hidden")
+            .accessibilityIdentifier("ww.mixer.toggle")
+            .help("Show the production mixer in the bottom pane or focus its separate window")
             ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { activity in
                 let active = state.inspectorPresented && state.workspaceInspector == activity
                 Button {

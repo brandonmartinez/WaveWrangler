@@ -26,6 +26,7 @@ struct EpisodeWorkspaceViewTests {
         view.trackScrollOffset = 220
         view.reviewPanelPresented = true
         view.reviewPanelHeight = 280
+        view.bottomPaneContent = .mixer
         view.collapsedSpeakers = [SpeakerID()]
         view.collapsedRecorders = [RecorderGroupID()]
         listening.workspace = view
@@ -35,6 +36,7 @@ struct EpisodeWorkspaceViewTests {
         let saved = listening.workspace
         let reopened = ShowWindowState(store: ShowDocumentStore(model: model), episodeID: episode.id)
         #expect(reopened.listeningState(for: episode.id).workspace == saved)
+        #expect(reopened.bottomPaneContent == .mixer && reopened.bottomPanePresented && !reopened.reviewPanelPresented)
         #expect(reopened.workspaceInspector == .transcript && !reopened.inspectorPresented && reopened.recordingsPresented)
         #expect(reopened.listeningState(for: episode.id).playback == .init(), "Saved views do not restore an old Solo/Mute mix")
         #expect(reopened.listeningState(for: other.id).workspace == EpisodeWorkspaceViewState())
@@ -55,6 +57,7 @@ struct EpisodeWorkspaceViewTests {
         object.removeValue(forKey: "followPlayhead")
         object.removeValue(forKey: "reviewPanelPresented")
         object.removeValue(forKey: "reviewPanelHeight")
+        object.removeValue(forKey: "bottomPaneContent")
         let decoded = try JSONDecoder().decode(EpisodeWorkspaceViewState.self,
             from: JSONSerialization.data(withJSONObject: object))
         #expect(decoded == view && decoded.followPlayhead && !decoded.fillSpace)
@@ -63,6 +66,7 @@ struct EpisodeWorkspaceViewTests {
         let legacyReview = try JSONDecoder().decode(EpisodeWorkspaceViewState.self,
             from: JSONSerialization.data(withJSONObject: object))
         #expect(legacyReview.reviewPanelPresented && legacyReview.reviewPanelHeight == 240)
+        #expect(legacyReview.bottomPaneContent == .review)
         view.fillSpace = true
         view.followPlayhead = false
         #expect(try JSONDecoder().decode(EpisodeWorkspaceViewState.self,

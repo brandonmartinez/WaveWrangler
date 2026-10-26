@@ -266,29 +266,29 @@ struct ReviewPanelHostedTests {
                 context: nil, characters: characters, charactersIgnoringModifiers: characters,
                 isARepeat: repeatKey, keyCode: code))
         }
-        func send(_ event: NSEvent) throws {
-            NSApp.postEvent(event, atStart: false)
-            while let next = NSApp.nextEvent(matching: .keyDown, until: Date().addingTimeInterval(0.05),
-                                            inMode: .default, dequeue: true) {
-                try #require(next.windowNumber == host.window.windowNumber)
-                NSApp.sendEvent(next)
-            }
+        func send(_ event: NSEvent, until completed: () -> Bool) async throws {
+            try #require(event.windowNumber == host.window.windowNumber)
+            NSApp.sendEvent(event)
+            try await wait(timeout: .seconds(2),
+                           context: "Dispatched key \(event.keyCode) did not produce the expected timeline state.",
+                           completed)
         }
         let space = try event(49, characters: " ")
-        try send(space)
+        try await send(space) { f.model.isPreparingAudition || f.model.isAuditioning }
         #expect(f.model.isPreparingAudition || f.model.isAuditioning)
-        try send(event(49, characters: " ", repeatKey: true))
+        // Synchronous dispatch acknowledges the no-change repeat before its state assertion.
+        NSApp.sendEvent(try event(49, characters: " ", repeatKey: true))
         #expect(f.model.canStopAudition)
-        try send(space)
+        try await send(space) { !f.model.canStopAudition }
         #expect(!f.model.canStopAudition)
         settings.timelineJumpInterval = .two
         f.model.seekEnabledTracks(to: 4)
-        try send(event(124, characters: "\u{f703}"))
+        try await send(event(124, characters: "\u{f703}")) { f.model.waveformPlayheadSeconds == 6 }
         #expect(f.model.waveformPlayheadSeconds == 6)
-        try send(event(123, characters: "\u{f702}"))
+        try await send(event(123, characters: "\u{f702}")) { f.model.waveformPlayheadSeconds == 4 }
         #expect(f.model.waveformPlayheadSeconds == 4)
         settings.timelineJumpInterval = .ten
-        try send(event(124, characters: "\u{f703}"))
+        try await send(event(124, characters: "\u{f703}")) { f.model.waveformPlayheadSeconds == 12 }
         #expect(f.model.waveformPlayheadSeconds == 12)
         let container = NSView(frame: host.view.frame)
         host.window.contentView = container
@@ -321,9 +321,13 @@ struct ReviewPanelHostedTests {
         sheet.orderOut(nil)
     }
 
-    private func wait(_ condition: () -> Bool) async throws {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(40))
+    private func wait(
+        timeout: Duration = .seconds(40),
+        context: String = "The synthetic review workspace did not finish preparing.",
+        _ condition: () -> Bool
+    ) async throws {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
         while !condition(), ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
-        try #require(condition(), "The synthetic review workspace did not finish preparing.")
+        try #require(condition(), Comment(rawValue: context))
     }
 }

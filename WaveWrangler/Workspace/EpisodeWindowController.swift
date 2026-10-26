@@ -6,11 +6,16 @@ import WWCore
 final class EpisodeWindowController: NSWindowController {
     private(set) var state: ShowWindowState
 
-    init(store: ShowDocumentStore, episodeID: EpisodeID) {
-        state = ShowWindowState(store: store, episodeID: episodeID)
+    convenience init(store: ShowDocumentStore, episodeID: EpisodeID) {
+        self.init(state: ShowWindowState(store: store, episodeID: episodeID))
+    }
+
+    init(state: ShowWindowState) {
+        self.state = state
         let hosting = NSHostingController(rootView: ShowWorkspaceView(state: state))
         hosting.sizingOptions = []
-        let window = NSWindow(contentViewController: hosting)
+        let window = EpisodeEditorWindow(contentViewController: hosting)
+        window.originatingState = state
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.contentMinSize = NSSize(width: 760, height: 440)
         #if DEBUG
@@ -40,8 +45,36 @@ final class EpisodeWindowController: NSWindowController {
         guard let value = coder.decodeObject(of: NSString.self, forKey: "ww.episodeID") as String?,
               let id = EpisodeID(uuidString: value), id != state.boundEpisodeID else { return }
         state = ShowWindowState(store: state.store, episodeID: id)
+        (window as? EpisodeEditorWindow)?.originatingState = state
         if let hosting = window?.contentViewController as? NSHostingController<ShowWorkspaceView> {
             hosting.rootView = ShowWorkspaceView(state: state)
         }
     }
+}
+
+@MainActor
+private final class EpisodeEditorWindow: NSWindow {
+    weak var originatingState: ShowWindowState?
+
+    override func performClose(_ sender: Any?) {
+        guard let document = originatingState?.store.document,
+              document.mixerTransactions.needsBarrier else { super.performClose(sender); return }
+        Task {
+            do { try await document.mixerTransactions.barrier { self.performCloseCaptured(sender) } }
+            catch { document.mixerTransactions.report(error) }
+        }
+    }
+
+    override func close() {
+        if originatingState?.mixerPresentation.isClosed == true { super.close(); return }
+        guard let document = originatingState?.store.document,
+              document.mixerTransactions.needsBarrier else { super.close(); return }
+        Task {
+            do { try await document.mixerTransactions.barrier { self.closeCaptured() } }
+            catch { document.mixerTransactions.report(error) }
+        }
+    }
+
+    private func performCloseCaptured(_ sender: Any?) { super.performClose(sender) }
+    private func closeCaptured() { super.close() }
 }

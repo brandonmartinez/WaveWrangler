@@ -32,9 +32,13 @@ struct EpisodeAlignmentContent: View {
             }
         }
         .task(id: episodeID) {
-            model?.suspend()
-            if let model, state.alignmentModel === model { state.alignmentModel = nil }
-            model = nil
+            if let existing = state.alignmentModel, existing.episodeID == episodeID {
+                model = existing
+                existing.load()
+                existing.synchronizeWaveforms()
+                await state.cleanupModel?.refresh()
+                return
+            }
             startupError = nil
             do {
                 guard let document = state.store.document else { return }
@@ -44,6 +48,10 @@ struct EpisodeAlignmentContent: View {
                 )
                 try Task.checkCancellation()
                 guard state.selectedEpisodeID == episodeID, state.destination == .alignment else { return }
+                if let existing = state.alignmentModel, existing.episodeID == episodeID {
+                    model = existing
+                    return
+                }
                 let value = EpisodeAlignmentModel(document: document, episodeID: episodeID, runtime: runtime,
                                                   listening: state.listeningState(for: episodeID))
                 model = value
@@ -97,10 +105,7 @@ struct EpisodeAlignmentContent: View {
             model.ensureWaveformOverview()
         }
         .onDisappear {
-            state.cleanupModel?.cancel()
-            state.cleanupModel = nil
-            model?.suspend()
-            if let model, state.alignmentModel === model { state.alignmentModel = nil }
+            state.alignmentWorkspaceDidDisappear()
         }
     }
 }
@@ -154,10 +159,39 @@ struct AlignmentWorkspace: View {
 
     var body: some View {
         Group {
-            if state.reviewPanelPresented, let cleanup = state.cleanupModel {
+            if state.bottomPanePresented {
                 VSplitView {
                     waveforms.frame(minHeight: 180)
-                    FillerReviewPanel(model: cleanup)
+                    VStack(spacing: 0) {
+                        HStack {
+                            Picker("Bottom pane", selection: $state.bottomPaneContent) {
+                                ForEach(EpisodeBottomPaneContent.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                            }
+                            .pickerStyle(.segmented).frame(width: 180)
+                            .accessibilityIdentifier("ww.bottomPane.content")
+                            Spacer()
+                            Button("Hide bottom pane", systemImage: "xmark") { state.bottomPanePresented = false }
+                                .labelStyle(.iconOnly).accessibilityIdentifier("ww.bottomPane.hide")
+                        }.padding(6)
+                        Divider()
+                        if state.bottomPaneContent == .review, let cleanup = state.cleanupModel {
+                            FillerReviewPanel(model: cleanup)
+                        } else if state.bottomPaneContent == .mixer {
+                            if state.mixerPresentation.isDetached {
+                                VStack(spacing: 8) {
+                                    Text("Mixer is in a separate window.")
+                                    HStack {
+                                        Button("Show Mixer Window") { state.mixerPresentation.detach() }
+                                            .accessibilityIdentifier("ww.mixer.focusDetached")
+                                        Button("Reattach") { state.mixerPresentation.reattach() }
+                                            .accessibilityIdentifier("ww.mixer.reattach")
+                                    }
+                                }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                            } else {
+                                MixerView(presentation: state.mixerPresentation)
+                            }
+                        }
+                    }
                         .frame(minHeight: 140, maxHeight: 1200)
                         .background {
                             ReviewPanelSplitState(height: Binding(

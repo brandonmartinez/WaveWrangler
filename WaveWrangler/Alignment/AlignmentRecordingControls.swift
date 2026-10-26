@@ -80,6 +80,14 @@ struct AlignmentTrackAssignmentControls: View {
             ) {
                 model.useAsTimingReference(track.group)
             }
+            if let store = model.mixerStore,
+               let channel = ChannelReference(sourceID: track.id, statedChannel: model.statedChannel(for: track.id))
+                .resolvedChannel(channelCount: track.envelope.channelCount) {
+                RecordingInputGainControl(store: store, episodeID: model.episodeID,
+                    reference: ChannelReference(sourceID: track.id, statedChannel: channel),
+                    enabled: store.canEdit && store.document?.mixerTransactions.isBusy != true,
+                    identifier: "ww.inspector.recording.inputGain")
+            }
         }
         .disabled(model.isWorking || model.pendingWaveformMove != nil)
     }

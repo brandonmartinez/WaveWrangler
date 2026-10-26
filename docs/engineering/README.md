@@ -966,7 +966,7 @@ browsed show in AppKit's save/quit lifecycle after its last episode editor close
 created. Library's episode panel routes Undo to that show's undo manager, while collection edits retain
 Library's separate history. `Close Show` calls `canClose` before closing the whole document.
 Edits go through `ShowDocumentStore.apply(_:coalescing:_:)` with the user-facing names in
-`WWOrganizer.UndoActionName`; canonical show/library formats are unchanged.
+`WWOrganizer.UndoActionName` for organization edits.
 
 Library ordering: `LibraryUIStore` (backed by the pure, unit-tested `WWOrganizer.LibrarySession`) loads at
 launch, never writes before load / after a failed load / while read-only (L4/L5), queues show-open bookkeeping,
@@ -975,6 +975,300 @@ refreshes titles only after a coherent save (D1), and undoes only what an action
 UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPreferences YES`,
 `-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
 `-WWForceReduceMotion YES`.
+
+### Mixer model and persistence (schema 9)
+
+`WWCore.Episode.mix` holds optional `EpisodeMixState`; absence is neutral:
+0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-8 shows
+require the existing consented C5 migration with an exact-byte backup. Migration
+changes no timing, transcripts, cuts, assignments, or history. Older-schema
+payloads carrying mix state are refused, even when the state is neutral; newer
+schemas remain read-only/refused by the usual format gate.
+
+`RecordingInputGain` is scoped by episode, `SourceID`, and explicit zero-based
+channel. `settingInputGain(_:for:in:)` refuses unknown channels rather than
+inventing channel 0. A caller may resolve verified mono media using the existing
+`ChannelReference.resolvedChannel(channelCount:)` helper before making the edit;
+unresolved multichannel media needs an explicit choice. Known channel counts
+bound stored gains; unknown counts do not invent media facts. Resetting input
+gain to 0 removes only that key. A later observed channel count that contradicts
+a stored gain is refused atomically, like a conflicting channel assignment.
+Changing a stated channel or Primary never moves gain: the newly selected
+recording/channel uses its own gain, while the speaker
+retains its fader, pan, and inserts. Speaker removal discards only that episode's
+speaker strip, not recording gains; source removal discards only that recording's
+gain entries, not the speaker or Master chains. Normal value-snapshot Undo
+restores the removed state.
+
+Build strips from `Episode.speakerAssignments`, not the sparse mix array. Use
+`mix.state(for:)` for a speaker's neutral fallback. The sole production input is
+the selected authorized Primary/channel; Backups are not summed. Source
+authorization and accepted-timing admission remain runtime responsibilities.
+Input gain precedes speaker inserts; `SpeakerMixState.gainDB` and `pan` follow
+them. `MasterMixState.gainDB` follows the summed Master inserts. All stored gains
+are finite in -96...24 dB; pan is finite in -1...1. Pan law, metering, mute/solo
+listening policy, and processing availability are not canonical mix data.
+
+`AudioUnitSlotID` is stable and unique across an episode's speaker/Master buses.
+Insert array order is processing order. `AudioUnitComponentIdentity` stores
+unsigned FourCC type/subtype/manufacturer codes; only `aufx` and `aumf` effects
+are supported. Slots retain bypass, optional diagnostic product/version strings,
+and exact opaque `documentState` bytes even when the unit is missing. State is
+an XML or binary property-list dictionary from the unit's document state, never
+a keyed object archive. `nil` requests default state; empty/malformed state is
+refused. Limits are 16 MiB per slot, 64 MiB per episode, 64 inserts per bus,
+64 levels of state nesting, and 1024 UTF-8 bytes per diagnostic string. State
+numbers must be finite. No discovery result, live unit, editor, or observer is
+serialized.
+
+The pure `ShowDocumentModel` operations `settingMix(_:in:)`,
+`settingInputGain(_:for:in:)`, `settingSpeakerMix(_:in:)`, and
+`settingMasterMix(_:in:)` return whole validated values or throw
+`DomainError.invalidMix`/the existing reference errors without mutation. Editing
+a strip's insert array supports add/remove/reorder/bypass/state recall as one
+atomic edit. Invoke these inside the existing shared
+`ShowDocumentStore.apply(_:coalescing:_:)` with a user-facing action name and a
+control/episode-specific coalescing key. The store owns Undo/coalescing; the pure
+operations do not append duplicate history entries or create a second store.
+
+`EpisodeProcessingInputs` / `hasSameProcessingInputs(as:in:)` include mixer
+state, source/timing dependencies, working range, and active manual cuts.
+`EpisodeMediaInputs` deliberately excludes mix state, preserving raw waveforms,
+accepted timing, and raw transcripts across mixer edits. Processing comparisons
+normalize sparse neutral entries and control order but preserve insert order
+and exact state bytes. This is only a canonical dependency snapshot, not source
+authorization or the complete offline recipe: the processing layer must freeze
+verified source identities, resolved channels, format, and latency/tail policy.
+Audio hosting, playback/offline rendering, mixer windows, and export UI are
+separate layers; this foundation does not launch UI or read original media.
+
+### Native mixer processing and PCM rendering
+
+`WWMix` is downstream of `WWRender`, which remains pure and unchanged.
+`AlignmentRuntime.mixerRecipe` freezes `EpisodeProcessingInputs`, the confirmed
+Primary routes, actual gateway-witnessed `RawSourceIdentity` and
+`FormatInterpretation`, explicit resolved channels, signed edited program frames,
+format, pan law, and seek/latency/tail policy. Neither a recipe nor a witness is
+an access grant. `productionPCM` reuses the accepted-map, witnessed
+`sourceAuditions` readers and the shared manual-cut timeline, always with cuts
+collapsed, with input gain disabled at that boundary. It checks frozen identities,
+current access records, actual formats, accepted timing, and complete windows
+before returning. Effects never receive a source URL. Offline jobs also recheck
+admission during their latency/tail drain, not just during source reads.
+
+The initial qualification is native arm64, 48 kHz planar Float32, mono speaker
+inserts and stereo Master inserts/output. Only one-input/one-output-bus `aufx`
+and `aumf` effects supporting the exact requested format are admitted. Unknown
+multichannel Primaries refuse rather than selecting channel 0. Multiple speakers
+cannot share the same Primary/channel (which would double one microphone).
+An episode assignment without a confirmed Primary is an explicit error, not a
+silent strip or automatic Backup substitution.
+
+`MixerProcessor.load(recipe:progress:)` asynchronously loads ordered slots.
+`MixerAudioUnits.installedEffects()` discovers effects without loading editors.
+Loading has a 30-second bound and responds to cancellation; a late completion
+does not replace a canceled/failed instance. Out-of-process loading is requested,
+and `unitStatuses()` exposes the actual `isLoadedInProcess` result. Apple
+low-pass units were observed as `AUAudioUnit_RemoteV2`, out of process, on the
+local macOS 27 arm64 headless test host. This is not a universal AUv2 isolation
+or release-distribution claim. No sandbox or library-validation exceptions are
+added. Sandboxed app-host/editor compatibility and physical device monitoring
+remain separate qualification gates.
+
+One serial processor retains each unit across all producer windows:
+
+```text
+authorized timed/cut mono PCM -> recording/channel input gain
+  -> ordered speaker inserts -> explicit parallel-path delay alignment
+  -> speaker fader/equal-power pan -> stereo sum
+  -> ordered Master inserts -> Master gain/meters -> prepared stereo PCM
+```
+
+The sum is not divided by the number of audible speakers. Center pan contributes
+1/sqrt(2) to each output; hard left/right contributes unity to that side.
+Finite output above unity is retained, not clipped or normalized;
+`MixerMeter` exposes peak/RMS, clipping, and headroom. Live gain/pan targets use
+sample-clocked 480-frame (10 ms) linear-amplitude ramps, continuous across chunks.
+Mix edits never enter estimators, ASR, raw waveform cache keys, or original files.
+Diagnostic source/comparison audition retains its routing/attenuation and applies
+the saved recording/channel gain without speaker/Master effects. A recording-gain
+change invalidates already-prepared diagnostic windows; restart that audition.
+
+`EpisodeAlignmentModel.playProductionMix(interval:)` explicitly selects
+production listening. `playEnabledTracks` remains diagnostic/source audition;
+neither pane visibility nor source Solo/Mute implicitly changes that choice.
+The production adapter schedules already-rendered stereo on the existing owned
+`AlignmentAudioPlayback` engine, with no second playback engine. Production
+separates one-second **raw** source-preparation windows (one bounded prefetch)
+from 512-frame DSP blocks. `preparePCM` never bakes gains or effects into that
+long window. `renderPrepared` reads current controls on **every** 512-frame
+block, including latency drain. The processed scheduling horizon is 4096 frames
+plus at most one in-flight block: at most 4608 frames / 96 ms of prepared audio,
+not seconds of producer buffering. The start lead is 2048 frames.
+The generated responsiveness assertion changes a fader after source preparation,
+observes its ramp on the very next block's first sample without resetting the
+processor, and verifies the horizon stays below 100 ms.
+Effects render on the serial worker, not in the hardware callback. This is
+**buffered monitoring**, not a claim of immediate/hardware-input low-latency
+processing: audible control response includes that bounded prepared horizon,
+the 10 ms ramp, scheduling jitter, and device latency. Meters describe prepared
+PCM, not a sample-synchronized hardware tap. Missed deadlines stop explicitly
+instead of scheduling substitute silence.
+Playback engine/device behavior has not been exercised on the user's desktop.
+
+`MixerOfflineRenderer.render(recipe:isCurrent:input:sink:)` uses independent
+instances of the identical processor. It accepts at most five seconds of input
+per window and uses 512-frame native render calls. Its sink receives bounded,
+finite stereo windows with absolute edited `firstFrame` and exact frame counts,
+never delivery files. The sink must stage results and publish only after a
+successful return; cancellation, stale dependencies or a failed final check
+invalidates every previously delivered window. The app adapter is
+`AlignmentRuntime.renderProductionOffline`. It requires a live document-currency
+closure as well as the built-in source-access/identity rechecks.
+
+Reported, nonnegative integral-frame unit latencies are summed along serial
+chains. Shorter speaker paths receive the difference from the longest path;
+the common speaker latency plus Master latency is then removed exactly once.
+No engine PDC is assumed or also applied. Generated unequal-latency paths and a
+Master delay verify impulse coincidence and exact program length. Fractional,
+changing, nonfinite or over-budget latency refuses. Vendor misreported latency
+is not automatically measured/corrected; each additional unit needs
+qualification rather than a DAW-grade compensation claim.
+
+Seeking/restarting creates independent reset instances. `MixerRenderPolicy`
+defaults to zero preroll and exact-program tail truncation, a deliberate
+cold-start policy rather than transparent seek equivalence. Optional bounded
+preroll requires real authorized preceding PCM, never fabricated program data.
+`includeReported` drains the maximum serial speaker tail plus Master tails;
+nonfinite, changing or over-budget declared tails refuse. Program output is
+exactly `programFrames.count`, plus the explicit reported tail when selected.
+Missing program frames do not become EOF. Native transient
+`CannotDoInCurrentContext` retries are limited to four attempts at the same sample
+time; other statuses fail immediately. Unwritten/nonfinite output refuses.
+A malicious/hung in-process vendor render call cannot be forcibly interrupted;
+bounded host loops do not constitute plug-in process isolation.
+
+#### Layer-3 controller and transaction contract
+
+Bind docked and detached views to **the same**
+`EpisodeAlignmentModel.mixer: EpisodeMixerController`, never construct another
+controller, processor, transport, source grant, or Undo store for detachment.
+The controller exposes observable loading/ready/playing/failure state, bounded
+speaker/Master meters and unit isolation/latency status. Its `processor` provides
+`parameters(slot:)`, `editor(slot:)`, and validated `setParameter` access.
+`MixerUnitEditor.requestViewController()` runs on the main actor and may return
+nil; use the generic descriptors in that case, not a fabricated native editor.
+Observe `instanceRevision` to dismiss/rebind vendor editors when a new processing
+instance replaces a prior seek/play session. Controller `mutedSpeakers`,
+`soloedSpeakers`, and `masterMuted` are separate ephemeral production-listening
+choices, shared by docked/detached views; they do not alter source-audition Solo/
+Mute or canonical mix state. Muting ramps post-insert gain to zero while effects
+continue processing, so an unmute does not reset their history.
+
+Use normal `ShowDocumentStore.apply(_:coalescing:_:)` operations for input gain,
+fader/pan, bypass, reorder, add/remove and Undo. `synchronizeControls()` applies
+current gains/pan without resetting effects. Input/routing/timing/cut or insert
+topology/state replacement is a stop/reload boundary; stale controllers must
+never write over a changed Primary, deleted slot, or Undo-restored state.
+Live gain changes are accepted against the frozen media/cut/slot dependencies;
+offline rendering instead freezes every gain and opaque state byte.
+
+Generic edits go through
+`setParameter(slot:address:value:coalescing:)`, which captures
+`AUAudioUnit.fullStateForDocument` and commits the validated opaque state through
+the existing document store. Await `beginEditorObservation(coalescing:)`
+**before** displaying a vendor editor. It establishes an unchanged-state baseline
+so opening an editor does not dirty default/nil state or rewrite unchanged
+serialized slot bytes, then polls the complete document state every
+200 ms, including opaque changes with no parameter notification. The Audio Unit
+parameter observer only increments an atomic revision; it never calls an actor,
+allocates a task, does I/O, or writes the document from the callback.
+`captureAndPersist(coalescing:)` refuses stale slots and invalid, oversized or
+nonfinite vendor state without dropping it or silently reverting to defaults.
+State restore requires complete dictionary read-back agreement; vendors that
+normalize/refuse supplied state may be conservatively rejected.
+
+The UI integration must await `captureAndPersist` at **Save, Undo/Redo and close
+barriers**, suspend editor polling, perform the normal document operation, and
+restore/reload from the resulting document before resuming editing. On editor
+close, await `endEditorObservation()`; do not rely on close as the first dirty
+capture. Serialize these barriers with new generic edits, dismiss stale native
+editors on reload, and surface any refused capture/transaction. Polling is not a
+synchronous Save interceptor; those command/lifecycle hooks belong to layer 3.
+Do not stop/reprepare a controller with uncommitted native-editor state.
+One shared coalescing key represents an edit gesture/burst, and the store ends
+coalescing normally on Save/Undo or an unrelated edit.
+
+Generated PCM plus Apple-unit headless tests live in `WWMixTests`.
+Docking, detachment, native editor interaction, sandboxed host behavior, and
+full transport/device qualification require the later leased VM/approved host
+gates; these package tests do not authorize UI launches or user-media access.
+The user-approved integration correction in `ForbiddenAPITests` distinguishes
+the labeled in-memory `.remove(at:)` operation from forbidden unlabeled POSIX/
+file-store `remove` calls. It does not exempt a cache file or relax any content,
+gateway, mutation, hook, or thread token. Its regression scans the actual
+`AdaptiveAudioPCMCache` and injects forbidden probes into that same source.
+
+#### Docked/detached mixer and document barriers
+
+`ShowWindowState.mixerPresentation` owns presentation only. Both `MixerView`
+surfaces bind `state.alignmentModel.mixer`; detaching constructs no audio engine,
+runtime, source grant, mix copy, or Undo manager. The originating editor retains
+its alignment model across legacy destination changes. A late runtime startup
+must reuse an already-attached model instead of replacing the editor's controller.
+`EpisodeBottomPaneContent` adds Review/Mixer to the existing device-local view
+state; the serialized review visibility/height keys and all review accessibility
+identifiers remain compatible. Detached windows are not document window
+controllers: they cannot keep a windowless document alive. They route commands
+and Undo through their originating state and close with that editor.
+
+`MixerOperationQueue` serializes capture/parameter/load operations across actor
+awaits. Suspending editor observation cancels **and awaits** the poll before
+final capture. The final capture retains the editor coalescing key, then ends
+coalescing. Native baseline comparison ignores only property-list dictionary
+serialization order; original slot bytes are retained until the native state
+actually changes. Domain/recipe equality still preserves exact serialized bytes.
+No-op captures do not create Undo steps or dirty default state.
+
+`ShowDocument.mixerTransactions` serializes document operations with generic edits.
+Save (including autosave), Undo/Redo, Revert, and document/editor close hide
+native editors, suspend polling, drain capture, and only then enter AppKit's
+ordinary operation. Save keeps the same current processor and resumes polling
+after completion. Undo/Redo and restart dismiss stale editors and invalidate the
+old processor; the next editor/play prepares from the resulting document.
+Transport Stop alone preserves native state and observation. Refused capture
+aborts the document operation, leaves the saved slot unchanged, and exposes an
+error. A failed editor can be retried or explicitly discarded after confirmation.
+While a native editor is open, incompatible source/timing/chain changes outside
+the mixer barrier are explicitly refused rather than racing its state.
+
+Effect-editor ownership is exclusive per episode across originating windows.
+`handoffEditors(to:)` runs inside the document queue, awaits capture/closure of
+the prior editor, and loads the new owner's instance from the resulting mix.
+Changed captures invalidate nonediting same-episode instances, never another
+episode's processors. Insert/play restart barriers scope teardown to their
+episode; Save, Undo/Redo, and document close retain document-wide barriers.
+Capture failures expose confirmed discard/reload on the mixer surface, including
+for a native editor that cannot close successfully. No capture is required to
+perform an explicitly confirmed discard.
+
+`ShowDocumentStore.canEdit` includes actual viewing mode and mapped read-only
+status at the mutation boundary. Both recording gain surfaces use its shared
+gain operation. A refused recovery restore never marks its offer restored, so
+a subsequent verified Save cannot delete that unapplied checkpoint.
+`alignmentWorkspaceDidDisappear()` stops diagnostic audition while preserving
+deliberately detached production and the retained originating model. Buffered
+monitoring still stops explicitly if UI/device scheduling misses its deadline.
+
+`MixerHostedTests` uses generated media and Apple low-pass units for shared
+ownership, two episodes/documents, input-gain/Primary identity, production
+transport, ordered slots, missing/read-only handling, native/generic recall,
+and controlled poll-versus-close/Save overlaps. `MixerUITests` exercises the real
+bottom-pane and auxiliary windows. `MixerReviewRegressionTests` covers refused
+recovery, same-episode editor handoff, failed native capture/discard, episode
+isolation, viewing mode, and workspace-disappearance policy. Run hosted/UI cases only through the
+[leased VM pipeline](gui-testing.md); the unhosted operation-queue tests and
+static plan checks launch no editor.
 
 ## Conventions
 

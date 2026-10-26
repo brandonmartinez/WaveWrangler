@@ -16,6 +16,7 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         case invalidAlignment
         case invalidCleanup
         case invalidWorkspace
+        case invalidMix
     }
 
     public var code: Code
@@ -49,6 +50,10 @@ extension ShowDocumentModel {
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if expectedSchemaVersion < 9, episode.mix != nil {
+                issues.append(.init(.invalidMix, "schemas before 9 cannot contain mix state"))
+            }
+            issues += episode.mix?.validationIssues(in: episode) ?? []
             if expectedSchemaVersion < 8, episode.cleanup?.manualCuts != nil {
                 issues.append(.init(.invalidCleanup, "schemas before 8 cannot contain manual cuts"))
             }

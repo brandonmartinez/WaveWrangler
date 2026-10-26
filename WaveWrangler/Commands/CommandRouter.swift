@@ -248,6 +248,8 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     @objc func toggleInspector(_ sender: Any?) { activeShowState?.toggleInspector() }
+    @objc func showMixer(_ sender: Any?) { activeShowState?.mixerPresentation.showDocked() }
+    @objc func detachMixer(_ sender: Any?) { activeShowState?.mixerPresentation.detach() }
     @objc func showSaveStatus(_ sender: Any?) { activeDocumentState?.showSaveStatus() }
 
     @objc func selectDestination(_ sender: Any?) {
@@ -406,6 +408,8 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         case #selector(toggleInspector(_:)):
             item.title = show?.inspectorPresented == false ? "Show Inspector" : "Hide Inspector"
             return show != nil
+        case #selector(showMixer(_:)), #selector(detachMixer(_:)):
+            return show?.selectedEpisode != nil && show?.alignmentModel != nil
         case #selector(showSaveStatus(_:)):
             return documentState != nil
         case #selector(selectDestination(_:)):
