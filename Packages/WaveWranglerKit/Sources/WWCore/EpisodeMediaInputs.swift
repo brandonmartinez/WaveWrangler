@@ -1,6 +1,6 @@
 import Foundation
 
-/// Only canonical inputs that can affect audio admission, timing, or processing.
+/// Canonical inputs for source audio admission, timing, and analysis, excluding mixer processing.
 /// Device-local access and original-file identity must still be verified by the read gateway.
 public struct EpisodeMediaInputs: Sendable, Equatable {
     private struct Source: Sendable, Equatable {

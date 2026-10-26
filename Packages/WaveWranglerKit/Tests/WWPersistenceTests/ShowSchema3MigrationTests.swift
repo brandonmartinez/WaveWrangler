@@ -16,7 +16,7 @@ struct ShowSchema3MigrationTests {
         #expect(migrated.payload.show.title == "Schema 3 golden")
         #expect(migrated.revision == 7)
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: migrated.payload).isEmpty)
-        #expect(ShowSchemaMigration.migratableSchemas == [1, 2, 3, 4, 5, 6, 7])
+        #expect(ShowSchemaMigration.migratableSchemas == [1, 2, 3, 4, 5, 6, 7, 8])
         #expect(ShowSchemaMigration.steps.contains { $0.fromSchema == 3 })
     }
 

@@ -25,7 +25,8 @@ extension ShowDocumentModel {
         if let count = observations.channelCount.value {
             let stated = episode.sources[index].placement.channelLabels.map(\.channel)
             let assigned = episode.references(to: sourceID).compactMap { $0.channel.channel.value }
-            if let channel = (stated + assigned).first(where: { $0 >= count }) {
+            let gained = (episode.mix?.inputGains ?? []).filter { $0.source == sourceID }.map(\.channel)
+            if let channel = (stated + assigned + gained).first(where: { $0 >= count }) {
                 throw .channelOutOfRange(.init(sourceID: sourceID, statedChannel: channel), channelCount: count)
             }
         }

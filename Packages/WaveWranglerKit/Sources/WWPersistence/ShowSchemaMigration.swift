@@ -1,7 +1,7 @@
 import Foundation
 import WWCore
 
-/// Show schema migrations (C5): 1 through 7 to current.
+/// Show schema migrations (C5): 1 through 8 to current.
 ///
 /// Schema 4 adds source-local timing corrections; a schema 3 document cannot contain them.
 /// All previous schemas migrate directly to current, preserving the original bytes in a backup.
@@ -9,6 +9,7 @@ import WWCore
 /// Schema 6 adds optional filler timing reviews, leaving existing transcripts and timing untouched.
 /// Schema 7 adds optional portable workspace identity/preferences without inventing profiles or assignments.
 /// Schema 8 adds manual ripple cuts; migration never creates or applies a cut.
+/// Schema 9 adds optional mix state; migration retains a neutral, no-effects mix without touching analysis.
 ///
 /// **2 → 3** (WW-020): schema 3 adds the optional `Episode.alignment` (versioned positive maps). A schema 2 show
 /// has none, so the upgrade sets `schemaVersion` to 3 and changes nothing else; a schema 2 file that already
@@ -34,9 +35,9 @@ import WWCore
 /// (retained checkpoints, unpublished edit checkpoints) offerable as whole values.
 public enum ShowSchemaMigration {
     /// Older show schemas this build can migrate.
-    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4, 5, 6, 7]
+    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4, 5, 6, 7, 8]
 
-    /// The registered migration steps (schemas 1 through 7 to current). Each goes straight to the
+    /// The registered migration steps (schemas 1 through 8 to current). Each goes straight to the
     /// current schema, so a schema 1 show is never published as an intermediate schema 2 revision.
     public static var steps: [MigrationStep<ShowDocumentModel>] {
         [
@@ -96,6 +97,14 @@ public enum ShowSchemaMigration {
                 },
                 expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
             ),
+            MigrationStep(
+                fromSchema: 8,
+                migrate: { data in
+                    let decoded = try decodeSchema8(data)
+                    return (decoded.payload, decoded.revision)
+                },
+                expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
+            ),
         ]
     }
 
@@ -118,7 +127,22 @@ public enum ShowSchemaMigration {
             return try decodeSchema6(data)
         } catch .unsupportedOlderSchema(found: 7, minimum: _) {
             return try decodeSchema7(data)
+        } catch .unsupportedOlderSchema(found: 8, minimum: _) {
+            return try decodeSchema8(data)
         }
+    }
+
+    static func decodeSchema8(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
+        let format = DocumentFormat(identifier: DocumentFormat.show.identifier,
+            filenameExtension: DocumentFormat.show.filenameExtension,
+            currentSchemaVersion: 8, minimumReadableSchemaVersion: 8)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>(format: format) { payload, schema in
+            payload.validationIssues(expectedSchemaVersion: schema) + payload.embeddedMapIssues()
+        }
+        let decoded = try coder.decode(data)
+        var upgraded = decoded.payload
+        upgraded.schemaVersion = SchemaVersion.show
+        return DecodedDocument(payload: upgraded, publication: decoded.publication)
     }
 
     static func decodeSchema7(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
@@ -445,7 +469,7 @@ public enum ShowSchemaMigration {
 }
 
 extension DocumentMigrator where Coder == JSONEnvelopeCoder<ShowDocumentModel> {
-    /// The show migrator (C5): schema 1 or 2 → current through `publisher` (which must have a recovery store for
+    /// The show migrator (C5): schemas 1 through 8 → current through `publisher` (which must have a recovery store for
     /// the non-overwriting backup). A different show's file at the location is refused before any write.
     public static func show(publisher: DocumentPublisher<JSONEnvelopeCoder<ShowDocumentModel>>) -> DocumentMigrator<JSONEnvelopeCoder<ShowDocumentModel>> {
         DocumentMigrator(publisher: publisher, steps: ShowSchemaMigration.steps,

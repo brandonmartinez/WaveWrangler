@@ -935,7 +935,7 @@ browsed show in AppKit's save/quit lifecycle after its last episode editor close
 created. Library's episode panel routes Undo to that show's undo manager, while collection edits retain
 Library's separate history. `Close Show` calls `canClose` before closing the whole document.
 Edits go through `ShowDocumentStore.apply(_:coalescing:_:)` with the user-facing names in
-`WWOrganizer.UndoActionName`; canonical show/library formats are unchanged.
+`WWOrganizer.UndoActionName` for organization edits.
 
 Library ordering: `LibraryUIStore` (backed by the pure, unit-tested `WWOrganizer.LibrarySession`) loads at
 launch, never writes before load / after a failed load / while read-only (L4/L5), queues show-open bookkeeping,
@@ -944,6 +944,72 @@ refreshes titles only after a coherent save (D1), and undoes only what an action
 UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPreferences YES`,
 `-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
 `-WWForceReduceMotion YES`.
+
+### Mixer model and persistence (schema 9)
+
+`WWCore.Episode.mix` holds optional `EpisodeMixState`; absence is neutral:
+0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-8 shows
+require the existing consented C5 migration with an exact-byte backup. Migration
+changes no timing, transcripts, cuts, assignments, or history. Older-schema
+payloads carrying mix state are refused, even when the state is neutral; newer
+schemas remain read-only/refused by the usual format gate.
+
+`RecordingInputGain` is scoped by episode, `SourceID`, and explicit zero-based
+channel. `settingInputGain(_:for:in:)` refuses unknown channels rather than
+inventing channel 0. A caller may resolve verified mono media using the existing
+`ChannelReference.resolvedChannel(channelCount:)` helper before making the edit;
+unresolved multichannel media needs an explicit choice. Known channel counts
+bound stored gains; unknown counts do not invent media facts. Resetting input
+gain to 0 removes only that key. A later observed channel count that contradicts
+a stored gain is refused atomically, like a conflicting channel assignment.
+Changing a stated channel or Primary never moves gain: the newly selected
+recording/channel uses its own gain, while the speaker
+retains its fader, pan, and inserts. Speaker removal discards only that episode's
+speaker strip, not recording gains; source removal discards only that recording's
+gain entries, not the speaker or Master chains. Normal value-snapshot Undo
+restores the removed state.
+
+Build strips from `Episode.speakerAssignments`, not the sparse mix array. Use
+`mix.state(for:)` for a speaker's neutral fallback. The sole production input is
+the selected authorized Primary/channel; Backups are not summed. Source
+authorization and accepted-timing admission remain runtime responsibilities.
+Input gain precedes speaker inserts; `SpeakerMixState.gainDB` and `pan` follow
+them. `MasterMixState.gainDB` follows the summed Master inserts. All stored gains
+are finite in -96...24 dB; pan is finite in -1...1. Pan law, metering, mute/solo
+listening policy, and processing availability are not canonical mix data.
+
+`AudioUnitSlotID` is stable and unique across an episode's speaker/Master buses.
+Insert array order is processing order. `AudioUnitComponentIdentity` stores
+unsigned FourCC type/subtype/manufacturer codes; only `aufx` and `aumf` effects
+are supported. Slots retain bypass, optional diagnostic product/version strings,
+and exact opaque `documentState` bytes even when the unit is missing. State is
+an XML or binary property-list dictionary from the unit's document state, never
+a keyed object archive. `nil` requests default state; empty/malformed state is
+refused. Limits are 16 MiB per slot, 64 MiB per episode, 64 inserts per bus,
+64 levels of state nesting, and 1024 UTF-8 bytes per diagnostic string. State
+numbers must be finite. No discovery result, live unit, editor, or observer is
+serialized.
+
+The pure `ShowDocumentModel` operations `settingMix(_:in:)`,
+`settingInputGain(_:for:in:)`, `settingSpeakerMix(_:in:)`, and
+`settingMasterMix(_:in:)` return whole validated values or throw
+`DomainError.invalidMix`/the existing reference errors without mutation. Editing
+a strip's insert array supports add/remove/reorder/bypass/state recall as one
+atomic edit. Invoke these inside the existing shared
+`ShowDocumentStore.apply(_:coalescing:_:)` with a user-facing action name and a
+control/episode-specific coalescing key. The store owns Undo/coalescing; the pure
+operations do not append duplicate history entries or create a second store.
+
+`EpisodeProcessingInputs` / `hasSameProcessingInputs(as:in:)` include mixer
+state, source/timing dependencies, working range, and active manual cuts.
+`EpisodeMediaInputs` deliberately excludes mix state, preserving raw waveforms,
+accepted timing, and raw transcripts across mixer edits. Processing comparisons
+normalize sparse neutral entries and control order but preserve insert order
+and exact state bytes. This is only a canonical dependency snapshot, not source
+authorization or the complete offline recipe: the processing layer must freeze
+verified source identities, resolved channels, format, and latency/tail policy.
+Audio hosting, playback/offline rendering, mixer windows, and export UI are
+separate layers; this foundation does not launch UI or read original media.
 
 ## Conventions
 

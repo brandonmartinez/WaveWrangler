@@ -18,7 +18,8 @@ public enum SchemaVersion {
     /// 6: nondestructive filler audible-word timing reviews with immutable detection provenance.
     /// 7: portable show profiles, speaker appearance, recorder definitions and episode workspace preferences.
     /// 8: manual cross-track ripple cuts on the original aligned frame grid.
-    public static let show = 8
+    /// 9: recording/channel input gain, speaker/Master controls, and ordered Audio Unit document state.
+    public static let show = 9
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.

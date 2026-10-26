@@ -26,6 +26,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
     public var cleanup: EpisodeCleanup?
     public var speakerAppearanceOverrides: [SpeakerAppearanceOverride]?
     public var workspace: EpisodeWorkspacePreferences?
+    /// Absent means unity input/output gain, centered speakers, and no effects.
+    public var mix: EpisodeMixState?
 
     public init(
         id: EpisodeID = EpisodeID(),
@@ -41,7 +43,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         alignment: EpisodeAlignment? = nil,
         cleanup: EpisodeCleanup? = nil,
         speakerAppearanceOverrides: [SpeakerAppearanceOverride]? = nil,
-        workspace: EpisodeWorkspacePreferences? = nil
+        workspace: EpisodeWorkspacePreferences? = nil,
+        mix: EpisodeMixState? = nil
     ) {
         self.id = id
         self.title = title
@@ -57,6 +60,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         self.cleanup = cleanup
         self.speakerAppearanceOverrides = speakerAppearanceOverrides
         self.workspace = workspace
+        self.mix = mix
     }
 
     public func source(_ id: SourceID) -> SourceRecord? {

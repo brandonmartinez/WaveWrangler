@@ -4,6 +4,7 @@ import Foundation
 public enum DomainError: Error, Sendable, Equatable {
     case invalidCleanup
     case invalidWorkspace(String)
+    case invalidMix(String)
     case emptyTitle
     case duplicateEpisode(EpisodeID)
     case duplicateSpeaker(SpeakerID)
