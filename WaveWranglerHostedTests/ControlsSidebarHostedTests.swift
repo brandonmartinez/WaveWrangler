@@ -197,7 +197,7 @@ struct ControlsSidebarHostedTests {
         model.selectFiller(detected.id, reveal: false)
         model.setWindow(start: 1.9, duration: 0.5)
         try #require(model.selectedFillerID == detected.id && model.canReviewFillers)
-        let host = HostedTimelineWindow(width: 744, height: 154,
+        let host = HostedTimelineWindow(width: 744, height: 204,
             content: ScrollView {
                 VStack(spacing: 0) {
                     Color.clear.frame(height: 140).accessibilityHidden(true)
@@ -227,9 +227,19 @@ struct ControlsSidebarHostedTests {
             """.utf8), named: "compact-marker-native-view-tree.txt")
         func clickControl(_ identifier: String, index: Int, audition: Bool) async throws {
             let controls = host.controlFrames.filter { $0.height < 15 && $0.width < 30 }
+                .sorted { $0.midY < $1.midY }
+            try #require(controls.count == 12, "\(identifier): expected twelve visible native controls, got \(controls)")
+            var rows: [[CGRect]] = []
+            for frame in controls {
+                if let row = rows.firstIndex(where: { abs($0[0].midY - frame.midY) < 2 }) {
+                    rows[row].append(frame)
+                } else {
+                    rows.append([frame])
+                }
+            }
+            let frames = try #require(rows.first { $0.count == (audition ? 5 : 7) },
+                "\(identifier): expected separate audition/review control rows, got \(rows)")
                 .sorted { $0.minX < $1.minX }
-            try #require(controls.count == 10, "\(identifier): expected ten visible native controls, got \(controls)")
-            let frames = Array(audition ? controls.prefix(5) : controls.suffix(5))
             let frame = frames[index]
             let point = CGPoint(x: frame.midX, y: frame.midY)
             Attachment.record(Data("""

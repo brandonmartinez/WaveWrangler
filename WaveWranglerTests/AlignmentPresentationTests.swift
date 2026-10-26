@@ -7,6 +7,26 @@ import WWTimeMap
 
 @Suite("Alignment presentation")
 struct AlignmentPresentationTests {
+    @Test func anAcceptedFileCorrectionDoesNotReportMissingRecordingTiming() {
+        let group = AlignmentStateCopy(
+            heading: "Timing not set — not attempted", evidence: "No recorder timing was attempted.",
+            remedies: ["Edit Numerically…"], isBlocked: true)
+        let correction = SourceTimingCorrection(
+            source: SourceID(), group: RecorderGroupID(), epoch: RecordingEpochID(), reference: SourceID(),
+            sourceRate: 8000, sourceFrames: 160_000, channelCount: 1,
+            analysisDigest: String(repeating: "a", count: 64), processing: PitchPreservingAudio.identifier,
+            segments: [SourceTimingSegment(sourceStart: 0, sourceEnd: 20, alignedStart: 5, rateRatio: 1)])
+        let copy = AlignmentPresentation.recordingTimingState(groupState: group, correction: correction)
+        #expect(copy.heading == "Adaptive file timing accepted · pitch preserved")
+        #expect(!copy.isBlocked && copy.evidence.contains("playback and comparison"))
+        #expect(copy.evidence.contains("Recorder-group timing is separate"))
+        #expect(copy.details?.contains(group.heading) == true)
+        #expect(AlignmentPresentation.recordingTimingState(groupState: group, correction: nil) == group)
+        var invalid = correction
+        invalid.version = 99
+        #expect(AlignmentPresentation.recordingTimingState(groupState: group, correction: invalid) == group)
+    }
+
     @Test func acceptanceFailureExplainsTheCurrentTimingAndRecoveryWithoutAnOpaqueErrorCode() {
         let error = AlignmentAcceptanceError.staleSnapshot
         let message = AlignmentPresentation.errorDescription(error)
@@ -43,8 +63,10 @@ struct AlignmentPresentationTests {
         #expect(estimated.contains("ESTIMATED timing"))
         #expect(estimated.contains("no acoustic confirmation"))
         #expect(estimated.contains("misaligned speech"))
+        #expect(estimated.contains("All source audio will be retained"))
+        #expect(estimated.contains("End timing is extrapolated"))
+        #expect(!estimated.contains("remain silent"))
         for warning in [supported, estimated] {
-            #expect(warning.contains("Unmeasured ends and larger unsupported gaps remain silent"))
             #expect(warning.contains("All channels"))
             #expect(warning.contains("originals stay unchanged"))
             #expect(warning.contains("fixed reference is not moved"))

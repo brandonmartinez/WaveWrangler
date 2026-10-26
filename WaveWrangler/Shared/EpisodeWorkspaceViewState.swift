@@ -19,6 +19,8 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
     var inspector = "Recording"
     var inspectorPresented = true
     var recordingsPresented = false
+    var reviewPanelPresented = false
+    var reviewPanelHeight = 240.0
     var expandedManualCutID: UUID?
 
     init() {}
@@ -27,7 +29,7 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
         case layout, normalizeView, showProposedAlignment, laneHeight, fillSpace, followPlayhead
         case startSeconds, durationSeconds, playheadSeconds, trackScrollOffset
         case collapsedRecorders, collapsedSpeakers, destination, inspector, inspectorPresented
-        case recordingsPresented, expandedManualCutID
+        case recordingsPresented, expandedManualCutID, reviewPanelPresented, reviewPanelHeight
     }
 
     init(from decoder: any Decoder) throws {
@@ -48,6 +50,9 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
         inspector = try values.decode(String.self, forKey: .inspector)
         inspectorPresented = try values.decode(Bool.self, forKey: .inspectorPresented)
         recordingsPresented = try values.decode(Bool.self, forKey: .recordingsPresented)
+        reviewPanelPresented = try values.decodeIfPresent(Bool.self, forKey: .reviewPanelPresented)
+            ?? (inspector == "Transcript & review")
+        reviewPanelHeight = try values.decodeIfPresent(Double.self, forKey: .reviewPanelHeight) ?? 240
         expandedManualCutID = try values.decodeIfPresent(UUID.self, forKey: .expandedManualCutID)
     }
 
@@ -57,6 +62,7 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
             && durationSeconds.isFinite && (0.5...172_800).contains(durationSeconds)
             && laneHeight.isFinite && (64...220).contains(laneHeight)
             && trackScrollOffset.isFinite && trackScrollOffset >= 0
+            && reviewPanelHeight.isFinite && (140...1200).contains(reviewPanelHeight)
     }
 }
 

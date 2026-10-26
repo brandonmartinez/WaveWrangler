@@ -60,12 +60,20 @@ final class ShowWindowState {
     }
     var workspaceInspector = WorkspaceInspector.recording { didSet { persistWorkspacePanels() } }
 
+    var reviewPanelPresented: Bool {
+        get { selectedEpisodeID.map { listeningState(for: $0).workspace.reviewPanelPresented } ?? false }
+        set {
+            if let episode = selectedEpisodeID { listeningState(for: episode).workspace.reviewPanelPresented = newValue }
+        }
+    }
+
     func toggleWorkspaceInspector(_ activity: WorkspaceInspector) {
         if inspectorPresented, workspaceInspector == activity {
             inspectorPresented = false
         } else {
             workspaceInspector = activity
             inspectorPresented = true
+            if activity == .transcript { reviewPanelPresented = true }
         }
     }
 

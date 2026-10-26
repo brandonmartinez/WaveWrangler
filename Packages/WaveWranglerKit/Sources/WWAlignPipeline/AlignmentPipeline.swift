@@ -97,6 +97,7 @@ public final class AlignmentPipeline: Sendable {
     public let decoder: SourceDecoder
     public let configuration: AlignmentPipelineConfiguration
     let gate: ResourceGate
+    let adaptivePCMCache = AdaptiveAudioPCMCache()
     let ledger = AcceptanceLedger()
     let activation = AsyncSerial()
     /// Group renders (they hold gateway cursors outside coordinator jobs); `shutdown()` awaits them.
@@ -155,6 +156,7 @@ public final class AlignmentPipeline: Sendable {
         for entry in running { entry.cancel() }
         await coordinator.shutdown()
         for entry in running { await entry.wait() }
+        await adaptivePCMCache.removeAll()
     }
 
     // MARK: Plan (metadata only)

@@ -5,6 +5,119 @@ import WWCore
 
 @Suite("Coherent pitch-preserving adaptive audio", .serialized)
 struct PitchPreservingAudioTests {
+    @Test func fractionalSourceEndRetainsTheLastCoveredOutputFrame() async throws {
+        let sourceRate = 8000, outputRate = 48000, frames = 8001
+        let tone = (0..<frames).map { Float(0.2 * cos(2 * .pi * 220 * Double($0) / Double(sourceRate))) }
+        let segment = SourceTimingSegment(sourceStart: 0, sourceEnd: Double(frames) / Double(sourceRate),
+            alignedStart: 0, rateRatio: 1.0003, kind: .estimated)
+        let correction = SourceTimingCorrection(source: SourceID(), group: RecorderGroupID(),
+            epoch: RecordingEpochID(), reference: SourceID(), sourceRate: sourceRate, sourceFrames: Int64(frames),
+            channelCount: 2, analysisDigest: String(repeating: "a", count: 64),
+            processing: PitchPreservingAudio.identifier, segments: [segment])
+        let tile = try await AdaptiveAudioRendering.tile(correction: correction, index: 0, outputRate: outputRate) { range in
+            let samples = Array(tone[Int(range.lowerBound)..<Int(range.upperBound)])
+            return [samples, samples.map { -0.5 * $0 }]
+        }
+        let coveredEnd = Int(ceil(segment.alignedEnd * Double(outputRate)))
+        #expect(coveredEnd == 48021)
+        #expect(tile.channels.allSatisfy { $0.count == outputRate * 5 && $0.allSatisfy(\.isFinite) })
+        #expect(tile.channels[0][0..<coveredEnd].contains { abs($0) > 0.01 })
+        #expect(tile.channels.allSatisfy { $0[coveredEnd...].allSatisfy { $0 == 0 } })
+        #expect(zip(tile.channels[0], tile.channels[1]).allSatisfy { abs($0 * 0.5 + $1) < 0.0001 })
+    }
+
+    @Test func fractionalEndCoverageWorksAcrossRatesOffsetsAndLongAlignedClocks() async throws {
+        for sourceRate in [8000, 11025, 44100, 48000] {
+            let frames = sourceRate + 1
+            let tone = (0..<frames).map {
+                Float(0.2 * cos(2 * .pi * 220 * Double($0) / Double(sourceRate)))
+            }
+            for outputRate in [8000, 48000] {
+                for ratio in [0.98, 0.9997, 1, 1.0003, 1.02] {
+                    for offset in [-3.000001, 0, 4213.787001] {
+                        let segment = SourceTimingSegment(sourceStart: 0, sourceEnd: Double(frames) / Double(sourceRate),
+                            alignedStart: offset, rateRatio: ratio, kind: .estimated)
+                        let correction = SourceTimingCorrection(source: SourceID(), group: RecorderGroupID(),
+                            epoch: RecordingEpochID(), reference: SourceID(), sourceRate: sourceRate,
+                            sourceFrames: Int64(frames), channelCount: 2, analysisDigest: String(repeating: "a", count: 64),
+                            processing: PitchPreservingAudio.identifier, segments: [segment])
+                        let index = Int64(floor(segment.alignedEnd / 5))
+                        let tile = try await AdaptiveAudioRendering.tile(correction: correction, index: index,
+                            outputRate: outputRate) { range in
+                            let samples = Array(tone[Int(range.lowerBound)..<Int(range.upperBound)])
+                            return [samples, samples.map { -0.5 * $0 }]
+                        }
+                        let end = Int(ceil(segment.alignedEnd * Double(outputRate))) - Int(tile.firstFrame)
+                        #expect(tile.channels.allSatisfy { $0.count == outputRate * 5 && $0.allSatisfy(\.isFinite) })
+                        #expect(tile.channels[0].contains { abs($0) > 0.01 })
+                        #expect(tile.channels.allSatisfy { $0[end...].allSatisfy { $0 == 0 } })
+                        #expect(zip(tile.channels[0], tile.channels[1]).allSatisfy { abs($0 * 0.5 + $1) < 0.0001 })
+                    }
+                }
+            }
+        }
+    }
+
+    @Test func explicitBoundarySamplesAreProcessedButUnboundedPaddingRequestsRefuse() async throws {
+        let pcm = [(0..<8001).map { Float(0.2 * cos(2 * .pi * 220 * Double($0) / 8000)) }]
+        let exact = 8001.0 * 1.0003 * 6
+        let ordinary = try await PitchPreservingAudio.stretch(pcm, sampleRate: 8000,
+            rateRatio: 1.0003, outputRate: 48000)
+        #expect(ordinary[0].count == Int(exact.rounded()))
+        let boundary = try await PitchPreservingAudio.stretch(pcm, sampleRate: 8000,
+            rateRatio: 1.0003, outputRate: 48000, minimumOutputFrames: Int(ceil(exact)) + 1)
+        #expect(boundary[0].count == Int(ceil(exact)) + 1)
+        #expect(boundary[0].allSatisfy { $0.isFinite })
+        #expect(zip(ordinary[0], boundary[0]).allSatisfy { abs($0 - $1) < 0.0001 })
+        for count in [-1, Int(ceil(exact)) + 2] {
+            await #expect(throws: PitchPreservingAudio.Failure.invalidPCM) {
+                try await PitchPreservingAudio.stretch(pcm, sampleRate: 8000,
+                    rateRatio: 1.0003, outputRate: 48000, minimumOutputFrames: count)
+            }
+        }
+    }
+
+    @Test func incompleteDecodedAudioRemainsATypedPreparationFailure() async throws {
+        let correction = SourceTimingCorrection(source: SourceID(), group: RecorderGroupID(),
+            epoch: RecordingEpochID(), reference: SourceID(), sourceRate: 8000, sourceFrames: 8001,
+            channelCount: 2, analysisDigest: String(repeating: "a", count: 64),
+            processing: PitchPreservingAudio.identifier,
+            segments: [SourceTimingSegment(sourceStart: 0, sourceEnd: 1, alignedStart: 0, rateRatio: 1)])
+        await #expect(throws: AdaptiveAudioRenderFailure.self) {
+            try await AdaptiveAudioRendering.tile(correction: correction, index: 0, outputRate: 48000) { _ in
+                [[0]]
+            }
+        }
+        let error = AdaptiveAudioRenderFailure.inputShape(expectedChannels: 2, expectedFrames: 8001, actualFrames: [8000])
+        #expect(workFailure(error) == .adaptiveAudio(error))
+        #expect(error.localizedDescription.contains("expected 2 channels of 8001 frames"))
+        #expect(!error.localizedDescription.contains("corrupt"))
+    }
+
+    @Test func tinyEstimatedGapsDoNotOverlapNeighboringCrossfadesOrDropAudio() async throws {
+        let rate = 8000
+        let tone = (0..<rate * 6).map { Float(0.2 * cos(2 * .pi * 220 * Double($0) / Double(rate))) }
+        let channels = [tone, tone.map { -0.5 * $0 }]
+        for gap in [1.0 / Double(rate), 0.001, 0.005] {
+            let segments = [
+                SourceTimingSegment(sourceStart: 0, sourceEnd: 2, alignedStart: 0, rateRatio: 1),
+                SourceTimingSegment(sourceStart: 2 + gap, sourceEnd: 6, alignedStart: 2 + gap, rateRatio: 1),
+            ]
+            let curve = try SourceTimingSegment.preservingAudio(in: segments, duration: 6)
+            let correction = SourceTimingCorrection(source: SourceID(), group: RecorderGroupID(),
+                epoch: RecordingEpochID(), reference: SourceID(), sourceRate: rate,
+                sourceFrames: Int64(tone.count), channelCount: 2, analysisDigest: String(repeating: "a", count: 64),
+                processing: PitchPreservingAudio.identifier, segments: curve)
+            let tile = try await AdaptiveAudioRendering.tile(correction: correction, index: 0, outputRate: rate) { range in
+                channels.map { Array($0[Int(range.lowerBound)..<Int(range.upperBound)]) }
+            }
+            let region = (2 * rate - 32)..<(2 * rate + 64)
+            #expect(zip(tile.channels[0][region], tone[region]).allSatisfy { abs($0 - $1) < 0.0001 },
+                    "Even sub-crossfade gaps must retain the waveform without attenuation")
+            #expect(zip(tile.channels[0], tile.channels[1]).allSatisfy { abs($0 * 0.5 + $1) < 0.0001 })
+        }
+    }
+
     @Test func estimatedJoinsCrossfadeWithoutSilencingContinuousAudioOrChangingChannels() async throws {
         let rate = 8000
         let tone = (0..<rate * 16).map { Float(0.2 * sin(2 * .pi * 220 * Double($0) / Double(rate))) }

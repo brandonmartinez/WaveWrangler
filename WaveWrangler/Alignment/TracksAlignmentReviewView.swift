@@ -49,32 +49,27 @@ struct TracksAlignmentReviewView: View {
                             }
                             if let adaptive = model.tracksAdaptiveRecord(for: row.epochID),
                                !adaptive.timing.regions.isEmpty {
-                                Toggle("Accept supported file timing", isOn: Binding(
+                                Toggle("Accept file timing and retain all audio", isOn: Binding(
                                     get: { model.selectedTracksAdaptive.contains(row.epochID) },
                                     set: { selected in
                                         if selected { model.selectedTracksAdaptive.insert(row.epochID) }
                                         else {
                                             model.selectedTracksAdaptive.remove(row.epochID)
-                                            model.estimatedTracksAdaptive.remove(row.epochID)
                                         }
                                     }
                                 ))
+                                .disabled(adaptive.audioPreservationError != nil)
                                 .accessibilityIdentifier("ww.workflow.acceptAdaptive.\(row.epochID)")
-                                let estimates = adaptive.playbackIntervals(includeEstimated: true).filter { $0.kind == .estimated }
-                                if !estimates.isEmpty {
-                                    Toggle("Keep bounded gaps using estimated timing", isOn: Binding(
-                                        get: { model.estimatedTracksAdaptive.contains(row.epochID) },
-                                        set: { selected in
-                                            if selected { model.estimatedTracksAdaptive.insert(row.epochID) }
-                                            else { model.estimatedTracksAdaptive.remove(row.epochID) }
-                                        }
-                                    ))
-                                    .disabled(!model.selectedTracksAdaptive.contains(row.epochID))
-                                    .accessibilityIdentifier("ww.workflow.estimatedAdaptive.\(row.epochID)")
-                                    Text("\(String(format: "%.1f", estimates.reduce(0) { $0 + $1.sourceEnd - $1.sourceStart })) s of estimated gap timing is available. Off by default; retained audio is not verified alignment.")
+                                switch adaptive.audioPreservation {
+                                case let .success(intervals):
+                                    let estimates = intervals.filter { $0.kind == .estimated }
+                                    Text("\(String(format: "%.1f", estimates.reduce(0) { $0 + $1.sourceEnd - $1.sourceStart })) s of unmatched audio will be retained using estimated timing, including unmeasured ends. Purple markers identify estimates, not verified alignment.")
                                         .font(.caption)
+                                case let .failure(error):
+                                    Label(error.localizedDescription, systemImage: "exclamationmark.triangle")
+                                        .font(.caption).foregroundStyle(.red)
                                 }
-                                Text("Pitch-preserving timing affects only this file, not its recorder group. Unsupported gaps and ends remain silent.")
+                                Text("Pitch-preserving timing affects only this file, not its recorder group. No source audio is muted.")
                                     .font(.caption)
                             }
                             HStack {
@@ -120,7 +115,7 @@ struct TracksAlignmentReviewView: View {
             Button("Keep review only", role: .cancel) {}
         } message: {
             Text(AlignmentPresentation.adaptiveAcceptanceWarning(
-                includeEstimated: !model.estimatedTracksAdaptive.intersection(model.selectedTracksAdaptive).isEmpty
+                includeEstimated: true
             ))
         }
     }

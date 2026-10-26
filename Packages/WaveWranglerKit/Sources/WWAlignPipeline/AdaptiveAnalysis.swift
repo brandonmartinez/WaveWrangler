@@ -49,6 +49,18 @@ public struct AdaptiveAnalysisRecord: Sendable, Equatable, Codable {
             lower: referenceCoverageStart, upper: referenceCoverageEnd, includeEstimated: includeEstimated)
     }
 
+    public var audioPreservation: Result<[SourceTimingSegment], SourceTimingSegment.AudioPreservationError> {
+        do {
+            return .success(try SourceTimingSegment.preservingAudio(
+                in: playbackIntervals(), duration: Double(target.sourceFrames) / Double(target.sourceRate)))
+        } catch { return .failure(error) }
+    }
+
+    public var audioPreservationError: SourceTimingSegment.AudioPreservationError? {
+        if case let .failure(error) = audioPreservation { return error }
+        return nil
+    }
+
     static func projectedIntervals(
         timing: AdaptiveTimingResult, scale: Double, translation: Double, lower: Double, upper: Double,
         includeEstimated: Bool

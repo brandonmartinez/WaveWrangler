@@ -7,20 +7,22 @@ import WWPersistence
 
 @Suite("Accepted file-local adaptive audio", .serialized)
 struct AdaptiveAcceptanceTests {
-    @Test func estimatedGapsRequireExplicitAcceptanceAndKeepAllConfirmedGeometryAndOtherFiles() async throws {
+    @Test func defaultAcceptanceRetainsAllAudioAndCanRepairLegacyGapsWithoutReanalysis() async throws {
         let (fixture, speaker) = try await AdaptiveAnalysisTests.quietFixture(nativeAudio: true)
         fixture.model.speakers = [Speaker(id: speaker, name: "Shared")]
         let before = fixture.model
         let record = try await AdaptiveAnalysisTests.run(fixture, speaker)
         try #require(!record.timing.estimatedIntervals.isEmpty)
         let strict = try await fixture.pipeline.acceptAdaptive(model: before, episode: fixture.episodeID,
-            record: record, sources: fixture.sources, authorizations: fixture.authorizations)
+            record: record, sources: fixture.sources, authorizations: fixture.authorizations, includeEstimated: false)
         let strictCorrection = try #require(strict.model.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first)
         #expect(strictCorrection.segments.allSatisfy { $0.kind != .estimated })
         let accepted = try await fixture.pipeline.acceptAdaptive(model: before, episode: fixture.episodeID,
-            record: record, sources: fixture.sources, authorizations: fixture.authorizations, includeEstimated: true)
+            record: record, sources: fixture.sources, authorizations: fixture.authorizations)
         let correction = try #require(accepted.model.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first)
         #expect(correction.version == 3 && correction.isValid)
+        #expect(correction.retainsAllAudio)
+        #expect(correction.segments == (try record.audioPreservation.get()))
         #expect(correction.segments.filter { $0.kind != .estimated } == strictCorrection.segments)
         #expect(accepted.map == strict.map)
         #expect(accepted.model.episodes[0].sources == before.episodes[0].sources)
@@ -28,7 +30,30 @@ struct AdaptiveAcceptanceTests {
         let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
         let restored = try coder.decode(coder.encode(accepted.model, revision: 1)).payload
         #expect(restored == accepted.model)
-        try await fixture.pipeline.activate(accepted)
+        var withRange = strict.model
+        let originalRange = EpisodeWorkingRange(
+            alignmentRevision: strict.revision.revision, tracksIn: 2, tracksOut: 80)
+        let originalCut = ManualEpisodeCut(
+            alignmentRevision: strict.revision.revision, startFrame: 240_000, endFrame: 288_000)
+        withRange.episodes[0].cleanup = EpisodeCleanup(workingRange: originalRange, manualCuts: [originalCut])
+        try await fixture.pipeline.activate(model: withRange, episode: fixture.episodeID)
+        let decodedBefore = fixture.content.total.decodedFrames
+        let repaired = try await fixture.pipeline.preserveAdaptiveAudio(
+            model: withRange, episode: fixture.episodeID, source: strictCorrection.source)
+        #expect(repaired.model.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first == correction)
+        #expect(repaired.map == strict.map)
+        #expect(repaired.model.episodes[0].cleanup?.workingRange == EpisodeWorkingRange(
+            alignmentRevision: repaired.revision.revision, tracksIn: 2, tracksOut: 80))
+        #expect(repaired.model.episodes[0].cleanup?.manualCuts == [originalCut],
+                "Global episode bounds can carry forward, but old cuts and word evidence must not be rebased")
+        #expect(fixture.content.total.decodedFrames == decodedBefore, "Repair uses saved evidence, not a new audio analysis")
+        var alreadyStale = withRange
+        alreadyStale.episodes[0].cleanup?.workingRange?.alignmentRevision = 999
+        let stillStale = try await fixture.pipeline.preserveAdaptiveAudio(
+            model: alreadyStale, episode: fixture.episodeID, source: strictCorrection.source)
+        #expect(stillStale.model.episodes[0].cleanup?.workingRange?.alignmentRevision == 999,
+                "Markers already stale before the correction require explicit review")
+        try await fixture.pipeline.activate(model: restored, episode: fixture.episodeID)
         let estimate = try #require(correction.segments.first { $0.kind == .estimated && $0.sourceEnd - $0.sourceStart > 0.3 })
         let fingerprint = try await fixture.decoder.withDecodingCursor(fixture.url("backup"), source: correction.source) {
             $0.interpretation.sourceFingerprint
@@ -65,7 +90,7 @@ struct AdaptiveAcceptanceTests {
                 record: tampered, sources: fixture.sources, authorizations: fixture.authorizations)
         }
         let accepted = try await fixture.pipeline.acceptAdaptive(model: before, episode: fixture.episodeID,
-            record: record, sources: fixture.sources, authorizations: fixture.authorizations)
+            record: record, sources: fixture.sources, authorizations: fixture.authorizations, includeEstimated: false)
         let correction = try #require(accepted.model.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first)
         #expect(correction.version == 2 && correction.isValid)
         #expect(correction.segments.filter { $0.kind == nil }.count == record.timing.regions.count)
@@ -131,7 +156,10 @@ struct AdaptiveAcceptanceTests {
             $0.interpretation.sourceFingerprint
         }
         let witness = try await fixture.decoder.captureRawIdentity(fixture.url("backup"), matching: fingerprint)
-        let segment = try #require(correction.segments.first)
+        #expect(correction.retainsAllAudio)
+        let segment = try #require(correction.segments.first {
+            $0.alignedEnd - ceil($0.alignedStart + 0.1) > 1.1
+        })
         let start = ceil(segment.alignedStart + 0.1)
         let duration = min(1, segment.alignedEnd - start - 0.1)
         try #require(duration == 1)
@@ -140,6 +168,15 @@ struct AdaptiveAcceptanceTests {
             startSeconds: start, durationSeconds: duration)
         #expect(audio.count == 2 && audio[0].contains { abs($0) > 0.001 })
         #expect(zip(audio[0], audio[1]).map { abs($0 * channelGain(1) - $1) }.max()! < 0.0001)
+        let transition = try #require(correction.segments.first {
+            $0.kind == .estimated && $0.sourceStart < 48 && $0.sourceEnd > 48
+        })
+        let restoredTransition = try await fixture.pipeline.adaptiveAudioWindow(
+            model: restored, episode: fixture.episodeID, source: correction.source,
+            sourceURL: fixture.url("backup"), matching: witness,
+            startSeconds: transition.alignedStart, durationSeconds: min(0.2, transition.alignedEnd - transition.alignedStart))
+        #expect(restoredTransition[0].contains { abs($0) > 0.001 },
+                "The changing-delay transition must play real audio, not the old unsupported silence")
         let repeated = try await fixture.pipeline.adaptiveAudioWindow(model: restored, episode: fixture.episodeID,
             source: correction.source, sourceURL: fixture.url("backup"), matching: witness,
             startSeconds: start, durationSeconds: duration)
@@ -191,6 +228,8 @@ struct AdaptiveAcceptanceTests {
             SourceTimingSegment(sourceStart: 0, sourceEnd: 2, alignedStart: 0, rateRatio: 1),
             SourceTimingSegment(sourceStart: 80, sourceEnd: 82, alignedStart: 3, rateRatio: 1),
         ]
+        separated.version = 1
+        try #require(separated.isValid)
         var separatedModel = restored
         separatedModel.episodes[0].alignment?.maps[0].sourceCorrections = [separated]
         try await fixture.pipeline.activate(model: separatedModel, episode: fixture.episodeID)

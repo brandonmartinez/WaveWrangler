@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
+import SwiftUI
 import Testing
+import WWAlignPipeline
 import WWCore
 import WWPersistence
 @testable import WWSpeech
@@ -9,6 +11,143 @@ import WWPersistence
 @MainActor
 @Suite("Sample-exact cleanup transcription windows", .serialized)
 struct CleanupTranscriptionTimingTests {
+    @Test func adaptiveTranscriptionCompletesAFractionalOutputEndWithoutInvalidSamples() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 12)
+        defer { f.close() }
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        f.model.placeGroupsAtSourceTime()
+        try await wait {
+            !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
+                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.model
+        }
+        let before = f.document.store.model
+        let episode = try #require(before.episode(f.model.episodeID))
+        let version = try #require(episode.alignment?.acceptedMap)
+        let map = try before.timeMap(revision: version.revision, in: episode.id)
+        let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
+        let reference = try #require(episode.sources.first { $0.id != f.target }?.id)
+        let correction = SourceTimingCorrection(source: f.target, group: target.group, epoch: target.epoch,
+            reference: reference,
+            sourceRate: target.envelope.sampleRate, sourceFrames: target.envelope.totalFrames, channelCount: 1,
+            analysisDigest: String(repeating: "a", count: 64), processing: PitchPreservingAudio.identifier,
+            segments: [SourceTimingSegment(sourceStart: 0, sourceEnd: 12, alignedStart: 0.125,
+                rateRatio: 1.0002, kind: .estimated)])
+        let recorded = try before.recordingMap(map, in: episode.id, inputs: version.inputs.sources,
+            recipe: version.inputs.recipe, derivedFrom: version.revision, sourceCorrections: [correction])
+        let corrected = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episode.id)
+        let published = f.document.store.applyReplacement(
+            "Synthetic fractional adaptive ending", expecting: before, model: corrected, afterChange: { _ in })
+        try #require(published)
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        let prepared = try await f.runtime.prepareCleanup(model: corrected, episode: episode.id)
+        try #require(prepared.plan.isReady, "\(prepared.plan.blockers)")
+        let probe = TranscriptionFrameProbe()
+        let transcripts = try await f.runtime.transcribeCleanup(model: corrected, episode: episode.id,
+            modelRevision: "synthetic-adaptive-output-boundary", chunking: .fixed,
+            transcribeWindow: { await probe.transcribe($0) }, progress: { await probe.progress($0) })
+        #expect(transcripts.count == 2 && transcripts.allSatisfy { $0.isValid })
+        let expected = prepared.plan.lanes.map { Int((($0.end - $0.start) * 48_000).rounded()) }
+        #expect(await probe.counts == expected)
+        #expect(await probe.allSamplesValid)
+        #expect(await probe.lastProgress == 1)
+        #expect(transcripts.first { $0.primary.sourceID == f.target }?.words.first?.alignedStart == 0.375)
+        #expect(f.document.store.model == corrected && f.document.verifiedModel == corrected)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
+    }
+
+    @Test func automaticBoundariesTranscribeEveryOffsetPrimaryAndDisabledHoverExplainsTheActualBlocker() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 12)
+        defer { f.close() }
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        f.model.placeGroupsAtSourceTime()
+        try await wait {
+            !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
+                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.model
+        }
+        let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
+        f.model.setPositionLocked(false, group: target.group)
+        f.model.selectWaveform(target)
+        f.model.applyNumeric(ratePPM: 0, offsetMilliseconds: -2250)
+        try await wait {
+            !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
+                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.model
+        }
+        let defaults = try #require(UserDefaults(suiteName: "ww.implicit-range.\(UUID().uuidString)"))
+        let modelDirectory = f.folder.appendingPathComponent("synthetic-model-availability")
+        let settings = TranscriptionSettings(defaults: defaults, directory: modelDirectory, metalAvailable: false)
+        settings.selection = .baseEnglish
+        let state = ShowWindowState(store: f.document.store, episodeID: f.model.episodeID)
+        let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID,
+            runtime: f.runtime, transcriptionSettings: settings)
+        cleanup.connectWorkspace(to: f.model)
+        defer { cleanup.cancel() }
+        state.cleanupModel = cleanup
+        await cleanup.refresh()
+        let plan = try #require(cleanup.plan)
+        try #require(plan.isReady, "\(cleanup.transcriptionReadinessMessage)")
+        #expect(plan.alignedRange == -2.25...12)
+        #expect(plan.lanes.first { $0.primary.sourceID == f.target }.map { $0.start...$0.end } == -2.25...9.75)
+        #expect(f.document.store.model.episodes[0].cleanup?.workingRange == nil)
+        #expect(cleanup.workingRangeSummary.contains("(automatic)"))
+        #expect(!cleanup.canTranscribe && cleanup.transcriptionReadinessMessage.contains("local model"))
+        let host = HostedTimelineWindow(width: 800, height: 60,
+            content: AudioWorkspaceWorkflowActions(state: state, alignment: f.model))
+        defer { host.close() }
+        try await host.settle()
+        func transcribeButton() throws -> NSButton {
+            try #require(host.descendants.compactMap { $0 as? NSButton }.first {
+                $0.accessibilityIdentifier() == "ww.workflow.transcribeTracks"
+            })
+        }
+        let disabled = try transcribeButton()
+        #expect(!disabled.isEnabled && disabled.toolTip == cleanup.transcriptionReadinessMessage)
+        #expect(disabled.accessibilityHelp() == cleanup.transcriptionReadinessMessage)
+
+        // A sparse generated file exercises availability only; no real model is loaded or inferred.
+        try FileManager.default.createDirectory(at: modelDirectory, withIntermediateDirectories: true)
+        let modelFile = modelDirectory.appendingPathComponent(LocalWhisperWeights.baseEnglish.filename)
+        try Data().write(to: modelFile)
+        let handle = try FileHandle(forWritingTo: modelFile)
+        try handle.truncate(atOffset: UInt64(LocalWhisperWeights.baseEnglish.byteCount))
+        try handle.close()
+        settings.refreshAvailability()
+        #expect(cleanup.canTranscribe)
+        #expect(cleanup.transcriptionReadinessMessage.contains("IN/OUT are optional"))
+        try await host.settle()
+        #expect(try transcribeButton().isEnabled)
+        cleanup.isBusy = true
+        try await host.settle()
+        let busy = try transcribeButton()
+        #expect(!busy.isEnabled && cleanup.transcriptionReadinessMessage.contains("Transcription is running"))
+        #expect(busy.toolTip == cleanup.transcriptionReadinessMessage)
+        #expect(busy.accessibilityHelp() == cleanup.transcriptionReadinessMessage)
+        cleanup.isBusy = false
+
+        let snapshot = f.document.store.model
+        let probe = TranscriptionFrameProbe()
+        let transcripts = try await f.runtime.transcribeCleanup(model: snapshot, episode: f.model.episodeID,
+            modelRevision: "synthetic-automatic-boundaries", chunking: .fixed,
+            transcribeWindow: { await probe.transcribe($0) }, progress: { await probe.progress($0) })
+        #expect(transcripts.count == 2 && transcripts.allSatisfy { $0.workingRange == nil && $0.isValid })
+        #expect(await probe.counts == [12 * 48_000, 12 * 48_000])
+        #expect(await probe.allSamplesValid)
+        #expect(transcripts.first { $0.primary.sourceID == f.target }?.words.first?.alignedStart == -2)
+        #expect(f.document.store.model == snapshot)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
+
+        let revision = try #require(snapshot.episodes[0].alignment?.acceptedRevision)
+        let empty = EpisodeWorkingRange(alignmentRevision: revision + 10)
+        try #require(f.document.store.apply("Synthetic automatic boundaries", { model throws(DomainError) in
+            try model.settingCleanup(EpisodeCleanup(workingRange: empty), in: f.model.episodeID)
+        }))
+        await cleanup.refresh()
+        #expect(cleanup.canTranscribe && !cleanup.hasStaleWorkingRange)
+        let legacy = try await f.runtime.transcribeCleanup(model: f.document.store.model, episode: f.model.episodeID,
+            modelRevision: "synthetic-legacy-empty-boundaries", chunking: .fixed,
+            transcribeWindow: { _ in PCMTranscript(segments: []) }, progress: { _ in })
+        #expect(legacy.allSatisfy { $0.workingRange == nil && $0.isValid })
+    }
+
     @Test func fillerReviewsPublishAtomicallySaveReopenAndKeepOldJudgmentsAsHistory() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }

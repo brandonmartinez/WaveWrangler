@@ -72,6 +72,10 @@ channel for matching, even when an older assignment leaves the channel unknown; 
 rewrite that saved assignment. Multichannel files still require an explicit speaker channel, and
 out-of-range selections are refused. The review names recordings that need a channel choice.
 A measured mono source also offers **Use mono channel 1** to explicitly save that choice.
+Selecting **Primary** confirms that choice; there is no separate confirmation step.
+Playback and the Speakers only view can use a mono recording's sole channel even when an
+older saved assignment leaves its channel unknown. Multichannel speaker channels still
+require an explicit choice. Transcription readiness is separate from timeline Solo/playback.
 An eligible match compares only that
 speaker's chosen channels (or a verified mono file's sole channel) and proposes the **target recorder group's**
 timing, so its other tracks move with it. You can then match another speaker from the newly
@@ -115,22 +119,42 @@ fit the measured delays. You can also select the target waveform and choose **Ad
 directly. This experimental path measures overlapping local
 windows throughout the shared audio instead of forcing one offset/rate over the entire file.
 Dashed teal waveforms and clock icons show locally supported timing runs for **only that file**;
-uncertain transitions, silent/ambiguous regions and unmeasured ends are not filled or extrapolated.
-Choose **Accept supported file timing…** to save a file-local correction and enable pitch-preserving
-playback. Review the confirmation carefully: **unsupported intervals are silent**, including
-unverified gaps and ends. This is not yet a reliable whole-track repair for every software recording.
-**Keep bounded gaps using estimated timing** is a separate, off-by-default choice: it retains audio
-without acoustic confirmation and may contain misaligned speech. It does not turn estimates into
-measured alignment or fill unmeasured ends. Automatic analysis never automatically applies timing.
+uncertain transitions, silent/ambiguous regions and unmeasured ends are not claimed as measured.
+Choose **Accept file timing and retain all audio…** to save a file-local correction and enable
+pitch-preserving playback. All original source audio is retained: unmatched gaps use interpolated
+timing, and unmeasured ends extrapolate the nearest supported rate. Purple question marks label
+these **estimates, not verified alignment**; speech may still be out of sync. If retaining every
+interval would exceed supported playback rates, acceptance refuses rather than muting audio.
+For an older correction that silences unmatched intervals, choose **Restore unmatched audio…**
+to restore gaps and ends without reanalysis, as a saved, undoable
+revision. Steep joins may widen estimated transitions into neighboring supported audio; timing
+outside those transitions stays unchanged. Older corrections are not silently rewritten.
+Automatic analysis never automatically applies timing.
 One shared multichannel processor applies the curve to every channel in that file; sibling files
 and original media remain unchanged. Blue clock icons mark applied timing. **Remove adaptive file
 timing** and native Undo/Redo restore earlier timing without discarding decoded waveform bins.
 Full-length review reports progress and can be canceled without accepting any partial timing.
+Solo playback, live track joining, and aligned comparison recognize accepted file-local timing
+even when its recorder group has no accepted clock map. Only the corrected file becomes playable;
+sibling files do not inherit its timing. The Recording inspector distinguishes accepted adaptive
+file timing from the separate recorder-group status. Verified saves and source-access checks still apply.
+Adaptive playback prepares a five-second starting buffer and keeps up to ten seconds queued.
+Decoded multichannel tiles are reused from a bounded memory cache as well as the existing disk
+cache, instead of rereading and decoding a full tile for every half-second playback window.
 Listening and derived aligned audio use the same bounded, pitch-preserving audio tiles, not the
 ordinary pitch-changing affine resampler. Source-region processing origins and shared crossfades
-avoid restarting audio phase at playback-window boundaries. Remove file-local corrections before
+avoid restarting audio phase at playback-window boundaries. Fractional aligned ends retain every
+covered output frame instead of failing transcription with an invalid-sample error. Preparation
+failures identify the recording and aligned interval; no substitute audio is used.
+Remove file-local corrections before
 editing recorder-group timing. Shows now use schema 6; older shows require the normal backed-up
 migration before saving.
+
+Individual adaptive file-timing changes keep current episode IN/OUT values when the shared
+recorder map is unchanged. Older stale markers remain blocked until explicitly reviewed.
+If transcription reports that IN/OUT belong to older alignment, choose **Review episode IN/OUT…**
+above the timeline, then **Keep existing IN/OUT** or reset them to include all available audio.
+This is undoable and does not revalidate old transcripts, word marks, or cuts.
 
 In a recording's inspector or **Recordings & Speakers**, choose **Use as Timing Reference** to select
 one recorder for the next **Align Tracks** operation. The track sidebar distinguishes the
@@ -225,12 +249,21 @@ one ready speaker does not authorize the rest. Supported source rates are 8-192 
 
 Select **Mark In** or **Mark Out**, then click a waveform or the ruler to place that shared marker.
 **In at Playhead / Out at Playhead** set it at the current listening position; **Precise Tracks In / Out**
-opens numeric aligned-second fields. Blank ends
-include available audio. These undoable, saved markers exclude pre/post-recording banter from cleanup
+opens numeric aligned-second fields. **IN/OUT are optional.** Without explicit markers, transcription
+includes each Primary's full available aligned range, including negative starts and offset ends.
+The implied episode boundaries cover the union of those ranges, not only the overlap shared by all
+recordings. Setting just IN or just OUT limits only that end; the other remains automatic. The range
+summary labels implied boundaries **automatic**. These undoable, saved markers exclude pre/post-recording banter from cleanup
 analysis; they never trim originals, change alignment, or imply an export cut. Shaded banter remains
 visible and playable outside the markers, so boundaries can be refined without resetting them.
-**Reset Range** includes the full recording in analysis again. An alignment revision change requires resetting or re-setting
-the markers. Each Primary needs at least 0.1 seconds of supported audio in the range.
+**Reset Range** returns to the automatic full-range default. Only explicit markers from an older
+alignment require review; legacy empty marker records do not block transcription or get rewritten.
+Each Primary needs at least 0.1 seconds of supported audio in the range.
+
+Hover **Transcribe Tracks** for its current readiness reason, including while disabled: pending
+alignment, source verification/access, read-only state, a missing local model, or stale explicit
+boundaries. Missing IN/OUT is never a blocker. Unplaced audio or unsupported timing still needs
+alignment rather than being silently omitted or extrapolated by transcription.
 
 Choose a model in **Settings > Transcription**, also reachable from Cleanup's **Transcription Settings**
 button. The dropdown applies to every episode; no file picker is needed. **Whisper Turbo Q5_0**
@@ -363,6 +396,24 @@ not an edit triggered by merely opening the view; undo does not immediately rege
 Multiword phrases, lexical `like`, substrings and untimed text are not automatically marked.
 The detector can miss fillers the recognizer omits or rewrites, and can flag mistaken recognition.
 
+Open the **Review panel** with the bottom-panel toolbar button or **Open review list** in the
+Transcript & Review sidebar. The resizable bottom table shows speaker, phrase, status, readable
+aligned time and duration; filter by text, speaker or status without hiding retained history.
+Selecting a row centers and zooms its complete word interval on the waveform and opens a focused
+inspector for that item. The sidebar no longer contains the entire review queue or an always-expanded
+full transcript. **Double-click a row to play its current segment** without added context; for a cut
+row, this reveals and auditions the removed audio without restoring the cut. Current listening choices
+apply, and uncut markers use their Loop setting. Panel visibility and divider height are remembered per
+episode on this Mac, not
+as document edits.
+
+**Auto Cut** on a row applies that row's current boundaries through the existing, undoable
+cross-track cut action. It does not run a new detector or silently cut other suggestions.
+**Restore** recovers a cut. Minus/plus on a row or marker toolbar contracts/expands both edges
+by 10 ms; independent handle dragging and 1 ms arrow-key adjustments remain available.
+Resizing an already-cut row adjusts the same shared cut and its linked marker as one Undo step.
+No action rewrites the original media, recognizer text, detected interval or captured provenance.
+
 Dotted start/end rails and a lightly highlighted region appear only in the relevant speaker's
 Primary waveform. Click a region or handle for its compact toolbar, anchored to the visible interval
 or clicked handle. Drag the start and end handles independently; the handle, dotted rail and highlighted
@@ -393,18 +444,28 @@ source rate, alignment revision, transcript/word identity and captured model/det
 available. Transcription publishes every speaker's text and suggestions in one undoable update and
 retains earlier reviews. Re-transcription, same-ID word edits, changed sources/Primaries or accepted
 alignment do not silently overwrite, retime or reassociate human judgments: incompatible reviews stay
-in **Saved reviews and retained history**, inspectable but inactive, with no rails, editing or audition.
+in the review table as **Inactive**, inspectable but with no rails, editing, cutting or audition.
 Reviews outside new Tracks In/Out are similarly inactive; restoring their exact original dependencies
 can reactivate them. Manual proposals without a transcript are source/alignment-bound only.
 **Refresh** and returning to the view reverify source access, including after a review-only edit.
 Schema 5 and earlier shows require the normal explicit-consent, exact-byte-backed-up migration to
 schema 6; migration itself invents no reviews and preserves existing text and timing.
 
-**This is timing review only, not cut acceptance.** Human judgments are useful reference data, not proof
-of phonetic ground truth. No deletion, ripple editing, silence detection, exports or uploads are added.
-Reviewed configurable filler phrases, all-speaker long-silence detection, adjustable editorial cut
-windows, common-timeline shortening and speaker-only silence are future work.
+**Review decisions alone do not accept cuts.** Human judgments are useful reference data, not proof
+of phonetic ground truth. A separate Auto Cut or manual cut action is required to shorten the shared
+timeline. No source deletion, automatic silence detection, export or upload is introduced.
+Reviewed configurable filler phrases, all-speaker long-silence detection and speaker-only silence are future work.
 Speaker-only silence must keep existing overlap in place, not slide later speech earlier.
+
+### Timeline keyboard controls
+
+With the workspace active and no text field, button, review table, boundary handle or other control
+owning the key, **Space** toggles Play/Pause. Held Space does not repeatedly toggle transport.
+In the track area, **Left/Right** jump backward/forward by the configured interval; the transport
+buttons use the same setting. **Settings > General > Timeline keyboard controls** offers 1, 2, 5,
+10, 15 or 30 seconds, defaulting to 5 seconds. Jumps stop at the available timeline bounds, including
+negative starts. Text editing, table navigation, modal sheets, and focused boundary handles retain
+their existing keyboard behavior.
 
 ## Local development builds and file access
 

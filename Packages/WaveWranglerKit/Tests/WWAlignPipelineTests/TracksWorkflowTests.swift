@@ -117,14 +117,15 @@ struct TracksWorkflowTests {
         #expect(record.referenceToAlignedOffset == 0 && record.referenceToAlignedRate == 1)
         let accepted = try await fixture.pipeline.accept(
             model: selected, episode: fixture.episodeID, report: report, decisions: [:],
-            replacingAlignment: true, adaptiveSelections: [fixture.epochs[0]: false],
+            replacingAlignment: true, adaptiveSelections: [fixture.epochs[0]: true],
             sources: fixture.sources, authorizations: fixture.authorizations
         )
         #expect(accepted.map.reference.group == fixture.groups[1])
         #expect(accepted.map.reference.occurrence == report.plan.reference?.occurrence)
         let curve = try #require(accepted.model.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first)
         #expect(curve.source == fixture.id("ref") && curve.reference == fixture.id("backup"))
-        #expect(curve.segments == record.playbackIntervals())
+        #expect(curve.retainsAllAudio)
+        #expect(curve.segments == (try record.audioPreservation.get()))
         #expect(await fixture.coordinator.inputs.acceptedMaps[fixture.episodeID] == prior.revision.revision)
         await ConcurrencyTests.expectQuiescent(fixture)
     }

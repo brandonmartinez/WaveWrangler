@@ -84,6 +84,10 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         let word = row.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.cleanup.word.'")).firstMatch
         XCTAssertTrue(word.isHittable)
         word.click()
+        let reading = app.descendants(matching: .any)["ww.review.transcriptReading"]
+        XCTAssertTrue(reading.waitForExistence(timeout: 5))
+        reveal(reading, in: app, scrollID: "ww.inspector")
+        reading.click()
         XCTAssertTrue(app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH 'ww.transcript.full.'")).firstMatch.waitForExistence(timeout: 5))
     }
@@ -258,6 +262,10 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         XCTAssertEqual(playhead.value as? String, beforePlayhead, "Cycle dragging does not scrub the playhead.")
         let transcriptSidebar = app.buttons["ww.sidebar.transcript"]
         if transcriptSidebar.value as? String != "Shown" { transcriptSidebar.click() }
+        let reading = app.descendants(matching: .any)["ww.review.transcriptReading"]
+        XCTAssertTrue(reading.waitForExistence(timeout: 5), app.debugDescription)
+        reveal(reading, in: app, scrollID: "ww.inspector")
+        reading.click()
         XCTAssertTrue(app.descendants(matching: .any).matching(
             NSPredicate(format: "identifier BEGINSWITH 'ww.transcript.full.'")).firstMatch.waitForExistence(timeout: 5),
                       app.debugDescription)
@@ -266,11 +274,50 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             let reviews = app.buttons["ww.cleanup.fillers.history"]
             reveal(reviews, in: app, scrollID: "ww.inspector")
             reviews.click()
-            XCTAssertTrue(wait { reviews.value as? String == "Expanded" }, app.debugDescription)
-            let review = app.buttons.matching(NSPredicate(
+            XCTAssertTrue(app.descendants(matching: .any)["ww.review.table"].waitForExistence(timeout: 5),
+                          app.debugDescription)
+            let review = app.descendants(matching: .any).matching(NSPredicate(
                 format: "identifier BEGINSWITH %@", "ww.cleanup.filler.review.")).firstMatch
             XCTAssertTrue(review.waitForExistence(timeout: 5), app.debugDescription)
-            reveal(review, in: app, scrollID: "ww.inspector")
+            review.click()
+            let reviewID = String(review.identifier.dropFirst("ww.cleanup.filler.review.".count))
+            XCTAssertTrue(app.textFields["ww.review.inspector.start"].waitForExistence(timeout: 5),
+                          app.debugDescription)
+            let marker = app.buttons["ww.cleanup.filler.\(reviewID)"]
+            XCTAssertTrue(marker.waitForExistence(timeout: 10), app.debugDescription)
+            let originalBounds = marker.value as? String
+            let transport = app.staticTexts["alignment.waveforms.transport.status"]
+            review.doubleClick()
+            XCTAssertTrue(wait { (transport.value as? String ?? transport.label) == "Finished selection audition." },
+                          app.debugDescription)
+            review.click()
+            XCTAssertNotEqual(transport.value as? String ?? transport.label, "Finished selection audition.")
+            let row = app.outlines["ww.review.table"].outlineRows.containing(.button, identifier: review.identifier).firstMatch
+            XCTAssertTrue(row.exists)
+            let statusCell = row.buttons["Needs review"]
+            XCTAssertTrue(statusCell.isHittable)
+            statusCell.doubleClick()
+            XCTAssertTrue(wait { (transport.value as? String ?? transport.label) == "Finished selection audition." },
+                          app.debugDescription)
+            let expand = app.buttons["ww.review.size.\(reviewID).expand"]
+            XCTAssertTrue(expand.isHittable)
+            expand.click()
+            XCTAssertTrue(wait { marker.value as? String != originalBounds })
+            app.buttons["ww.review.size.\(reviewID).contract"].click()
+            XCTAssertTrue(wait { marker.value as? String == originalBounds })
+            app.buttons["ww.review.cut.\(reviewID)"].click()
+            let restore = app.buttons["ww.review.restore.\(reviewID)"]
+            XCTAssertTrue(restore.waitForExistence(timeout: 5))
+            review.doubleClick()
+            XCTAssertTrue(wait { (transport.value as? String ?? transport.label) == "Finished selection audition." },
+                          app.debugDescription)
+            XCTAssertTrue(restore.exists, "Auditioning removed audio must not restore or remove its cut.")
+            app.typeKey("z", modifierFlags: .command)
+            XCTAssertTrue(app.buttons["ww.review.cut.\(reviewID)"].waitForExistence(timeout: 5))
+            app.typeKey("z", modifierFlags: [.command, .shift])
+            XCTAssertTrue(restore.waitForExistence(timeout: 5))
+            restore.click()
+            XCTAssertTrue(app.buttons["ww.review.cut.\(reviewID)"].waitForExistence(timeout: 5))
             review.click()
             let context = app.buttons["Play with context"].firstMatch
             XCTAssertTrue(context.waitForExistence(timeout: 5), app.debugDescription)

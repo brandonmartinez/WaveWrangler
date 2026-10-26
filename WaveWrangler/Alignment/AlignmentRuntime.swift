@@ -221,7 +221,7 @@ actor AlignmentRuntime {
 
     func acceptAdaptive(
         model: ShowDocumentModel, episode episodeID: EpisodeID, record: AdaptiveAnalysisRecord,
-        includeEstimated: Bool = false
+        includeEstimated: Bool = true
     ) async throws -> AcceptedAlignment {
         let sources = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         let authorizations = sources.filter { $0.availability == .on }
@@ -235,6 +235,13 @@ actor AlignmentRuntime {
     ) async throws -> AcceptedAlignment {
         _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
         return try await pipeline.removeAdaptiveCorrection(model: model, episode: episodeID, source: source)
+    }
+
+    func preserveAdaptiveAudio(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, source: SourceID
+    ) async throws -> AcceptedAlignment {
+        _ = try await resolveSources(model.episode(episodeID)?.sources ?? [])
+        return try await pipeline.preserveAdaptiveAudio(model: model, episode: episodeID, source: source)
     }
 
     func reviewSavedProposal(
@@ -1258,7 +1265,7 @@ actor AlignmentRuntime {
                                 speakerCount: preparation.plan.lanes.count, sources: sources, map: map,
                                 expectedIdentity: preparation.identities[preparation.plan.lanes[index].primary.sourceID],
                                 revision: revision, modelRevision: modelRevision,
-                                workingRange: episode.cleanup?.workingRange, total: total,
+                                workingRange: episode.cleanup?.explicitWorkingRange, total: total,
                                 chunking: chunking,
                                 transcribeWindow: transcribeWindow, reporter: reporter)
                         }
@@ -1309,10 +1316,17 @@ actor AlignmentRuntime {
                     completedSeconds: completed, totalSeconds: total)
             }
             await reporter.report(update(.rendering, window: candidate))
-            var pcm = try await cleanupSamples(model: model, episode: episodeID, lane: lane,
-                admission: admission, map: map,
-                start: Double(candidate.audioFrames.lowerBound) / 48_000,
-                end: Double(candidate.audioFrames.upperBound) / 48_000)
+            let audioStart = Double(candidate.audioFrames.lowerBound) / 48_000
+            let audioEnd = Double(candidate.audioFrames.upperBound) / 48_000
+            var pcm: [Float]
+            do {
+                pcm = try await cleanupSamples(model: model, episode: episodeID, lane: lane,
+                    admission: admission, map: map, start: audioStart, end: audioEnd)
+            } catch {
+                if error is CancellationError || Task.isCancelled { throw CancellationError() }
+                let detail = (error as? any LocalizedError)?.errorDescription ?? String(describing: error)
+                throw CleanupFailure(reason: "Could not prepare \(lane.name)'s Primary, \(lane.sourceName), at aligned \(String(format: "%.3f", audioStart))–\(String(format: "%.3f", audioEnd)) seconds. \(detail)")
+            }
             let window = try planner.next(pcm: pcm)
             // Keep the selected window's right context; re-render overlap on the next iteration.
             pcm.removeLast(pcm.count - window.audioFrames.count)

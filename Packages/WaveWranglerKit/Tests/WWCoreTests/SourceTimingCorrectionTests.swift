@@ -4,6 +4,77 @@ import WWCore
 
 @Suite("Portable source-local timing corrections")
 struct SourceTimingCorrectionTests {
+    @Test func preservingAudioFillsEveryGapAndBothEndsWithoutChangingEvidence() throws {
+        let original = correction()
+        let preserved = try original.preservingAudio()
+        #expect(!original.retainsAllAudio && preserved.retainsAllAudio)
+        #expect(preserved.segments.filter { $0.kind != .estimated } == original.segments)
+        #expect(preserved.segments.filter { $0.kind == .estimated }.count == 3)
+        #expect(preserved.source == original.source && preserved.reference == original.reference)
+        #expect(preserved.analysisDigest == original.analysisDigest && preserved.version == 3)
+        for time in stride(from: 0.0, to: 20, by: 0.001) {
+            #expect(preserved.alignedTime(at: time) != nil)
+        }
+        #expect(try preserved.preservingAudio() == preserved)
+        #expect(try JSONDecoder().decode(SourceTimingCorrection.self, from: JSONEncoder().encode(preserved)) == preserved)
+    }
+
+    @Test func preservationIncludesTinyAndLongGapsButRefusesUnsafeOrReversedTiming() throws {
+        for gap in [0.000125, 0.005, 0.01, 301, 600] {
+            let segments = [
+                SourceTimingSegment(sourceStart: 1, sourceEnd: 2, alignedStart: 0, rateRatio: 1),
+                SourceTimingSegment(sourceStart: 2 + gap, sourceEnd: 3 + gap, alignedStart: 1 + gap, rateRatio: 1),
+            ]
+            let result = try SourceTimingSegment.preservingAudio(in: segments, duration: 4 + gap)
+            #expect(result.filter { $0.kind == .estimated }.count == 3)
+            #expect(result.first?.sourceStart == 0 && result.last?.sourceEnd == 4 + gap)
+            #expect(result.filter { $0.kind == nil } == segments)
+        }
+        let unsafe = [
+            SourceTimingSegment(sourceStart: 0, sourceEnd: 2, alignedStart: 0, rateRatio: 1),
+            SourceTimingSegment(sourceStart: 3, sourceEnd: 4, alignedStart: 5, rateRatio: 1),
+        ]
+        #expect(throws: SourceTimingSegment.AudioPreservationError.unsafeTransition) {
+            try SourceTimingSegment.preservingAudio(in: unsafe, duration: 5)
+        }
+        #expect(throws: SourceTimingSegment.AudioPreservationError.invalidTiming) {
+            try SourceTimingSegment.preservingAudio(in: unsafe.reversed(), duration: 5)
+        }
+        #expect(throws: SourceTimingSegment.AudioPreservationError.invalidTiming) {
+            try SourceTimingSegment.preservingAudio(in: [], duration: 5)
+        }
+    }
+
+    @Test func steepShortGapsUseLabeledRampsInsteadOfDeletingAudioOrRelaxingNativeRateLimits() throws {
+        let original = [
+            SourceTimingSegment(sourceStart: 0, sourceEnd: 2, alignedStart: 0, rateRatio: 1),
+            SourceTimingSegment(sourceStart: 2.001, sourceEnd: 6, alignedStart: 2.021, rateRatio: 1),
+        ]
+        let result = try SourceTimingSegment.preservingAudio(in: original, duration: 6)
+        let ramp = try #require(result.first { $0.kind == .estimated })
+        #expect(ramp.sourceStart < 2 && ramp.sourceEnd > 2.001)
+        #expect((0.98...1.02).contains(ramp.rateRatio))
+        #expect(result.first?.sourceStart == 0 && result.last?.sourceEnd == 6)
+        #expect(zip(result, result.dropFirst()).allSatisfy { $0.sourceEnd == $1.sourceStart })
+        for segment in result where segment.kind != .estimated {
+            let measured = try #require(original.first {
+                segment.sourceStart >= $0.sourceStart && segment.sourceEnd <= $0.sourceEnd
+            })
+            #expect(segment.rateRatio == measured.rateRatio)
+            #expect(abs(segment.alignedStart - (measured.alignedStart
+                + (segment.sourceStart - measured.sourceStart) * measured.rateRatio)) < 1e-12)
+        }
+        #expect(try SourceTimingSegment.preservingAudio(in: result, duration: 6) == result)
+        let short = [
+            SourceTimingSegment(sourceStart: 0, sourceEnd: 0.25, alignedStart: 0, rateRatio: 1),
+            SourceTimingSegment(sourceStart: 0.251, sourceEnd: 0.5, alignedStart: 0.271, rateRatio: 1),
+            SourceTimingSegment(sourceStart: 0.501, sourceEnd: 4, alignedStart: 0.521, rateRatio: 1),
+        ]
+        let expanded = try SourceTimingSegment.preservingAudio(in: short, duration: 4)
+        #expect(expanded.first?.sourceStart == 0 && expanded.last?.sourceEnd == 4)
+        #expect(expanded.allSatisfy { $0.kind == .estimated && (0.98...1.02).contains($0.rateRatio) })
+    }
+
     func correction() -> SourceTimingCorrection {
         SourceTimingCorrection(source: SourceID(), group: RecorderGroupID(), epoch: RecordingEpochID(),
             reference: SourceID(), sourceRate: 8000, sourceFrames: 160000, channelCount: 7,

@@ -16,6 +16,20 @@ final class ControlsSidebarUITests: XCTestCase {
         let candidate = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND label CONTAINS 'Um,'")).firstMatch
         XCTAssertTrue(candidate.waitForExistence(timeout: 20), app.debugDescription)
+        let rulerSurface = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
+        rulerSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.2)).click()
+        app.typeKey(.space, modifierFlags: [])
+        let play = app.buttons["alignment.waveforms.transport.play"]
+        XCTAssertTrue(wait { play.label == "Pause" }, "Space starts transport after clicking the timeline. \(app.debugDescription)")
+        app.typeKey(.space, modifierFlags: [])
+        XCTAssertTrue(wait { play.label == "Play" }, "Space pauses transport without a focused control.")
+        let timelinePlayhead = app.textFields["alignment.waveforms.playhead"]
+        let beforeJump = try XCTUnwrap(Double(timelinePlayhead.value as? String ?? ""))
+        app.typeKey(.rightArrow, modifierFlags: [])
+        XCTAssertTrue(wait { (Double(timelinePlayhead.value as? String ?? "") ?? beforeJump) > beforeJump })
+        let afterJump = try XCTUnwrap(Double(timelinePlayhead.value as? String ?? ""))
+        app.typeKey(.leftArrow, modifierFlags: [])
+        XCTAssertTrue(wait { (Double(timelinePlayhead.value as? String ?? "") ?? afterJump) < afterJump })
         let region = app.buttons[candidate.identifier]
         app.menuButtons["alignment.waveforms.commandTool"].click()
         app.menuItems["Reject"].click()
@@ -344,8 +358,13 @@ final class ControlsSidebarUITests: XCTestCase {
         episode.click()
         XCTAssertTrue(app.textFields["ww.inspector.episode.title"].waitForExistence(timeout: 5))
         transcript.click()
+        let reading = app.descendants(matching: .any)["ww.review.transcriptReading"]
+        XCTAssertTrue(reading.waitForExistence(timeout: 5))
+        reveal(reading, in: app, scrollID: "ww.inspector")
+        reading.click()
         XCTAssertTrue(app.descendants(matching: .any).matching(
-            NSPredicate(format: "identifier BEGINSWITH 'ww.transcript.full.'")).firstMatch.waitForExistence(timeout: 5))
+            NSPredicate(format: "identifier BEGINSWITH 'ww.transcript.full.'")).firstMatch.waitForExistence(timeout: 5),
+            app.debugDescription)
         XCTAssertEqual(episode.value as? String, "Hidden")
         let primary = app.menuButtons["alignment.waveforms.tool"]
         reveal(primary, in: app)
@@ -386,8 +405,8 @@ final class ControlsSidebarUITests: XCTestCase {
         return app
     }
 
-    private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
-        let scroll = app.scrollViews["ww.alignment.workspace"]
+    private func reveal(_ element: XCUIElement, in app: XCUIApplication, scrollID: String = "ww.alignment.workspace") {
+        let scroll = app.scrollViews[scrollID]
         for _ in 0..<16 {
             if element.isHittable { return }
             scroll.scroll(byDeltaX: 0, deltaY: element.exists && element.frame.minY < scroll.frame.minY ? 200 : -200)

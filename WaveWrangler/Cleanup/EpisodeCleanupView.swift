@@ -151,7 +151,7 @@ struct EpisodeCleanupContent: View {
                 Button("Reset Range") { model.saveRange(inValue: nil, outValue: nil) }
                     .accessibilityIdentifier("ww.cleanup.range.reset")
             }
-            Text("Blank ends include the available recording. A timing change requires resetting or re-setting these markers.")
+            Text("IN/OUT are optional. Blank ends automatically include each Primary's full available range, including offset starts and ends. Explicit markers from older alignment require review.")
                 .wwFont(.caption)
                 .fixedSize(horizontal: false, vertical: true)
         }
@@ -278,12 +278,14 @@ struct EpisodeCleanupContent: View {
             prefix: "ww.cleanup", isPlaying: model.isPlaying, isPreparing: model.isPreparingPlayback,
             canPlay: model.canNavigate, canNavigate: model.canNavigate,
             playhead: model.playhead, status: model.transportMessage,
-            back: { model.seek(to: model.playhead - 5) },
+            back: { model.seek(to: max(model.bounds.lowerBound, model.playhead - AppSettings.shared.timelineJumpInterval.seconds)) },
             playPause: {
                 model.isPlaying || model.isPreparingPlayback ? model.stopPlayback() : model.play()
             },
-            stop: { model.stop() }, forward: { model.seek(to: model.playhead + 5) },
-            seek: { model.seek(to: $0) }, isEdited: !model.cutTimeline.removals.isEmpty
+            stop: { model.stop() },
+            forward: { model.seek(to: min(model.bounds.upperBound, model.playhead + AppSettings.shared.timelineJumpInterval.seconds)) },
+            seek: { model.seek(to: $0) }, isEdited: !model.cutTimeline.removals.isEmpty,
+            jumpSeconds: AppSettings.shared.timelineJumpInterval.rawValue
         )
         .padding(8)
         .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
@@ -364,13 +366,9 @@ struct EpisodeCleanupContent: View {
     }
 
     private var rangeSummary: some View {
-        Text("IN \(rangeTime(model.episode?.cleanup?.workingRange?.tracksIn))  OUT \(rangeTime(model.episode?.cleanup?.workingRange?.tracksOut))")
+        Text(model.workingRangeSummary)
             .font(.caption.monospacedDigit())
             .accessibilityIdentifier("ww.cleanup.range.summary")
-    }
-
-    private func rangeTime(_ time: Double?) -> String {
-        time.map { String(format: "%.3f", $0) } ?? "—"
     }
 
     private var ruler: some View {
@@ -599,19 +597,18 @@ private struct CleanupWaveform: View {
 
 struct CleanupInspectorView: View {
     @Bindable var model: EpisodeCleanupModel
+    @State private var transcriptReadingExpanded = false
+    private var hasFocusedReview: Bool { model.selectedFiller != nil || model.selectedManualCut != nil }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             Text("Transcript & Review").wwFont(.headline)
-            Picker("Speaker", selection: $model.selectedSpeaker) {
-                Text("Choose a speaker").tag(Optional<SpeakerID>.none)
-                ForEach(model.episode?.speakerAssignments ?? [], id: \.speakerID) { assignment in
-                    Text(model.state.store.model.speaker(assignment.speakerID)?.name ?? "Speaker")
-                        .tag(Optional(assignment.speakerID))
+            if !hasFocusedReview {
+                Text("Select a row in the bottom review list to center its interval and edit it here.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let text = model.listening.selectedTranscriptText {
+                    Text(text).textSelection(.enabled)
                 }
-            }
-            if let text = model.listening.selectedTranscriptText {
-                Text(text).textSelection(.enabled)
             }
             if model.listening.selection != nil {
                 HStack {
@@ -627,12 +624,36 @@ struct CleanupInspectorView: View {
                     }
                 }.controlSize(.small)
             }
-            FillerTimingReviewSummary(model: model)
+            if !hasFocusedReview { FillerTimingReviewSummary(model: model) }
             if let review = model.selectedFiller {
                 Text("\(review.word?.text ?? "Manual filler") · \(review.status)")
                     .font(.callout.weight(.semibold))
-                Text("Review with the marker toolbar; drag its audible-word handles to adjust. No audio or transcript is deleted.")
-                    .font(.caption).foregroundStyle(.secondary)
+                Text("\(AlignmentPresentation.formatTime(review.bounds.alignedStart)) – \(AlignmentPresentation.formatTime(review.bounds.alignedEnd))")
+                    .font(.caption.monospacedDigit())
+                if let issue = model.fillerIssue(review) {
+                    Label(issue, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.orange)
+                } else {
+                    VStack(alignment: .leading, spacing: 4) {
+                        TextField("Start (aligned seconds)", text: $model.fillerStartText)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("ww.review.inspector.start")
+                            .onSubmit { model.applyFillerText(reviewID: review.id) }
+                        TextField("End (aligned seconds)", text: $model.fillerEndText)
+                            .textFieldStyle(.roundedBorder)
+                            .accessibilityIdentifier("ww.review.inspector.end")
+                            .onSubmit { model.applyFillerText(reviewID: review.id) }
+                        Button("Apply timing") { model.applyFillerText(reviewID: review.id) }
+                            .accessibilityIdentifier("ww.review.inspector.apply")
+                    }
+                    .disabled(!model.canReviewFillers)
+                    FillerTimingToolbar(model: model, reviewID: review.id, accessibilityPrefix: "ww.review.inspector")
+                    Text("Minus/plus contracts or expands both edges by 10 ms. Handles still adjust independently.")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Auto Cut", systemImage: "scissors") { model.autoCutReviewRow(review.id) }
+                        .disabled(!model.canEditManualCuts)
+                        .help("Cut the current interval across every aligned track. Undo restores it; original media remains unchanged.")
+                        .accessibilityIdentifier("ww.review.inspector.cut")
+                }
                 DisclosureGroup("Captured review origin") {
                     Text(review.origin == .detected ? "Automatically detected" : "Manually proposed")
                     Text("Source: \(review.primary.sourceID.description)")
@@ -647,14 +668,20 @@ struct CleanupInspectorView: View {
                                 review.initialBounds.alignedStart, review.initialBounds.alignedEnd))
                 }
                 .font(.caption).textSelection(.enabled)
+                .padding(.leading, 24)
                 Divider()
+            } else if let cut = model.selectedManualCut {
+                Text("Selected cross-track cut").font(.callout.weight(.semibold))
+                Text("\(AlignmentPresentation.formatTime(cut.alignedStart)) – \(AlignmentPresentation.formatTime(cut.alignedEnd))")
+                    .font(.caption.monospacedDigit())
+                ManualCutToolbar(model: model, cut: cut)
+                if let review = cut.markerID {
+                    FillerIntervalSizeControls(model: model, reviewID: review, prefix: "ww.review.inspector.size")
+                }
             }
             if let lane = model.plan?.lanes.first(where: { $0.speaker == model.selectedSpeaker }) {
                 Text(lane.name).wwFont(.headline)
                 Text(lane.sourceName).textSelection(.enabled)
-                Text("Primary · Channel \((lane.primary.channel.value ?? 0) + 1)")
-                Text("Source rate: \(lane.sourceRate) Hz")
-                Text("Alignment revision: \(model.plan?.alignmentRevision ?? 0)")
                 let uncertainIDs = model.uncertainWordIDs(for: lane)
                 if !uncertainIDs.isEmpty {
                     Label("\(uncertainIDs.count) words/segments need recognition review",
@@ -682,11 +709,19 @@ struct CleanupInspectorView: View {
                 Text("Select a transcript phrase, a speaker, or a filler marker to review it.")
             }
             Divider()
-            transcriptReading
-            Text("Recognition is approximate. Review by listening; no cuts are applied and original recordings remain unchanged.")
+            DisclosureGroup(isExpanded: $transcriptReadingExpanded) { transcriptReading } label: {
+                Text("Read transcript and history")
+                    .contentShape(Rectangle())
+                    .onTapGesture { transcriptReadingExpanded.toggle() }
+            }
+                .padding(.leading, 24)
+                .accessibilityElement(children: .contain)
+                .accessibilityIdentifier("ww.review.transcriptReading")
+            Text("Recognition is approximate. Review decisions do not cut audio. Auto Cut is a separate undoable edit; original recordings remain unchanged.")
         }
         .wwFont(.body)
         .frame(maxWidth: .infinity, alignment: .leading)
+        .onChange(of: model.selectedReviewRowID) { _, _ in transcriptReadingExpanded = false }
     }
 
     @ViewBuilder
