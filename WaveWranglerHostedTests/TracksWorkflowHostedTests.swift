@@ -310,7 +310,7 @@ struct TracksWorkflowHostedTests {
 
     @Test func changingCallDelayAutomaticallyReviewsAndSavesAdaptiveTimingWithUndoRedo() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(
-            durationSeconds: 96, targetStepSeconds: 0.02
+            cleanupPrimaries: 1, durationSeconds: 96, targetStepSeconds: 0.02
         )
         defer { f.close() }
         let before = f.document.store.model
@@ -322,7 +322,7 @@ struct TracksWorkflowHostedTests {
         try await wait(seconds: 90) { !f.model.isWorking }
         let individual = try #require(f.model.currentAdaptiveAnalysis, "\(f.model.lastError ?? f.model.message)")
         #expect(!individual.timing.regions.isEmpty && individual.target.source == f.target)
-        #expect(!f.model.includeEstimatedAdaptiveTiming)
+        #expect(individual.audioPreservationError == nil)
         #expect(!f.model.proposedWaveformStrokes(for: target).isEmpty)
         #expect(f.document.store.model == before)
         f.model.analyzeTracks()
@@ -333,7 +333,7 @@ struct TracksWorkflowHostedTests {
         #expect(f.model.tracksReviewRows.contains {
             $0.epochID == target.epoch && $0.state.heading == "Adaptive file timing proposed"
         })
-        #expect(f.model.selectedTracksAdaptive.isEmpty && f.model.estimatedTracksAdaptive.isEmpty)
+        #expect(f.model.selectedTracksAdaptive.isEmpty)
         #expect(!f.model.canAcceptTracksReview)
         #expect(f.document.store.model == before && !f.model.isAuditioning)
         f.model.selectedTracksAdaptive = [target.epoch]
@@ -350,8 +350,8 @@ struct TracksWorkflowHostedTests {
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         let accepted = f.document.store.model
         let correction = try #require(accepted.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first)
-        #expect(correction.source == f.target && correction.segments.allSatisfy { $0.kind != .estimated })
-        #expect(f.model.selectedTracksAdaptive.isEmpty && f.model.estimatedTracksAdaptive.isEmpty)
+        #expect(correction.source == f.target && correction.retainsAllAudio)
+        #expect(f.model.selectedTracksAdaptive.isEmpty)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
             Data(contentsOf: #require(f.document.fileURL))
         ).payload
@@ -362,6 +362,81 @@ struct TracksWorkflowHostedTests {
         try #require(undo.canRedo)
         undo.redo()
         try await wait { f.document.verifiedModel == accepted && f.document.store.model == accepted }
+        f.model.load()
+        f.model.loadWaveforms()
+        try await wait {
+            !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave && f.model.waveformMap != nil
+        }
+        let timedTarget = try #require(f.model.waveformTracks.first { $0.id == f.target })
+        f.model.selectWaveform(timedTarget)
+        let map = try #require(f.model.waveformMap)
+        #expect(!AlignmentWaveformProjection.hasAcceptedTiming(
+            source: f.target, epoch: timedTarget.epoch, group: timedTarget.group, map: map))
+        #expect(f.model.sourceHasAcceptedTiming(f.target))
+        #expect(f.model.canCompareAligned)
+        #expect(f.model.selectedRecordingTimingState?.heading == "Adaptive file timing accepted · pitch preserved")
+        let cleanup = EpisodeCleanupModel(
+            state: ShowWindowState(store: f.document.store), episodeID: f.model.episodeID, runtime: f.runtime)
+        defer { cleanup.cancel() }
+        cleanup.saveRange(inValue: 2, outValue: 20)
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        let priorRangeRevision = try #require(f.document.store.model.episodes[0].cleanup?.workingRange?.alignmentRevision)
+        f.model.saveAdaptiveCorrection(restoringAudio: f.target)
+        try await wait {
+            !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+                && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
+        }
+        try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
+        let currentRevision = try #require(f.document.store.model.episodes[0].alignment?.acceptedRevision)
+        #expect(currentRevision != priorRangeRevision)
+        #expect(f.document.store.model.episodes[0].cleanup?.workingRange == EpisodeWorkingRange(
+            alignmentRevision: currentRevision, tracksIn: 2, tracksOut: 20))
+        await cleanup.refresh()
+        #expect(cleanup.plan?.isReady == true, "\(cleanup.transcriptionReadinessMessage)")
+
+        var stale = try #require(f.document.store.model.episodes[0].cleanup)
+        stale.workingRange?.alignmentRevision = priorRangeRevision
+        try #require(f.document.store.apply("Synthetic older boundaries", { model throws(DomainError) in
+            try model.settingCleanup(stale, in: f.model.episodeID)
+        }))
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        await cleanup.refresh()
+        #expect(cleanup.hasStaleWorkingRange && cleanup.plan?.isReady == false)
+        let staleRange = try #require(stale.workingRange)
+        cleanup.resolveStaleWorkingRange(keeping: true,
+            expectedRange: staleRange, expectedRevision: currentRevision)
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        await cleanup.refresh()
+        #expect(!cleanup.hasStaleWorkingRange && cleanup.plan?.isReady == true,
+                "\(cleanup.transcriptionReadinessMessage)")
+        let current = f.document.store.model
+        let transcripts = try await f.runtime.transcribeCleanup(
+            model: current, episode: f.model.episodeID, modelRevision: "synthetic-buffer-regression",
+            transcribeWindow: { _ in
+                PCMTranscript(segments: [.init(text: "synthetic", startSeconds: 1, endSeconds: 1.25)])
+            }, progress: { _ in })
+        #expect(transcripts.count == 1 && transcripts.first?.alignmentRevision == currentRevision)
+        f.model.load()
+        f.model.synchronizeWaveforms()
+        try await wait { !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
+        f.model.setMuted(false, scope: .source(f.target))
+        f.model.setSoloed(true, scope: .source(f.target))
+        try #require(f.model.enabledSources == [f.target])
+        let clips = try await f.runtime.sourceAuditions(model: current, episode: f.model.episodeID,
+            sources: [f.target], outputFrames: 48_000..<96_000)
+        #expect(clips[f.target]?.samples.contains { abs($0) > 0.001 } == true)
+        f.model.playEnabledTracks(interval: 1...31, repeatInterval: false)
+        try await wait { f.model.isAuditioning || f.model.lastError != nil }
+        #expect(f.model.lastError == nil, "\(f.model.lastError ?? f.model.auditionLabel)")
+        #expect(f.model.isAuditioning && f.model.playbackClockForTesting != nil, "\(f.model.auditionLabel)")
+        try await wait(seconds: 45) {
+            f.model.waveformPlayheadSeconds >= 30 || f.model.lastError != nil
+        }
+        #expect(f.model.lastError == nil, "\(f.model.lastError ?? f.model.auditionLabel)")
+        #expect(f.model.isAuditioning && f.model.waveformPlayheadSeconds >= 30,
+                "Adaptive audio must keep playing across six cold canonical tile boundaries.")
+        f.model.stopAudition()
+        #expect(f.document.store.model == current)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 

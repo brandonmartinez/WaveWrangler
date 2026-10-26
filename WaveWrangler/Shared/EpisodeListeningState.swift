@@ -161,7 +161,7 @@ struct AudioTimelineSelectionToolbar: View {
     }
 
     static func height(width: Double, cleanup: EpisodeCleanupModel?) -> Double {
-        cleanup?.selectedManualCut == nil && cleanup?.selectedFiller != nil && width < 350 ? 76 : 44
+        cleanup?.selectedManualCut == nil && cleanup?.selectedFiller != nil && width < 410 ? 76 : 44
     }
 
     var body: some View {
@@ -170,9 +170,9 @@ struct AudioTimelineSelectionToolbar: View {
                 let lo = max(0, (range.lowerBound - start) / duration * geometry.size.width)
                 let hi = min(geometry.size.width, (range.upperBound - start) / duration * geometry.size.width)
                 if hi > lo || (cleanup?.selectedManualCut != nil && hi >= 0 && lo <= geometry.size.width) {
-                    let toolbarWidth = min(geometry.size.width,
-                        cleanup?.selectedManualCut != nil ? 252 : cleanup?.selectedFiller == nil ? 184 : 366)
-                    let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= 350
+                    let toolbarWidth = min(geometry.size.width, trackWidth,
+                        cleanup?.selectedManualCut != nil ? 252 : cleanup?.selectedFiller == nil ? 184 : 426)
+                    let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= 410
                     let layout = horizontal
                         ? AnyLayout(HStackLayout(spacing: 6))
                         : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))

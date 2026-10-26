@@ -113,8 +113,9 @@ Each episode's last workspace view is stored in device-local preferences keyed b
 show and episode ID, not in the canonical document or its Undo history. Reopening
 restores layout, normalization, lane height, zoom, edited viewport/playhead,
 vertical track scroll position, collapsed groups, destination, and sidebar choices.
-It also stores Fill Space and Follow Playhead. Older view records decode these as
-off and on respectively, without changing canonical schemas. Fitted height is derived
+It also stores the bottom review panel's visibility/divider height, Fill Space and Follow Playhead.
+Older view records preserve the transcript-panel choice and decode Fill Space/Follow Playhead as
+off/on respectively, without changing canonical schemas. Fitted height is derived
 from the live viewport and measured content, never written over the bounded manual
 height. Fit mode measures all rows, including group chrome, transcript strips, errors,
 and metadata-only Ungrouped rows; ordinary manual mode retains lazy track stacks.
@@ -135,6 +136,36 @@ Cold reopening a zoomed-out view first loads a bounded exact audio tile, then
 builds the full overview without changing the saved viewport. The 30-second
 exact-read limit does not limit the visible timeline span or leave track rows
 and playback uninitialized.
+
+### Review queue and keyboard focus
+
+The Transcript & Review queue lives in a resizable bottom `VSplitView` pane, not in the trailing
+inspector's scroll stack. A native-backed `Table` virtualizes visible rows; columns separate speaker,
+phrase, status, aligned timestamp, duration and row actions. Header filters wrap at narrow widths.
+The trailing inspector shows just the selected review or cut, timing fields, decisions and collapsed
+captured-origin/transcript details. Display timestamps use milliseconds; the underlying source-frame
+anchors and exact captured timing remain unchanged.
+The native divider position is restored after layout and persisted from resize notifications;
+an `idealHeight` hint alone does not restore `VSplitView`'s actual position.
+
+`reviewRows` caches source/timing issue classification by model generation and is invalidated when
+the verified plan or source identities change. Panning/playhead updates do not revalidate hundreds of
+reviews. Table selection defers navigation to the next main-actor turn to avoid reentering native
+table delegates; a newer row request supersedes an older one. Row navigation centers/zooms the
+interval, expands any collapsed parent groups and scrolls its source into view. Auto Cut and Restore
+call existing manual-cut operations, with no
+new detector or edit-map format. Symmetric 10 ms resize controls reuse existing marker/cut validation
+and Undo, including linked-marker synchronization for accepted cuts.
+The table's primary action and readable cells audition the current row without context through the
+existing filler transport, or reveal/audition removed audio for a cut row. Embedded controls handle
+native double-click counts because they consume the table's primary action. Activation cancels
+pending selection navigation so it cannot stop the new audition.
+
+Transport keyboard routing runs only for an episode workspace without an attached sheet. It yields
+to native controls, text editors, the review pane, inspector controls and the focused accessibility
+role, preserving SwiftUI boundary-handle arrow events. Space ignores repeat events; Left/Right and
+the transport buttons share the typed `TimelineJumpInterval` preference. This setting changes only
+navigation, not episode documents or active inference configuration.
 
 Waveform projection/reprojection runs off the main actor with cancellation and
 snapshot checks before publication. Waveform pixel aggregation and path drawing

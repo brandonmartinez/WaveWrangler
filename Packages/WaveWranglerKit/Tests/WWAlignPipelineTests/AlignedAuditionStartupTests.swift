@@ -68,6 +68,28 @@ struct AlignedAuditionStartupTests {
         }
     }
 
+    @Test func adaptiveSchedulePrimesOneTileAndKeepsTwoTilesOfPreparationAhead() throws {
+        for interval in [-0.25...0.1, 0.0...16.0, 4.75...20.0] {
+            var schedule = try AlignedAuditionSchedule(
+                startSeconds: interval.lowerBound, endSeconds: interval.upperBound, usesAdaptiveTiming: true)
+            #expect(schedule.maximumBufferedSeconds == 10)
+            let initial = schedule.next()
+            let first = try #require(initial)
+            #expect(first.lowerBound == schedule.firstFrame)
+            #expect(first.count == min(240_000, Int(schedule.endFrame - schedule.firstFrame)))
+            var end = first.upperBound
+            while let frames = schedule.next() {
+                #expect(frames.lowerBound == end && frames.count <= 24_000)
+                end = frames.upperBound
+            }
+            #expect(end == schedule.endFrame)
+        }
+        var ordinary = try AlignedAuditionSchedule(startSeconds: 0, endSeconds: 16)
+        let ordinaryFirst = ordinary.next()
+        #expect(ordinaryFirst?.count == 48_000)
+        #expect(ordinary.maximumBufferedSeconds == 3)
+    }
+
     @Test func replayAndWarmSubwindowsAreExactAndStillCheckTheOriginalFile() async throws {
         let fixture = try await Fixture(ratio: ExactRational(10_001, 10_000))
         defer { try? FileManager.default.removeItem(at: fixture.folder) }

@@ -21,6 +21,7 @@ public enum PreferenceKey {
     public static let transcriptionBackend = "WWTranscriptionBackend"
     public static let transcriptionThreads = "WWTranscriptionThreads"
     public static let editingPlaybackPolicy = "WWEditingPlaybackPolicy"
+    public static let timelineJumpSeconds = "WWTimelineJumpSeconds"
 }
 
 /// Typed accessor over a `UserDefaults` store with the product defaults applied.
@@ -35,6 +36,7 @@ public struct AppPreferences {
             PreferenceKey.downloadSourcesAutomatically: defaultDownloadSourcesAutomatically,
             PreferenceKey.textSizePercent: TextSize.actual.percent,
             PreferenceKey.editingPlaybackPolicy: EditingPlaybackPolicy.muteNonPrimaries.rawValue,
+            PreferenceKey.timelineJumpSeconds: TimelineJumpInterval.five.rawValue,
         ]
     }
 
@@ -69,6 +71,20 @@ public struct AppPreferences {
         }
         nonmutating set { defaults.set(newValue.rawValue, forKey: PreferenceKey.editingPlaybackPolicy) }
     }
+
+    public var timelineJumpInterval: TimelineJumpInterval {
+        get {
+            (defaults.object(forKey: PreferenceKey.timelineJumpSeconds) as? Int)
+                .flatMap(TimelineJumpInterval.init(rawValue:)) ?? .five
+        }
+        nonmutating set { defaults.set(newValue.rawValue, forKey: PreferenceKey.timelineJumpSeconds) }
+    }
+}
+
+public enum TimelineJumpInterval: Int, Sendable, CaseIterable {
+    case one = 1, two = 2, five = 5, ten = 10, fifteen = 15, thirty = 30
+
+    public var seconds: Double { Double(rawValue) }
 }
 
 /// In-app text size (CMD-20). macOS has no Dynamic Type, so WaveWrangler scales its own text 100%–200%.

@@ -314,6 +314,8 @@ struct FillerTimingToolbar: View {
                         }
                     }
                     .labelStyle(.iconOnly)
+                    FillerIntervalSizeControls(model: model, reviewID: review.id,
+                        prefix: "\(accessibilityPrefix).size")
                 }
             }
             .font(.caption)
@@ -339,7 +341,6 @@ extension EpisodeCleanupModel {
 
 struct FillerTimingReviewSummary: View {
     @Bindable var model: EpisodeCleanupModel
-    @State private var showsSavedReviews = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -347,46 +348,12 @@ struct FillerTimingReviewSummary: View {
                 HStack { heading; Spacer(); actions }
                 VStack(alignment: .leading, spacing: 6) { heading; actions }
             }
-            Text("Dotted rails mark proposed audible-word starts/ends for um, uh, erm and er. Click a region to review; drag each handle independently. Untimed text has no automatic rails.")
-                .font(.caption).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            if !model.fillerReviews.isEmpty {
-                Button {
-                    showsSavedReviews.toggle()
-                } label: {
-                    Label("Saved reviews and retained history (\(model.fillerReviews.count))",
-                          systemImage: showsSavedReviews ? "chevron.down" : "chevron.right")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityValue(showsSavedReviews ? "Expanded" : "Collapsed")
-                .accessibilityIdentifier("ww.cleanup.fillers.history")
-                if showsSavedReviews {
-                    LazyVStack(alignment: .leading, spacing: 6) {
-                        ForEach(model.fillerReviews) { review in
-                            let issue = model.fillerIssue(review)
-                            Button {
-                                model.selectFiller(review.id)
-                                model.state.inspectorPresented = true
-                            } label: {
-                                VStack(alignment: .leading) {
-                                    let speaker = model.state.store.model.speaker(review.speaker)?.name ?? "Removed speaker"
-                                    Text("\(speaker) · \(review.word?.text ?? "Manual filler") · \(review.status)")
-                                    Text(String(format: "%.6f–%.6f s", review.bounds.alignedStart, review.bounds.alignedEnd))
-                                        .monospacedDigit()
-                                    if let issue { Text("Inactive: \(issue)").foregroundStyle(.orange) }
-                                }
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .accessibilityIdentifier("ww.cleanup.filler.review.\(review.id)")
-                        }
-                    }
-                    .font(.caption)
-                }
+            Button("Open review list", systemImage: "rectangle.bottomthird.inset.filled") {
+                model.state.reviewPanelPresented = true
+                if model.state.destination != .alignment { model.state.select(.alignment) }
             }
+            .help("Open the resizable bottom list. Select a row to center and zoom its word interval.")
+            .accessibilityIdentifier("ww.cleanup.fillers.history")
         }
         .controlSize(.small)
         .padding(8)

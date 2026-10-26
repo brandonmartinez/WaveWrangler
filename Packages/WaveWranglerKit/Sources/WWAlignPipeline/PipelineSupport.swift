@@ -27,6 +27,7 @@ public enum AlignmentWorkFailure: Error, Sendable, Equatable {
     case memoryBudget(requested: Int, budget: Int)
     case setupRequired(String)
     case encoding(String)
+    case adaptiveAudio(AdaptiveAudioRenderFailure)
     case render(RenderFailure)
     /// The accepted map changed (or was cleared) while the job ran.
     case acceptedMapChanged
@@ -199,6 +200,8 @@ func workFailure(_ error: any Error) -> AlignmentWorkFailure {
     switch error {
     case let failure as AlignmentWorkFailure: failure
     case let failure as DecodeFailure: failure.asWorkFailure
+    case let failure as AdaptiveAudioRenderFailure: .adaptiveAudio(failure)
+    case let failure as PitchPreservingAudio.Failure: .adaptiveAudio(.processing(failure))
     case is CancellationError: .canceled
     case let failure as ResourceGate.Refusal:
         switch failure {

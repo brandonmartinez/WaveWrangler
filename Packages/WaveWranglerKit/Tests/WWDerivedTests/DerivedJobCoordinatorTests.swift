@@ -402,6 +402,90 @@ struct DerivedJobCoordinatorTests {
         #expect(await coordinator.state(of: dependentSlot) == .stale(dependent, reasons: [.upstreamChanged]))
     }
 
+    @Test func largeReadyHistoryDoesNotRehashOrRefreshForUnchangedTranscriptionInputs() async throws {
+        let directory = try TemporaryDirectory("large-ready-history")
+        let coordinator = try coordinator(directory)
+        let reference = key(channel: nil)
+        let referenceSlot = DerivedSlot("reference")
+        #expect(await coordinator.submit(referenceSlot, key: reference) { Data("reference".utf8) }.outcome == .published(reference))
+        let tiles = (0..<128).map { index in
+            (DerivedSlot("tile/\(index)"), key(kind: "onsets", channel: index, upstream: [reference]))
+        }
+        for (slot, key) in tiles {
+            #expect(await coordinator.submit(slot, key: key) { Data("tile".utf8) }.outcome == .published(key))
+        }
+        let refreshes = await coordinator.dependencyRefreshCount
+        let digests = await coordinator.readyDigestComputationCount
+        #expect(digests == tiles.count + 1)
+        let began = ContinuousClock.now
+        for index in 0..<256 {
+            await coordinator.setAssetRevision(AssetSpec(kind: "onsets", revision: 1))
+            await coordinator.setRecipe(RecipeReference(name: "align", revision: 1))
+            await coordinator.updateSource(SourceRevision(source: source, token: "t1"))
+            await coordinator.setFormat(.current)
+            await coordinator.acceptMap(MapRevisionReference(episode: episode, revision: 1))
+            #expect(await coordinator.staleReasons(for: tiles[index % tiles.count].1).isEmpty)
+        }
+        await coordinator.removeSource(SourceID())
+        await coordinator.clearAcceptedMap(episode: EpisodeID())
+        let elapsed = began.duration(to: .now)
+        #expect(await coordinator.dependencyRefreshCount == refreshes)
+        #expect(await coordinator.readyDigestComputationCount == digests,
+                "Warm tile dependency checks must not re-encode/hash every previously rendered tile")
+        print("DERIVED_WARM_HISTORY ready=\(tiles.count + 1) checks=256 refreshes=0 digestComputations=0 elapsed=\(elapsed)")
+
+        await coordinator.updateSource(SourceRevision(source: source, token: "changed"))
+        for (slot, key) in tiles {
+            #expect(await coordinator.state(of: slot) == .stale(key, reasons: [.sourceChanged(source), .upstreamChanged]))
+        }
+        #expect(await coordinator.staleReasons(for: tiles[0].1).contains(.upstreamChanged))
+        await coordinator.updateSource(SourceRevision(source: source, token: "t1"))
+        #expect(await coordinator.staleReasons(for: tiles[0].1).contains(.upstreamChanged),
+                "Restoring inputs alone must not revive an unverified cached dependency")
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.state(of: referenceSlot) == .ready(reference))
+        for (slot, key) in tiles { #expect(await coordinator.state(of: slot) == .ready(key)) }
+        #expect(await coordinator.readyDigestComputationCount == 2 * digests)
+        await coordinator.shutdown()
+    }
+
+    @Test func duplicateReadyKeysKeepDependenciesCurrentUntilTheirLastSlotIsInvalidated() async throws {
+        let directory = try TemporaryDirectory("ready-aliases")
+        let coordinator = try coordinator(directory)
+        let first = DerivedSlot("first"), second = DerivedSlot("second"), child = DerivedSlot("child")
+        let upstream = key()
+        let dependent = key(kind: "onsets", upstream: [upstream])
+        #expect(await coordinator.submit(first, key: upstream) { Data("source".utf8) }.outcome == .published(upstream))
+        #expect(await coordinator.submit(second, key: upstream) { Data() }.outcome == .reused(upstream))
+        #expect(await coordinator.submit(child, key: dependent) { Data("child".utf8) }.outcome == .published(dependent))
+        await coordinator.invalidate(first)
+        #expect(await coordinator.state(of: child) == .ready(dependent))
+        #expect(await coordinator.staleReasons(for: dependent).isEmpty)
+        await coordinator.invalidate(second)
+        #expect(await coordinator.state(of: child) == .stale(dependent, reasons: [.upstreamChanged]))
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.staleReasons(for: dependent) == [.upstreamChanged])
+        #expect(await coordinator.submit(first, key: upstream) { Data("source".utf8) }.outcome == .published(upstream))
+        await coordinator.restoreCachedCurrentSlots()
+        #expect(await coordinator.state(of: child) == .ready(dependent))
+
+        let entered = Latch(), release = Latch()
+        await coordinator.invalidate(first)
+        let replacement = await coordinator.submit(first, key: upstream) {
+            await entered.open()
+            await release.wait()
+            return Data("source".utf8)
+        }
+        await entered.wait()
+        #expect(await coordinator.staleReasons(for: dependent) == [.upstreamChanged],
+                "A running replacement is not a ready dependency even when its key matches the old result")
+        await coordinator.cancel(first)
+        await release.open()
+        #expect(await replacement.outcome == .canceled)
+        #expect(await coordinator.staleReasons(for: dependent) == [.upstreamChanged])
+        await coordinator.shutdown()
+    }
+
     @Test func aRunningDependentIsInvalidatedWithItsUpstream() async throws {
         let directory = try TemporaryDirectory("jobs")
         let coordinator = try coordinator(directory)

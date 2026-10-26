@@ -50,6 +50,93 @@ struct PrimaryCleanupPlanTests {
         #expect(lane.sourceRange(start: -1, end: 1) == nil)
     }
 
+    @Test func automaticBoundariesRetainWholeOffsetPrimariesRatherThanCroppingToTheirSharedOverlap() throws {
+        let f = try Fixture()
+        var model = f.model
+        var groups = f.map.groups
+        for (name, seconds, offset) in [("Early", 16, -3), ("Late", 12, 8)] {
+            let speaker = Speaker(name: name)
+            let epoch = RecordingEpoch(label: name)
+            let group = RecorderGroup(name: name, epochs: [epoch])
+            let source = SourceRecord(displayNameHint: "\(name).wav",
+                observations: .init(channelCount: .known(1)),
+                placement: .init(recorderGroupID: group.id, epochID: epoch.id),
+                role: .primary, roleConfirmation: .userConfirmed)
+            let occurrence = try SourceOccurrence(source: source.id, nominalRate: NominalRate(16000),
+                frameCount: Int64(seconds * 16000))
+            let segment = try AffineClockSegment(groupClockStart: .zero, groupClockEnd: ExactRational(Int64(seconds)),
+                rateRatio: .one, alignedOffset: ExactRational(Int64(offset)))
+            groups.append(try GroupTimeMap(group: group.id, reference: f.map.reference, epochs: [
+                EpochClockMap(epoch: epoch.id, mapping: .mapped(segments: [segment],
+                    provenance: .manual(.init(basis: .numericEntry)))),
+            ], placements: [OccurrencePlacement(occurrence: occurrence, spans: [
+                EpochSpan(startFrame: 0, endFrame: occurrence.frameCount, epoch: epoch.id, groupClockOffset: .zero),
+            ])]))
+            model.speakers.append(speaker)
+            model.episodes[0].recorderGroups.append(group)
+            model.episodes[0].sources.append(source)
+            model.episodes[0].speakerAssignments.append(SpeakerAssignment(speakerID: speaker.id,
+                primary: ChannelReference(sourceID: source.id, statedChannel: 0), primaryConfirmation: .userConfirmed))
+        }
+        let map = try AlignedTimelineMap(reference: f.map.reference, groups: groups)
+        let original = model
+        func plan() -> PrimaryCleanupPlan {
+            PrimaryCleanupPlan.make(model: model, episode: model.episodes[0].id, map: map)
+        }
+        #expect(plan().isReady && plan().alignedRange == -3...20)
+        #expect(plan().lanes.map { $0.start...$0.end } == [0...10, -3...13, 8...20])
+        for lane in plan().lanes {
+            #expect(lane.sourceRange(start: lane.start, end: lane.end) == 0..<lane.sourceFrames)
+        }
+        #expect(model == original && model.episodes[0].cleanup == nil)
+        for (start, end, expected) in [
+            (1.0 as Double?, nil as Double?, [1.0...10, 1.0...13, 8.0...20]),
+            (nil, 14.0, [0.0...10, -3.0...13, 8.0...14]),
+            (1.0, 14.0, [1.0...10, 1.0...13, 8.0...14]),
+        ] {
+            model.episodes[0].cleanup = EpisodeCleanup(workingRange:
+                EpisodeWorkingRange(alignmentRevision: 1, tracksIn: start, tracksOut: end))
+            #expect(plan().isReady)
+            #expect(plan().lanes.map { $0.start...$0.end } == expected)
+        }
+    }
+
+    @Test func emptyLegacyMarkersDoNotRequireReviewOrBlockTheAutomaticRange() throws {
+        var fixture = try Fixture()
+        fixture.model.episodes[0].cleanup = EpisodeCleanup(workingRange: EpisodeWorkingRange(alignmentRevision: 999))
+        let before = fixture.model
+        #expect(fixture.plan.isReady && fixture.plan.blockers.isEmpty)
+        #expect(fixture.plan.alignedRange == 0...10)
+        #expect(fixture.model == before)
+    }
+
+    @Test func automaticBoundariesCannotSilentlyOmitUnplacedSourceAudio() throws {
+        let f = try Fixture()
+        let referenceEpoch = RecordingEpochID(), referenceGroup = RecorderGroupID()
+        let referenceSource = try SourceOccurrence(source: SourceID(),
+            nominalRate: NominalRate(16000), frameCount: 160000)
+        let reference = TimelineReference(group: referenceGroup, epoch: referenceEpoch, occurrence: referenceSource.id)
+        let identity = try AffineClockSegment(groupClockStart: .zero, groupClockEnd: ExactRational(10),
+            rateRatio: .one, alignedOffset: .zero)
+        let referenceMap = try GroupTimeMap(group: referenceGroup, reference: reference, epochs: [
+            EpochClockMap(epoch: referenceEpoch, mapping: .mapped(segments: [identity], provenance: .timelineReference)),
+        ], placements: [OccurrencePlacement(occurrence: referenceSource, spans: [
+            EpochSpan(startFrame: 0, endFrame: 160000, epoch: referenceEpoch, groupClockOffset: .zero),
+        ])])
+        let mapped = try AffineClockSegment(groupClockStart: ExactRational(2), groupClockEnd: ExactRational(8),
+            rateRatio: .one, alignedOffset: ExactRational(-1))
+        let group = try GroupTimeMap(group: f.group.id, reference: reference, epochs: [
+            EpochClockMap(epoch: f.group.epochs[0].id, mapping: .mapped(segments: [mapped],
+                provenance: .manual(.init(basis: .numericEntry)))),
+        ], placements: [OccurrencePlacement(occurrence: f.placement.occurrence, spans: [
+            EpochSpan(startFrame: 32000, endFrame: 128000, epoch: f.group.epochs[0].id, groupClockOffset: .zero),
+        ])])
+        let map = try AlignedTimelineMap(reference: reference, groups: [referenceMap, group])
+        let plan = PrimaryCleanupPlan.make(model: f.model, episode: f.model.episodes[0].id, map: map)
+        #expect(!plan.isReady && plan.blockers.contains { $0.contains("alignment does not cover all audio") })
+        #expect(plan.lanes[0].start == 1 && plan.lanes[0].end == 7)
+    }
+
     @Test func oneAlignedPrimaryNeverAuthorizesAnUnalignedOrMissingSecondPrimary() throws {
         var fixture = try Fixture()
         let guest = Speaker(name: "Guest")
@@ -89,6 +176,49 @@ struct PrimaryCleanupPlanTests {
             ChannelReference(sourceID: fixture.source.id, statedChannel: 1)
         #expect(!fixture.plan.isReady)
         #expect(fixture.plan.lanes.isEmpty)
+    }
+
+    @Test func choosingAMonoPrimaryConfirmsItAndResolvesItsOnlyChannelWithoutAnotherStep() throws {
+        var fixture = try Fixture()
+        let primary = ChannelReference(sourceID: fixture.source.id, channel: .unknown)
+        fixture.model.episodes[0].speakerAssignments[0].primary = nil
+        fixture.model.episodes[0].speakerAssignments[0].backups = [primary]
+        fixture.model.episodes[0].sources[0].role = .backup
+        fixture.model = try fixture.model.settingPrimary(
+            primary, for: fixture.speaker.id, in: fixture.model.episodes[0].id)
+        let chosen = fixture.model
+        #expect(fixture.plan.isReady)
+        #expect(fixture.plan.lanes.first?.primary.channel == .known(0))
+        #expect(fixture.model == chosen, "Readiness must not rewrite saved assignments")
+        #expect(chosen.episodes[0].speakerAssignments[0].primary?.channel == .unknown)
+        #expect(chosen.episodes[0].speakerAssignments[0].primaryConfirmation == .userConfirmed)
+        #expect(chosen.episodes[0].sources[0].roleConfirmation == .userConfirmed)
+    }
+
+    @Test func unknownMultichannelChoiceRequestsAChannelNotRedundantPrimaryConfirmation() throws {
+        var fixture = try Fixture()
+        fixture.model.episodes[0].sources[0].observations.channelCount = .known(2)
+        fixture.model.episodes[0].speakerAssignments[0].primary?.channel = .unknown
+        #expect(!fixture.plan.isReady && fixture.plan.lanes.isEmpty)
+        #expect(fixture.plan.blockers.contains { $0.contains("choose a valid speaker channel") })
+        #expect(!fixture.plan.blockers.contains { $0.contains("confirm") })
+    }
+
+    @Test func resolvedMonoReferencesCannotAliasAnotherSpeakersPrimaryOrABackup() throws {
+        var fixture = try Fixture()
+        fixture.model.episodes[0].speakerAssignments[0].primary?.channel = .unknown
+        fixture.model.episodes[0].speakerAssignments[0].backups = [
+            ChannelReference(sourceID: fixture.source.id, statedChannel: 0),
+        ]
+        #expect(!fixture.plan.isReady && fixture.plan.lanes.isEmpty)
+        fixture.model.episodes[0].speakerAssignments[0].backups = []
+        let other = Speaker(name: "Other")
+        fixture.model.speakers.append(other)
+        fixture.model.episodes[0].speakerAssignments.append(SpeakerAssignment(speakerID: other.id,
+            primary: ChannelReference(sourceID: fixture.source.id, statedChannel: 0),
+            primaryConfirmation: .userConfirmed))
+        #expect(!fixture.plan.isReady && fixture.plan.lanes.isEmpty)
+        #expect(fixture.plan.blockers.contains { $0.contains("unique Primary speaker channel") })
     }
 
     @Test func numericalBoundariesDoNotCreateGapsButFramesAndEpochsDo() throws {

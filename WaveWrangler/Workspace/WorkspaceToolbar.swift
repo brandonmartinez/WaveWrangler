@@ -6,6 +6,19 @@ struct WorkspaceInspectorToggles: View {
 
     var body: some View {
         HStack(spacing: 2) {
+            Button {
+                state.reviewPanelPresented.toggle()
+            } label: {
+                Image(systemName: "rectangle.bottomthird.inset.filled")
+                    .frame(width: 24, height: 24)
+                    .background(state.reviewPanelPresented ? Color.accentColor.opacity(0.2) : .clear,
+                                in: RoundedRectangle(cornerRadius: 5))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Review panel")
+            .accessibilityValue(state.reviewPanelPresented ? "Shown" : "Hidden")
+            .accessibilityIdentifier("ww.review.toggle")
+            .help("\(state.reviewPanelPresented ? "Hide" : "Show") the resizable bottom review list")
             ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { activity in
                 let active = state.inspectorPresented && state.workspaceInspector == activity
                 Button {

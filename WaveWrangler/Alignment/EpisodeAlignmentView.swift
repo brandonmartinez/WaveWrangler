@@ -153,11 +153,26 @@ struct AlignmentWorkspace: View {
     let showInspector: () -> Void
 
     var body: some View {
-        AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
-            showTranscript: {
-                state.workspaceInspector = .transcript
-                state.inspectorPresented = true
-            }, showInspector: showInspector, sourceEditingEnabled: state.canEdit, workspaceState: state)
+        Group {
+            if state.reviewPanelPresented, let cleanup = state.cleanupModel {
+                VSplitView {
+                    waveforms.frame(minHeight: 180)
+                    FillerReviewPanel(model: cleanup)
+                        .frame(minHeight: 140, maxHeight: 1200)
+                        .background {
+                            ReviewPanelSplitState(height: Binding(
+                                get: { model.listening.workspace.reviewPanelHeight },
+                                set: { model.listening.workspace.reviewPanelHeight = $0 }
+                            ))
+                            .id(model.episodeID)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                        }
+                }
+            } else {
+                waveforms
+            }
+        }
         .safeAreaInset(edge: .top, spacing: 0) {
             AudioWorkspaceActions(state: state, alignment: model)
                 .padding(10).background(.bar)
@@ -180,6 +195,15 @@ struct AlignmentWorkspace: View {
                 EditAnchorSheet(model: model, anchorID: anchorID)
             }
         }
+    }
+
+    private var waveforms: some View {
+        AlignmentWaveformView(model: model, cleanup: state.cleanupModel,
+            showTranscript: {
+                state.reviewPanelPresented = true
+                state.workspaceInspector = .transcript
+                state.inspectorPresented = true
+            }, showInspector: showInspector, sourceEditingEnabled: state.canEdit, workspaceState: state)
     }
 
     private func revealAlignmentInspector() {
@@ -650,7 +674,7 @@ private enum AlignmentAnchorFocus {
 }
 
 @MainActor
-private enum AlignmentKeyHandler {
+enum AlignmentKeyHandler {
     private static var monitor: Any?
 
     static func install() {
@@ -660,7 +684,7 @@ private enum AlignmentKeyHandler {
         }
     }
 
-    private static func handle(_ event: NSEvent) -> Bool {
+    static func handle(_ event: NSEvent) -> Bool {
         guard let window = event.window ?? NSApp.keyWindow,
               window.attachedSheet == nil,
               let state = ShowWindowRegistry.state(for: window),
@@ -678,6 +702,12 @@ private enum AlignmentKeyHandler {
             return true
         }
         guard modifiers.isEmpty else { return false }
+        if event.keyCode == 49 || event.charactersIgnoringModifiers == " ",
+           handleTimelineKey(.space, repeating: event.isARepeat, in: window) { return true }
+        let left = event.keyCode == 123 || event.charactersIgnoringModifiers == "\u{f702}"
+        let right = event.keyCode == 124 || event.charactersIgnoringModifiers == "\u{f703}"
+        if (left || right),
+           handleTimelineKey(left ? .leftArrow : .rightArrow, repeating: event.isARepeat, in: window) { return true }
         guard !(window.firstResponder is NSTextView) else { return false }
         if event.keyCode == 51, isInside("ww.alignment.anchors", responder: window.firstResponder) {
             model.requestDeleteSelectedAnchor()
@@ -696,6 +726,39 @@ private enum AlignmentKeyHandler {
             model.requestSelectedAnchorEditor()
             return true
         }
+        return false
+    }
+
+    private static func handleTimelineKey(_ key: KeyEquivalent, repeating: Bool, in window: NSWindow?) -> Bool {
+        guard let window, window.attachedSheet == nil,
+              let state = ShowWindowRegistry.state(for: window), state.destination == .alignment,
+              let model = state.alignmentModel, !hasInteractiveFocus(in: window) else { return false }
+        if key == .space {
+            if !repeating { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() }
+            return true
+        }
+        guard key == .leftArrow || key == .rightArrow,
+              model.selectedWaveformSource != nil || isInside("ww.alignment.workspaceRoot", responder: window.firstResponder)
+                || window.firstResponder === window else { return false }
+        let seconds = AppSettings.shared.timelineJumpInterval.seconds
+        model.jumpEnabledTracks(by: key == .leftArrow ? -seconds : seconds)
+        return true
+    }
+
+    static func hasInteractiveFocus(in window: NSWindow) -> Bool {
+        if window.firstResponder is NSTextView || window.firstResponder is NSControl { return true }
+        if isInside("ww.review.panel", responder: window.firstResponder)
+            || isInside("ww.inspector", responder: window.firstResponder) { return true }
+        let controls: Set<NSAccessibility.Role> = [
+            .button, .checkBox, .radioButton, .popUpButton, .comboBox, .textField, .textArea,
+            .slider, .incrementor, .table, .outline, .list, .row, .cell, .tabGroup,
+            .menu, .menuItem, .link, .splitter, .scrollBar, .disclosureTriangle,
+        ]
+        if let view = window.firstResponder as? NSView, let role = view.accessibilityRole(),
+           controls.contains(role) { return true }
+        if window.isKeyWindow,
+           let element = NSApp.accessibilityFocusedUIElement as? any NSAccessibilityProtocol,
+           let role = element.accessibilityRole(), controls.contains(role) { return true }
         return false
     }
 
@@ -773,24 +836,25 @@ struct AlignmentInspectorView: View {
                     .accessibilityIdentifier("alignment.waveforms.revision")
             }
             if let row = model.selectedRow {
+                let timing = model.selectedRecordingTimingState ?? row.state
                 Divider()
-                Text(row.state.heading)
+                Text(timing.heading)
                     .font(.subheadline.weight(.semibold))
                     .accessibilityIdentifier("ww.inspector.alignment.state")
                 AlignmentTimingControls(model: model)
                 DisclosureGroup("Timing evidence") {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(row.state.evidence)
+                        Text(timing.evidence)
                             .accessibilityIdentifier("ww.inspector.alignment.evidence")
-                        Text(row.state.basis ?? "No manual basis")
+                        Text(timing.basis ?? "No manual basis")
                             .accessibilityIdentifier("ww.inspector.alignment.basis")
-                        if let details = row.state.details { Text(details) }
-                        if !row.state.remedies.isEmpty {
-                            Text("Available: \(row.state.remedies.joined(separator: ", "))")
+                        if let details = timing.details { Text(details) }
+                        if !timing.remedies.isEmpty {
+                            Text("Available: \(timing.remedies.joined(separator: ", "))")
                         }
-                        Text("Rate: \(row.ratePPM.map(AlignmentPresentation.rateLabel) ?? "Not set")")
+                        Text("Recorder-group rate: \(row.ratePPM.map(AlignmentPresentation.rateLabel) ?? "Not set")")
                             .accessibilityIdentifier("ww.inspector.alignment.rate")
-                        Text("Offset: \(row.offsetMilliseconds.map(AlignmentPresentation.offsetLabel) ?? "Not set")")
+                        Text("Recorder-group offset: \(row.offsetMilliseconds.map(AlignmentPresentation.offsetLabel) ?? "Not set")")
                             .accessibilityIdentifier("ww.inspector.alignment.offset")
                     }
                     .font(.caption)

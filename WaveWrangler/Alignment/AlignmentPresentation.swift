@@ -98,14 +98,27 @@ extension AlignmentPresentation {
         let measured = String(format: "%.1f", record.timing.supportedSeconds)
         let guided = String(format: "%.1f", record.timing.anchoredRecovery?.supportedSeconds ?? 0)
         let quiet = String(format: "%.1f", record.timing.quietSeconds)
-        return "Local timing: \(measured) s independently measured, \(guided) s anchor-guided, \(quiet) s quiet-derived. Review before applying; unmatched intervals remain silent unless bounded estimated gaps are explicitly enabled."
+        return "Local timing: \(measured) s independently measured, \(guided) s anchor-guided, \(quiet) s quiet-derived. All audio is retained; unmatched gaps and ends use estimated timing, not verified alignment."
+    }
+
+    static func recordingTimingState(
+        groupState: AlignmentStateCopy, correction: SourceTimingCorrection?
+    ) -> AlignmentStateCopy {
+        guard let correction, correction.isValid else { return groupState }
+        return AlignmentStateCopy(
+            heading: "Adaptive file timing accepted · pitch preserved",
+            evidence: "This recording uses accepted file-local timing for playback and comparison. Recorder-group timing is separate and stays unchanged.",
+            remedies: ["Remove adaptive file timing"],
+            details: "Recorder-group status: \(groupState.heading). \(groupState.evidence)",
+            basis: "Human-accepted file correction, not recorder-clock authority.",
+            symbol: "clock.badge.checkmark")
     }
 
     static func adaptiveAcceptanceWarning(includeEstimated: Bool) -> String {
         let coverage = includeEstimated
-            ? "Bounded gaps will play using ESTIMATED timing. These gaps have no acoustic confirmation and may contain misaligned speech."
+            ? "All source audio will be retained. Unmatched gaps and ends will play using ESTIMATED timing. These intervals have no acoustic confirmation and may contain misaligned speech. End timing is extrapolated from the nearest supported run. Steep joins may widen estimated transitions into neighboring supported audio; timing outside those transitions stays unchanged."
             : "Only independently measured runs, anchor-guided acoustic matches and verified quiet-only transitions will play. Unmatched intervals will be silent."
-        return "\(coverage) Unmeasured ends and larger unsupported gaps remain silent. Quiet timing is inferred, not an extra speech match. All channels of each selected file share its correction; sibling recordings and originals stay unchanged. The fixed reference is not moved. This is saved and undoable."
+        return "\(coverage) If retaining audio would exceed supported playback rates, acceptance is refused rather than muting it. Quiet timing is inferred, not an extra speech match. All channels of each selected file share its correction; sibling recordings and originals stay unchanged. The fixed reference is not moved. This is saved and undoable."
     }
 
     static func automaticMethod(fingerprintSeconds: [Double]?, refinementRatePPM: Double? = nil) -> String {

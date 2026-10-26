@@ -23,8 +23,10 @@ final class EpisodeCleanupModel {
     var listening: EpisodeListeningState { workspaceAlignment?.listening ?? standaloneListening }
     var rendersWaveforms = true
     @ObservationIgnored private(set) weak var workspaceAlignment: EpisodeAlignmentModel?
-    var plan: PrimaryCleanupPlan?
-    var identities: [SourceID: String] = [:]
+    var plan: PrimaryCleanupPlan? { didSet { reviewRowsSnapshot = nil } }
+    var identities: [SourceID: String] = [:] { didSet { reviewRowsSnapshot = nil } }
+    @ObservationIgnored var reviewRowsSnapshot: (generation: UInt64, rows: [FillerReviewRow])?
+    @ObservationIgnored var pendingReviewFocus: UUID?
     var windowStart = 0.0 {
         didSet { if oldValue != windowStart { scheduleWaveforms() } }
     }
@@ -89,6 +91,7 @@ final class EpisodeCleanupModel {
     var activeModelName: String?
     var message = "All Primaries must have current accepted alignment before transcription."
     var error: String?
+    private var readinessError: String?
     let transcriptionSettings: TranscriptionSettings
     @ObservationIgnored private let suppliedRuntime: AlignmentRuntime?
     @ObservationIgnored private var job: Task<Void, Never>?
@@ -148,9 +151,7 @@ final class EpisodeCleanupModel {
     }
     var maximumDuration: Double { max(0.5, bounds.upperBound - bounds.lowerBound) }
     var canTranscribe: Bool {
-        !isBusy && !isRefreshing && workspaceAlignment?.isWorking != true && state.canEdit && state.store.document != nil
-            && plan?.isReady == true && transcriptionSettings.selectedURL != nil
-            && plan?.lanes.allSatisfy({ identities[$0.primary.sourceID] != nil }) == true
+        transcriptionBlocker == nil
     }
     var bounds: ClosedRange<Double> {
         let regions = plan?.lanes.flatMap(\.regions) ?? []
@@ -210,6 +211,7 @@ final class EpisodeCleanupModel {
             waveformSnapshot = UUID()
         }
         identities = [:]
+        readinessError = nil
         plan = nil
         selectedWord = nil
         if !isPublishing, let workSnapshot,
@@ -220,6 +222,7 @@ final class EpisodeCleanupModel {
     }
 
     func cancel() {
+        pendingReviewFocus = nil
         cancelTranscription()
         refreshGeneration = UUID()
         isRefreshing = false
@@ -245,6 +248,7 @@ final class EpisodeCleanupModel {
         refreshGeneration = token
         let snapshot = state.store.model
         isRefreshing = true
+        readinessError = nil
         defer { if refreshGeneration == token { isRefreshing = false } }
         updateRangeDrafts()
         let revision = episode?.alignment?.acceptedRevision
@@ -253,7 +257,9 @@ final class EpisodeCleanupModel {
             if let revision { map = try snapshot.timeMap(revision: revision, in: episodeID) }
             else { map = nil }
         } catch {
-            self.error = "Accepted alignment could not be read: \(Self.describe(error))"
+            let reason = "Accepted alignment could not be read: \(Self.describe(error))"
+            readinessError = reason
+            self.error = reason
             plan = nil
             identities = [:]
             return
@@ -290,6 +296,7 @@ final class EpisodeCleanupModel {
             guard token == refreshGeneration,
                   state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true) else { return }
             self.error = "Cleanup readiness could not be verified: \(Self.describe(error))"
+            readinessError = self.error
             plan = nil
             identities = [:]
             readyInputs = nil
@@ -359,6 +366,23 @@ final class EpisodeCleanupModel {
         outText = episode?.cleanup?.workingRange?.tracksOut.map { String(format: "%.6f", $0) } ?? ""
     }
 
+    var hasStaleWorkingRange: Bool {
+        guard let episode, let range = episode.cleanup?.explicitWorkingRange,
+              let revision = episode.alignment?.acceptedRevision else { return false }
+        return range.alignmentRevision != revision
+    }
+
+    func resolveStaleWorkingRange(
+        keeping: Bool, expectedRange: EpisodeWorkingRange, expectedRevision: Int
+    ) {
+        guard hasStaleWorkingRange, episode?.cleanup?.workingRange == expectedRange,
+              episode?.alignment?.acceptedRevision == expectedRevision else {
+            error = "Episode boundaries or accepted timing changed. Review IN/OUT again."
+            return
+        }
+        saveRange(inValue: keeping ? expectedRange.tracksIn : nil, outValue: keeping ? expectedRange.tracksOut : nil)
+    }
+
     func applyRangeText() {
         let a = inText.trimmingCharacters(in: .whitespacesAndNewlines)
         let b = outText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -391,16 +415,35 @@ final class EpisodeCleanupModel {
         }
     }
 
-    var transcriptionReadinessMessage: String {
+    var transcriptionBlocker: String? {
         if isBusy { return "Transcription is running. Cancel it before starting another workflow." }
+        if workspaceAlignment?.isWorking == true { return "Alignment is running. Wait for accepted timing to finish saving before transcription." }
         if isRefreshing { return "Verifying accepted alignment and source access…" }
-        if let blocker = plan?.blockers.first { return blocker }
-        if plan?.isReady != true { return "Assign and confirm Primaries/channels, then accept and save alignment before transcription. Use Recordings & Speakers to resolve assignments or source access." }
+        if episode == nil { return "This episode is no longer available." }
+        if state.store.document == nil { return "Open this show as an editable document before transcription." }
+        if !state.canEdit { return "This show is read-only. Open an editable copy before transcription." }
+        if let readinessError { return readinessError }
+        if let blockers = plan?.blockers, !blockers.isEmpty { return blockers.joined(separator: "\n") }
+        if plan?.isReady != true { return "Alignment needed: choose Primaries and any multichannel speaker channels, then accept and save their timing. IN/OUT are optional; omitted ends include the full available recording." }
         if transcriptionSettings.selectedURL == nil { return "Choose an available local model in Transcription Settings." }
         if plan?.lanes.allSatisfy({ identities[$0.primary.sourceID] != nil }) != true {
             return "Refresh readiness to verify source identity and accepted timing."
         }
-        return "Transcribe assigned Primaries locally. Mute/Solo affects listening only."
+        return nil
+    }
+
+    var workingRangeSummary: String {
+        let range = episode?.cleanup?.explicitWorkingRange
+        func label(_ explicit: Double?, automatic: Double?) -> String {
+            if let explicit { return AlignmentPresentation.formatTime(explicit) }
+            return automatic.map { "\(AlignmentPresentation.formatTime($0)) (automatic)" } ?? "Automatic"
+        }
+        return "IN \(label(range?.tracksIn, automatic: plan?.alignedRange?.lowerBound))  OUT \(label(range?.tracksOut, automatic: plan?.alignedRange?.upperBound))"
+    }
+
+    var transcriptionReadinessMessage: String {
+        if let transcriptionBlocker { return transcriptionBlocker }
+        return "Transcribe assigned Primaries locally. \(workingRangeSummary). IN/OUT are optional; each Primary includes its full available range unless explicitly limited. Mute/Solo affects listening only."
     }
 
     private func transcribe() {

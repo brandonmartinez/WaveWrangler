@@ -14,6 +14,7 @@ struct AlignmentWaveformView: View {
     var fitGeometryChanged: ((Double, Double, Double, Int) -> Void)?
     #endif
     @Environment(\.displayScale) private var displayScale
+    @FocusState private var waveformFocused: Bool
     @State private var dragSession: AlignmentWaveformDrag?
     private var layout: AlignmentWaveformLayout {
         get { model.listening.workspace.layout }
@@ -45,11 +46,15 @@ struct AlignmentWaveformView: View {
     @State private var handCursorPushed = false
     @State private var confirmingExtension = false
     @State private var confirmingAdaptiveAcceptance = false
+    @State private var confirmingAdaptiveRestoration = false
     @State private var newGroupSource: SourceRecord?
 
     private let headerWidth: CGFloat = 190
 
     private typealias WaveformTrackDrawing = AudioTimelineWaveformDrawing
+    private enum ScrollTarget: Hashable {
+        case source(SourceID, SpeakerID?)
+    }
 
     private var groups: [RecorderGroupID] {
         var seen: Set<RecorderGroupID> = []
@@ -119,7 +124,7 @@ struct AlignmentWaveformView: View {
                         "No waveforms showing",
                         systemImage: "waveform",
                         description: Text(layout == .speakersOnly
-                            ? "Assign and confirm speaker Primary tracks in Setup, or refresh audio."
+                            ? "Choose speaker Primary tracks in Recordings & Speakers, or refresh audio."
                             : "Enable a recorder and track below, or refresh audio to load a measured window.")
                     )
                     .frame(minHeight: 200)
@@ -200,25 +205,49 @@ struct AlignmentWaveformView: View {
     var body: some View {
         VStack(spacing: 0) {
             timelineChrome
-            ScrollView { trackContent }
-            .onGeometryChange(for: Double.self) { $0.size.height } action: {
-                trackViewportHeight = $0
+            ScrollViewReader { proxy in
+                ScrollView { trackContent }
+                .onGeometryChange(for: Double.self) { $0.size.height } action: {
+                    trackViewportHeight = $0
+                }
+                .scrollIndicators(fillsSpace && trackMeasuredHeight <= trackViewportHeight + 0.5 ? .hidden : .automatic)
+                .scrollPosition($trackScrollPosition)
+                .onScrollGeometryChange(for: Double.self) { geometry in
+                    max(0, geometry.contentOffset.y + geometry.contentInsets.top)
+                } action: { _, offset in
+                    if trackScrollPosition.isPositionedByUser { model.listening.workspace.trackScrollOffset = offset }
+                }
+                .task(id: visibleTracks.map(\.id)) {
+                    guard !visibleTracks.isEmpty else { return }
+                    trackScrollPosition.scrollTo(y: model.listening.workspace.trackScrollOffset)
+                }
+                .accessibilityLabel("Alignment workspace scroll area")
+                .accessibilityIdentifier("ww.alignment.workspace")
+                .task(id: model.requestedWaveformFocus) {
+                    guard let focus = model.requestedWaveformFocus else { return }
+                    await Task.yield()
+                    guard !Task.isCancelled, model.requestedWaveformFocus == focus else { return }
+                    if layout == .recorderGroup {
+                        if let track = model.waveformTracks.first(where: { $0.id == focus.source }) {
+                            proxy.scrollTo(track.group, anchor: .center)
+                        }
+                    } else {
+                        proxy.scrollTo(Optional(focus.speaker), anchor: .center)
+                    }
+                    await Task.yield()
+                    guard !Task.isCancelled, model.requestedWaveformFocus == focus else { return }
+                    if layout != .overlay {
+                        proxy.scrollTo(ScrollTarget.source(focus.source,
+                            layout == .recorderGroup ? nil : focus.speaker), anchor: .center)
+                    }
+                    model.requestedWaveformFocus = nil
+                }
             }
-            .scrollIndicators(fillsSpace && trackMeasuredHeight <= trackViewportHeight + 0.5 ? .hidden : .automatic)
-            .scrollPosition($trackScrollPosition)
-            .onScrollGeometryChange(for: Double.self) { geometry in
-                max(0, geometry.contentOffset.y + geometry.contentInsets.top)
-            } action: { _, offset in
-                if trackScrollPosition.isPositionedByUser { model.listening.workspace.trackScrollOffset = offset }
-            }
-            .task(id: visibleTracks.map(\.id)) {
-                guard !visibleTracks.isEmpty else { return }
-                trackScrollPosition.scrollTo(y: model.listening.workspace.trackScrollOffset)
-            }
-            .accessibilityLabel("Alignment workspace scroll area")
-            .accessibilityIdentifier("ww.alignment.workspace")
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .focusable(interactions: .edit)
+        .focused($waveformFocused)
+        .focusEffectDisabled()
         .task(id: AudioTimelineFitRequest(enabled: fillsSpace, measurement: fitMeasurement, viewport: trackViewportHeight)) {
             await Task.yield()
             guard !Task.isCancelled else { return }
@@ -443,10 +472,10 @@ struct AlignmentWaveformView: View {
             isPreparing: model.isPreparingAudition, canPlay: model.pendingWaveformMove == nil,
             canNavigate: model.pendingWaveformMove == nil,
             playhead: model.waveformPlayheadSeconds, status: model.auditionLabel,
-            back: { model.seekEnabledTracks(to: max(-86_400, model.waveformPlayheadSeconds - 5)) },
+            back: { model.jumpEnabledTracks(by: -AppSettings.shared.timelineJumpInterval.seconds) },
             playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() },
             stop: { model.stopEnabledTracks() },
-            forward: { model.seekEnabledTracks(to: min(86_400, model.waveformPlayheadSeconds + 5)) },
+            forward: { model.jumpEnabledTracks(by: AppSettings.shared.timelineJumpInterval.seconds) },
             seek: { model.seekEnabledTracks(to: $0) }, isEdited: !model.cutTimeline.removals.isEmpty,
             cycleEnabled: model.listening.cycleEnabled,
             toggleCycle: {
@@ -457,7 +486,8 @@ struct AlignmentWaveformView: View {
                 model.listening.cycleEnabled.toggle()
             },
             followPlayhead: model.listening.workspace.followPlayhead,
-            toggleFollowPlayhead: { model.setFollowPlayhead(!model.listening.workspace.followPlayhead) }
+            toggleFollowPlayhead: { model.setFollowPlayhead(!model.listening.workspace.followPlayhead) },
+            jumpSeconds: AppSettings.shared.timelineJumpInterval.rawValue
         )
         .padding(.vertical, 2)
     }
@@ -633,6 +663,7 @@ struct AlignmentWaveformView: View {
                 .contentShape(Rectangle())
                 .onTapGesture { point in
                     guard model.listening.effectiveTool.reviewDecision == nil else { return }
+                    waveformFocused = true
                     let time = model.waveformStartSeconds
                         + Double(point.x / geometry.size.width) * model.waveformDurationSeconds
                     if let track = tracks.first(where: { $0.id == model.selectedWaveformSource }),
@@ -734,6 +765,7 @@ struct AlignmentWaveformView: View {
             }
         }
         .zIndex(hasActiveSelection(in: [track]) ? 1 : 0)
+        .id(ScrollTarget.source(track.id, speaker))
         #if DEBUG
         .onAppear { trackVisibilityChanged?(track.id, true) }
         .onDisappear { trackVisibilityChanged?(track.id, false) }
@@ -821,6 +853,7 @@ struct AlignmentWaveformView: View {
                     .contentShape(Rectangle())
                     .onTapGesture { point in
                         guard model.listening.effectiveTool.reviewDecision == nil else { return }
+                        waveformFocused = true
                         pick(track, strokes: model.waveformInteractionStrokes(for: track.id), time: model.waveformStartSeconds
                              + Double(point.x / geometry.size.width) * model.waveformDurationSeconds)
                     }
@@ -1058,7 +1091,7 @@ struct AlignmentWaveformView: View {
         }
         if showProposedAlignment, let record = model.currentAdaptiveAnalysis {
             ForEach(AlignmentWaveformProjection.adaptiveMarkers(
-                track: track, record: record, includeEstimated: model.includeEstimatedAdaptiveTiming)) { marker in
+                track: track, record: record, includeEstimated: true)) { marker in
                 let position = x(model.cutTimeline.editedTime(forAlignedTime: marker.alignedSeconds), width: size.width)
                 if (0...size.width).contains(position) {
                     let style = adaptiveMarkerStyle(marker.kind, accepted: false)
@@ -1153,22 +1186,22 @@ struct AlignmentWaveformView: View {
                             .font(.caption).foregroundStyle(.secondary)
                             .accessibilityIdentifier("alignment.adaptive.guidedCoverage")
                     }
-                    let estimated = adaptive.playbackIntervals(includeEstimated: true).filter { $0.kind == .estimated }
-                    if !estimated.isEmpty {
-                        Toggle("Keep bounded gaps using estimated timing", isOn: $model.includeEstimatedAdaptiveTiming)
-                            .toggleStyle(.checkbox)
-                            .disabled(model.isWorking)
-                            .accessibilityIdentifier("alignment.adaptive.includeEstimated")
-                        Text("\(String(format: "%.1f", estimated.reduce(0) { $0 + $1.sourceEnd - $1.sourceStart })) s can use interpolated timing in gaps up to five minutes long. Off by default. Purple question marks identify estimates: audio is retained but its alignment is not acoustically verified and speech may still be out of sync.")
+                    switch adaptive.audioPreservation {
+                    case let .success(intervals):
+                        let estimated = intervals.filter { $0.kind == .estimated }
+                        Text("\(String(format: "%.1f", estimated.reduce(0) { $0 + $1.sourceEnd - $1.sourceStart })) s of unmatched audio is retained using estimated timing. Purple question marks identify interpolation in gaps and extrapolation at the ends, not acoustically verified alignment; speech may still be out of sync.")
                             .font(.caption).foregroundStyle(.secondary)
+                    case let .failure(error):
+                        Label(error.localizedDescription, systemImage: "exclamationmark.triangle")
+                            .font(.caption).foregroundStyle(.red)
                     }
-                    Text("Dashed waveforms preview placement; icons distinguish independent measurements, anchor-guided matches, quiet transitions and optional estimates. No leading or trailing timing is extrapolated.")
+                    Text("Dashed waveforms preview placement; icons distinguish independent measurements, anchor-guided matches, quiet transitions and estimated timing. All source audio is retained.")
                         .font(.caption).foregroundStyle(.secondary)
-                    Text("Preview only until accepted. All channels of this file share one pitch-preserving curve. \(model.includeEstimatedAdaptiveTiming ? "Bounded estimated gaps will also play; their timing can be wrong." : "Unmatched intervals stay silent unless you opt into estimated gap timing.") Larger unsupported gaps and unmeasured ends stay silent. Originals and other files remain unchanged.")
+                    Text("Preview only until accepted. All channels of this file share one pitch-preserving curve. Unmatched audio is not muted. Originals and other files remain unchanged.")
                         .font(.caption).foregroundStyle(.secondary)
                         .accessibilityIdentifier("alignment.adaptive.previewOnly")
-                    Button("Accept supported file timing…") { confirmingAdaptiveAcceptance = true }
-                        .disabled(model.isWorking || adaptive.timing.regions.isEmpty)
+                    Button("Accept file timing and retain all audio…") { confirmingAdaptiveAcceptance = true }
+                        .disabled(model.isWorking || adaptive.timing.regions.isEmpty || adaptive.audioPreservationError != nil)
                         .accessibilityIdentifier("alignment.adaptive.accept")
                     if let refusal = adaptive.refusal {
                         Label(refusal, systemImage: "exclamationmark.triangle")
@@ -1190,8 +1223,15 @@ struct AlignmentWaveformView: View {
                 } else if let source = model.selectedWaveformSource, let correction = model.adaptiveCorrection(for: source) {
                     Label("Adaptive timing accepted · pitch preserved", systemImage: "clock.badge.checkmark")
                         .accessibilityIdentifier("alignment.adaptive.applied")
-                    Text("\(correction.segments.filter { $0.kind == nil }.count) independent measured runs; \(correction.segments.filter { $0.kind == .anchorGuided }.count) green anchor-guided matches; \(correction.segments.filter { $0.kind == .quietTransition }.count) orange quiet transitions; \(correction.segments.filter { $0.kind == .estimated }.count) purple estimated gaps, not verified alignment. Other intervals are silent. Remove this file correction before editing recorder-group timing.")
+                    Text("\(correction.segments.filter { $0.kind == nil }.count) independent measured runs; \(correction.segments.filter { $0.kind == .anchorGuided }.count) green anchor-guided matches; \(correction.segments.filter { $0.kind == .quietTransition }.count) orange quiet transitions; \(correction.segments.filter { $0.kind == .estimated }.count) purple estimated intervals, not verified alignment. \(correction.retainsAllAudio ? "All source audio is retained." : "This older correction mutes unmatched audio.") Remove this file correction before editing recorder-group timing.")
                         .font(.caption).foregroundStyle(.secondary)
+                    if !correction.retainsAllAudio {
+                        Button("Restore unmatched audio…") { confirmingAdaptiveRestoration = true }
+                            .disabled(model.isWorking)
+                            .accessibilityIdentifier("alignment.adaptive.restoreAudio")
+                        Text("Restores gaps and ends using labeled estimates. Steep joins may widen the estimated transition into neighboring audio; timing outside those transitions stays unchanged. No reanalysis is required.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
                     Button("Remove adaptive file timing") { model.saveAdaptiveCorrection(removing: source) }
                         .disabled(model.isWorking)
                         .accessibilityIdentifier("alignment.adaptive.remove")
@@ -1276,12 +1316,22 @@ struct AlignmentWaveformView: View {
         .help("Only the chosen speaker channels are compared. Accepting a match moves the target recorder's tracks together; unequal recording lengths need no percentage setting.")
         .accessibilityIdentifier("alignment.auto")
         .confirmationDialog("Apply pitch-preserving timing to this file?", isPresented: $confirmingAdaptiveAcceptance) {
-            Button(model.includeEstimatedAdaptiveTiming ? "Accept with estimated gaps" : "Accept supported intervals") {
+            Button("Accept and retain all audio") {
                 model.saveAdaptiveCorrection()
             }
             Button("Keep preview only", role: .cancel) {}
         } message: {
-            Text(AlignmentPresentation.adaptiveAcceptanceWarning(includeEstimated: model.includeEstimatedAdaptiveTiming))
+            Text(AlignmentPresentation.adaptiveAcceptanceWarning(includeEstimated: true))
+        }
+        .confirmationDialog("Restore unmatched audio with estimated timing?", isPresented: $confirmingAdaptiveRestoration) {
+            Button("Restore all source audio") {
+                if let source = model.selectedWaveformSource {
+                    model.saveAdaptiveCorrection(restoringAudio: source)
+                }
+            }
+            Button("Keep current timing", role: .cancel) {}
+        } message: {
+            Text(AlignmentPresentation.adaptiveAcceptanceWarning(includeEstimated: true))
         }
         .confirmationDialog("Extend the measured timing beyond its evidence?", isPresented: $confirmingExtension) {
             Button("Extend rate and offset to whole recording segment") { model.extendProposalToEpoch() }
@@ -1302,6 +1352,7 @@ struct AlignmentWaveformView: View {
         drag: DragGesture.Value, geometry: GeometryProxy
     ) {
         if model.listening.effectiveTool == .select {
+            waveformFocused = true
             cleanup?.selectedFillerID = nil
             cleanup?.selectedManualCutID = nil
             model.selectWaveform(track)

@@ -19,15 +19,18 @@ struct AudioTimelineTransport: View {
     var toggleCycle: () -> Void = {}
     var followPlayhead: Bool? = nil
     var toggleFollowPlayhead: () -> Void = {}
+    var jumpSeconds = 5
 
     @State private var timeDraft = ""
     @FocusState private var editingTime: Bool
+    private var jumpDescription: String { jumpSeconds == 1 ? "1 second" : "\(jumpSeconds) seconds" }
 
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
-                Button(action: back) { Label("Back 5 seconds", systemImage: "gobackward.5") }
+                Button(action: back) { Label("Back \(jumpDescription)", systemImage: jumpSeconds == 5 ? "gobackward.5" : "gobackward") }
                     .disabled(!canNavigate)
+                    .help("Jump backward \(jumpDescription). Configure in Settings > General.")
                     .accessibilityIdentifier("\(prefix).transport.back")
                 Button(action: playPause) {
                     Label(
@@ -39,8 +42,9 @@ struct AudioTimelineTransport: View {
                 Button(action: stop) { Label("Stop", systemImage: "stop.fill") }
                     .disabled(!canNavigate && !isPlaying && !isPreparing)
                     .accessibilityIdentifier("\(prefix).transport.stop")
-                Button(action: forward) { Label("Forward 5 seconds", systemImage: "goforward.5") }
+                Button(action: forward) { Label("Forward \(jumpDescription)", systemImage: jumpSeconds == 5 ? "goforward.5" : "goforward") }
                     .disabled(!canNavigate)
+                    .help("Jump forward \(jumpDescription). Configure in Settings > General.")
                     .accessibilityIdentifier("\(prefix).transport.forward")
                 if let cycleEnabled {
                     Button("Cycle", systemImage: "repeat", action: toggleCycle)
@@ -382,6 +386,7 @@ struct AudioTimelineRuler: View {
     @State private var zoom: Zoom?
     @State private var cycleDrag: CycleEdge?
     @State private var cycleCreation: (start: Double, duration: Double, width: Double)?
+    @FocusState private var timelineFocused: Bool
 
     var body: some View {
         VStack(spacing: 2) {
@@ -523,6 +528,9 @@ struct AudioTimelineRuler: View {
                 .contentShape(Rectangle())
                 .accessibilityElement(children: .contain)
                 .accessibilityIdentifier("\(prefix).ruler.surface")
+                .focusable(interactions: .edit)
+                .focused($timelineFocused)
+                .focusEffectDisabled()
                 .onTapGesture { point in
                     guard canNavigate, cycleEdge(at: point, width: Double(width)) == nil,
                         let time = AlignmentWaveformProjection.rulerTime(
@@ -530,6 +538,7 @@ struct AudioTimelineRuler: View {
                             duration: duration, bounds: seekBounds
                         )
                     else { return }
+                    timelineFocused = true
                     if let clicked { clicked(time) } else { seek(time) }
                 }
                 .gesture(
@@ -537,6 +546,7 @@ struct AudioTimelineRuler: View {
                         .onChanged { drag in
                             guard canNavigate, width > 0, zoom == nil else { return }
                             if pan == nil, scrub == nil, cycleDrag == nil {
+                                timelineFocused = true
                                 cycleDrag = cycleEdge(at: drag.startLocation, width: Double(width))
                                 if cycleDrag == nil {
                                     let x = (playhead - start) / duration * width

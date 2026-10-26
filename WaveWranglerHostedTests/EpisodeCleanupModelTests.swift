@@ -49,6 +49,28 @@ struct EpisodeCleanupModelTests {
         #expect(model.episode?.cleanup?.workingRange == nil)
     }
 
+    @Test(arguments: [false, true])
+    func staleWorkingRangeRequiresExplicitSnapshotCheckedRecovery(keeping: Bool) throws {
+        let model = fixture()
+        defer { model.cancel() }
+        let range = EpisodeWorkingRange(alignmentRevision: 2, tracksIn: 1.25, tracksOut: 4.75)
+        let before = model.state.store.model
+        try #require(model.state.store.apply("Synthetic older boundaries", { document throws(DomainError) in
+            try document.settingCleanup(EpisodeCleanup(workingRange: range), in: model.episodeID)
+        }))
+        #expect(model.hasStaleWorkingRange)
+        let snapshot = model.state.store.model
+        model.resolveStaleWorkingRange(keeping: keeping, expectedRange: range, expectedRevision: 99)
+        #expect(model.state.store.model == snapshot)
+        #expect(model.error?.contains("changed") == true)
+        model.resolveStaleWorkingRange(keeping: keeping, expectedRange: range, expectedRevision: 1)
+        #expect(model.error == nil && !model.hasStaleWorkingRange)
+        #expect(model.episode?.cleanup?.workingRange == (keeping
+            ? EpisodeWorkingRange(alignmentRevision: 1, tracksIn: 1.25, tracksOut: 4.75) : nil))
+        #expect(model.episode?.alignment == before.episodes[0].alignment)
+        #expect(model.state.store.model.episodes[1] == before.episodes[1])
+    }
+
     @Test func invalidNavigationIsAnExplicitErrorAndNeverReadsAudio() {
         let model = fixture()
         defer { model.cancel() }
@@ -89,6 +111,31 @@ struct EpisodeCleanupModelTests {
         #expect(model.error?.contains("Accepted alignment could not be read") == true)
         #expect(model.plan == nil)
         #expect(!model.canTranscribe)
+    }
+
+    @Test func disabledTranscriptionExplainsBusyVerificationAndMissingDocumentInsteadOfRequiringMarkers() {
+        let model = fixture()
+        defer { model.cancel() }
+        model.isBusy = true
+        #expect(!model.canTranscribe && model.transcriptionReadinessMessage.contains("Transcription is running"))
+        model.isBusy = false
+        model.isRefreshing = true
+        #expect(!model.canTranscribe && model.transcriptionReadinessMessage.contains("Verifying accepted alignment"))
+        model.isRefreshing = false
+        #expect(!model.canTranscribe && model.transcriptionReadinessMessage.contains("editable document"))
+        #expect(!model.transcriptionReadinessMessage.contains("IN/OUT"))
+    }
+
+    @Test func emptyOlderBoundaryRecordsAreAutomaticRatherThanStaleUserMarkers() throws {
+        let model = fixture()
+        defer { model.cancel() }
+        let empty = EpisodeWorkingRange(alignmentRevision: 99)
+        try #require(model.state.store.apply("Synthetic automatic boundaries", { document throws(DomainError) in
+            try document.settingCleanup(EpisodeCleanup(workingRange: empty), in: model.episodeID)
+        }))
+        #expect(!model.hasStaleWorkingRange)
+        #expect(model.workingRangeSummary == "IN Automatic  OUT Automatic")
+        #expect(model.episode?.cleanup?.workingRange == empty)
     }
 
     private func timelineFixture(offset: ExactRational = ExactRational(-2)) throws -> EpisodeCleanupModel {

@@ -120,6 +120,8 @@ public actor DerivedJobCoordinator {
 
     public private(set) var inputs: DerivedInputs
     private var slots: [DerivedSlot: SlotRecord] = [:]
+    /// The same key may be ready in several slots; removing one must not invalidate the others.
+    private var readyDigestCounts: [String: Int] = [:]
     private var cachedCandidates: [DerivedSlot: [DerivedAssetKey]] = [:]
     private var explicitlyInvalidated: [DerivedSlot: Set<DerivedAssetKey>] = [:]
     private var nextJobID: UInt64 = 0
@@ -129,10 +131,13 @@ public actor DerivedJobCoordinator {
 
     #if DEBUG
     private let hooks: DerivedCoordinatorTestHooks
+    package private(set) var dependencyRefreshCount = 0
+    package private(set) var readyDigestComputationCount = 0
     #endif
 
     private struct SlotRecord {
         var state: DerivedSlotState = .idle
+        var readyDigest: String?
         /// The job allowed to publish into this slot, if any.
         var currentJob: UInt64?
         var task: Task<DerivedJobOutcome, Never>?
@@ -177,7 +182,7 @@ public actor DerivedJobCoordinator {
                 record.state = .canceled(key)
                 continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
             }
-            slots[slot] = record
+            setRecord(record, for: slot)
         }
         continuation.finish()
         for task in jobs { _ = await task.value }
@@ -188,16 +193,19 @@ public actor DerivedJobCoordinator {
     // MARK: - Inputs
 
     public func updateSource(_ revision: SourceRevision) {
+        guard inputs.sources[revision.source] != revision.token else { return }
         inputs.sources[revision.source] = revision.token
         refresh()
     }
 
     public func removeSource(_ source: SourceID) {
+        guard inputs.sources[source] != nil else { return }
         inputs.sources[source] = nil
         refresh()
     }
 
     public func setFormat(_ format: FormatRevision) {
+        guard inputs.format != format else { return }
         inputs.format = format
         refresh()
     }
@@ -205,21 +213,25 @@ public actor DerivedJobCoordinator {
     /// The accepted map changed (REF-019): everything derived from any other revision of this episode's map
     /// becomes stale and its in-flight jobs are canceled.
     public func acceptMap(_ map: MapRevisionReference) {
+        guard inputs.acceptedMaps[map.episode] != map.revision else { return }
         inputs.acceptedMaps[map.episode] = map.revision
         refresh()
     }
 
     public func clearAcceptedMap(episode: EpisodeID) {
+        guard inputs.acceptedMaps[episode] != nil else { return }
         inputs.acceptedMaps[episode] = nil
         refresh()
     }
 
     public func setRecipe(_ recipe: RecipeReference) {
+        guard inputs.recipes[recipe.name] != recipe.revision else { return }
         inputs.recipes[recipe.name] = recipe.revision
         refresh()
     }
 
     public func setAssetRevision(_ asset: AssetSpec) {
+        guard inputs.assets[asset.kind] != asset.revision else { return }
         inputs.assets[asset.kind] = asset.revision
         refresh()
     }
@@ -234,7 +246,7 @@ public actor DerivedJobCoordinator {
         record.task = nil
         record.currentJob = nil
         record.state = .stale(key, reasons: [.superseded])
-        slots[slot] = record
+        setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
         refresh()
     }
@@ -260,10 +272,7 @@ public actor DerivedJobCoordinator {
         if let map = key.map, inputs.acceptedMaps[map.episode] != map.revision { reasons.insert(.mapChanged(map.episode)) }
         if let recipe = key.recipe, inputs.recipes[recipe.name] != recipe.revision { reasons.insert(.recipeChanged(recipe.name)) }
         if inputs.assets[key.asset.kind] != key.asset.revision { reasons.insert(.assetRevisionChanged(key.asset.kind)) }
-        if !key.upstream.isEmpty {
-            let ready = readyDigests()
-            if key.upstream.contains(where: { !ready.contains($0) }) { reasons.insert(.upstreamChanged) }
-        }
+        if key.upstream.contains(where: { readyDigestCounts[$0] == nil }) { reasons.insert(.upstreamChanged) }
         return reasons
     }
 
@@ -298,7 +307,7 @@ public actor DerivedJobCoordinator {
             record.task = nil
             record.currentJob = nil
             record.state = .stale(key, reasons: initial)
-            slots[slot] = record
+            setRecord(record, for: slot)
             continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
             refresh()
             return DerivedJob(slot: slot, key: key, task: Task { .discardedStale(initial) })
@@ -341,7 +350,7 @@ public actor DerivedJobCoordinator {
         record.task = task
         record.currentJob = jobID
         record.state = .running(key)
-        slots[slot] = record
+        setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
         refresh()
         return DerivedJob(slot: slot, key: key, task: task)
@@ -353,7 +362,7 @@ public actor DerivedJobCoordinator {
         record.task = nil
         record.currentJob = nil
         record.state = .canceled(key)
-        slots[slot] = record
+        setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
     }
 
@@ -379,7 +388,7 @@ public actor DerivedJobCoordinator {
                 updated.state = .ready(restored)
                 updated.currentJob = nil
                 updated.task = nil
-                slots[slot] = updated
+                setRecord(updated, for: slot)
                 continuation.yield(DerivedSlotChange(slot: slot, state: updated.state))
                 changed = true
             }
@@ -408,7 +417,7 @@ public actor DerivedJobCoordinator {
             record.state = .failed(staged.key, reason: String(describing: error))
             record.currentJob = nil
             record.task = nil
-            slots[slot] = record
+            setRecord(record, for: slot)
             continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
             refresh()
             return .failed(String(describing: error))
@@ -417,7 +426,7 @@ public actor DerivedJobCoordinator {
         explicitlyInvalidated[slot]?.subtract([staged.key])
         record.currentJob = nil
         record.task = nil
-        slots[slot] = record
+        setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
         return .published(staged.key)
     }
@@ -425,9 +434,11 @@ public actor DerivedJobCoordinator {
     private func adoptCached(_ jobID: UInt64, slot: DerivedSlot, key: DerivedAssetKey) -> DerivedJobOutcome {
         inFlight[jobID] = nil
         if let refusal = refusal(jobID, slot: slot, key: key) { return refusal }
-        slots[slot]?.state = .ready(key)
-        slots[slot]?.currentJob = nil
-        slots[slot]?.task = nil
+        guard var record = slots[slot] else { return .discardedStale([.superseded]) }
+        record.state = .ready(key)
+        record.currentJob = nil
+        record.task = nil
+        setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: .ready(key)))
         return .reused(key)
     }
@@ -436,9 +447,11 @@ public actor DerivedJobCoordinator {
         inFlight[jobID] = nil
         if let refusal = refusal(jobID, slot: slot, key: key) { return refusal }
         let state: DerivedSlotState = failure.map { .failed(key, reason: $0) } ?? .canceled(key)
-        slots[slot]?.state = state
-        slots[slot]?.currentJob = nil
-        slots[slot]?.task = nil
+        guard var record = slots[slot] else { return .discardedStale([.superseded]) }
+        record.state = state
+        record.currentJob = nil
+        record.task = nil
+        setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: state))
         refresh()
         return failure.map { .failed($0) } ?? .canceled
@@ -463,10 +476,28 @@ public actor DerivedJobCoordinator {
 
     // MARK: - Staleness
 
-    private func readyDigests() -> Set<String> {
-        Set(slots.values.compactMap { record in
-            if case let .ready(key) = record.state { key.digest } else { nil }
-        })
+    private func setRecord(_ value: SlotRecord, for slot: DerivedSlot) {
+        let prior = slots[slot]
+        var updated = value
+        if case let .ready(key) = updated.state {
+            if case .ready? = prior?.state, prior?.state.key == key {
+                updated.readyDigest = prior?.readyDigest
+            } else {
+                updated.readyDigest = key.digest
+                #if DEBUG
+                readyDigestComputationCount += 1
+                #endif
+            }
+        } else {
+            updated.readyDigest = nil
+        }
+        if prior?.readyDigest != updated.readyDigest {
+            if let old = prior?.readyDigest, let count = readyDigestCounts[old] {
+                readyDigestCounts[old] = count > 1 ? count - 1 : nil
+            }
+            if let new = updated.readyDigest { readyDigestCounts[new, default: 0] += 1 }
+        }
+        slots[slot] = updated
     }
 
     private func markStale(_ slot: DerivedSlot, key: DerivedAssetKey, reasons: Set<StaleReason>) {
@@ -475,7 +506,7 @@ public actor DerivedJobCoordinator {
         record.task = nil
         record.currentJob = nil
         record.state = .stale(key, reasons: reasons)
-        slots[slot] = record
+        setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
     }
 
@@ -491,6 +522,9 @@ public actor DerivedJobCoordinator {
     /// Re-evaluates every ready or running slot against the current inputs until nothing changes, so a stale
     /// upstream result cascades to everything keyed on it.
     private func refresh() {
+        #if DEBUG
+        dependencyRefreshCount += 1
+        #endif
         var changed = true
         while changed {
             changed = false

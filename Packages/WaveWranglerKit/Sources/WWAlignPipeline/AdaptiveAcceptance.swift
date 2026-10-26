@@ -9,7 +9,7 @@ import WWTimeMap
 extension AlignmentPipeline {
     public func acceptAdaptive(
         model: ShowDocumentModel, episode episodeID: EpisodeID, record: AdaptiveAnalysisRecord,
-        sources: [AlignmentSource], authorizations: [ContentWorkAuthorization], includeEstimated: Bool = false
+        sources: [AlignmentSource], authorizations: [ContentWorkAuthorization], includeEstimated: Bool = true
     ) async throws -> AcceptedAlignment {
         let preparation = try await prepareManual(
             model: model, episode: episodeID, sources: sources, authorizations: authorizations
@@ -92,8 +92,11 @@ extension AlignmentPipeline {
         guard timing == record.timing else {
             throw AlignmentAcceptanceError.invalidMap("Anchor-guided evidence does not reproduce its timing.")
         }
-        let curve = AdaptiveAnalysisRecord.projectedIntervals(timing: timing, scale: scale, translation: translation,
-                                                              lower: lower, upper: upper, includeEstimated: includeEstimated)
+        let confirmed = AdaptiveAnalysisRecord.projectedIntervals(timing: timing, scale: scale, translation: translation,
+                                                                 lower: lower, upper: upper, includeEstimated: false)
+        let curve = includeEstimated
+            ? try SourceTimingSegment.preservingAudio(in: confirmed, duration: Double(facts.frameCount) / Double(facts.sampleRate))
+            : confirmed
         let correction = SourceTimingCorrection(
             source: record.target.source, group: group, epoch: targetEpoch, reference: record.reference.source,
             sourceRate: facts.sampleRate, sourceFrames: facts.frameCount, channelCount: facts.channelCount,
@@ -139,6 +142,19 @@ extension AlignmentPipeline {
                                         expectedSources: await coordinator.inputs.sources)
     }
 
+    public func preserveAdaptiveAudio(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, source: SourceID
+    ) async throws -> AcceptedAlignment {
+        let map = try await verifiedAcceptedMap(model: model, episode: episodeID)
+        guard var corrections = model.episode(episodeID)?.alignment?.acceptedMap?.sourceCorrections,
+              let index = corrections.firstIndex(where: { $0.source == source }) else {
+            throw AlignmentAcceptanceError.invalidMap("This file has no accepted adaptive correction.")
+        }
+        corrections[index] = try corrections[index].preservingAudio()
+        return try await recordAdaptive(map: map, corrections: corrections, model: model, episode: episodeID,
+                                        expectedSources: await coordinator.inputs.sources)
+    }
+
     private func recordAdaptive(
         map: AlignedTimelineMap, corrections: [SourceTimingCorrection],
         model: ShowDocumentModel, episode episodeID: EpisodeID, expectedSources: [SourceID: String]
@@ -166,7 +182,13 @@ extension AlignmentPipeline {
             derivedFrom: episode.alignment?.acceptedRevision,
             sourceCorrections: corrections.isEmpty ? nil : corrections
         )
-        let updated = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episodeID)
+        var updated = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episodeID)
+        if let priorRevision = episode.alignment?.acceptedRevision, var cleanup = episode.cleanup,
+           cleanup.workingRange?.alignmentRevision == priorRevision {
+            // File corrections do not move the shared recorder map or its aligned-time episode boundaries.
+            cleanup.workingRange?.alignmentRevision = recorded.revision.revision
+            updated = try updated.settingCleanup(cleanup, in: episodeID)
+        }
         guard let version = updated.episode(episodeID)?.alignment?.acceptedMap else {
             throw AlignmentAcceptanceError.invalidMap("The new adaptive revision is missing.")
         }

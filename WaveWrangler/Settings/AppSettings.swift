@@ -39,12 +39,21 @@ final class AppSettings {
         }
     }
 
+    var timelineJumpInterval: TimelineJumpInterval {
+        didSet {
+            if preferences.timelineJumpInterval != timelineJumpInterval {
+                preferences.timelineJumpInterval = timelineJumpInterval
+            }
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         preferences = AppPreferences(defaults: defaults)
         autosaveEnabled = preferences.autosaveEnabled
         downloadSourcesAutomatically = preferences.downloadSourcesAutomatically
         textSize = preferences.textSize
         editingPlaybackPolicy = preferences.editingPlaybackPolicy
+        timelineJumpInterval = preferences.timelineJumpInterval
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: defaults, queue: .main
         ) { [weak self] _ in
@@ -60,6 +69,9 @@ final class AppSettings {
         if textSize != preferences.textSize { textSize = preferences.textSize }
         if editingPlaybackPolicy != preferences.editingPlaybackPolicy {
             editingPlaybackPolicy = preferences.editingPlaybackPolicy
+        }
+        if timelineJumpInterval != preferences.timelineJumpInterval {
+            timelineJumpInterval = preferences.timelineJumpInterval
         }
     }
 

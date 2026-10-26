@@ -94,7 +94,7 @@ enum LaunchFixtures {
             if let suite = UserDefaults(suiteName: "com.brandonmartinez.wavewrangler.uitest-preferences") {
                 for key in [PreferenceKey.autosaveEnabled, "WWAutosaveDelaySeconds", "WWLocalWhisperModelBookmark", PreferenceKey.whisperModel, PreferenceKey.transcriptionWorkers, PreferenceKey.transcriptionBackend, PreferenceKey.transcriptionThreads] { suite.removeObject(forKey: key) }
             }
-            for key in [PreferenceKey.autosaveEnabled, PreferenceKey.downloadSourcesAutomatically, PreferenceKey.textSizePercent, PreferenceKey.settingsLastPane, PreferenceKey.editingPlaybackPolicy] {
+            for key in [PreferenceKey.autosaveEnabled, PreferenceKey.downloadSourcesAutomatically, PreferenceKey.textSizePercent, PreferenceKey.settingsLastPane, PreferenceKey.editingPlaybackPolicy, PreferenceKey.timelineJumpSeconds] {
                 defaults.removeObject(forKey: key)
             }
         }

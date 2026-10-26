@@ -8,9 +8,11 @@ public struct AlignedAuditionSchedule: Sendable {
 
     public let firstFrame: Int64
     public let endFrame: Int64
+    public let maximumBufferedSeconds: Double
+    private let startupFrames: Int64
     public private(set) var nextFrame: Int64
 
-    public init(startSeconds: Double, endSeconds: Double) throws {
+    public init(startSeconds: Double, endSeconds: Double, usesAdaptiveTiming: Bool = false) throws {
         guard startSeconds.isFinite, endSeconds.isFinite,
               (-86_400...86_400).contains(startSeconds),
               (-86_400...86_400).contains(endSeconds), endSeconds > startSeconds else {
@@ -19,11 +21,14 @@ public struct AlignedAuditionSchedule: Sendable {
         firstFrame = Int64(floor(startSeconds * Double(AlignedAuditionWindowReader.outputRate)))
         endFrame = Int64(ceil(endSeconds * Double(AlignedAuditionWindowReader.outputRate)))
         nextFrame = firstFrame
+        // A cold adaptive tile spans five seconds; its preparation must not compete with a one-second start.
+        startupFrames = usesAdaptiveTiming ? 5 * 48_000 : Self.initialFrames
+        maximumBufferedSeconds = usesAdaptiveTiming ? 10 : Self.maximumAheadSeconds
     }
 
     public mutating func next() -> Range<Int64>? {
         guard nextFrame < endFrame else { return nil }
-        let count = nextFrame == firstFrame ? Self.initialFrames : Self.followingFrames
+        let count = nextFrame == firstFrame ? startupFrames : Self.followingFrames
         let frames = nextFrame..<min(endFrame, nextFrame + count)
         nextFrame = frames.upperBound
         return frames
