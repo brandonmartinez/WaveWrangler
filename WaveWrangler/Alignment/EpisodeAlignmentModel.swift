@@ -8,6 +8,7 @@ import WWDerived
 import WWEpisodeSetup
 import WWOrganizer
 import WWTimeMap
+import WWMix
 
 @MainActor
 @Observable
@@ -339,6 +340,9 @@ final class EpisodeAlignmentModel {
     }
 
     let episodeID: EpisodeID
+    let mixer: EpisodeMixerController
+    enum ListeningMode { case sourceAudition, productionMix }
+    private(set) var listeningMode: ListeningMode = .sourceAudition
     private weak var document: ShowDocument?
     private let runtime: AlignmentRuntime
     @ObservationIgnored private let audioPlayback = AlignmentAudioPlayback()
@@ -354,6 +358,7 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private var transportWarmup: (source: SourceID, frames: Range<Int64>)?
     @ObservationIgnored private var auditionStopTask: Task<Void, Never>?
     @ObservationIgnored private var auditionUsesOriginalTime = false
+    @ObservationIgnored private var productionTimeline: ManualCutTimeline?
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime,
          listening: EpisodeListeningState = EpisodeListeningState()) {
@@ -361,6 +366,7 @@ final class EpisodeAlignmentModel {
         self.episodeID = episodeID
         self.runtime = runtime
         self.listening = listening
+        mixer = EpisodeMixerController(document: document, episodeID: episodeID, runtime: runtime)
         do {
             if let id = listening.expandedManualCutID,
                document.store.model.episode(episodeID)?.activeManualCuts.contains(where: { $0.id == id }) != true {
@@ -1590,6 +1596,98 @@ final class EpisodeAlignmentModel {
         ) ?? 0...max(0.1, enabledTimelineEnd)
     }
 
+    /// Explicit production listening. Panel visibility, source Solo/Mute, and comparison layouts
+    /// never select this mode implicitly. Intervals use the collapsed shared-edit timeline.
+    func playProductionMix(interval: ClosedRange<Double>? = nil) {
+        adoptCachedPresentation()
+        stopAudition()
+        guard let document, let episode = document.store.model.episode(episodeID),
+              timingIsVerified(document.store.model), !waveformTimingIsDraft,
+              loadedWaveformMap != nil, !waveformNeedsRefreshAfterSave,
+              groupDraftMilliseconds == 0, pendingWaveformMove == nil else {
+            auditionLabel = "Save and verify accepted timing before playing the production mix."
+            return
+        }
+        let generation = auditionGeneration
+        listeningMode = .productionMix
+        isPreparingAudition = true
+        auditionLabel = "Preparing the confirmed Primary-speaker production mix."
+        transportTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let timeline = try episode.manualCutTimeline()
+                let sources = Set(episode.speakerAssignments.compactMap(\.primary?.sourceID))
+                let end = min(86_400, timeline.editedTime(forAlignedTime: timelineEnd(for: sources, applyingCuts: false)))
+                let position = timeline.editedTime(
+                    forAlignedTime: cutTimeline.alignedTime(forEditedTime: waveformPlayheadSeconds))
+                let start = interval?.lowerBound ?? position
+                let last = min(end, interval?.upperBound ?? end)
+                let schedule = try AlignedAuditionSchedule(startSeconds: start, endSeconds: last)
+                let frames = schedule.firstFrame..<schedule.endFrame
+                let recipe = try await mixer.prepare(programFrames: frames)
+                guard generation == auditionGeneration else { throw CancellationError() }
+                productionTimeline = timeline
+                var next = recipe.programFrames.lowerBound
+                func enqueue(_ output: MixerPCMOutput, final: Bool) throws {
+                    guard generation == auditionGeneration else { throw CancellationError() }
+                    guard output.frameCount > 0 else { return }
+                    try audioPlayback.enqueueProduction(output, final: final) { [weak self] in
+                        guard let self else { return }
+                        stopAudition()
+                        let error = AlignmentTransportFailure.bufferDeadline
+                        mixer.fail(error)
+                        lastError = error.localizedDescription
+                        auditionLabel = "Production playback stopped: \(error.localizedDescription)."
+                    }
+                    isAuditioning = true
+                    isPreparingAudition = false
+                    auditionLabel = "Playing the Primary-speaker production mix; source audition choices are unchanged."
+                }
+                while next < recipe.programFrames.upperBound {
+                    try Task.checkCancellation()
+                    let range = next..<min(next + 12_000, recipe.programFrames.upperBound)
+                    let output = try await mixer.render(range)
+                    let lastInput = range.upperBound == recipe.programFrames.upperBound
+                    try enqueue(output, final: lastInput && mixer.processor?.latencyFrames == 0)
+                    next = range.upperBound
+                    // Keep rendered control latency bounded. This is buffered monitoring, not a
+                    // hardware-input low-latency path; effects never run on the device callback.
+                    while let clock = audioPlayback.clock,
+                          clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow > 0.5 {
+                        let time = timeline.alignedTime(forEditedTime: clock.playhead())
+                        waveformPlayheadSeconds = cutTimeline.editedTime(forAlignedTime: time)
+                        followPlayheadIfNeeded()
+                        try await Task.sleep(for: .milliseconds(20))
+                    }
+                }
+                while let output = try await mixer.finishNext() {
+                    let final = output.firstFrame + Int64(output.frameCount) == recipe.programFrames.upperBound
+                    try enqueue(output, final: final)
+                }
+                while let clock = audioPlayback.clock,
+                      clock.startedAt.addingTimeInterval(clock.duration) > Date() {
+                    waveformPlayheadSeconds = cutTimeline.editedTime(
+                        forAlignedTime: timeline.alignedTime(forEditedTime: clock.playhead()))
+                    try await Task.sleep(for: .milliseconds(50))
+                }
+                guard generation == auditionGeneration else { return }
+                stopPlayback(updatePlayhead: false)
+                waveformPlayheadSeconds = cutTimeline.editedTime(forAlignedTime: timeline.alignedTime(forEditedTime: last))
+                auditionPlayheadSeconds = waveformPlayheadSeconds
+                auditionLabel = "Production mix reached the end of the selected program."
+                transportTask = nil
+            } catch {
+                guard generation == auditionGeneration else { return }
+                stopPlayback(updatePlayhead: true)
+                transportTask = nil
+                isPreparingAudition = false
+                mixer.fail(error)
+                lastError = error.localizedDescription
+                auditionLabel = "Production playback stopped: \(error.localizedDescription). No substitute audio was played."
+            }
+        }
+    }
+
     func playEnabledTracks(interval: ClosedRange<Double>? = nil, repeatInterval: Bool? = nil,
                            repeatWhile: (() -> Bool)? = nil, applyingCuts: Bool = true) {
         adoptCachedPresentation()
@@ -1628,6 +1726,7 @@ final class EpisodeAlignmentModel {
         }
         let omitted = enabled.count - sources.count
         stopAudition()
+        listeningMode = .sourceAudition
         auditionUsesOriginalTime = !applyingCuts
         let snapshot = document.store.model
         let generation = auditionGeneration
@@ -1695,6 +1794,7 @@ final class EpisodeAlignmentModel {
                     try Task.checkCancellation()
                     guard generation == auditionGeneration,
                           document.store.model.hasSameMediaInputs(as: snapshot, in: episodeID),
+                          document.store.model.episode(episodeID)?.mix?.inputGains == snapshot.episode(episodeID)?.mix?.inputGains,
                           timingIsVerified(snapshot) else { throw CancellationError() }
                     guard !clips.isEmpty else { throw WaveformWindowError.invalidSamples }
                     isPreparingAudition = false
@@ -2154,11 +2254,12 @@ final class EpisodeAlignmentModel {
     }
 
     func auditionSelection() {
-        guard let epoch = selection, canAudition, !isAuditioning,
+        guard let document, let epoch = selection, canAudition, !isAuditioning,
               auditionStartSeconds.isFinite, auditionStartSeconds >= 0,
               auditionDurationSeconds.isFinite, auditionDurationSeconds > 0
         else { return }
         stopAudition()
+        let snapshot = document.store.model
         let generation = auditionGeneration
         isPreparingAudition = true
         auditionLabel = "Preparing the selected internal audition range. Nothing is exported."
@@ -2174,7 +2275,8 @@ final class EpisodeAlignmentModel {
                 let clip = try await runtime.audition(
                     episode: episodeID, epoch: epoch,
                     startSeconds: auditionStartSeconds,
-                    durationSeconds: auditionDurationSeconds
+                    durationSeconds: auditionDurationSeconds,
+                    inputGains: snapshot.episode(episodeID)?.mix?.inputGains ?? []
                 ) { [weak self] progress in
                     Task { @MainActor [weak self] in
                         guard let self, self.isPreparingAudition,
@@ -2183,7 +2285,10 @@ final class EpisodeAlignmentModel {
                     }
                 }
                 try Task.checkCancellation()
-                guard generation == auditionGeneration else { return }
+                guard generation == auditionGeneration,
+                      document.store.model.hasSameProcessingInputs(as: snapshot, in: episodeID) else {
+                    throw CancellationError()
+                }
                 try play(clip)
                 try Task.checkCancellation()
                 isAuditioning = true
@@ -2867,9 +2972,16 @@ final class EpisodeAlignmentModel {
     private func stopPlayback(updatePlayhead: Bool) {
         if updatePlayhead, isAuditioning, let clock = audioPlayback.clock {
             let time = clock.playhead()
-            auditionPlayheadSeconds = auditionUsesOriginalTime ? cutTimeline.editedTime(forAlignedTime: time) : time
+            if listeningMode == .productionMix, let productionTimeline {
+                auditionPlayheadSeconds = cutTimeline.editedTime(
+                    forAlignedTime: productionTimeline.alignedTime(forEditedTime: time))
+            } else {
+                auditionPlayheadSeconds = auditionUsesOriginalTime ? cutTimeline.editedTime(forAlignedTime: time) : time
+            }
         }
         audioPlayback.stop()
+        mixer.stop()
+        productionTimeline = nil
         transportWarmupTask?.cancel()
         transportWarmupTask = nil
         transportWarmup = nil
@@ -2904,6 +3016,7 @@ final class EpisodeAlignmentModel {
         automaticallyStop: Bool = true
     ) throws {
         stopPlayback(updatePlayhead: false)
+        listeningMode = .sourceAudition
         let start = startSeconds ?? auditionStartSeconds
         try audioPlayback.play(clip, startSeconds: start)
         auditionPlayheadSeconds = start
@@ -2918,7 +3031,7 @@ final class EpisodeAlignmentModel {
     }
 
     private func refreshTransportGains() {
-        guard transportTask != nil else { return }
+        guard transportTask != nil, listeningMode == .sourceAudition else { return }
         let enabled = enabledSources
         let pendingStarts = audioPlayback.pendingSources
         let gains = AlignmentTransportSelection.gains(

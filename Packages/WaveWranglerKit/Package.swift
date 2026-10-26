@@ -29,6 +29,7 @@ let package = Package(
         // Pure channel-consistent clock-correction renderer (WW-018/WW-023). Consumes decoded buffers through a
         // caller-owned provider; never opens files.
         .library(name: "WWRender", targets: ["WWRender"]),
+        .library(name: "WWMix", targets: ["WWMix"]),
         // Pure discontinuity detector/segmenter (WW-017) between the frozen WW-016 estimator and WWTimeMap:
         // splits an occurrence into epochs or leaves regions unsupported; never bridges a jump, never approves.
         .library(name: "WWAlignSegment", targets: ["WWAlignSegment"]),
@@ -60,6 +61,7 @@ let package = Package(
         .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWAutoAlign", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"]),
+        .target(name: "WWMix", dependencies: ["WWCore", "WWSources", "WWDecode"]),
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWAutoAlign", "WWRender"]),
         .target(name: "WWWordEvaluation"),
@@ -98,6 +100,7 @@ let package = Package(
         .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore", "WWTestSupport"]),
         .testTarget(name: "WWAutoAlignTests", dependencies: ["WWAutoAlign", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore", "WWTestSupport"]),
+        .testTarget(name: "WWMixTests", dependencies: ["WWMix", "WWCore", "WWSources"]),
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore", "WWTestSupport"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
         .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),

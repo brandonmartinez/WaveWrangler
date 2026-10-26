@@ -3,6 +3,7 @@ import Darwin
 import Foundation
 import WWAlignPipeline
 import WWCore
+import WWMix
 
 struct AlignmentAudioClip: Sendable {
     var sampleRate: Double
@@ -69,6 +70,7 @@ final class AlignmentAudioPlayback {
     private let engine = AVAudioEngine()
     private var players: [SourceID: AVAudioPlayerNode] = [:]
     private var source: AVAudioSourceNode?
+    private var productionPlayer: AVAudioPlayerNode?
     private var transportSampleRate: Double?
     private var transportHostTime: UInt64?
     private var bufferDeadlineTask: Task<Void, Never>?
@@ -93,6 +95,11 @@ final class AlignmentAudioPlayback {
             player.stop()
         }
         engine.pause()
+        if let productionPlayer {
+            productionPlayer.stop()
+            engine.detach(productionPlayer)
+            self.productionPlayer = nil
+        }
         if let source, engine.attachedNodes.contains(source) { engine.detach(source) }
         source = nil
         clock = nil
@@ -128,6 +135,66 @@ final class AlignmentAudioPlayback {
 
     func setGains(_ gains: [SourceID: Float]) {
         for (source, player) in players { player.volume = gains[source] ?? 0 }
+    }
+
+    static func validateProduction(_ output: MixerPCMOutput) throws -> AlignmentAudioClip {
+        guard output.channels.count == 2, output.frameCount > 0,
+              output.frameCount <= MixerRecipe.maximumWindowFrames,
+              output.channels.allSatisfy({ $0.count == output.frameCount && $0.allSatisfy(\.isFinite) }) else {
+            throw MixerFailure.incompletePCM
+        }
+        return AlignmentAudioClip(sampleRate: Double(MixerRecipe.sampleRate),
+            samples: output.channels.flatMap { $0 }, channelCount: 2)
+    }
+
+    /// Only pre-rendered stereo reaches the device graph. No vendor code or Swift task is called
+    /// from the output callback; the serial mixer worker owns persistent effect state.
+    func enqueueProduction(_ output: MixerPCMOutput, final: Bool,
+                           onBufferDeadline: @escaping @MainActor () -> Void) throws {
+        let clip = try Self.validateProduction(output)
+        let format = try clip.makeFormat()
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(output.frameCount)),
+              let data = buffer.floatChannelData else { throw MixerFailure.incompletePCM }
+        buffer.frameLength = AVAudioFrameCount(output.frameCount)
+        for channel in 0..<2 {
+            output.channels[channel].withUnsafeBufferPointer {
+                if let base = $0.baseAddress { data[channel].update(from: base, count: output.frameCount) }
+            }
+        }
+        let start = Double(output.firstFrame) / Double(MixerRecipe.sampleRate)
+        if productionPlayer == nil {
+            stop()
+            clearPlayers()
+            let player = AVAudioPlayerNode()
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: format)
+            productionPlayer = player
+            player.scheduleBuffer(buffer)
+            do { try engine.start() }
+            catch { stop(); throw error }
+            let lead = 0.1
+            player.play(at: AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)))
+            clock = AlignmentPlaybackClock(startSeconds: start, duration: clip.duration,
+                startedAt: Date().addingTimeInterval(lead))
+        } else {
+            guard let clock, let productionPlayer else { throw MixerFailure.discontinuousPCM }
+            try Self.validateAppend(to: clock, startSeconds: start)
+            productionPlayer.scheduleBuffer(buffer)
+            self.clock = AlignmentPlaybackClock(startSeconds: clock.startSeconds,
+                duration: clock.duration + clip.duration, startedAt: clock.startedAt)
+        }
+        bufferDeadlineTask?.cancel()
+        bufferDeadlineTask = nil
+        if !final, let clock {
+            let remaining = max(0, clock.startedAt.addingTimeInterval(clock.duration - 0.02).timeIntervalSinceNow)
+            bufferDeadlineTask = Task { [weak self] in
+                do { try await Task.sleep(for: .seconds(remaining)) }
+                catch { return }
+                guard let self, !Task.isCancelled else { return }
+                stop()
+                onBufferDeadline()
+            }
+        }
     }
 
     func excludeSource(_ source: SourceID) {

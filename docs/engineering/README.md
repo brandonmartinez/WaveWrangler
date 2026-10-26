@@ -1011,6 +1011,156 @@ verified source identities, resolved channels, format, and latency/tail policy.
 Audio hosting, playback/offline rendering, mixer windows, and export UI are
 separate layers; this foundation does not launch UI or read original media.
 
+### Native mixer processing and PCM rendering
+
+`WWMix` is downstream of `WWRender`, which remains pure and unchanged.
+`AlignmentRuntime.mixerRecipe` freezes `EpisodeProcessingInputs`, the confirmed
+Primary routes, actual gateway-witnessed `RawSourceIdentity` and
+`FormatInterpretation`, explicit resolved channels, signed edited program frames,
+format, pan law, and seek/latency/tail policy. Neither a recipe nor a witness is
+an access grant. `productionPCM` reuses the accepted-map, witnessed
+`sourceAuditions` readers and the shared manual-cut timeline, always with cuts
+collapsed, with input gain disabled at that boundary. It checks frozen identities,
+current access records, actual formats, accepted timing, and complete windows
+before returning. Effects never receive a source URL. Offline jobs also recheck
+admission during their latency/tail drain, not just during source reads.
+
+The initial qualification is native arm64, 48 kHz planar Float32, mono speaker
+inserts and stereo Master inserts/output. Only one-input/one-output-bus `aufx`
+and `aumf` effects supporting the exact requested format are admitted. Unknown
+multichannel Primaries refuse rather than selecting channel 0. Multiple speakers
+cannot share the same Primary/channel (which would double one microphone).
+An episode assignment without a confirmed Primary is an explicit error, not a
+silent strip or automatic Backup substitution.
+
+`MixerProcessor.load(recipe:progress:)` asynchronously loads ordered slots.
+`MixerAudioUnits.installedEffects()` discovers effects without loading editors.
+Loading has a 30-second bound and responds to cancellation; a late completion
+does not replace a canceled/failed instance. Out-of-process loading is requested,
+and `unitStatuses()` exposes the actual `isLoadedInProcess` result. Apple
+low-pass units were observed as `AUAudioUnit_RemoteV2`, out of process, on the
+local macOS 27 arm64 headless test host. This is not a universal AUv2 isolation
+or release-distribution claim. No sandbox or library-validation exceptions are
+added. Sandboxed app-host/editor compatibility and physical device monitoring
+remain separate qualification gates.
+
+One serial processor retains each unit across all producer windows:
+
+```text
+authorized timed/cut mono PCM -> recording/channel input gain
+  -> ordered speaker inserts -> explicit parallel-path delay alignment
+  -> speaker fader/equal-power pan -> stereo sum
+  -> ordered Master inserts -> Master gain/meters -> prepared stereo PCM
+```
+
+The sum is not divided by the number of audible speakers. Center pan contributes
+1/sqrt(2) to each output; hard left/right contributes unity to that side.
+Finite output above unity is retained, not clipped or normalized;
+`MixerMeter` exposes peak/RMS, clipping, and headroom. Live gain/pan targets use
+sample-clocked 480-frame (10 ms) linear-amplitude ramps, continuous across chunks.
+Mix edits never enter estimators, ASR, raw waveform cache keys, or original files.
+Diagnostic source/comparison audition retains its routing/attenuation and applies
+the saved recording/channel gain without speaker/Master effects. A recording-gain
+change invalidates already-prepared diagnostic windows; restart that audition.
+
+`EpisodeAlignmentModel.playProductionMix(interval:)` explicitly selects
+production listening. `playEnabledTracks` remains diagnostic/source audition;
+neither pane visibility nor source Solo/Mute implicitly changes that choice.
+The production adapter schedules already-rendered stereo on the existing owned
+`AlignmentAudioPlayback` engine, with no second playback engine. Production uses
+quarter-second input windows and bounded half-second producer look-ahead
+(up to one additional prepared window). Effects render on the serial worker,
+not in the hardware callback. This is **buffered monitoring**, not a claim of
+hardware-input low-latency processing; live control response includes the queued
+PCM. Missed deadlines stop explicitly instead of scheduling substitute silence.
+Playback engine/device behavior has not been exercised on the user's desktop.
+
+`MixerOfflineRenderer.render(recipe:isCurrent:input:sink:)` uses independent
+instances of the identical processor. It accepts at most five seconds of input
+per window and uses 512-frame native render calls. Its sink receives bounded,
+finite stereo windows with absolute edited `firstFrame` and exact frame counts,
+never delivery files. The sink must stage results and publish only after a
+successful return; cancellation, stale dependencies or a failed final check
+invalidates every previously delivered window. The app adapter is
+`AlignmentRuntime.renderProductionOffline`. It requires a live document-currency
+closure as well as the built-in source-access/identity rechecks.
+
+Reported, nonnegative integral-frame unit latencies are summed along serial
+chains. Shorter speaker paths receive the difference from the longest path;
+the common speaker latency plus Master latency is then removed exactly once.
+No engine PDC is assumed or also applied. Generated unequal-latency paths and a
+Master delay verify impulse coincidence and exact program length. Fractional,
+changing, nonfinite or over-budget latency refuses. Vendor misreported latency
+is not automatically measured/corrected; each additional unit needs
+qualification rather than a DAW-grade compensation claim.
+
+Seeking/restarting creates independent reset instances. `MixerRenderPolicy`
+defaults to zero preroll and exact-program tail truncation, a deliberate
+cold-start policy rather than transparent seek equivalence. Optional bounded
+preroll requires real authorized preceding PCM, never fabricated program data.
+`includeReported` drains the maximum serial speaker tail plus Master tails;
+nonfinite, changing or over-budget declared tails refuse. Program output is
+exactly `programFrames.count`, plus the explicit reported tail when selected.
+Missing program frames do not become EOF. Native transient
+`CannotDoInCurrentContext` retries are limited to four attempts at the same sample
+time; other statuses fail immediately. Unwritten/nonfinite output refuses.
+A malicious/hung in-process vendor render call cannot be forcibly interrupted;
+bounded host loops do not constitute plug-in process isolation.
+
+#### Layer-3 controller and transaction contract
+
+Bind docked and detached views to **the same**
+`EpisodeAlignmentModel.mixer: EpisodeMixerController`, never construct another
+controller, processor, transport, source grant, or Undo store for detachment.
+The controller exposes observable loading/ready/playing/failure state, bounded
+speaker/Master meters and unit isolation/latency status. Its `processor` provides
+`parameters(slot:)`, `editor(slot:)`, and validated `setParameter` access.
+`MixerUnitEditor.requestViewController()` runs on the main actor and may return
+nil; use the generic descriptors in that case, not a fabricated native editor.
+Observe `instanceRevision` to dismiss/rebind vendor editors when a new processing
+instance replaces a prior seek/play session. Controller `mutedSpeakers`,
+`soloedSpeakers`, and `masterMuted` are separate ephemeral production-listening
+choices, shared by docked/detached views; they do not alter source-audition Solo/
+Mute or canonical mix state. Muting ramps post-insert gain to zero while effects
+continue processing, so an unmute does not reset their history.
+
+Use normal `ShowDocumentStore.apply(_:coalescing:_:)` operations for input gain,
+fader/pan, bypass, reorder, add/remove and Undo. `synchronizeControls()` applies
+current gains/pan without resetting effects. Input/routing/timing/cut or insert
+topology/state replacement is a stop/reload boundary; stale controllers must
+never write over a changed Primary, deleted slot, or Undo-restored state.
+Live gain changes are accepted against the frozen media/cut/slot dependencies;
+offline rendering instead freezes every gain and opaque state byte.
+
+Generic edits go through
+`setParameter(slot:address:value:coalescing:)`, which captures
+`AUAudioUnit.fullStateForDocument` and commits the validated opaque state through
+the existing document store. Start `beginEditorObservation(coalescing:)`
+**before** displaying a vendor editor. It polls the complete document state every
+200 ms, including opaque changes with no parameter notification. The Audio Unit
+parameter observer only increments an atomic revision; it never calls an actor,
+allocates a task, does I/O, or writes the document from the callback.
+`captureAndPersist(coalescing:)` refuses stale slots and invalid, oversized or
+nonfinite vendor state without dropping it or silently reverting to defaults.
+State restore requires complete dictionary read-back agreement; vendors that
+normalize/refuse supplied state may be conservatively rejected.
+
+The UI integration must await `captureAndPersist` at **Save, Undo/Redo and close
+barriers**, suspend editor polling, perform the normal document operation, and
+restore/reload from the resulting document before resuming editing. On editor
+close, await `endEditorObservation()`; do not rely on close as the first dirty
+capture. Serialize these barriers with new generic edits, dismiss stale native
+editors on reload, and surface any refused capture/transaction. Polling is not a
+synchronous Save interceptor; those command/lifecycle hooks belong to layer 3.
+Do not stop/reprepare a controller with uncommitted native-editor state.
+One shared coalescing key represents an edit gesture/burst, and the store ends
+coalescing normally on Save/Undo or an unrelated edit.
+
+Generated PCM plus Apple-unit headless tests live in `WWMixTests`.
+Docking, detachment, native editor interaction, sandboxed host behavior, and
+full transport/device qualification require the later leased VM/approved host
+gates; these package tests do not authorize UI launches or user-media access.
+
 ## Conventions
 
 - **Originals are immutable.** No code path renames, moves, deletes, overwrites or writes into a

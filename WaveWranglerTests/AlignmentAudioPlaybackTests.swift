@@ -2,10 +2,25 @@ import AVFAudio
 import Foundation
 import Testing
 import WWCore
+import WWMix
 
 @MainActor
 @Suite("Alignment audio playback foundations")
 struct AlignmentAudioPlaybackTests {
+    @Test func productionStereoAdapterIsHeadlessExactAndNeverNormalizes() throws {
+        let output = MixerPCMOutput(firstFrame: -5, channels: [[1.5, 0.25, -1.5], [-0.5, 0, 0.5]])
+        let clip = try AlignmentAudioPlayback.validateProduction(output)
+        #expect(clip.channelCount == 2 && clip.sampleRate == 48_000)
+        #expect(clip.samples == [1.5, 0.25, -1.5, -0.5, 0, 0.5])
+        #expect(clip.duration == 3.0 / 48_000)
+        let invalid: [[[Float]]] = [[], [[]], [[], []], [[0]], [[0], [0, 0]], [[0], [.nan]], [[0], [.infinity]]]
+        for channels in invalid {
+            #expect(throws: MixerFailure.self) {
+                try AlignmentAudioPlayback.validateProduction(.init(firstFrame: 0, channels: channels))
+            }
+        }
+    }
+
     @Test func playbackClockIncludesLeadAndClampsToScheduledAudio() {
         let start = Date(timeIntervalSinceReferenceDate: 100)
         let clock = AlignmentPlaybackClock(startSeconds: 25, duration: 3, startedAt: start)

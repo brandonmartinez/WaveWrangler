@@ -8,6 +8,7 @@ import WWEpisodeSetup
 import WWSources
 import WWTimeMap
 import WWSpeech
+import WWMix
 
 actor AlignmentRuntime {
     struct Prepared: Sendable {
@@ -424,11 +425,17 @@ actor AlignmentRuntime {
         epoch: RecordingEpochID,
         startSeconds: Double,
         durationSeconds: Double,
+        inputGains: [RecordingInputGain] = [],
         progress: @escaping @Sendable (Double) -> Void
     ) async throws -> AuditionClip {
         guard let source = sourceByEpoch[episodeID]?[epoch] else { throw DecodeFailure.notFound }
+        guard inputGains.allSatisfy(\.isValid) else { throw MixerFailure.invalidRecipe("invalid recording input gain") }
         return try await pipeline.decoder.withDecodingCursor(source.url, source: source.id) { cursor in
             let sampleRate = Double(cursor.interpretation.sourceSampleRate)
+            guard !inputGains.contains(where: { $0.source == source.id
+                && $0.channel >= cursor.interpretation.channelCount }) else {
+                throw MixerFailure.unresolvedChannel(source.id)
+            }
             let range = try AlignmentAuditionRequest.frameRange(
                 startSeconds: startSeconds,
                 durationSeconds: durationSeconds,
@@ -437,6 +444,10 @@ actor AlignmentRuntime {
             )
             var samples: [Float] = []
             samples.reserveCapacity(range.count)
+            let channelGains = (0..<cursor.interpretation.channelCount).map { channel in
+                let db = inputGains.first { $0.source == source.id && $0.channel == channel }?.gainDB ?? 0
+                return Float(pow(10, db / 20))
+            }
             var lastReportedProgress = -1.0
             if range.lowerBound > 0 { progress(0) }
             while await cursor.position < range.upperBound, let chunk = try await cursor.next() {
@@ -470,12 +481,13 @@ actor AlignmentRuntime {
                 for frame in first..<(first + count) {
                     var sum: Float = 0
                     for channel in 0..<chunk.channelCount {
-                        sum += chunk.samples[channel * chunk.frameCount + frame]
+                        sum += chunk.samples[channel * chunk.frameCount + frame] * channelGains[channel]
                     }
                     samples.append(sum / Float(chunk.channelCount))
                 }
             }
             try await cursor.verifyUnchanged()
+            guard samples.allSatisfy(\.isFinite) else { throw MixerFailure.nonfinitePCM }
             return AuditionClip(sampleRate: sampleRate, samples: samples)
         }
     }
@@ -760,9 +772,12 @@ actor AlignmentRuntime {
         try await reverify(targetAdmission)
         _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         guard left.count == right.count else { throw WaveformWindowError.invalidSamples }
+        let leftGain = Float(pow(10, (episode.mix?.inputGainDB(for: reference.occurrence.source, channel: 0) ?? 0) / 20))
+        let rightGain = Float(pow(10, (episode.mix?.inputGainDB(for: target, channel: targetChannel) ?? 0) / 20))
+        let samples = left.map { $0 * leftGain } + right.map { $0 * rightGain }
+        guard samples.allSatisfy(\.isFinite) else { throw MixerFailure.nonfinitePCM }
         return AuditionClip(
-            sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: left + right, channelCount: 2
-        )
+            sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples, channelCount: 2)
     }
 
     func sourceAudition(
@@ -787,7 +802,8 @@ actor AlignmentRuntime {
     func sourceAuditions(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         sources requested: [SourceID], outputFrames: Range<Int64>, applyingCuts: Bool = true,
-        revealingCut: UUID? = nil
+        revealingCut: UUID? = nil, decodedChannels: [SourceID: Int] = [:],
+        applyingInputGain: Bool = true, frozenSources: [MixerSourceSnapshot] = []
     ) async throws -> [SourceID: AuditionClip] {
         guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
         guard !requested.isEmpty, Set(requested).count == requested.count else {
@@ -815,7 +831,19 @@ actor AlignmentRuntime {
             try Task.checkCancellation()
             do {
                 let admission = try await waveformSource(source, sources: sources)
-                let channel = episode.statedChannel(of: source) ?? 0
+                let interpretation = try await pipeline.decoder.withWitnessBoundDecodingCursor(
+                    admission.url, source: source, matching: admission.witness
+                ) { cursor in cursor.interpretation }
+                if !frozenSources.isEmpty {
+                    guard frozenSources.contains(MixerSourceSnapshot(
+                        source: source, witness: admission.witness, interpretation: interpretation
+                    )) else { throw MixerFailure.staleDependencies }
+                }
+                let reference = ChannelReference(sourceID: source,
+                    statedChannel: decodedChannels[source] ?? episode.statedChannel(of: source))
+                guard let channel = reference.resolvedChannel(channelCount: interpretation.channelCount) else {
+                    throw MixerFailure.unresolvedChannel(source)
+                }
                 var samples: [Float] = []
                 for alignedFrames in alignedRanges {
                     if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
@@ -839,6 +867,14 @@ actor AlignmentRuntime {
                     }
                 }
                 guard samples.count == outputFrames.count else { throw WaveformWindowError.invalidSamples }
+                if applyingInputGain {
+                    let gainDB = episode.mix?.inputGainDB(for: source, channel: channel) ?? 0
+                    if gainDB != 0 {
+                        let gain = Float(pow(10, gainDB / 20))
+                        samples = samples.map { $0 * gain }
+                    }
+                    guard samples.allSatisfy(\.isFinite) else { throw MixerFailure.nonfinitePCM }
+                }
                 clips[source] = AuditionClip(
                     sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples
                 )
@@ -863,6 +899,85 @@ actor AlignmentRuntime {
         _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         try Task.checkCancellation()
         return clips
+    }
+
+    /// Freeze actual admitted identities/channels, not metadata guesses or sparse strip entries.
+    func mixerRecipe(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, programFrames: Range<Int64>,
+        policy: MixerRenderPolicy = .init()
+    ) async throws -> MixerRecipe {
+        guard let episode = model.episode(episodeID) else { throw MixerFailure.staleDependencies }
+        let resolved = try await resolveSources(episode.sources)
+        try await pipeline.activate(model: model, episode: episodeID)
+        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        var snapshots: [MixerSourceSnapshot] = []
+        for assignment in episode.speakerAssignments {
+            guard assignment.primaryConfirmation == .userConfirmed, let primary = assignment.primary else {
+                throw MixerFailure.unconfirmedPrimary(assignment.speakerID)
+            }
+            if snapshots.contains(where: { $0.source == primary.sourceID }) { continue }
+            let admission = try await waveformSource(primary.sourceID, sources: resolved)
+            let interpretation = try await pipeline.decoder.withWitnessBoundDecodingCursor(
+                admission.url, source: primary.sourceID, matching: admission.witness
+            ) { cursor in cursor.interpretation }
+            try await reverify(admission)
+            snapshots.append(.init(source: primary.sourceID, witness: admission.witness, interpretation: interpretation))
+        }
+        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        return try MixerRecipe(episode: episode, sources: snapshots, programFrames: programFrames, policy: policy)
+    }
+
+    func productionPCM(recipe: MixerRecipe, model: ShowDocumentModel, frames: Range<Int64>) async throws -> MixerPCMWindow {
+        guard let episode = model.episode(recipe.episode), EpisodeProcessingInputs(episode) == recipe.dependencies else {
+            throw MixerFailure.staleDependencies
+        }
+        var channels: [ChannelReference: [Float]] = [:]
+        // Each admitted recording is mono/stereo, so at most two channel passes are needed.
+        // Batch admissions across sources rather than re-resolving every recording for each strip.
+        var first: [MixerRoute] = [], second: [MixerRoute] = []
+        var seen: Set<SourceID> = []
+        for route in recipe.routes {
+            if seen.insert(route.reference.sourceID).inserted { first.append(route) }
+            else { second.append(route) }
+        }
+        for routes in [first, second] where !routes.isEmpty {
+            var decodedChannels: [SourceID: Int] = [:]
+            for route in routes {
+                guard let channel = route.reference.channel.value else {
+                    throw MixerFailure.unresolvedChannel(route.reference.sourceID)
+                }
+                decodedChannels[route.reference.sourceID] = channel
+            }
+            let clips = try await sourceAuditions(
+                model: model, episode: recipe.episode, sources: routes.map(\.reference.sourceID),
+                outputFrames: frames, decodedChannels: decodedChannels,
+                applyingInputGain: false, frozenSources: routes.map(\.source)
+            )
+            for route in routes {
+                guard let clip = clips[route.reference.sourceID] else { throw MixerFailure.incompletePCM }
+                channels[route.reference] = clip.samples
+            }
+        }
+        // Source access, identity and timing are checked again across the complete multi-source window.
+        let current = try await mixerRecipe(model: model, episode: recipe.episode,
+            programFrames: recipe.programFrames, policy: recipe.policy)
+        guard current == recipe else { throw MixerFailure.staleDependencies }
+        return MixerPCMWindow(frames: frames, channels: channels)
+    }
+
+    func renderProductionOffline(
+        recipe: MixerRecipe, model: ShowDocumentModel,
+        isCurrent: @escaping @Sendable () async throws -> Bool,
+        sink: @escaping @Sendable (MixerPCMOutput) async throws -> Void
+    ) async throws {
+        try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { [self] in
+            guard try await isCurrent() else { return false }
+            let current = try await mixerRecipe(model: model, episode: recipe.episode,
+                programFrames: recipe.programFrames, policy: recipe.policy)
+            return current == recipe
+        },
+            input: { [self] frames in try await productionPCM(recipe: recipe, model: model, frames: frames) },
+            sink: sink)
     }
 
     func dependentCounts(episode episodeID: EpisodeID) async -> DependentCounts {
