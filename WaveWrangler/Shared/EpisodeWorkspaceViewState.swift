@@ -2,6 +2,11 @@ import Foundation
 import OSLog
 import WWCore
 
+enum EpisodeBottomPaneContent: String, Codable, CaseIterable {
+    case review = "Review"
+    case mixer = "Mixer"
+}
+
 struct EpisodeWorkspaceViewState: Codable, Equatable {
     var layout = AlignmentWaveformLayout.defaultValue
     var normalizeView = false
@@ -21,6 +26,7 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
     var recordingsPresented = false
     var reviewPanelPresented = false
     var reviewPanelHeight = 240.0
+    var bottomPaneContent = EpisodeBottomPaneContent.review
     var expandedManualCutID: UUID?
 
     init() {}
@@ -30,6 +36,7 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
         case startSeconds, durationSeconds, playheadSeconds, trackScrollOffset
         case collapsedRecorders, collapsedSpeakers, destination, inspector, inspectorPresented
         case recordingsPresented, expandedManualCutID, reviewPanelPresented, reviewPanelHeight
+        case bottomPaneContent
     }
 
     init(from decoder: any Decoder) throws {
@@ -53,6 +60,7 @@ struct EpisodeWorkspaceViewState: Codable, Equatable {
         reviewPanelPresented = try values.decodeIfPresent(Bool.self, forKey: .reviewPanelPresented)
             ?? (inspector == "Transcript & review")
         reviewPanelHeight = try values.decodeIfPresent(Double.self, forKey: .reviewPanelHeight) ?? 240
+        bottomPaneContent = try values.decodeIfPresent(EpisodeBottomPaneContent.self, forKey: .bottomPaneContent) ?? .review
         expandedManualCutID = try values.decodeIfPresent(UUID.self, forKey: .expandedManualCutID)
     }
 

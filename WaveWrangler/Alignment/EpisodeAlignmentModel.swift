@@ -346,6 +346,7 @@ final class EpisodeAlignmentModel {
 
     let episodeID: EpisodeID
     let mixer: EpisodeMixerController
+    var mixerStore: ShowDocumentStore? { document?.store }
     enum ListeningMode { case sourceAudition, productionMix }
     private(set) var listeningMode: ListeningMode = .sourceAudition
     private weak var document: ShowDocument?

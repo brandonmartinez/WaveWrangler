@@ -18,6 +18,7 @@
       "selectedTests": [
         "VisualAlignmentUITests/testNormalImportThroughSavedManualPlayback()",
         "UnifiedWorkspaceUITests/testIntegratedWorkspaceManagementSelectionCycleAndReadableTranscript()",
+        "MixerUITests/testReviewMixerResizeDetachReattachAndOriginClose()",
         "TranscriptReviewUITests/testUnalignedEpisodeCannotTranscribeOrFabricateWordsAndHasRecoveryNavigation()",
         "TranscriptReviewUITests/testManualFillerRailsHaveIndependentDragsCompactReviewAndUndo()",
         "ControlsSidebarUITests/testCommandReviewToolIsTemporaryAndMarkerUsesOneCenteredToolbar()",

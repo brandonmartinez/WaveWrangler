@@ -10,7 +10,10 @@ final class ShowDocumentStore {
     private(set) var model: ShowDocumentModel {
         didSet {
             modelGeneration += 1
-            for state in ShowWindowRegistry.states(for: self) { state.reviewModelDidChange() }
+            for state in ShowWindowRegistry.states(for: self) {
+                state.reviewModelDidChange()
+                if !isCapturingMixer { state.mixerPresentation.modelDidChange(from: oldValue) }
+            }
         }
     }
     /// Ephemeral publication identity, including load, coalesced edits and undo/redo.
@@ -22,6 +25,8 @@ final class ShowDocumentStore {
     @ObservationIgnored weak var document: ShowDocument?
     /// Key of the edit burst currently being coalesced into a single undo step (e.g. live title typing).
     @ObservationIgnored private var coalescingKey: String?
+    @ObservationIgnored private var isCapturingMixer = false
+    @ObservationIgnored private var isEditingMixer = false
 
     init(model: ShowDocumentModel) {
         self.model = model
@@ -49,8 +54,15 @@ final class ShowDocumentStore {
     ) -> Bool {
         // #159: an older-format show is read-only until its update has published.
         guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
-        do {
+        do throws(DomainError) {
+            if document?.mixerTransactions.isBusy == true, !isCapturingMixer, !isEditingMixer {
+                throw DomainError.invalidMix("Wait for the mixer document transaction to finish.")
+            }
             let updated = try operation(model)
+            if !isCapturingMixer,
+               document?.mixerTransactions.refusesReplacement(from: model, to: updated) == true {
+                throw DomainError.invalidMix("Close the Audio Unit editor before changing its source, timing, or insert chain.")
+            }
             lastError = nil
             guard updated != model else { return true }
             if let key, key == coalescingKey {
@@ -75,6 +87,24 @@ final class ShowDocumentStore {
         coalescingKey = nil
     }
 
+    func applyMixerCapture(
+        coalescing key: String?,
+        _ operation: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel
+    ) -> Bool {
+        isCapturingMixer = true
+        defer { isCapturingMixer = false }
+        return apply("Edit Audio Unit", coalescing: key, operation)
+    }
+
+    func applyMixerEdit(
+        _ action: String,
+        _ operation: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel
+    ) -> Bool {
+        isEditingMixer = true
+        defer { isEditingMixer = false }
+        return apply(action, operation)
+    }
+
     /// Applies a complete, already-validated model and runs `afterChange` for the initial edit and every
     /// undo/redo replacement. Alignment uses this to persist first, then activate the accepted map revision.
     @discardableResult
@@ -84,6 +114,14 @@ final class ShowDocumentStore {
         afterChange: @escaping @MainActor (ShowDocumentModel) -> Void
     ) -> Bool {
         guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
+        guard document?.mixerTransactions.isBusy != true else {
+            lastError = .invalidMix("Wait for the mixer document transaction to finish.")
+            return false
+        }
+        guard document?.mixerTransactions.refusesReplacement(from: model, to: newModel) != true else {
+            lastError = .invalidMix("Close the Audio Unit editor before replacing its source, timing, or insert chain.")
+            return false
+        }
         guard newModel != model else { return true }
         lastError = nil
         replace(with: newModel, actionName: actionName, afterChange: afterChange)
@@ -113,6 +151,11 @@ final class ShowDocumentStore {
         actionName: String,
         afterChange: (@MainActor (ShowDocumentModel) -> Void)? = nil
     ) {
+        let undo = document?.undoManager
+        let ownsGroup = undo?.groupsByEvent == false && undo?.groupingLevel == 0
+            && undo?.isUndoing != true && undo?.isRedoing != true
+        if ownsGroup { undo?.beginUndoGrouping() }
+        defer { if ownsGroup { undo?.endUndoGrouping() } }
         let previous = model
         model = newModel
         coalescingKey = nil

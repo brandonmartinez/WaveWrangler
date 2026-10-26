@@ -22,6 +22,42 @@ the same show share its document, Save/autosave state, and Undo history. Closing
 does not discard a show that is still being managed in Library; **Close Show** closes that show
 through the normal unsaved-changes decision.
 
+## Mixer and input gain
+
+Choose **View > Show Mixer** or the mixer button beside the sidebar controls. **Review** and
+**Mixer** are alternative contents of the same resizable bottom pane; switching keeps the review
+selection and saved divider height. **Pop Out** opens a native resizable mixer window for another
+display. **Reattach** returns it to the bottom pane. Repeatedly opening a detached mixer focuses
+the existing window. Closing its originating episode editor closes its mixer and effect editors.
+Each episode editor owns its own auxiliary window, bound to that editor's document and transport.
+
+There is one strip per assigned speaker and a pinned **Master** beside the horizontally scrolling
+speaker strips. A strip identifies its selected Primary recording and channel; Backups are never
+automatically mixed in. **Input gain (dB)** is the same saved recording/channel value in the mixer
+and Recording inspector. It precedes inserts and also applies to diagnostic source listening.
+Replacing a Primary uses the new recording's own input gain while retaining the speaker's
+effects, output fader, and pan. Original audio, measured waveforms, alignment, and transcription
+inputs are unchanged. Numeric controls and sliders use the show's normal Save and Undo history.
+
+Use **Add**, **Open Editor**, and the insert actions menu for ordered Audio Unit effects,
+generic parameters, reordering, bypass, and removal. Native vendor editors are requested when
+available; otherwise the generic parameter editor is used. Missing or unsupported units remain
+visible with their saved state and an error; they are not silently omitted. Close an effect
+editor before changing source/timing assignments. Save, Undo/Redo, restart, and close await
+full native-state capture; Undo or restart dismisses an editor belonging to an old processor.
+A refused capture leaves the editor open for retry or an explicitly confirmed discard of its
+unsaved changes.
+
+**Play Mix** explicitly selects production listening through the confirmed speaker Primaries,
+speaker inserts/fader/pan, and Master inserts/output gain. Ordinary timeline/source audition
+remains diagnostic listening, without those inserts or faders. Opening, docking, or closing a
+mixer never starts playback or changes those source-listening choices. Mixer **Solo/Mute** is
+temporary production listening, not a saved render setting or a source-role change.
+Levels describe prepared PCM, including clipping; they are not acoustic-output measurements.
+This is buffered monitoring, not live microphone monitoring or zero-latency processing.
+The initial processing scope is arm64, mono/stereo recordings, mono speaker inserts, and 48 kHz
+stereo Master/output. Compatibility is unit-specific. There is no export/file-delivery UI yet.
+
 ## Visual alignment
 
 Import recordings in **Setup** to review device groups, recording segments, and speaker/channel
@@ -147,7 +183,7 @@ avoid restarting audio phase at playback-window boundaries. Fractional aligned e
 covered output frame instead of failing transcription with an invalid-sample error. Preparation
 failures identify the recording and aligned interval; no substitute audio is used.
 Remove file-local corrections before
-editing recorder-group timing. Shows now use schema 6; older shows require the normal backed-up
+editing recorder-group timing. Shows now use schema 9; older shows require the normal backed-up
 migration before saving.
 
 Individual adaptive file-timing changes keep current episode IN/OUT values when the shared

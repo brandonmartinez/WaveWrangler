@@ -24,6 +24,7 @@ import WWPersistence
 @objc(ShowDocument)
 final class ShowDocument: NSDocument {
     let store: ShowDocumentStore
+    lazy var mixerTransactions = MixerDocumentTransactions(document: self)
     private var libraryController: NSWindowController?
     weak var libraryWindow: NSWindow?
     let status = DocumentStatusModel()
@@ -101,6 +102,9 @@ final class ShowDocument: NSDocument {
         store = ShowDocumentStore(model: .untitled())
         super.init()
         store.document = self
+        let mixerUndo = MixerUndoManager()
+        mixerUndo.document = self
+        undoManager = mixerUndo
         // Ensures preference changes written directly to UserDefaults (Settings) reach the autosave gate.
         _ = AutosavePolicyController.shared
         scheduler = QuiescenceScheduler(
@@ -147,7 +151,7 @@ final class ShowDocument: NSDocument {
     func openEpisode(_ id: EpisodeID, inNewWindow: Bool = false) -> EpisodeWindowController? {
         guard store.model.episode(id) != nil else { return nil }
         if !inNewWindow, let existing = windowControllers.compactMap({ $0 as? EpisodeWindowController })
-            .first(where: { $0.state.boundEpisodeID == id }) {
+            .first(where: { $0.state.boundEpisodeID == id && !$0.state.mixerPresentation.isClosed }) {
             existing.showWindow(nil)
             existing.window?.deminiaturize(nil)
             existing.window?.makeKeyAndOrderFront(nil)
@@ -243,6 +247,31 @@ final class ShowDocument: NSDocument {
 
     // MARK: - Writing
 
+    override func revertToSaved(_ sender: Any?) {
+        guard mixerTransactions.needsBarrier else {
+            super.revertToSaved(sender)
+            return
+        }
+        Task { @MainActor in
+            do {
+                try await mixerTransactions.barrier(replacingInstances: true) {
+                    self.revertActionCaptured(sender)
+                }
+            } catch { presentError(error) }
+        }
+    }
+
+    private func revertActionCaptured(_ sender: Any?) { super.revertToSaved(sender) }
+
+    override func revert(toContentsOf url: URL, ofType typeName: String) throws {
+        guard !mixerTransactions.needsBarrier else {
+            throw CocoaError(.fileReadUnknown, userInfo: [
+                NSLocalizedFailureReasonErrorKey: "Finish the Audio Unit capture barrier before reverting this show."
+            ])
+        }
+        try super.revert(toContentsOf: url, ofType: typeName)
+    }
+
     override func data(ofType typeName: String) throws -> Data {
         try MainActor.assumeIsolated {
             if let pendingCandidate { return pendingCandidate.data }
@@ -254,6 +283,29 @@ final class ShowDocument: NSDocument {
         to url: URL,
         ofType typeName: String,
         for saveOperation: NSDocument.SaveOperationType,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
+        if mixerTransactions.needsBarrier {
+            Task { @MainActor in
+                do {
+                    try await mixerTransactions.barrier {
+                        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                            self.saveCaptured(to: url, ofType: typeName, for: saveOperation) { error in
+                                if let error { continuation.resume(throwing: error) }
+                                else { continuation.resume() }
+                            }
+                        }
+                    }
+                    completionHandler(nil)
+                } catch { completionHandler(error) }
+            }
+            return
+        }
+        saveCaptured(to: url, ofType: typeName, for: saveOperation, completionHandler: completionHandler)
+    }
+
+    private func saveCaptured(
+        to url: URL, ofType typeName: String, for saveOperation: NSDocument.SaveOperationType,
         completionHandler: @escaping (Error?) -> Void
     ) {
         // The model is already current (edits apply live); end any coalesced burst so that an edit made
@@ -499,6 +551,25 @@ final class ShowDocument: NSDocument {
     }
 
     override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
+        if mixerTransactions.needsBarrier {
+            Task { @MainActor in
+                do {
+                    try await mixerTransactions.barrier {
+                        self.canCloseCaptured(withDelegate: delegate, shouldClose: shouldCloseSelector, contextInfo: contextInfo)
+                    }
+                } catch {
+                    Self.reply(to: delegate, selector: shouldCloseSelector, document: self,
+                               shouldClose: false, contextInfo: contextInfo)
+                    presentError(error)
+                }
+            }
+            return
+        }
+        canCloseCaptured(withDelegate: delegate, shouldClose: shouldCloseSelector, contextInfo: contextInfo)
+    }
+
+    private func canCloseCaptured(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?,
+                                  contextInfo: UnsafeMutableRawPointer?) {
         // T23 D7–D9: closing while the last save failed asks how to keep the changes (never AppKit's plain review,
         // and never closes silently). Every other state keeps AppKit's behavior.
         guard isDocumentEdited, let window = windowForSheet, let sheet = failedSaveCloseSheet() else {
@@ -830,6 +901,20 @@ final class ShowDocument: NSDocument {
     }
 
     override func close() {
+        guard !mixerTransactions.isClosed else { return }
+        if mixerTransactions.needsBarrier {
+            Task { @MainActor in
+                do { try await mixerTransactions.barrier(replacingInstances: true) { self.closeCaptured() } }
+                catch { presentError(error) }
+            }
+            return
+        }
+        closeCaptured()
+    }
+
+    private func closeCaptured() {
+        mixerTransactions.finishClosingAfterCapture()
+        for state in ShowWindowRegistry.states(for: store) { state.mixerPresentation.originDidClose() }
         EpisodeWorkspaceViewStore.flushPending()
         // Closing while still edited means the user chose Don't Save: drop this document's edit checkpoints.
         if isDocumentEdited {

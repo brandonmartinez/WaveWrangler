@@ -16,6 +16,7 @@ final class EpisodeMixerController {
     private(set) var meters: MixerPCMOutput?
     private(set) var unitStatuses: [MixerUnitStatus] = []
     private(set) var instanceRevision: UInt64 = 0
+    private(set) var dependencyFailure: String?
     var mutedSpeakers: Set<SpeakerID> = []
     var soloedSpeakers: Set<SpeakerID> = []
     var masterMuted = false
@@ -24,18 +25,44 @@ final class EpisodeMixerController {
     @ObservationIgnored private var expectedMix: EpisodeMixState?
     @ObservationIgnored private var nativeStateBaseline: [AudioUnitSlotID: AudioUnitSlot]?
     @ObservationIgnored private var editorPolling: Task<Void, Never>?
+    @ObservationIgnored private let operations = MixerOperationQueue()
+    private(set) var editorObservationKey: String?
     @ObservationIgnored private var generation: UInt64 = 0
     private weak var document: ShowDocument?
     private let runtime: AlignmentRuntime
     let episodeID: EpisodeID
+    #if DEBUG
+    @ObservationIgnored var beforeStateCapture: (@MainActor () async -> Void)?
+    #endif
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime) {
         self.document = document
         self.episodeID = episodeID
         self.runtime = runtime
+        document.mixerTransactions.register(self)
     }
 
     func prepare(programFrames: Range<Int64>, policy: MixerRenderPolicy = .init()) async throws -> MixerRecipe {
+        let presentations = document.map {
+            ShowWindowRegistry.states(for: $0.store).filter { $0.alignmentModel?.mixer === self }.map(\.mixerPresentation)
+        } ?? []
+        presentations.forEach { $0.hideEditorsForBarrier() }
+        let key = editorObservationKey
+        await suspendEditorObservation()
+        do {
+            return try await operations.run { [self] in
+                if nativeStateBaseline != nil { try await captureState(coalescing: key) }
+                document?.store.endCoalescing()
+                presentations.forEach { $0.dismissEditorsAfterCapture() }
+                return try await load(programFrames: programFrames, policy: policy)
+            }
+        } catch {
+            presentations.forEach { $0.restoreEditorsAfterBarrier() }
+            throw error
+        }
+    }
+
+    private func load(programFrames: Range<Int64>, policy: MixerRenderPolicy) async throws -> MixerRecipe {
         generation &+= 1
         let generation = generation
         editorPolling?.cancel()
@@ -142,20 +169,25 @@ final class EpisodeMixerController {
 
     func setParameter(slot: AudioUnitSlotID, address: UInt64, value: Float,
                       coalescing key: String) async throws {
-        try validateCurrent()
-        guard let processor else { throw MixerFailure.staleDependencies }
-        let generation = generation
-        try await establishNativeStateBaseline()
-        try await processor.setParameter(slot: slot, address: address, value: value)
-        guard generation == self.generation else { throw CancellationError() }
-        try await captureAndPersist(coalescing: key)
+        let revision = instanceRevision
+        try await operations.run { [self] in
+            guard revision == instanceRevision else { throw MixerFailure.staleDependencies }
+            try validateCurrent()
+            guard let processor else { throw MixerFailure.staleDependencies }
+            let generation = generation
+            try await establishNativeStateBaseline()
+            try await processor.setParameter(slot: slot, address: address, value: value)
+            guard generation == self.generation else { throw CancellationError() }
+            try await captureState(coalescing: key)
+        }
     }
 
     /// Begin before displaying a vendor editor. End only after captureAndPersist has succeeded.
     /// The poll captures opaque state even when the vendor emits no parameter notification.
     func beginEditorObservation(coalescing key: String) async throws {
-        try await establishNativeStateBaseline()
-        editorPolling?.cancel()
+        await suspendEditorObservation()
+        try await operations.run { [self] in try await establishNativeStateBaseline() }
+        editorObservationKey = key
         editorPolling = Task { [weak self] in
             while let self, !Task.isCancelled {
                 do {
@@ -168,36 +200,57 @@ final class EpisodeMixerController {
     }
 
     func endEditorObservation() async throws {
-        try await captureAndPersist(coalescing: nil)
-        editorPolling?.cancel()
-        editorPolling = nil
+        let key = editorObservationKey
+        await suspendEditorObservation()
+        try await captureAndPersist(coalescing: key)
         document?.store.endCoalescing()
+        nativeStateBaseline = nil
     }
 
+    func suspendEditorObservation() async {
+        let polling = editorPolling
+        editorPolling = nil
+        editorObservationKey = nil
+        polling?.cancel()
+        await polling?.value
+    }
+
+    var hasObservedState: Bool { nativeStateBaseline != nil && processor != nil }
+
     func captureAndPersist(coalescing key: String?) async throws {
+        try await operations.run { [self] in
+            try Task.checkCancellation()
+            try await captureState(coalescing: key)
+        }
+    }
+
+    private func captureState(coalescing key: String?) async throws {
         try validateCurrent()
         guard let processor, let document else { throw MixerFailure.staleDependencies }
         try await establishNativeStateBaseline()
         let generation = generation
         let expectedAtCapture = expectedMix
+        #if DEBUG
+        await beforeStateCapture?()
+        #endif
         let slots = try await processor.captureDocumentStates()
         try Task.checkCancellation()
         guard generation == self.generation else { throw CancellationError() }
-        guard expectedMix == expectedAtCapture else { throw MixerFailure.staleDependencies }
+        guard expectedMix == expectedAtCapture else { throw stale("another capture replaced the expected mix") }
         try validateCurrent()
         guard let episode = document.store.model.episode(episodeID) else { throw MixerFailure.staleDependencies }
         var mix = episode.mix ?? EpisodeMixState()
         let expectedIDs = Set((mix.speakers.flatMap(\.inserts) + mix.master.inserts).map(\.id))
-        guard Set(slots.map(\.id)) == expectedIDs else { throw MixerFailure.staleDependencies }
-        let byID = Dictionary(uniqueKeysWithValues: slots.filter {
-            nativeStateBaseline?[$0.id]?.documentState != $0.documentState
+        guard Set(slots.map(\.id)) == expectedIDs else { throw stale("captured slot IDs differ from the document") }
+        let byID = Dictionary(uniqueKeysWithValues: try slots.filter {
+            try !Self.sameNativeState(nativeStateBaseline?[$0.id]?.documentState, $0.documentState, slot: $0.id)
         }.map { ($0.id, $0) })
         for index in mix.speakers.indices {
             mix.speakers[index].inserts = mix.speakers[index].inserts.map { byID[$0.id] ?? $0 }
         }
         mix.master.inserts = mix.master.inserts.map { byID[$0.id] ?? $0 }
         let captured = mix
-        guard document.store.apply("Edit Audio Unit", coalescing: key, { (model: ShowDocumentModel) throws(DomainError) in
+        guard document.store.applyMixerCapture(coalescing: key, { (model: ShowDocumentModel) throws(DomainError) in
             try model.settingMix(captured, in: episodeID)
         }) else { throw MixerFailure.invalidRecipe("the document refused the Audio Unit state transaction") }
         expectedMix = mix
@@ -205,6 +258,17 @@ final class EpisodeMixerController {
         let statuses = await processor.unitStatuses()
         guard generation == self.generation else { throw CancellationError() }
         unitStatuses = statuses
+    }
+
+    static func sameNativeState(_ lhs: Data?, _ rhs: Data?, slot: AudioUnitSlotID) throws -> Bool {
+        if lhs == rhs { return true }
+        guard let lhs, let rhs else { return false }
+        guard let a = try PropertyListSerialization.propertyList(from: lhs, options: [], format: nil) as? [String: Any],
+              let b = try PropertyListSerialization.propertyList(from: rhs, options: [], format: nil) as? [String: Any] else {
+            throw MixerFailure.state(slot, "captured state is not a property-list dictionary")
+        }
+        // Dictionary serialization order is not a knob edit. Preserve original bytes until state changes.
+        return NSDictionary(dictionary: a).isEqual(to: b)
     }
 
     private func establishNativeStateBaseline() async throws {
@@ -223,11 +287,24 @@ final class EpisodeMixerController {
     /// Save/Undo/Redo/close must await capture, suspend polling, then restore/reload from the document.
     /// Never let a stale vendor editor overwrite Undo or a changed Primary/insert chain.
     func stop() {
-        generation &+= 1
-        editorPolling?.cancel()
-        editorPolling = nil
-        state = .idle
+        // Stopping the transport does not discard an editor's unsaved native state.
+        if state == .loading { generation &+= 1 }
+        state = processor == nil ? .idle : .ready
         meters = nil
+    }
+
+    /// Only after the awaited capture barrier; the next editor/play loads the resulting document.
+    func invalidatePreparedInstance() {
+        precondition(editorPolling == nil)
+        generation &+= 1
+        processor = nil
+        snapshot = nil
+        expectedMix = nil
+        nativeStateBaseline = nil
+        unitStatuses = []
+        meters = nil
+        state = .idle
+        instanceRevision &+= 1
     }
 
     func fail(_ error: Error) {
@@ -238,17 +315,28 @@ final class EpisodeMixerController {
     }
 
     private func validateCurrent() throws {
-        guard let document, let snapshot, let recipe = processor?.recipe, let expectedMix,
-              let episode = document.store.model.episode(episodeID),
-              EpisodeProcessingInputs(episode).media == recipe.dependencies.media,
-              episode.activeManualCuts == recipe.dependencies.manualCuts,
-              document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: episodeID) == true else {
-            throw MixerFailure.staleDependencies
+        guard let document, !document.mixerTransactions.isClosed,
+              let snapshot, let recipe = processor?.recipe, let expectedMix,
+              let episode = document.store.model.episode(episodeID) else {
+            throw stale("the originating document, episode, or prepared instance is unavailable")
+        }
+        guard EpisodeProcessingInputs(episode).media == recipe.dependencies.media,
+              episode.activeManualCuts == recipe.dependencies.manualCuts else {
+            throw stale("the source/timing/cut dependencies changed")
+        }
+        guard document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: episodeID) == true else {
+            throw stale("the verified media snapshot changed")
         }
         let mix = episode.mix ?? EpisodeMixState()
         guard mix.master.inserts == expectedMix.master.inserts,
               recipe.routes.allSatisfy({
                   mix.state(for: $0.speaker).inserts == expectedMix.state(for: $0.speaker).inserts
-              }) else { throw MixerFailure.staleDependencies }
+              }) else { throw stale("document insert state changed outside the prepared instance") }
+        dependencyFailure = nil
+    }
+
+    private func stale(_ detail: String) -> MixerFailure {
+        dependencyFailure = detail
+        return .staleDependencies
     }
 }

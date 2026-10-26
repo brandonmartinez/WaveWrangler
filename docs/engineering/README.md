@@ -1209,6 +1209,47 @@ file-store `remove` calls. It does not exempt a cache file or relax any content,
 gateway, mutation, hook, or thread token. Its regression scans the actual
 `AdaptiveAudioPCMCache` and injects forbidden probes into that same source.
 
+#### Docked/detached mixer and document barriers
+
+`ShowWindowState.mixerPresentation` owns presentation only. Both `MixerView`
+surfaces bind `state.alignmentModel.mixer`; detaching constructs no audio engine,
+runtime, source grant, mix copy, or Undo manager. The originating editor retains
+its alignment model across legacy destination changes. A late runtime startup
+must reuse an already-attached model instead of replacing the editor's controller.
+`EpisodeBottomPaneContent` adds Review/Mixer to the existing device-local view
+state; the serialized review visibility/height keys and all review accessibility
+identifiers remain compatible. Detached windows are not document window
+controllers: they cannot keep a windowless document alive. They route commands
+and Undo through their originating state and close with that editor.
+
+`MixerOperationQueue` serializes capture/parameter/load operations across actor
+awaits. Suspending editor observation cancels **and awaits** the poll before
+final capture. The final capture retains the editor coalescing key, then ends
+coalescing. Native baseline comparison ignores only property-list dictionary
+serialization order; original slot bytes are retained until the native state
+actually changes. Domain/recipe equality still preserves exact serialized bytes.
+No-op captures do not create Undo steps or dirty default state.
+
+`ShowDocument.mixerTransactions` serializes document operations with generic edits.
+Save (including autosave), Undo/Redo, Revert, and document/editor close hide
+native editors, suspend polling, drain capture, and only then enter AppKit's
+ordinary operation. Save keeps the same current processor and resumes polling
+after completion. Undo/Redo and restart dismiss stale editors and invalidate the
+old processor; the next editor/play prepares from the resulting document.
+Transport Stop alone preserves native state and observation. Refused capture
+aborts the document operation, leaves the saved slot unchanged, and exposes an
+error. A failed editor can be retried or explicitly discarded after confirmation.
+While a native editor is open, incompatible source/timing/chain changes outside
+the mixer barrier are explicitly refused rather than racing its state.
+
+`MixerHostedTests` uses generated media and Apple low-pass units for shared
+ownership, two episodes/documents, input-gain/Primary identity, production
+transport, ordered slots, missing/read-only handling, native/generic recall,
+and controlled poll-versus-close/Save overlaps. `MixerUITests` exercises the real
+bottom-pane and auxiliary windows. Run hosted/UI cases only through the
+[leased VM pipeline](gui-testing.md); the unhosted operation-queue tests and
+static plan checks launch no editor.
+
 ## Conventions
 
 - **Originals are immutable.** No code path renames, moves, deletes, overwrites or writes into a

@@ -155,6 +155,16 @@ private struct SourceInspector: View {
         .setupFont(.body)
         .accessibilityIdentifier("ww.inspector.source.speaker")
 
+        if let episode,
+           let channel = ChannelReference(sourceID: source.id, statedChannel: statedChannel).resolvedChannel(in: episode) {
+            RecordingInputGainControl(store: model.store, episodeID: episode.id,
+                reference: ChannelReference(sourceID: source.id, statedChannel: channel),
+                enabled: model.store.document?.isAwaitingFormatUpdate != true,
+                identifier: "ww.inspector.source.inputGain")
+        } else {
+            Text("Choose an explicit channel before adjusting input gain.").font(.caption)
+        }
+
         roleRow
         if let definitions = model.store.model.show.profile?.recorderDefinitions, !definitions.isEmpty {
             Menu("Apply saved source definition") {
