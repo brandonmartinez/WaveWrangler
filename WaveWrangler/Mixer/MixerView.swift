@@ -38,6 +38,11 @@ struct MixerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
                     .accessibilityIdentifier("ww.mixer.processorError")
             }
+            if presentation.canDiscardEditorChanges {
+                Button("Discard Unsaved Effect Changes...") { presentation.discardFailedEditorChanges() }
+                    .accessibilityIdentifier("ww.mixer.discardEditorChanges")
+                    .help("Requires confirmation. Reloads the last document state without capturing the failed editor.")
+            }
             if presentation.episode != nil {
                 HStack(spacing: 0) {
                     ScrollView(.horizontal) {
@@ -88,7 +93,7 @@ struct MixerView: View {
         guard let document = presentation.state?.store.document else { return }
         Task {
             do {
-                try await document.mixerTransactions.barrier(replacingInstances: true) {
+                try await document.mixerTransactions.barrier(replacingInstances: true, episode: presentation.episode?.id) {
                     guard let model = presentation.model, !presentation.isClosed else { throw MixerFailure.staleDependencies }
                     model.playProductionMix()
                 }
@@ -311,12 +316,10 @@ struct RecordingInputGainControl: View {
             MixerNumberControl(title: "Input gain (dB)", value: Binding(
                 get: { store.model.episode(episodeID)?.mix?.inputGainDB(for: reference.sourceID, channel: channel) ?? 0 },
                 set: { gain in
-                    guard enabled else { return }
-                    store.apply("Adjust Recording Input Gain", coalescing: "inputGain.\(episodeID).\(reference.sourceID).\(channel)") {
-                        model throws(DomainError) in try model.settingInputGain(gain, for: reference, in: episodeID)
-                    }
+                    guard enabled, store.canEdit else { return }
+                    store.setRecordingInputGain(gain, reference: reference, in: episodeID)
                 }), range: EpisodeMixState.gainRangeDB, identifier: identifier, endEditing: { store.endCoalescing() })
-                .disabled(!enabled)
+                .disabled(!enabled || !store.canEdit)
                 .help("Saved gain for this recording and channel, before inserts. Original audio, waveforms, alignment, and transcripts are unchanged.")
             if let error = store.lastError {
                 Text(EpisodeSetupModel.describe(error)).font(.caption).foregroundStyle(.red)

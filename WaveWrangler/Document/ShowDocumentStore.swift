@@ -32,6 +32,11 @@ final class ShowDocumentStore {
         self.model = model
     }
 
+    var canEdit: Bool {
+        guard let document else { return true }
+        return !document.isInViewingMode && !document.saveStatus.state.isReadOnly
+    }
+
     /// Replaces the value after reading from disk; not an undoable edit.
     func replaceLoadedModel(_ model: ShowDocumentModel) {
         self.model = model
@@ -53,7 +58,10 @@ final class ShowDocumentStore {
         _ operation: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel
     ) -> Bool {
         // #159: an older-format show is read-only until its update has published.
-        guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
+        guard canEdit else {
+            lastError = .invalidMix("This show is read-only. Open an editable copy before changing it.")
+            return false
+        }
         do throws(DomainError) {
             if document?.mixerTransactions.isBusy == true, !isCapturingMixer, !isEditingMixer {
                 throw DomainError.invalidMix("Wait for the mixer document transaction to finish.")
@@ -87,6 +95,14 @@ final class ShowDocumentStore {
         coalescingKey = nil
     }
 
+    @discardableResult
+    func setRecordingInputGain(_ gain: Double, reference: ChannelReference, in episode: EpisodeID) -> Bool {
+        apply("Adjust Recording Input Gain",
+              coalescing: "inputGain.\(episode).\(reference.sourceID).\(String(describing: reference.channel.value))") {
+            model throws(DomainError) in try model.settingInputGain(gain, for: reference, in: episode)
+        }
+    }
+
     func applyMixerCapture(
         coalescing key: String?,
         _ operation: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel
@@ -113,7 +129,10 @@ final class ShowDocumentStore {
         model newModel: ShowDocumentModel,
         afterChange: @escaping @MainActor (ShowDocumentModel) -> Void
     ) -> Bool {
-        guard FormatUpdatePolicy.allowsEdits(document?.status.formatUpdate) else { return false }
+        guard canEdit else {
+            lastError = .invalidMix("This show is read-only. Open an editable copy before changing it.")
+            return false
+        }
         guard document?.mixerTransactions.isBusy != true else {
             lastError = .invalidMix("Wait for the mixer document transaction to finish.")
             return false

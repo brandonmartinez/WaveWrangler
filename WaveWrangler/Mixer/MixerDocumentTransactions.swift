@@ -55,17 +55,52 @@ final class MixerDocumentTransactions {
         }
     }
 
+    /// The document queue already serializes the requesting UI action.
+    func handoffEditors(to target: EpisodeMixerController) async throws {
+        guard isBusy, !isClosed else { throw MixerFailure.staleDependencies }
+        let others = liveControllers.filter { $0 !== target && $0.episodeID == target.episodeID && $0.hasObservedState }
+        let states = document.map { ShowWindowRegistry.states(for: $0.store) } ?? []
+        let presentations = states.filter { state in others.contains { state.alignmentModel?.mixer === $0 } }
+            .map(\.mixerPresentation)
+        presentations.forEach { $0.hideEditorsForBarrier() }
+        do {
+            for other in others { try await other.endEditorObservation() }
+            presentations.forEach { $0.dismissEditorsAfterCapture() }
+            for state in states where others.contains(where: { state.alignmentModel?.mixer === $0 }) {
+                if state.alignmentModel?.listeningMode == .productionMix { state.alignmentModel?.stopAudition() }
+            }
+            others.forEach { $0.invalidatePreparedInstance() }
+        } catch {
+            presentations.forEach { $0.restoreEditorsAfterBarrier() }
+            throw error
+        }
+    }
+
+    func didCapture(from source: EpisodeMixerController) {
+        let others = liveControllers.filter { $0 !== source && $0.episodeID == source.episodeID && !$0.hasObservedState }
+        for state in document.map({ ShowWindowRegistry.states(for: $0.store) }) ?? [] {
+            if others.contains(where: { state.alignmentModel?.mixer === $0 }),
+               state.alignmentModel?.listeningMode == .productionMix {
+                state.alignmentModel?.stopAudition()
+            }
+        }
+        others.forEach { $0.invalidatePreparedInstance() }
+    }
+
     /// Hide native editors before capture so no UI knob can race the document operation.
     func barrier(
         replacingInstances: Bool = false,
+        episode: EpisodeID? = nil,
         _ operation: @escaping @MainActor () async throws -> Void
     ) async throws {
         try await operations.run { [self] in
             guard !isClosed else { throw MixerFailure.staleDependencies }
             isBusy = true
             isInsideBarrier = true
-            let presentations = document.map { ShowWindowRegistry.states(for: $0.store).map(\.mixerPresentation) } ?? []
-            let controllers = liveControllers
+            let states = document.map { ShowWindowRegistry.states(for: $0.store) } ?? []
+            let affectedStates = states.filter { episode == nil || $0.selectedEpisodeID == episode }
+            let presentations = affectedStates.map(\.mixerPresentation)
+            let controllers = liveControllers.filter { episode == nil || $0.episodeID == episode }
             let observing = controllers.map { ($0, $0.editorObservationKey) }
             presentations.forEach { $0.hideEditorsForBarrier() }
             defer { isBusy = false; isInsideBarrier = false }
@@ -77,7 +112,7 @@ final class MixerDocumentTransactions {
                 document?.store.endCoalescing()
                 if replacingInstances {
                     presentations.forEach { $0.dismissEditorsAfterCapture() }
-                    for state in document.map({ ShowWindowRegistry.states(for: $0.store) }) ?? [] {
+                    for state in affectedStates {
                         state.alignmentModel?.stopAudition()
                     }
                     controllers.forEach { $0.invalidatePreparedInstance() }

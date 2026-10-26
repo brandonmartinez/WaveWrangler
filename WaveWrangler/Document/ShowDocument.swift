@@ -63,6 +63,9 @@ final class ShowDocument: NSDocument {
     }
 
     #if DEBUG
+    var debugViewingMode = false
+    override var isInViewingMode: Bool { debugViewingMode || super.isInViewingMode }
+
     /// Debug-only fault injection at the C3 boundaries (native holdout runner); `nil` in normal use.
     static var debugPublicationHooks: (any PublicationHooks)?
     /// Debug-only replacement for the shared library acknowledgment (native holdout runner).
@@ -811,10 +814,10 @@ final class ShowDocument: NSDocument {
         // restore also un-marks the record and offers it again; Redo marks it again.
         let undo = undoManager
         undo?.beginUndoGrouping()
-        store.apply("Restore Unsaved Changes") { _ in candidate.payload }
+        defer { undo?.endUndoGrouping() }
+        guard store.apply("Restore Unsaved Changes", { _ in candidate.payload }) else { return }
         markRestored(candidate.url)
         undo?.setActionName("Restore Unsaved Changes")
-        undo?.endUndoGrouping()
     }
 
     private func markRestored(_ url: URL) {

@@ -105,7 +105,7 @@ struct EpisodeAlignmentContent: View {
             model.ensureWaveformOverview()
         }
         .onDisappear {
-            state.cleanupModel?.cancel()
+            state.alignmentWorkspaceDidDisappear()
         }
     }
 }

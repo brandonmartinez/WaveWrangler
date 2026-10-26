@@ -21,44 +21,45 @@ struct MixerHostedTests {
         #expect(try !EpisodeMixerController.sameNativeState(xml, changed, slot: AudioUnitSlotID()))
     }
 
-    private func ready() async throws -> AlignmentWaveformRetentionHostedTests.Fixture {
-        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 4)
+    func ready(durationSeconds: Int = 4) async throws -> AlignmentWaveformRetentionHostedTests.Fixture {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: durationSeconds)
         f.model.placeGroupsAtSourceTime()
         try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
             && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
         return f
     }
 
-    private func owner(_ f: AlignmentWaveformRetentionHostedTests.Fixture) -> EpisodeWindowController {
-        let owner = EpisodeWindowController(store: f.document.store, episodeID: f.model.episodeID)
-        owner.state.alignmentModel = f.model
-        owner.state.select(.alignment)
+    func owner(_ f: AlignmentWaveformRetentionHostedTests.Fixture) -> EpisodeWindowController {
+        let state = ShowWindowState(store: f.document.store, episodeID: f.model.episodeID)
+        state.alignmentModel = f.model
+        state.select(.alignment)
+        let owner = EpisodeWindowController(state: state)
         f.document.addWindowController(owner)
         if let window = owner.window { owner.state.attach(to: window) }
         return owner
     }
 
-    private func wait(_ context: @autoclosure () -> String = "mixer condition", _ condition: () -> Bool) async throws {
+    func wait(_ context: @autoclosure () -> String = "mixer condition", _ condition: () -> Bool) async throws {
         let end = Date().addingTimeInterval(20)
         while !condition(), Date() < end { try await Task.sleep(for: .milliseconds(10)) }
         try #require(condition(), Comment(rawValue: context()))
     }
 
-    private func appleSlot() throws -> AudioUnitSlot {
+    func appleSlot() throws -> AudioUnitSlot {
         let component = try #require(MixerAudioUnits.installedEffects().first {
             $0.identity.manufacturer == 0x6170706C && $0.identity.subtype == 0x6C706173
         })
         return AudioUnitSlot(component: component.identity, productName: component.name)
     }
 
-    private func insert(_ slot: AudioUnitSlot, into f: AlignmentWaveformRetentionHostedTests.Fixture) throws {
+    func insert(_ slot: AudioUnitSlot, into f: AlignmentWaveformRetentionHostedTests.Fixture) throws {
         let episode = f.model.episodeID
         try #require(f.document.store.apply("Add Apple Test Effect") { model throws(DomainError) in
             try model.settingMasterMix(MasterMixState(inserts: [slot]), in: episode)
         })
     }
 
-    private func save(_ document: ShowDocument) async throws {
+    func save(_ document: ShowDocument) async throws {
         let url = try #require(document.fileURL)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             document.save(to: url, ofType: DocumentTypes.show, for: .saveOperation) {

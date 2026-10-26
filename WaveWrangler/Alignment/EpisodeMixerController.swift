@@ -32,7 +32,7 @@ final class EpisodeMixerController {
     private let runtime: AlignmentRuntime
     let episodeID: EpisodeID
     #if DEBUG
-    @ObservationIgnored var beforeStateCapture: (@MainActor () async -> Void)?
+    @ObservationIgnored var beforeStateCapture: (@MainActor () async throws -> Void)?
     #endif
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime) {
@@ -231,7 +231,7 @@ final class EpisodeMixerController {
         let generation = generation
         let expectedAtCapture = expectedMix
         #if DEBUG
-        await beforeStateCapture?()
+        try await beforeStateCapture?()
         #endif
         let slots = try await processor.captureDocumentStates()
         try Task.checkCancellation()
@@ -240,6 +240,7 @@ final class EpisodeMixerController {
         try validateCurrent()
         guard let episode = document.store.model.episode(episodeID) else { throw MixerFailure.staleDependencies }
         var mix = episode.mix ?? EpisodeMixState()
+        let originalMix = mix
         let expectedIDs = Set((mix.speakers.flatMap(\.inserts) + mix.master.inserts).map(\.id))
         guard Set(slots.map(\.id)) == expectedIDs else { throw stale("captured slot IDs differ from the document") }
         let byID = Dictionary(uniqueKeysWithValues: try slots.filter {
@@ -255,6 +256,7 @@ final class EpisodeMixerController {
         }) else { throw MixerFailure.invalidRecipe("the document refused the Audio Unit state transaction") }
         expectedMix = mix
         nativeStateBaseline = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
+        if mix != originalMix { document.mixerTransactions.didCapture(from: self) }
         let statuses = await processor.unitStatuses()
         guard generation == self.generation else { throw CancellationError() }
         unitStatuses = statuses
@@ -307,6 +309,11 @@ final class EpisodeMixerController {
         instanceRevision &+= 1
     }
 
+    func discardUncapturedEditorState() async throws {
+        await suspendEditorObservation()
+        try await operations.run { [self] in invalidatePreparedInstance() }
+    }
+
     func fail(_ error: Error) {
         generation &+= 1
         editorPolling?.cancel()
@@ -314,25 +321,32 @@ final class EpisodeMixerController {
         state = .failed(error.localizedDescription)
     }
 
+    var preparedInstanceIsCurrent: Bool { currentDependencyFailure() == nil }
+
     private func validateCurrent() throws {
+        if let detail = currentDependencyFailure() { throw stale(detail) }
+        dependencyFailure = nil
+    }
+
+    private func currentDependencyFailure() -> String? {
         guard let document, !document.mixerTransactions.isClosed,
               let snapshot, let recipe = processor?.recipe, let expectedMix,
               let episode = document.store.model.episode(episodeID) else {
-            throw stale("the originating document, episode, or prepared instance is unavailable")
+            return "the originating document, episode, or prepared instance is unavailable"
         }
         guard EpisodeProcessingInputs(episode).media == recipe.dependencies.media,
               episode.activeManualCuts == recipe.dependencies.manualCuts else {
-            throw stale("the source/timing/cut dependencies changed")
+            return "the source/timing/cut dependencies changed"
         }
         guard document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: episodeID) == true else {
-            throw stale("the verified media snapshot changed")
+            return "the verified media snapshot changed"
         }
         let mix = episode.mix ?? EpisodeMixState()
         guard mix.master.inserts == expectedMix.master.inserts,
               recipe.routes.allSatisfy({
                   mix.state(for: $0.speaker).inserts == expectedMix.state(for: $0.speaker).inserts
-              }) else { throw stale("document insert state changed outside the prepared instance") }
-        dependencyFailure = nil
+              }) else { return "document insert state changed outside the prepared instance" }
+        return nil
     }
 
     private func stale(_ detail: String) -> MixerFailure {

@@ -1242,11 +1242,31 @@ error. A failed editor can be retried or explicitly discarded after confirmation
 While a native editor is open, incompatible source/timing/chain changes outside
 the mixer barrier are explicitly refused rather than racing its state.
 
+Effect-editor ownership is exclusive per episode across originating windows.
+`handoffEditors(to:)` runs inside the document queue, awaits capture/closure of
+the prior editor, and loads the new owner's instance from the resulting mix.
+Changed captures invalidate nonediting same-episode instances, never another
+episode's processors. Insert/play restart barriers scope teardown to their
+episode; Save, Undo/Redo, and document close retain document-wide barriers.
+Capture failures expose confirmed discard/reload on the mixer surface, including
+for a native editor that cannot close successfully. No capture is required to
+perform an explicitly confirmed discard.
+
+`ShowDocumentStore.canEdit` includes actual viewing mode and mapped read-only
+status at the mutation boundary. Both recording gain surfaces use its shared
+gain operation. A refused recovery restore never marks its offer restored, so
+a subsequent verified Save cannot delete that unapplied checkpoint.
+`alignmentWorkspaceDidDisappear()` stops diagnostic audition while preserving
+deliberately detached production and the retained originating model. Buffered
+monitoring still stops explicitly if UI/device scheduling misses its deadline.
+
 `MixerHostedTests` uses generated media and Apple low-pass units for shared
 ownership, two episodes/documents, input-gain/Primary identity, production
 transport, ordered slots, missing/read-only handling, native/generic recall,
 and controlled poll-versus-close/Save overlaps. `MixerUITests` exercises the real
-bottom-pane and auxiliary windows. Run hosted/UI cases only through the
+bottom-pane and auxiliary windows. `MixerReviewRegressionTests` covers refused
+recovery, same-episode editor handoff, failed native capture/discard, episode
+isolation, viewing mode, and workspace-disappearance policy. Run hosted/UI cases only through the
 [leased VM pipeline](gui-testing.md); the unhosted operation-queue tests and
 static plan checks launch no editor.
 

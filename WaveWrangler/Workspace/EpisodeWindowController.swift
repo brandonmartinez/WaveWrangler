@@ -6,8 +6,12 @@ import WWCore
 final class EpisodeWindowController: NSWindowController {
     private(set) var state: ShowWindowState
 
-    init(store: ShowDocumentStore, episodeID: EpisodeID) {
-        state = ShowWindowState(store: store, episodeID: episodeID)
+    convenience init(store: ShowDocumentStore, episodeID: EpisodeID) {
+        self.init(state: ShowWindowState(store: store, episodeID: episodeID))
+    }
+
+    init(state: ShowWindowState) {
+        self.state = state
         let hosting = NSHostingController(rootView: ShowWorkspaceView(state: state))
         hosting.sizingOptions = []
         let window = EpisodeEditorWindow(contentViewController: hosting)

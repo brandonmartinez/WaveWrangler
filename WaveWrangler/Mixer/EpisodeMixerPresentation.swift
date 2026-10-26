@@ -41,6 +41,12 @@ final class EpisodeMixerPresentation {
     var error: String? {
         state?.store.document?.mixerTransactions.error ?? state?.store.lastError.map(EpisodeSetupModel.describe)
     }
+    var canDiscardEditorChanges: Bool {
+        guard controller?.hasObservedState == true else { return false }
+        if error != nil { return true }
+        if case .failed = controller?.state { return true }
+        return false
+    }
 
     func discoverEffects() { components = MixerAudioUnits.installedEffects() }
 
@@ -86,6 +92,7 @@ final class EpisodeMixerPresentation {
         detachedWindow = nil
         owner?.close()
         guard !isClosed, let state else { return }
+        state.select(.alignment)
         state.bottomPaneContent = .mixer
         state.bottomPanePresented = true
         state.window?.makeKeyAndOrderFront(nil)
@@ -167,7 +174,7 @@ final class EpisodeMixerPresentation {
         guard canEdit, let state, let id = state.selectedEpisodeID, let document = state.store.document else { return }
         Task {
             do {
-                try await document.mixerTransactions.barrier(replacingInstances: true) {
+                try await document.mixerTransactions.barrier(replacingInstances: true, episode: id) {
                     guard state.canEdit, !self.isClosed else { throw MixerFailure.staleDependencies }
                     let applied = state.store.applyMixerEdit(action) { model throws(DomainError) in
                         let mix = model.episode(id)?.mix ?? EpisodeMixState()
@@ -200,7 +207,11 @@ final class EpisodeMixerPresentation {
                 try await document.mixerTransactions.edit {
                     guard !self.isClosed, let controller = self.controller else { throw MixerFailure.staleDependencies }
                     try await self.closeEditor()
-                    if controller.processor == nil || {
+                    try await document.mixerTransactions.handoffEditors(to: controller)
+                    guard self.controller === controller else {
+                        throw MixerFailure.invalidRecipe("the originating editor changed during effect-editor handoff")
+                    }
+                    if !controller.preparedInstanceIsCurrent || {
                         if case .failed = controller.state { return true }
                         return false
                     }() {
@@ -210,8 +221,9 @@ final class EpisodeMixerPresentation {
                     let revision = controller.instanceRevision
                     let parameters = try await processor.parameters(slot: slot.id)
                     let native = generic ? nil : try await processor.editor(slot: slot.id).requestViewController()
-                    guard !self.isClosed, revision == controller.instanceRevision, self.canEdit else {
-                        throw MixerFailure.staleDependencies
+                    guard !self.isClosed, self.controller === controller,
+                          revision == controller.instanceRevision, self.canEdit else {
+                        throw MixerFailure.invalidRecipe("the editor request was superseded by a new processing instance")
                     }
                     try await controller.beginEditorObservation(coalescing: "mixer.editor.\(slot.id)")
                     self.parameters = parameters
@@ -266,18 +278,31 @@ final class EpisodeMixerPresentation {
     func discardFailedEditorChanges() {
         guard let state, let document = state.store.document else { return }
         Task {
-            guard await Dialogs.confirm(in: editorWindow?.window ?? state.window,
-                message: "Discard unsaved Audio Unit changes?",
-                informative: "The last document state will be kept. Changes that could not be captured from this editor will be discarded.",
-                confirmTitle: "Discard Editor Changes", destructiveIsDefault: false) else { return }
             do {
-                try await document.mixerTransactions.edit {
-                    await self.controller?.suspendEditorObservation()
-                    self.dismissEditorsAfterCapture()
-                    self.model?.stopAudition()
-                    self.controller?.invalidatePreparedInstance()
+                try await discardFailedEditorChanges {
+                    await Dialogs.confirm(in: self.editorWindow?.window ?? state.window,
+                        message: "Discard unsaved Audio Unit changes?",
+                        informative: "The last document state will be reloaded. Changes that could not be captured from this editor will be discarded.",
+                        confirmTitle: "Discard Editor Changes", destructiveIsDefault: false)
                 }
             } catch { document.mixerTransactions.report(error) }
+        }
+    }
+
+    func discardFailedEditorChanges(confirm: @MainActor () async -> Bool) async throws {
+        guard let document = state?.store.document, canDiscardEditorChanges else { return }
+        let revision = editorRevision, slot = editedSlot
+        guard await confirm() else { return }
+        try await document.mixerTransactions.edit {
+            guard self.editorRevision == revision, self.editedSlot == slot, let controller = self.controller else {
+                throw MixerFailure.staleDependencies
+            }
+            self.hideEditorsForBarrier()
+            await controller.suspendEditorObservation()
+            self.dismissEditorsAfterCapture()
+            self.model?.stopAudition()
+            try await controller.discardUncapturedEditorState()
+            _ = try await controller.prepare(programFrames: 0..<1)
         }
     }
 

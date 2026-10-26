@@ -46,13 +46,17 @@ visible with their saved state and an error; they are not silently omitted. Clos
 editor before changing source/timing assignments. Save, Undo/Redo, restart, and close await
 full native-state capture; Undo or restart dismisses an editor belonging to an old processor.
 A refused capture leaves the editor open for retry or an explicitly confirmed discard of its
-unsaved changes.
+unsaved changes from the mixer itself. Opening an effect editor in another window of the same
+episode safely captures and closes the previous effect editor before handing it over.
+Insert edits in one episode do not stop another episode's mixer.
 
 **Play Mix** explicitly selects production listening through the confirmed speaker Primaries,
 speaker inserts/fader/pan, and Master inserts/output gain. Ordinary timeline/source audition
 remains diagnostic listening, without those inserts or faders. Opening, docking, or closing a
 mixer never starts playback or changes those source-listening choices. Mixer **Solo/Mute** is
 temporary production listening, not a saved render setting or a source-role change.
+Leaving Alignment stops diagnostic source audition. Deliberate production listening can
+continue in a detached mixer, which retains its own Stop control.
 Levels describe prepared PCM, including clipping; they are not acoustic-output measurements.
 This is buffered monitoring, not live microphone monitoring or zero-latency processing.
 The initial processing scope is arm64, mono/stereo recordings, mono speaker inserts, and 48 kHz

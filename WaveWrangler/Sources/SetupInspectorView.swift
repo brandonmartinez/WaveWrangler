@@ -159,7 +159,7 @@ private struct SourceInspector: View {
            let channel = ChannelReference(sourceID: source.id, statedChannel: statedChannel).resolvedChannel(in: episode) {
             RecordingInputGainControl(store: model.store, episodeID: episode.id,
                 reference: ChannelReference(sourceID: source.id, statedChannel: channel),
-                enabled: model.store.document?.isAwaitingFormatUpdate != true,
+                enabled: model.store.canEdit,
                 identifier: "ww.inspector.source.inputGain")
         } else {
             Text("Choose an explicit channel before adjusting input gain.").font(.caption)

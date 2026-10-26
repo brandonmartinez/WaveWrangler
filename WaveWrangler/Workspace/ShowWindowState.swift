@@ -26,6 +26,10 @@ final class ShowWindowState {
     var destination: ShowDestination = .setup {
         didSet {
             persistWorkspacePanels()
+            if oldValue == .alignment, destination != .alignment, let alignmentModel,
+               alignmentModel.listeningMode == .sourceAudition || !mixerPresentation.isDetached {
+                alignmentModel.stopAudition()
+            }
             // Leaving Review revokes pending handoffs even if a new Setup selects the same speaker.
             guard oldValue != destination, destination != .review else { return }
             reviewSelectionGeneration += 1
@@ -114,6 +118,13 @@ final class ShowWindowState {
     var alignmentModel: EpisodeAlignmentModel?
     var cleanupModel: EpisodeCleanupModel?
     private var listeningStates: [EpisodeID: EpisodeListeningState] = [:]
+
+    func alignmentWorkspaceDidDisappear() {
+        let active = alignmentModel
+        let keepsProduction = mixerPresentation.isDetached && active?.listeningMode == .productionMix
+        cleanupModel?.cancel(preservingWorkspacePlayback: keepsProduction)
+        if active?.listeningMode == .sourceAudition { active?.stopAudition() }
+    }
 
     func listeningState(for episode: EpisodeID) -> EpisodeListeningState {
         if let existing = listeningStates[episode] { return existing }

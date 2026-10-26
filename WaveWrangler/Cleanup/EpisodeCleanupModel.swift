@@ -221,14 +221,14 @@ final class EpisodeCleanupModel {
         }
     }
 
-    func cancel() {
+    func cancel(preservingWorkspacePlayback: Bool = false) {
         pendingReviewFocus = nil
         cancelTranscription()
         refreshGeneration = UUID()
         isRefreshing = false
         fillerPublicationGeneration = nil
         cancelWaveforms()
-        stopPlayback()
+        if !preservingWorkspacePlayback || workspaceAlignment == nil { stopPlayback() }
     }
 
     func cancelTranscription() {
