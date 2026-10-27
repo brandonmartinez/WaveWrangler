@@ -33,7 +33,7 @@ struct MixerView: View {
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
                     .accessibilityIdentifier("ww.mixer.error")
             }
-            if case let .failed(message) = presentation.controller?.state {
+            if case let .failed(message) = presentation.controller?.state, message != presentation.error {
                 Text(message).font(.caption).foregroundStyle(.red).textSelection(.enabled)
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 8)
                     .accessibilityIdentifier("ww.mixer.processorError")
@@ -125,11 +125,15 @@ private struct MixerStrip: View {
                     Text("Inserts").font(.subheadline)
                     Spacer()
                     Menu("Add") {
-                        ForEach(presentation.components) { component in
-                            Button(component.name) {
-                                presentation.changeInserts(bus, action: "Add Audio Unit") {
-                                    $0 + [AudioUnitSlot(component: component.identity,
-                                        productName: component.name, version: String(component.version))]
+                        ForEach(presentation.componentGroups) { group in
+                            Menu(group.manufacturer) {
+                                ForEach(group.components) { component in
+                                    Button(component.name) {
+                                        presentation.changeInserts(bus, action: "Add Audio Unit") {
+                                            $0 + [AudioUnitSlot(component: component.identity,
+                                                productName: component.name, version: String(component.version))]
+                                        }
+                                    }
                                 }
                             }
                         }

@@ -10,7 +10,7 @@ public enum MixerFailure: Error, Sendable, Equatable, LocalizedError {
     case staleDependencies
     case missingUnit(AudioUnitSlotID)
     case loading(AudioUnitSlotID, String)
-    case format(AudioUnitSlotID)
+    case format(AudioUnitSlotID, String)
     case state(AudioUnitSlotID, String)
     case parameter(AudioUnitSlotID)
     case render(AudioUnitSlotID, Int32)
@@ -32,7 +32,7 @@ public enum MixerFailure: Error, Sendable, Equatable, LocalizedError {
         case .staleDependencies: "Mixer dependencies changed. Prepared audio was discarded."
         case .missingUnit(let slot): "Audio Unit in slot \(slot) is not installed. No substitute was used."
         case .loading(let slot, let reason): "Audio Unit \(slot) could not load: \(reason)"
-        case .format(let slot): "Audio Unit \(slot) does not support the required mono/stereo format."
+        case .format(let slot, let reason): "Audio Unit in slot \(slot) cannot use the required format: \(reason)"
         case .state(let slot, let reason): "Audio Unit \(slot) document state failed: \(reason)"
         case .parameter(let slot): "Audio Unit \(slot) refused the parameter edit."
         case .render(let slot, let status): "Audio Unit \(slot) rendering failed (\(status))."

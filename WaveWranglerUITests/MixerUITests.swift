@@ -91,6 +91,9 @@ final class MixerUITests: XCTestCase {
         let add = mixer.descendants(matching: .any)["ww.mixer.strip.master.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 5), app.debugDescription)
         add.click()
+        let apple = app.menuItems["Apple"]
+        XCTAssertTrue(apple.waitForExistence(timeout: 5), app.debugDescription)
+        apple.hover()
         let lowpass = app.menuItems["AULowpass"]
         XCTAssertTrue(lowpass.waitForExistence(timeout: 5), app.debugDescription)
         lowpass.click()

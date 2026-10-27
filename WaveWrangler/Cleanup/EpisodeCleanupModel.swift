@@ -632,8 +632,13 @@ final class EpisodeCleanupModel {
                         throw NSError(domain: "CleanupWaveforms", code: 1,
                                       userInfo: [NSLocalizedDescriptionKey: "\(lane.name): \(reason)"])
                     }
-                    let prepared = try await AlignmentWaveformProjection.prepare(
-                        load: loaded, episode: snapshot.episode(episodeID), cuts: cuts, mappedOnly: true)
+                    let prepared = if overview {
+                        try await runtime.prepareWaveformOverview(
+                            load: loaded, episode: snapshot.episode(episodeID), cuts: cuts, mappedOnly: true)
+                    } else {
+                        try await AlignmentWaveformProjection.prepare(
+                            load: loaded, episode: snapshot.episode(episodeID), cuts: cuts, mappedOnly: true)
+                    }
                     if let reason = prepared.errors[track.id] {
                         throw ManualCutReviewFailure(reason: "\(lane.name): \(reason)")
                     }

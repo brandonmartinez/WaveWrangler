@@ -155,6 +155,36 @@ struct MixerProcessorTests {
         #expect(throws: MixerFailure.self) { try invalid.capture() }
     }
 
+    @Test func unusedSidechainInputsAreDisabledAfterStateRecall() throws {
+        for channels in [1, 2] {
+            var slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+                manufacturer: kAudioUnitManufacturer_Apple), productName: "Generated Sidechain Effect")
+            slot.documentState = try PropertyListSerialization.data(
+                fromPropertyList: ["auxiliaryEnabled": true], format: .binary, options: 0)
+            let unit = try GeneratedUnit(channels: channels, operation: .identity, latency: 0, tail: 0,
+                inputBusCount: 2)
+            let host = try NativeAudioUnit(slot: slot, unit: unit, channels: channels, policy: .init())
+            #expect(unit.inputBusses[0].isEnabled)
+            #expect(!unit.inputBusses[1].isEnabled)
+            let samples = Array(repeating: [Float(0.2), -0.4, 0.1], count: channels)
+            #expect(try host.render(samples) == samples)
+            #expect(try host.capture().documentState == slot.documentState)
+        }
+    }
+
+    @Test func missingMainBussesAndMultipleOutputsStillRefuse() throws {
+        let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+            manufacturer: kAudioUnitManufacturer_Apple), productName: "Generated Multi-Bus Effect")
+        for (inputs, outputs) in [(0, 1), (1, 0), (1, 2)] {
+            let unit = try GeneratedUnit(channels: 1, operation: .identity, latency: 0, tail: 0,
+                inputBusCount: inputs, outputBusCount: outputs)
+            #expect(throws: MixerFailure.format(slot.id,
+                "Generated Multi-Bus Effect needs 48 kHz mono audio. The effect must provide a main input and a single output bus.")) {
+                try NativeAudioUnit(slot: slot, unit: unit, channels: 1, policy: .init())
+            }
+        }
+    }
+
     @Test func changedNonfiniteFractionalAndOverBudgetLatencyOrTailRefuse() throws {
         let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
             manufacturer: kAudioUnitManufacturer_Apple))
@@ -368,7 +398,8 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     var reportedLatency: TimeInterval?
     var reportedTail: TimeInterval?
 
-    init(channels: Int, operation: Operation, latency: Int, tail: Int, failures: Int = 0) throws {
+    init(channels: Int, operation: Operation, latency: Int, tail: Int, failures: Int = 0,
+         inputBusCount: Int = 1, outputBusCount: Int = 1) throws {
         delay = latency
         self.tail = tail
         self.operation = operation
@@ -379,8 +410,10 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
             componentFlags: 0, componentFlagsMask: 0), options: [])
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000,
             channels: AVAudioChannelCount(channels)))
-        inputs = AUAudioUnitBusArray(audioUnit: self, busType: .input, busses: [try AUAudioUnitBus(format: format)])
-        outputs = AUAudioUnitBusArray(audioUnit: self, busType: .output, busses: [try AUAudioUnitBus(format: format)])
+        inputs = AUAudioUnitBusArray(audioUnit: self, busType: .input,
+            busses: try (0..<inputBusCount).map { _ in try AUAudioUnitBus(format: format) })
+        outputs = AUAudioUnitBusArray(audioUnit: self, busType: .output,
+            busses: try (0..<outputBusCount).map { _ in try AUAudioUnitBus(format: format) })
     }
     override var inputBusses: AUAudioUnitBusArray { inputs }
     override var outputBusses: AUAudioUnitBusArray { outputs }
@@ -388,7 +421,12 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     override var tailTime: TimeInterval { reportedTail ?? Double(tail) / 48_000 }
     override var fullStateForDocument: [String: Any]? {
         get { documentState }
-        set { documentState = newValue }
+        set {
+            documentState = newValue
+            if let enabled = newValue?["auxiliaryEnabled"] as? Bool {
+                for index in (0..<inputBusses.count).dropFirst() { inputBusses[index].isEnabled = enabled }
+            }
+        }
     }
     override var internalRenderBlock: AUInternalRenderBlock {
         { [self] flags, time, count, _, output, _, pull in
@@ -397,6 +435,9 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
                 return kAudioUnitErr_CannotDoInCurrentContext
             }
             if case .unwritten = operation { return noErr }
+            guard (0..<inputBusses.count).dropFirst().allSatisfy({ !inputBusses[$0].isEnabled }) else {
+                return kAudioUnitErr_NoConnection
+            }
             guard let pull else { return kAudioUnitErr_NoConnection }
             let status = pull(flags, time, count, 0, output)
             if status != noErr { return status }

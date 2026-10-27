@@ -72,6 +72,7 @@
 				Alignment/AlignmentSourceAccess.swift,
 				Alignment/AlignmentWaveform.swift,
 				Alignment/AlignmentWaveformCache.swift,
+				Alignment/AlignmentWaveformPreparationCache.swift,
 				Alignment/AlignmentWaveformStrokeIndex.swift,
 				Alignment/AnchorTimeEditing.swift,
 				App/AppBuildIdentity.swift,

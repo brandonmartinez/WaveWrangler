@@ -19,6 +19,29 @@ struct NativeAudioUnitTests {
         #expect(MixerAudioUnits.installedEffects().allSatisfy { $0.identity.isValid })
     }
 
+    @Test func vendorGroupsAreSortedAndKeepEveryComponentIdentity() throws {
+        func component(_ subtype: UInt32, _ name: String, _ manufacturer: String) -> MixerComponent {
+            .init(identity: .init(type: kAudioUnitType_Effect, subtype: subtype,
+                manufacturer: kAudioUnitManufacturer_Apple), name: name, manufacturer: manufacturer, version: 1)
+        }
+        let components = [
+            component(10, "Compressor 10", "Waves"),
+            component(2, "Compressor 2", "Waves"),
+            component(3, "AULowpass", "Apple"),
+            component(4, "Unnamed Vendor Effect", " \n"),
+            component(5, "Compressor 2", " Waves "),
+            component(6, "Another Unknown Effect", ""),
+        ]
+        let groups = MixerAudioUnits.groupedByManufacturer(components)
+        #expect(groups.map(\.manufacturer) == ["Apple", "Unknown Vendor", "Waves"])
+        let waves = try #require(groups.first { $0.manufacturer == "Waves" })
+        #expect(waves.components.map(\.name) == ["Compressor 2", "Compressor 2", "Compressor 10"])
+        #expect(waves.components.prefix(2).map(\.id) == [components[1].id, components[4].id])
+        #expect(groups.flatMap(\.components).count == components.count)
+        #expect(Set(groups.flatMap(\.components).map(\.id)) == Set(components.map(\.id)))
+        #expect(MixerAudioUnits.groupedByManufacturer([]).isEmpty)
+    }
+
     @Test func appleMonoAndStereoRenderAndRecallOpaqueDocumentState() async throws {
         for channels in [1, 2] {
             let unit = try await NativeAudioUnit.load(slot(), channels: channels, policy: .init())

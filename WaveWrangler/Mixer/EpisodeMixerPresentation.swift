@@ -25,6 +25,7 @@ final class EpisodeMixerPresentation {
     private(set) var editedSlot: AudioUnitSlotID?
     private(set) var parameters: [MixerParameter] = []
     private(set) var components: [MixerComponent] = []
+    private(set) var componentGroups: [MixerComponentGroup] = []
     private(set) var isClosed = false
     private var editorRevision: UInt64?
     private var editorWasVisible = false
@@ -48,7 +49,10 @@ final class EpisodeMixerPresentation {
         return false
     }
 
-    func discoverEffects() { components = MixerAudioUnits.installedEffects() }
+    func discoverEffects() {
+        components = MixerAudioUnits.installedEffects()
+        componentGroups = MixerAudioUnits.groupedByManufacturer(components)
+    }
 
     func showDocked() {
         guard let state, !isClosed else { return }

@@ -570,10 +570,20 @@ expansion of the 30-second exact-window budget. The app caches complete overview
 Derived root, keyed by the source metadata revision, decode format and exact source-frame coverage
 ranges. Moving an aligned offset or changing drift without changing covered frames reprojects the
 same measured bins rather than rescanning hours of PCM; changing gaps, segment coverage or the
-source invalidates that reuse. Reuse still requires current source admission, witness verification,
+source invalidates that reuse. The complete overview's projected strokes and sorted drawing/hit-test
+index also persist in the local Derived store. A small canonical SHA-256 key combines the existing
+measured-overview key with the track's group/epoch, current group-map content, file-local correction,
+active cut ranges, mapped-only scope, and presentation-recipe revision. It never hashes the recording
+again. Unchanged opens restore the prepared display; timing/cut changes rebuild only affected keys,
+and Undo can restore the prior cached display. Compact, explicitly little-endian numeric buffers
+avoid per-bin property-list decoding and index re-sorting. Checksummed payloads and validated indices
+are required; damaged presentation caches rebuild rather than being used. Progress distinguishes
+checking saved measurements from a real PCM scan, and completion reports restored/rebuilt displays.
+This applies to the alignment overview and channel-specific cleanup Primary overviews.
+Reuse still requires current source admission, witness verification,
 map applicability and matching decoded format/frame count; only current complete
 results publish. It streams every covered sample (no stride sampling),
-retains at most 2,048 bins per recording, and refuses more than 24 source hours or 2,048 covered
+retains at most 65,536 bins per recording, and refuses more than 24 source hours or 2,048 covered
 ranges. Bins never cross an epoch or affine-segment boundary. Unsupported spans remain unplaced;
 positive gaps are not scanned or bridged. The runtime rechecks the access record after every chunk,
 then witnesses and map currency before publication. Progress also checks the native document
@@ -1057,8 +1067,12 @@ before returning. Effects never receive a source URL. Offline jobs also recheck
 admission during their latency/tail drain, not just during source reads.
 
 The initial qualification is native arm64, 48 kHz planar Float32, mono speaker
-inserts and stereo Master inserts/output. Only one-input/one-output-bus `aufx`
-and `aumf` effects supporting the exact requested format are admitted. Unknown
+inserts and stereo Master inserts/output. Only `aufx` and `aumf` effects with a
+main input and a single output bus supporting the exact requested format are
+admitted. Unused auxiliary/sidechain inputs are disabled after document-state
+recall and verified disabled before rendering; external sidechain routing is
+not supported. Format failures identify the effect, the required 48 kHz
+mono/stereo layout, and the failed configuration step. Unknown
 multichannel Primaries refuse rather than selecting channel 0. Multiple speakers
 cannot share the same Primary/channel (which would double one microphone).
 An episode assignment without a confirmed Primary is an explicit error, not a
@@ -1066,6 +1080,8 @@ silent strip or automatic Backup substitution.
 
 `MixerProcessor.load(recipe:progress:)` asynchronously loads ordered slots.
 `MixerAudioUnits.installedEffects()` discovers effects without loading editors.
+The Add menu groups effects into alphabetized manufacturer submenus, with
+alphabetized effects inside each and an Unknown Vendor group for missing names.
 Loading has a 30-second bound and responds to cancellation; a late completion
 does not replace a canceled/failed instance. Out-of-process loading is requested,
 and `unitStatuses()` exposes the actual `isLoadedInProcess` result. Apple
@@ -1074,6 +1090,16 @@ local macOS 27 arm64 headless test host. This is not a universal AUv2 isolation
 or release-distribution claim. No sandbox or library-validation exceptions are
 added. Sandboxed app-host/editor compatibility and physical device monitoring
 remain separate qualification gates.
+
+macOS may display a "lower security settings" compatibility warning when a
+third-party Audio Unit is not declared sandbox-safe. This is not a request to
+disable SIP or change system-wide security settings. Requesting out-of-process
+hosting does not guarantee that every legacy unit runs sandboxed. WW does not
+add the audio-unit-host sandbox exception or disable library validation to
+suppress the warning. Cancel rather than approve a warning for an effect you
+do not trust. See Apple's
+[Audio Unit Host Sandboxing Guide](https://developer.apple.com/library/archive/technotes/tn2312/_index.html)
+and [out-of-process hosting guide](https://developer.apple.com/documentation/audiotoolbox/debugging-out-of-process-audio-units-on-apple-silicon).
 
 One serial processor retains each unit across all producer windows:
 

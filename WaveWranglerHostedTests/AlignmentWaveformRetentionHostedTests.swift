@@ -121,6 +121,68 @@ struct AlignmentWaveformRetentionHostedTests {
         })
     }
 
+    private actor OverviewActivityLog {
+        var scans = 0
+        func record(_ activity: AlignmentRuntime.OverviewActivity) {
+            if case .measuring = activity { scans += 1 }
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func freshRuntimeRestoresPreparedOverviewsWithoutRescanning(accepted: Bool) async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        if accepted {
+            f.model.placeGroupsAtSourceTime()
+            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        }
+        f.model.loadWaveformOverview()
+        try await wait { !f.model.isLoadingOverview && f.model.waveformOverviewTracks.count == 2 }
+        let original = f.document.store.model
+        let strokes = f.model.waveformOverviewStrokes
+        let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
+        let fresh = try await AlignmentRuntime.make(showID: original.show.id,
+            accessStore: access, access: SourceAccessContext(io: SystemSourceIO()))
+        let activity = OverviewActivityLog()
+        let loaded = try await fresh.waveformTracks(model: original, episode: f.model.episodeID,
+            startSeconds: 0, durationSeconds: 1, overview: true,
+            overviewActivity: { await activity.record($0) })
+        #expect(loaded.refusals.isEmpty && loaded.mapWarning == nil)
+        #expect(await activity.scans == 0)
+        let prepared = try await fresh.prepareWaveformOverview(load: loaded,
+            episode: original.episode(f.model.episodeID), cuts: .unedited)
+        #expect(prepared.errors.isEmpty && prepared.restoredTracks == 2)
+        #expect(prepared.strokes == strokes)
+        let reopened = EpisodeAlignmentModel(document: f.document, episodeID: f.model.episodeID,
+            runtime: fresh, listening: EpisodeListeningState())
+        reopened.loadWaveformOverview()
+        try await wait(reopened.waveformOverviewMessage) { !reopened.isLoadingOverview }
+        #expect(reopened.waveformOverviewMessage.hasPrefix("2 waveform displays restored from cache; 0 rebuilt"))
+        #expect(reopened.waveformOverviewRefusals.isEmpty)
+        reopened.suspend()
+        await fresh.coordinator.shutdown()
+        #expect(f.document.store.model == original)
+    }
+
+    @Test func preparedOverviewCacheNeverBypassesRevokedSourceAccess() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let original = f.document.store.model
+        let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
+        try await access.removeRecord(for: DeviceAccessKey(showID: original.show.id, sourceID: f.target))
+        let fresh = try await AlignmentRuntime.make(showID: original.show.id,
+            accessStore: access, access: SourceAccessContext(io: SystemSourceIO()))
+        let loaded = try await fresh.waveformTracks(model: original, episode: f.model.episodeID,
+            startSeconds: 0, durationSeconds: 1, overview: true)
+        #expect(!loaded.tracks.contains { $0.id == f.target })
+        #expect(loaded.refusals.contains { $0.id == f.target })
+        let prepared = try await fresh.prepareWaveformOverview(load: loaded,
+            episode: original.episode(f.model.episodeID), cuts: .unedited)
+        #expect(prepared.restoredTracks == 1 && prepared.strokes[f.target] == nil)
+        await fresh.coordinator.shutdown()
+        #expect(f.document.store.model == original)
+    }
+
     @Test(arguments: [false, true])
     func coldZoomedOutWorkspaceLoadsTracksOverviewAndVerifiedPlayback(accepted: Bool) async throws {
         let f = try await fixture(cleanupPrimaries: 1)

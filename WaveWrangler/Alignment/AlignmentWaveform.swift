@@ -1,6 +1,7 @@
 import Foundation
 import WWAlignPipeline
 import WWCore
+import WWDerived
 import WWSources
 import WWTimeMap
 
@@ -21,10 +22,12 @@ struct AlignmentWaveformTrack: Identifiable, Sendable {
     let groupName: String
     let envelope: WaveformEnvelope
     let sourceIdentity: RawSourceIdentity?
+    let overviewCacheKey: DerivedAssetKey?
 
     init(
         group: RecorderGroupID, epoch: RecordingEpochID, name: String, groupName: String,
-        envelope: WaveformEnvelope, sourceIdentity: RawSourceIdentity? = nil
+        envelope: WaveformEnvelope, sourceIdentity: RawSourceIdentity? = nil,
+        overviewCacheKey: DerivedAssetKey? = nil
     ) {
         self.group = group
         self.epoch = epoch
@@ -32,6 +35,7 @@ struct AlignmentWaveformTrack: Identifiable, Sendable {
         self.groupName = groupName
         self.envelope = envelope
         self.sourceIdentity = sourceIdentity
+        self.overviewCacheKey = overviewCacheKey
     }
 }
 
@@ -172,23 +176,36 @@ enum AlignmentWaveformProjection {
         var indices: [SourceID: AlignmentWaveformStrokeIndex] = [:]
         var gains: [SourceID: Double] = [:]
         var errors: [SourceID: String] = [:]
+        var restoredTracks = 0
+        var repairedTracks = 0
     }
 
     @concurrent
     static func prepare(load: AlignmentWaveformLoad, episode: Episode?,
-                        cuts: ManualCutTimeline, mappedOnly: Bool = false) async throws -> Prepared {
+                        cuts: ManualCutTimeline, mappedOnly: Bool = false,
+                        cache: AlignmentWaveformPreparationCache? = nil) async throws -> Prepared {
         var result = Prepared()
         for track in load.tracks {
             try Task.checkCancellation()
             do {
-                var projected = try strokes(track: track, map: load.map,
-                    correction: episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id },
-                    cuts: cuts)
-                if mappedOnly { projected.removeAll { !$0.mapped } }
-                result.strokes[track.id] = projected
-                let index = AlignmentWaveformStrokeIndex(strokes: projected)
+                let correction = episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id }
+                let index: AlignmentWaveformStrokeIndex
+                if let cache, let episode, let overviewKey = track.overviewCacheKey {
+                    let prepared = try await cache.prepare(track: track, overviewKey: overviewKey,
+                        episode: episode.id, map: load.map, correction: correction, cuts: cuts, mappedOnly: mappedOnly)
+                    index = prepared.index
+                    if prepared.reused { result.restoredTracks += 1 }
+                    if prepared.repaired { result.repairedTracks += 1 }
+                } else {
+                    var projected = try strokes(track: track, map: load.map, correction: correction, cuts: cuts)
+                    if mappedOnly { projected.removeAll { !$0.mapped } }
+                    index = AlignmentWaveformStrokeIndex(strokes: projected)
+                }
+                result.strokes[track.id] = index.strokes
                 result.indices[track.id] = index
                 result.gains[track.id] = index.normalizedGain
+            } catch is CancellationError {
+                throw CancellationError()
             } catch {
                 result.errors[track.id] = error.localizedDescription
             }

@@ -11,6 +11,17 @@ import WWSpeech
 import WWMix
 
 actor AlignmentRuntime {
+    enum OverviewActivity: Sendable {
+        case checkingCache, measuring
+
+        var message: String {
+            switch self {
+            case .checkingCache: "Checking saved waveform data..."
+            case .measuring: "Measuring an uncached recording; every covered sample contributes..."
+            }
+        }
+    }
+
     struct Prepared: Sendable {
         var sources: [AlignmentSource]
         var snapshot: AlignmentInspectionSnapshot?
@@ -504,6 +515,7 @@ actor AlignmentRuntime {
         startSeconds: Double, durationSeconds: Double, overview: Bool = false,
         onlySources: Set<SourceID>? = nil, decodedChannels: [SourceID: Int] = [:],
         revealingCut: UUID? = nil,
+        overviewActivity: @escaping @Sendable (OverviewActivity) async throws -> Void = { _ in },
         progress: @escaping @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> AlignmentWaveformLoad {
         guard let episode = model.episode(episodeID) else {
@@ -534,12 +546,15 @@ actor AlignmentRuntime {
             do {
                 let admission = try await waveformSource(record.id, sources: sources)
                 let envelope: WaveformEnvelope
+                var overviewKey: DerivedAssetKey?
                 if overview {
-                    envelope = try await cachedOverview(
+                    let cached = try await cachedOverview(
                         admission: admission, episode: episode, group: groupID, map: map,
                         sourceIndex: index, sourceCount: selectedSources.count,
-                        decodedChannel: decodedChannels[record.id], progress: progress
+                        decodedChannel: decodedChannels[record.id], activity: overviewActivity, progress: progress
                     )
+                    envelope = cached.envelope
+                    overviewKey = cached.key
                 } else {
                     let sourceMap = map?.groups.first(where: {
                         $0.group == groupID && $0.placements.contains(where: { $0.occurrence.source == record.id })
@@ -575,7 +590,8 @@ actor AlignmentRuntime {
                 admissions[record.id] = admission
                 tracks.append(AlignmentWaveformTrack(
                     group: groupID, epoch: epochID, name: record.displayNameHint,
-                    groupName: group.name, envelope: envelope, sourceIdentity: admission.witness
+                    groupName: group.name, envelope: envelope, sourceIdentity: admission.witness,
+                    overviewCacheKey: overviewKey
                 ))
             } catch is CancellationError {
                 throw CancellationError()
@@ -631,8 +647,9 @@ actor AlignmentRuntime {
     private func cachedOverview(
         admission: WaveformSourceAdmission, episode: Episode, group: RecorderGroupID,
         map: AlignedTimelineMap?, sourceIndex: Int, sourceCount: Int, decodedChannel: Int?,
+        activity: @escaping @Sendable (OverviewActivity) async throws -> Void,
         progress: @escaping @Sendable (Double) async throws -> Void
-    ) async throws -> WaveformEnvelope {
+    ) async throws -> (envelope: WaveformEnvelope, key: DerivedAssetKey) {
         guard let fingerprint = admission.record.recordedIdentity?.fingerprint else {
             throw DecodeFailure.sourceIdentityMismatch
         }
@@ -659,7 +676,9 @@ actor AlignmentRuntime {
         let pipeline = pipeline
         let accessStore = accessStore
         let sourceCount = max(1, sourceCount)
+        try await activity(.checkingCache)
         let job = await coordinator.submit(slot, key: key) {
+            try await activity(.measuring)
             return try await pipeline.waveformOverviewPayload(
                 sourceURL: admission.url, source: source,
                 matching: admission.witness, groupMap: groupMap, sourceCorrection: correction,
@@ -691,7 +710,13 @@ actor AlignmentRuntime {
         try WaveformWindowReader.verifyOverviewCoverage(envelope: envelope, groupMap: groupMap, sourceCorrection: correction)
         try await reverify(admission)
         try await progress(Double(sourceIndex + 1) / Double(sourceCount))
-        return envelope
+        return (envelope, key)
+    }
+
+    func prepareWaveformOverview(load: AlignmentWaveformLoad, episode: Episode?,
+                                cuts: ManualCutTimeline, mappedOnly: Bool = false) async throws -> AlignmentWaveformProjection.Prepared {
+        try await AlignmentWaveformProjection.prepare(load: load, episode: episode, cuts: cuts, mappedOnly: mappedOnly,
+            cache: AlignmentWaveformPreparationCache(coordinator: coordinator))
     }
 
     private struct WaveformSourceAdmission: Sendable {

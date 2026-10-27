@@ -169,8 +169,12 @@ struct AlignmentWaveformView: View {
                     .font(.caption)
                     .accessibilityIdentifier("alignment.waveforms.status")
                 if model.isLoadingOverview {
-                    ProgressView("Preparing zoomed-out waveforms", value: model.waveformOverviewProgress)
+                    ProgressView(model.waveformOverviewMessage, value: model.waveformOverviewProgress)
                         .font(.caption)
+                } else if !model.waveformOverviewTracks.isEmpty {
+                    Text(model.waveformOverviewMessage)
+                        .font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("alignment.waveforms.overviewStatus")
                 }
                 ForEach(model.waveformOverviewRefusals) { refusal in
                     Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
@@ -926,7 +930,7 @@ struct AlignmentWaveformView: View {
                 Color.primary.opacity(0.02)
                     .frame(height: 34)
                     .overlay(alignment: .leading) {
-                        Text(model.isLoadingOverview ? "Preparing zoomed-out waveforms…"
+                        Text(model.isLoadingOverview ? model.waveformOverviewMessage
                             : model.isLoadingWaveforms ? "Loading measured waveform…"
                             : "No measured audio in this window")
                             .font(.caption).foregroundStyle(.secondary)

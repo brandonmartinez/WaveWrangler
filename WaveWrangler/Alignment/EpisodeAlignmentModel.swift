@@ -142,7 +142,7 @@ final class EpisodeAlignmentModel {
     private(set) var waveformOverviewMap: AlignedTimelineMap?
     private(set) var isLoadingOverview = false
     private(set) var waveformOverviewProgress = 0.0
-    private(set) var waveformOverviewMessage = "Build Overview scans all covered PCM samples. It does not change or cache recordings."
+    private(set) var waveformOverviewMessage = "Saved waveform data is reused when its inputs match. Original recordings stay unchanged."
     private(set) var waveformMessage = "Load a bounded audio window to see the recordings. Original files are never changed."
     var waveformStartSeconds: Double {
         get { listening.workspace.startSeconds }
@@ -1342,7 +1342,7 @@ final class EpisodeAlignmentModel {
             pendingWaveformMove = nil
         }
         waveformMessage = tile.load.mapWarning
-            ?? "\(tile.load.tracks.count) recordings loaded; \(tile.load.refusals.count) failed to load. Measured tiles are cached in memory; originals stay unchanged."
+            ?? "\(tile.load.tracks.count) recordings loaded; \(tile.load.refusals.count) failed to load. Exact-window tiles are cached in memory; originals stay unchanged."
         ensureWaveformOverview()
     }
 
@@ -1408,7 +1408,7 @@ final class EpisodeAlignmentModel {
         }
         requestedOverviewEpisode = snapshot.episode(episodeID)
         isLoadingOverview = true
-        waveformOverviewMessage = "Scanning every covered PCM sample; no partial overview is published."
+        waveformOverviewMessage = "Checking saved waveform data..."
         let cuts = cutTimeline
         overviewTask = Task { [weak self] in
             guard let self else { return }
@@ -1420,7 +1420,10 @@ final class EpisodeAlignmentModel {
             }
             do {
                 let loaded = try await runtime.waveformTracks(
-                    model: snapshot, episode: episodeID, startSeconds: 0, durationSeconds: 1, overview: true
+                    model: snapshot, episode: episodeID, startSeconds: 0, durationSeconds: 1, overview: true,
+                    overviewActivity: { activity in
+                        try await self.updateOverviewActivity(activity, generation: generation, snapshot: snapshot)
+                    }
                 ) { fraction in
                     try await self.updateOverviewProgress(fraction, generation: generation, snapshot: snapshot)
                 }
@@ -1433,7 +1436,8 @@ final class EpisodeAlignmentModel {
                     waveformOverviewMessage = "The episode or verified timing changed. Save and reload its overview."
                     return
                 }
-                let prepared = try await AlignmentWaveformProjection.prepare(
+                waveformOverviewMessage = "Restoring or preparing waveform displays..."
+                let prepared = try await runtime.prepareWaveformOverview(
                     load: loaded, episode: snapshot.episode(episodeID), cuts: cuts)
                 guard generation == overviewGeneration,
                       document.store.model.hasSameMediaInputs(as: snapshot, in: episodeID),
@@ -1444,12 +1448,16 @@ final class EpisodeAlignmentModel {
                 waveformOverviewDisplayGains = prepared.gains
                 waveformOverviewProjectionErrors = prepared.errors
                 waveformOverviewSnapshotID = UUID()
-                waveformOverviewRefusals = loaded.refusals
+                waveformOverviewRefusals = loaded.refusals + loaded.tracks.compactMap { track in
+                    prepared.errors[track.id].map { AlignmentWaveformRefusal(id: track.id, name: track.name, reason: $0) }
+                }
                 waveformOverviewMap = loaded.map
                 loadedOverviewEpisode = snapshot.episode(episodeID)
                 waveformOverviewProgress = 1
                 waveformOverviewMessage = loaded.mapWarning
-                    ?? "\(loaded.tracks.count) cached PCM overviews; \(loaded.refusals.count) failed to load. Click covered audio to load an exact window; coarse bins are not anchors."
+                    ?? "\(prepared.restoredTracks) waveform displays restored from cache; \(prepared.indices.count - prepared.restoredTracks) rebuilt; \(waveformOverviewRefusals.count) failed to load."
+                        + (prepared.repairedTracks > 0 ? " \(prepared.repairedTracks) damaged display caches were repaired." : "")
+                        + " Click covered audio to load an exact window; coarse bins are not anchors."
             } catch is CancellationError {
                 if generation == overviewGeneration {
                     waveformOverviewMessage = "Overview canceled or episode changed. No partial result was kept."
@@ -1482,6 +1490,13 @@ final class EpisodeAlignmentModel {
         if fraction >= waveformOverviewProgress + 0.01 || fraction == 1 {
             waveformOverviewProgress = fraction
         }
+    }
+
+    private func updateOverviewActivity(
+        _ activity: AlignmentRuntime.OverviewActivity, generation: UInt64, snapshot: ShowDocumentModel
+    ) throws {
+        try updateOverviewProgress(waveformOverviewProgress, generation: generation, snapshot: snapshot)
+        waveformOverviewMessage = activity.message
     }
 
     func cancelWaveformOverview(keepingSnapshot: Bool = false) {

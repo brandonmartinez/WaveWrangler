@@ -15,6 +15,12 @@ public struct MixerComponent: Sendable, Equatable, Identifiable {
     public var id: String { "\(identity.type):\(identity.subtype):\(identity.manufacturer)" }
 }
 
+public struct MixerComponentGroup: Sendable, Equatable, Identifiable {
+    public let manufacturer: String
+    public let components: [MixerComponent]
+    public var id: String { manufacturer }
+}
+
 public enum MixerAudioUnits {
     /// Discovery loads no unit, reads no media, and includes only installed audio/music effects.
     @MainActor public static func installedEffects() -> [MixerComponent] {
@@ -28,6 +34,19 @@ public enum MixerAudioUnits {
                     manufacturer: component.manufacturerName, version: component.version)
             }
         }.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+    }
+
+    public static func groupedByManufacturer(_ components: [MixerComponent]) -> [MixerComponentGroup] {
+        let groups = Dictionary(grouping: components) { component in
+            let manufacturer = component.manufacturer.trimmingCharacters(in: .whitespacesAndNewlines)
+            return manufacturer.isEmpty ? "Unknown Vendor" : manufacturer
+        }
+        return groups.map { manufacturer, components in
+            MixerComponentGroup(manufacturer: manufacturer, components: components.sorted {
+                let order = $0.name.localizedStandardCompare($1.name)
+                return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+            })
+        }.sorted { $0.manufacturer.localizedStandardCompare($1.manufacturer) == .orderedAscending }
     }
 }
 
@@ -156,7 +175,11 @@ final class NativeAudioUnit: @unchecked Sendable {
         self.unit = unit
         self.channels = channels
         includesTail = policy.tail == .includeReported
-        guard (1...2).contains(channels), unit.inputBusses.count == 1, unit.outputBusses.count == 1,
+        func formatFailure(_ reason: String) -> MixerFailure {
+            let layout = channels == 1 ? "mono" : channels == 2 ? "stereo" : "\(channels)-channel"
+            return .format(slot.id, "\(slot.productName ?? "Audio Unit") needs 48 kHz \(layout) audio. \(reason)")
+        }
+        guard (1...2).contains(channels),
               let format = AVAudioFormat(standardFormatWithSampleRate: Double(MixerRecipe.sampleRate),
                 channels: AVAudioChannelCount(channels)),
               let inputBuffer = AVAudioPCMBuffer(pcmFormat: format,
@@ -164,7 +187,7 @@ final class NativeAudioUnit: @unchecked Sendable {
               let outputBuffer = AVAudioPCMBuffer(pcmFormat: format,
                 frameCapacity: AVAudioFrameCount(MixerRecipe.blockFrames)),
               let outputData = outputBuffer.floatChannelData else {
-            throw MixerFailure.format(slot.id)
+            throw formatFailure("Only mono speaker inserts and stereo Master inserts are supported.")
         }
         if let data = slot.documentState {
             guard let state = try PropertyListSerialization.propertyList(from: data, options: [], format: nil)
@@ -174,6 +197,14 @@ final class NativeAudioUnit: @unchecked Sendable {
                 throw MixerFailure.state(slot.id, "the unit did not recall the complete document state")
             }
         }
+        guard unit.inputBusses.count >= 1, unit.outputBusses.count == 1 else {
+            throw formatFailure("The effect must provide a main input and a single output bus.")
+        }
+        // Sidechain routing is not supported; unused auxiliary inputs must not reject the main effect.
+        let auxiliaryInputs = (0..<unit.inputBusses.count).dropFirst()
+        for index in auxiliaryInputs { unit.inputBusses[index].isEnabled = false }
+        unit.inputBusses[0].isEnabled = true
+        unit.outputBusses[0].isEnabled = true
         let pullInput = UnitPullInput(buffer: inputBuffer)
         // AUv2 bridges use the legacy input callback rather than the render block's pull argument.
         if let bridge = unit as? AUAudioUnitV2Bridge {
@@ -187,16 +218,24 @@ final class NativeAudioUnit: @unchecked Sendable {
         }
         do {
             try unit.inputBusses[0].setFormat(format)
+        } catch { throw formatFailure("The main input refused this format: \(error.localizedDescription)") }
+        do {
             try unit.outputBusses[0].setFormat(format)
-            unit.inputBusses[0].isEnabled = true
-            unit.outputBusses[0].isEnabled = true
-        } catch { throw MixerFailure.format(slot.id) }
+        } catch { throw formatFailure("The output refused this format: \(error.localizedDescription)") }
+        guard auxiliaryInputs.allSatisfy({ !unit.inputBusses[$0].isEnabled }) else {
+            throw formatFailure("The effect requires an auxiliary input, but sidechain routing is not supported.")
+        }
         unit.maximumFramesToRender = AVAudioFrameCount(MixerRecipe.blockFrames)
         do { try unit.allocateRenderResources() }
         catch { throw MixerFailure.loading(slot.id, error.localizedDescription) }
         guard unit.inputBusses[0].format == format, unit.outputBusses[0].format == format else {
             unit.deallocateRenderResources()
-            throw MixerFailure.format(slot.id)
+            throw formatFailure("The effect changed the requested input/output format during allocation.")
+        }
+        guard unit.inputBusses[0].isEnabled, unit.outputBusses[0].isEnabled,
+              auxiliaryInputs.allSatisfy({ !unit.inputBusses[$0].isEnabled }) else {
+            unit.deallocateRenderResources()
+            throw formatFailure("The effect changed the enabled buses during allocation.")
         }
         unit.reset()
         // Host bypass is an explicit zero-latency dry path; no claim about a vendor's bypass behavior.
