@@ -140,10 +140,11 @@ final class AlignmentAudioPlayback: @unchecked Sendable {
     }
 
     func enqueueProduction(_ output: MixerPCMOutput, final: Bool, generation: UInt64? = nil,
+                           diagnostics: ProductionPlaybackDiagnostics? = nil,
                            onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
         try queue.sync {
             if let generation, sessionGeneration != generation { throw CancellationError() }
-            try graph.enqueueProduction(output, final: final, onBufferDeadline: onBufferDeadline)
+            try graph.enqueueProduction(output, final: final, diagnostics: diagnostics, onBufferDeadline: onBufferDeadline)
         }
     }
 
@@ -185,6 +186,8 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private var source: AVAudioSourceNode?
     private var productionPlayer: AVAudioPlayerNode?
     private var productionBuffer = AlignmentProductionBuffer()
+    private var productionDiagnostics: ProductionPlaybackDiagnostics?
+    private var lastProductionAppend: ContinuousClock.Instant?
     private var transportSampleRate: Double?
     private var transportHostTime: UInt64?
     private var monitor: DispatchSourceTimer?
@@ -260,6 +263,8 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         if let source, engine.attachedNodes.contains(source) { engine.detach(source) }
         source = nil
         productionBuffer = AlignmentProductionBuffer()
+        productionDiagnostics = nil
+        lastProductionAppend = nil
         clock = terminal
         transportHostTime = nil
         transportSources = AlignmentTransportSources()
@@ -279,6 +284,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private func checkDeadline() {
         guard !finalBuffer, failure == nil, let scheduled = clock,
               let elapsed = elapsedAudioSeconds, elapsed >= scheduled.duration else { return }
+        reportUnderrun(elapsed: elapsed)
         let callback = onDeadline
         let stopped = readClock()
         stop()
@@ -304,7 +310,21 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private func validateQueueAppend(startSeconds: Double) throws {
         if let failure { throw failure }
         guard let clock else { throw AlignmentTransportFailure.discontinuousWindow }
-        try Self.validateAppend(to: clock, startSeconds: startSeconds, playedSeconds: elapsedAudioSeconds)
+        let elapsed = elapsedAudioSeconds
+        do {
+            try Self.validateAppend(to: clock, startSeconds: startSeconds, playedSeconds: elapsed)
+        } catch AlignmentTransportFailure.bufferDeadline {
+            if let elapsed { reportUnderrun(elapsed: elapsed) }
+            throw AlignmentTransportFailure.bufferDeadline
+        }
+    }
+
+    private func reportUnderrun(elapsed: Double) {
+        let now = ContinuousClock.now
+        productionDiagnostics?.reportUnderrun(
+            scheduledFrames: productionBuffer.frameCount,
+            consumedFrames: Int64((elapsed * Double(MixerRecipe.sampleRate)).rounded(.down)),
+            appendGap: lastProductionAppend.map { $0.duration(to: now) } ?? .zero, at: now)
     }
 
     private func clearPlayers() {
@@ -350,6 +370,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     /// Only pre-rendered stereo reaches the device graph. No vendor code or Swift task is called
     /// from the output callback; the serial mixer worker owns persistent effect state.
     func enqueueProduction(_ output: MixerPCMOutput, final: Bool,
+                           diagnostics: ProductionPlaybackDiagnostics?,
                            onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
         if let failure { throw failure }
         let clip = try Self.validateProduction(output)
@@ -371,6 +392,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             engine.connect(player, to: engine.mainMixerNode, format: format)
             productionPlayer = player
         }
+        productionDiagnostics = diagnostics
         guard let productionPlayer else { throw MixerFailure.incompletePCM }
         var scheduled = productionBuffer
         try scheduled.append(output, final: final)
@@ -383,6 +405,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             productionPlayer.scheduleBuffer(buffer)
         }
         productionBuffer = scheduled
+        lastProductionAppend = .now
         if clock == nil, scheduled.isReady, let first = scheduled.firstFrame {
             do { try engine.start() }
             catch { stop(); throw error }

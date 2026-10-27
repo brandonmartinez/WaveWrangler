@@ -4,6 +4,7 @@ import Synchronization
 import Testing
 import WWAlignPipeline
 import WWCore
+import WWMix
 @testable import WaveWrangler
 
 @MainActor
@@ -56,6 +57,24 @@ struct FlattenedPlaybackHostedTests {
                 && f.document.verifiedModel == f.document.store.model
         }
         return f
+    }
+
+    @Test func aStarvedProductionQueueReportsBeforeTheDeadlineHandlerClearsTheGraph() async throws {
+        let output = AlignmentAudioPlayback()
+        defer { output.stop() }
+        let diagnostics = ProductionPlaybackDiagnostics()
+        for count in 1...MixerLiveTiming.sourcePrefetchWindows { diagnostics.preparedRawWindow(queued: count) }
+        _ = diagnostics.begin(.dsp)
+        var deadlines = 0
+        for first in stride(from: 0, to: MixerLiveTiming.startupBufferedFrames, by: MixerLiveTiming.processingBlockFrames) {
+            try output.enqueueProduction(.init(firstFrame: Int64(first),
+                channels: Array(repeating: Array(repeating: 0.1, count: MixerLiveTiming.processingBlockFrames), count: 2)),
+                final: false, diagnostics: diagnostics) { deadlines += 1 }
+        }
+        try await wait("Intentionally starved generated PCM must stop with a diagnostic") { deadlines > 0 }
+        #expect(deadlines == 1)
+        #expect(diagnostics.takeUnderrunReport(scheduledFrames: 0, consumedFrames: 0, appendGap: .zero) == nil,
+            "The output queue must record the real underrun before invoking its UI handler.")
     }
 
     @Test(arguments: [false, true])

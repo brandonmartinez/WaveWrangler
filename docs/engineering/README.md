@@ -1184,6 +1184,17 @@ the 10 ms ramp, scheduling jitter, and device latency. Meters describe prepared
 PCM, not a sample-synchronized hardware tap. Missed deadlines stop explicitly
 instead of scheduling substitute silence.
 
+Production underruns emit one `WWAUDIO_UNDERRUN v=1` error in the
+`com.brandonmartinez.wavewrangler` / `AudioPlayback` unified-log category.
+The bounded per-playback snapshot contains scheduled/consumed frame counts,
+time since the last scheduled packet, raw queue occupancy, and last/maximum/
+in-flight timings for source preparation, waiting for raw PCM, source verification,
+control publication, DSP, and output scheduling. Producer wake delay excludes
+the requested pacing sleep. The output queue captures this evidence before
+stopping the graph or waiting for the UI handler; late enqueues use the same
+one-shot report. No audio, source identifiers, paths, or vendor state is retained
+in diagnostics, and no per-block log/event history is collected.
+
 `WW_PRODUCTION_TIMING_TESTS=1` enables the hosted source-preparation timing
 diagnostic and sustained drift-plus-inserts qualification. Run those on a leased
 VM; the recorded run with unoptimized `WWRender` is the negative control.

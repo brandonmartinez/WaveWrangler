@@ -75,6 +75,7 @@
 				Alignment/AlignmentWaveformPreparationCache.swift,
 				Alignment/AlignmentWaveformStrokeIndex.swift,
 				Alignment/AnchorTimeEditing.swift,
+				Alignment/ProductionPlaybackDiagnostics.swift,
 				App/AppBuildIdentity.swift,
 				Document/CopyElsewhereRetryGate.swift,
 				Document/FormatUpdate.swift,
