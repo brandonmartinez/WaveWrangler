@@ -99,7 +99,7 @@ extension AlignmentPipeline {
         guard let token = identity.sources.first(where: { $0.source == correction.source })?.token else {
             throw AlignmentWorkFailure.sourceFactsMismatch
         }
-        let asset = AssetSpec(kind: "ww.adaptive-audio-tile", revision: PitchPreservingAudio.renderRecipeVersion)
+        let asset = AssetSpec(kind: "ww.adaptive-audio-pcm", revision: PitchPreservingAudio.renderRecipeVersion)
         let recipe = RecipeReference(name: "\(PitchPreservingAudio.identifier);rate=\(outputRate);tile=\(index);seconds=5;fade=4ms;v5-output-grid-coverage;contiguous-crossfade=duration-bounded-8ms",
                                      revision: PitchPreservingAudio.renderRecipeVersion)
         let key = DerivedAssetKey(asset: asset, sources: identity.sources, format: .current,
@@ -118,30 +118,50 @@ extension AlignmentPipeline {
             tile = cached
         } else {
             let decoder = decoder, gate = gate
+            let store = coordinator.store
+            var legacyKey = key
+            legacyKey.asset.kind = "ww.adaptive-audio-tile"
+            let oldKey = legacyKey
             let admittedBytes = try Self.adaptiveAudioReservationBytes(channels: correction.channelCount,
                 sourceRate: correction.sourceRate, outputRate: outputRate)
-            let result = await coordinator.run(slot, key: key) { () throws(AlignmentWorkFailure) -> Data in
-                do {
-                    return try await gate.withAdmission(bytes: admittedBytes) {
-                        let rendered = try await Self.renderAdaptiveTile(
-                            correction: correction, url: sourceURL, witness: witness,
-                            decoder: decoder, index: index, outputRate: outputRate
-                        )
-                        return try JSONEncoder().encode(rendered)
-                    }
-                } catch { throw workFailure(error) }
-            }
-            try Task.checkCancellation()
-            guard result.isAvailable, await coordinator.staleReasons(for: key).isEmpty,
-                  let bytes = await coordinator.readyPayload(for: slot, matching: key) else {
-                if case let .adaptiveAudio(failure)? = result.typedFailure { throw failure }
-                throw result.typedFailure ?? AlignmentWorkFailure.encoding("Adaptive audio became unavailable or stale.")
-            }
-            tile = try JSONDecoder().decode(AdaptivePCM.self, from: bytes)
-            guard tile.firstFrame == index * Int64(outputRate) * 5,
-                  tile.channels.count == correction.channelCount,
-                  tile.channels.allSatisfy({ $0.count == outputRate * 5 && $0.allSatisfy(\.isFinite) }) else {
-                throw AdaptiveAudioRenderFailure.invalidTile
+            let coordinator = coordinator
+            tile = try await adaptivePCMPreparations.value(for: cacheKey) {
+                let result = await coordinator.run(slot, key: key) { () throws(AlignmentWorkFailure) -> Data in
+                    do {
+                        return try await gate.withAdmission(bytes: admittedBytes) {
+                            let rendered: AdaptivePCM
+                            if let legacy = store.payload(for: oldKey) {
+                                rendered = try JSONDecoder().decode(AdaptivePCM.self, from: legacy)
+                            } else {
+                                rendered = try await Self.renderAdaptiveTile(
+                                    correction: correction, url: sourceURL, witness: witness,
+                                    decoder: decoder, index: index, outputRate: outputRate)
+                            }
+                            guard rendered.firstFrame == index * Int64(outputRate) * 5,
+                                  rendered.channels.count == correction.channelCount,
+                                  rendered.channels.allSatisfy({ $0.count == outputRate * 5 }) else {
+                                throw AdaptiveAudioRenderFailure.invalidTile
+                            }
+                            return try ListeningPCM(firstFrame: rendered.firstFrame,
+                                sampleRate: outputRate, channels: rendered.channels).encode()
+                        }
+                    } catch { throw workFailure(error) }
+                }
+                try Task.checkCancellation()
+                guard result.isAvailable, await coordinator.staleReasons(for: key).isEmpty,
+                      let bytes = await coordinator.readyPayload(for: slot, matching: key) else {
+                    if case let .adaptiveAudio(failure)? = result.typedFailure { throw failure }
+                    throw result.typedFailure ?? AlignmentWorkFailure.encoding("Adaptive audio became unavailable or stale.")
+                }
+                let decoded = try ListeningPCM.decode(bytes)
+                guard decoded.sampleRate == outputRate else { throw AdaptiveAudioRenderFailure.invalidTile }
+                let prepared = AdaptivePCM(firstFrame: decoded.firstFrame, channels: decoded.channels)
+                guard prepared.firstFrame == index * Int64(outputRate) * 5,
+                      prepared.channels.count == correction.channelCount,
+                      prepared.channels.allSatisfy({ $0.count == outputRate * 5 }) else {
+                    throw AdaptiveAudioRenderFailure.invalidTile
+                }
+                return prepared
             }
         }
         // Cache hits must still witness the actual file, not merely trust a previously registered token.

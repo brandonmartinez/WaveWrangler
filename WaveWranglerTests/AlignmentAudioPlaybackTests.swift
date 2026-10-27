@@ -7,6 +7,42 @@ import WWMix
 @MainActor
 @Suite("Alignment audio playback foundations")
 struct AlignmentAudioPlaybackTests {
+    @Test func productionPrefillIncludesLatencyShortenedBlocksAndKeepsTheControlHorizonBounded() throws {
+        var buffer = AlignmentProductionBuffer()
+        try buffer.append(productionOutput(first: -4, frames: 384), final: false)
+        #expect(!buffer.isReady && buffer.firstFrame == -4)
+        while !buffer.isReady {
+            let first = try #require(buffer.endFrame)
+            try buffer.append(productionOutput(first: first, frames: MixerLiveTiming.processingBlockFrames), final: false)
+        }
+        #expect(buffer.endFrame == -4 + buffer.frameCount)
+        #expect(buffer.frameCount >= MixerLiveTiming.startupBufferedFrames)
+        #expect(buffer.frameCount + Int64(MixerLiveTiming.startLeadFrames) <= MixerLiveTiming.maximumPreparedControlFrames)
+        #expect(MixerLiveTiming.maximumPreparedControlFrames <= MixerRecipe.sampleRate / 10)
+    }
+
+    @Test func shortFinalProductionAndDiscontinuousOrOverflowingPacketsAreExplicit() throws {
+        var short = AlignmentProductionBuffer()
+        try short.append(productionOutput(first: -1, frames: 3), final: true)
+        #expect(short.isReady && short.frameCount == 3 && short.endFrame == 2)
+        #expect(throws: MixerFailure.self) { try short.append(productionOutput(first: 2, frames: 1), final: true) }
+        var buffer = AlignmentProductionBuffer()
+        try buffer.append(productionOutput(first: 0, frames: 512), final: false)
+        #expect(throws: AlignmentTransportFailure.self) {
+            try buffer.append(productionOutput(first: 513, frames: 512), final: false)
+        }
+        #expect(buffer.frameCount == 512 && buffer.endFrame == 512 && !buffer.isReady)
+        var overflow = AlignmentProductionBuffer()
+        #expect(throws: MixerFailure.self) {
+            try overflow.append(productionOutput(first: .max, frames: 1), final: true)
+        }
+        #expect(overflow.firstFrame == nil && overflow.frameCount == 0)
+    }
+
+    private func productionOutput(first: Int64, frames: Int) -> MixerPCMOutput {
+        .init(firstFrame: first, channels: Array(repeating: Array(repeating: 0.1, count: frames), count: 2))
+    }
+
     @Test func productionStereoAdapterIsHeadlessExactAndNeverNormalizes() throws {
         let output = MixerPCMOutput(firstFrame: -5, channels: [[1.5, 0.25, -1.5], [-0.5, 0, 0.5]])
         let clip = try AlignmentAudioPlayback.validateProduction(output)

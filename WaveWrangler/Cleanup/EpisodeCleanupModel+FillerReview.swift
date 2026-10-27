@@ -13,11 +13,14 @@ extension EpisodeCleanupModel {
     }
 
     func visibleFillers(for lane: CleanupSpeakerLane) -> [FillerTimingReview] {
-        fillerReviews.filter {
-            $0.speaker == lane.speaker && cut(for: $0) == nil
+        let current = Set(reviewRows.lazy.filter {
+            $0.speakerID == lane.speaker && $0.issue == nil && $0.cutID == nil
+        }.map(\.id))
+        return fillerReviews.filter {
+            current.contains($0.id)
                 && displayRange(start: $0.bounds.alignedStart, end: $0.bounds.alignedEnd).map {
                     $0.upperBound > windowStart && $0.lowerBound < windowStart + visibleDuration
-                } == true && fillerIssue($0) == nil
+                } == true
         }
     }
 

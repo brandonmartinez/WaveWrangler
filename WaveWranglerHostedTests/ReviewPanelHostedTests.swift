@@ -66,6 +66,24 @@ struct ReviewPanelHostedTests {
         #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
     }
 
+    @Test func waveformFillerVisibilitySharesClassificationAndInvalidatesWithSourceEvidence() async throws {
+        let (f, cleanup, _) = try await fixture()
+        defer { cleanup.cancel(); f.close() }
+        let lane = try #require(cleanup.plan?.lanes.first)
+        cleanup.windowStart = 0
+        cleanup.windowDuration = 12
+        #expect(cleanup.visibleFillers(for: lane).map(\.id) == cleanup.fillerReviews.map(\.id))
+        #expect(cleanup.reviewRowsSnapshot?.generation == f.document.store.modelGeneration)
+        cleanup.windowStart = 3
+        cleanup.windowDuration = 3
+        #expect(cleanup.visibleFillers(for: lane).map(\.id) == [cleanup.fillerReviews[1].id])
+        let identities = cleanup.identities
+        cleanup.identities = [:]
+        #expect(cleanup.visibleFillers(for: lane).isEmpty)
+        cleanup.identities = identities
+        #expect(cleanup.visibleFillers(for: lane).map(\.id) == [cleanup.fillerReviews[1].id])
+    }
+
     @Test func plusMinusAndRowCutsUseExistingUndoAndPreserveRawTranscriptAndRecordings() async throws {
         let (f, cleanup, _) = try await fixture()
         defer { cleanup.cancel(); f.close() }

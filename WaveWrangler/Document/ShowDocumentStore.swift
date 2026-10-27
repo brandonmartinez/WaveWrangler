@@ -7,9 +7,17 @@ import WWCore
 @MainActor
 @Observable
 final class ShowDocumentStore {
+    private struct WeakListening {
+        weak var value: RegularAudioPlayback?
+    }
+    @ObservationIgnored private var listeningSessions: [WeakListening] = []
+
     private(set) var model: ShowDocumentModel {
         didSet {
             modelGeneration += 1
+            listeningSessions.removeAll { $0.value == nil }
+            listeningSessions.forEach { $0.value?.documentDidChange(model) }
+            if !isCapturingMixer { document?.mixerTransactions.modelDidChange() }
             for state in ShowWindowRegistry.states(for: self) {
                 state.reviewModelDidChange()
                 if !isCapturingMixer { state.mixerPresentation.modelDidChange(from: oldValue) }
@@ -30,6 +38,11 @@ final class ShowDocumentStore {
 
     init(model: ShowDocumentModel) {
         self.model = model
+    }
+
+    func registerListening(_ session: RegularAudioPlayback) {
+        listeningSessions.removeAll { $0.value == nil }
+        listeningSessions.append(WeakListening(value: session))
     }
 
     var canEdit: Bool {

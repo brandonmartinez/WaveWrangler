@@ -150,7 +150,9 @@ an `idealHeight` hint alone does not restore `VSplitView`'s actual position.
 
 `reviewRows` caches source/timing issue classification by model generation and is invalidated when
 the verified plan or source identities change. Panning/playhead updates do not revalidate hundreds of
-reviews. Table selection defers navigation to the next main-actor turn to avoid reentering native
+reviews. Waveform filler markers reuse the same classification snapshot rather than rechecking every
+adaptive region for every playhead update; source/plan evidence still invalidates it.
+Table selection defers navigation to the next main-actor turn to avoid reentering native
 table delegates; a newer row request supersedes an older one. Row navigation centers/zooms the
 interval, expands any collapsed parent groups and scrolls its source into view. Auto Cut and Restore
 call existing manual-cut operations, with no
@@ -563,6 +565,18 @@ cache-cut phase jumps. Unsupported timing remains silence. See
 [automatic alignment](automatic-alignment.md#persistence-and-audible-application) for processing
 identity, cache revision and native accuracy limits.
 
+Aligned regular listening, production-mix input, and cleanup share prepared PCM
+before cuts, recording gain, inserts, or faders. Adaptive tiles use versioned
+`WWPCM1` planar little-endian Float32 payloads; compatible legacy JSON tiles migrate
+to the binary cache without changing samples. Affine listening also persists
+canonical five-second tiles instead of retaining only window-local PCM. Cache keys
+include source revision, exact timing context, channel, output format, and render
+recipe. A hit never authorizes source access: the existing witnessed decoder and
+current-map checks still surround reuse. Original recordings are never written,
+replaced, or flattened in place; only app-local derived caches contain rendered audio.
+Concurrent listeners share identical preparations, and canceling one listener cannot
+cancel another's preparation or a newer same-key derived job.
+
 `WaveformWindowReader.readOverview` is a separate automatic PCM scan after a confirmed episode source
 has verified access and the show is saved, or when its overview is missing on alignment open/refresh.
 Leaving Setup cancels an unfinished setup scan; opening Alignment checks again. This is not an
@@ -739,6 +753,14 @@ scripts/test.sh             # swift test (package, --jobs 4), serialized estimat
 scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only on the current host; use the VM lease pipeline instead on the development Mac
 ```
+
+`WWRender` uses `-O` in Debug as well as Release. Its scalar clock-correction
+renderer can otherwise take longer than one second to prepare one second of
+drift-corrected audio, even when Audio Unit rendering easily meets its deadline.
+More prebuffered effect output only postpones that sustained underrun. The
+optimization is confined to the renderer: the app remains debuggable, and its
+signing, sandbox, source-access gates, sample rates, and alignment mathematics
+stay unchanged.
 
 The app target generates a UTC millisecond-based build number on every build, including direct Xcode
 and test builds. `scripts/build_number.py` writes a derived preprocessor header; Info.plist preprocessing
@@ -1125,12 +1147,33 @@ production listening. `playEnabledTracks` remains diagnostic/source audition;
 neither pane visibility nor source Solo/Mute implicitly changes that choice.
 The production adapter schedules already-rendered stereo on the existing owned
 `AlignmentAudioPlayback` engine, with no second playback engine. Production
-separates one-second **raw** source-preparation windows (one bounded prefetch)
-from 512-frame DSP blocks. `preparePCM` never bakes gains or effects into that
-long window. `renderPrepared` reads current controls on **every** 512-frame
-block, including latency drain. The processed scheduling horizon is 4096 frames
+separates one-second **raw** source-preparation windows (at most five queued
+windows plus the currently consumed window) from 512-frame DSP blocks. Startup
+primes this raw queue (or the remaining program, when shorter), then revalidates
+source access, identity, and timing before starting output. A separate worker
+continues that verification throughout playback, including final draining and
+fully prefetched short programs; any failure invalidates DSP immediately.
+Bookmark/File Provider and full-map checks must never block the sub-100-ms
+processed-output horizon. Each newly prepared source window still performs its
+normal witnessed-read and current-map checks.
+`ProductionMixPlayback` reads a value snapshot of live controls on **every**
+512-frame block, including latency drain; no gains or effects are baked into the
+raw cache. Document edits synchronously update controls or invalidate incompatible
+workers. The processed scheduling horizon is 4096 frames
 plus at most one in-flight block: at most 4608 frames / 96 ms of prepared audio,
-not seconds of producer buffering. The start lead is 2048 frames.
+not seconds of producer buffering. Before starting the device clock, production
+queues at least 2048 verified output frames (or the complete final short program).
+The 2048-frame start lead plus this prefill and any one-block rounding still fit
+the same 4608-frame bound. No underrun deadline runs while the initial buffer is
+being prepared. This absorbs cold Audio Unit startup work without adding seconds
+of pre-rendered control latency; real missed deadlines after startup still stop
+explicitly and preserve the clock long enough for the handler to retain the playhead.
+Both regular and production refill run outside the main actor. One serial output
+queue owns the shared AVFAudio graph, schedules buffers, and accounts for consumed
+audio using the player's native sample timeline, not a `Date` estimate or an
+early wall-clock margin. Final draining uses `.dataPlayedBack` completion.
+The UI independently polls progress and prepared meters, so transcript layout,
+accessibility work, and other UI stalls do not hold up audio refill or its watchdog.
 The generated responsiveness assertion changes a fader after source preparation,
 observes its ramp on the very next block's first sample without resetting the
 processor, and verifies the horizon stays below 100 ms.
@@ -1140,7 +1183,17 @@ processing: audible control response includes that bounded prepared horizon,
 the 10 ms ramp, scheduling jitter, and device latency. Meters describe prepared
 PCM, not a sample-synchronized hardware tap. Missed deadlines stop explicitly
 instead of scheduling substitute silence.
-Playback engine/device behavior has not been exercised on the user's desktop.
+
+`WW_PRODUCTION_TIMING_TESTS=1` enables the hosted source-preparation timing
+diagnostic and sustained drift-plus-inserts qualification. Run those on a leased
+VM; the recorded run with unoptimized `WWRender` is the negative control.
+`WW_WAVES_SYNTHETIC_TIMING=1` enables a separate headless, generated-PCM-only
+benchmark of installed RCompressor, TrueVerb, and L1 effects. A physical-host run
+requires explicit approval for that specific benchmark; it never opens source
+recordings, editors, audio output, or saved vendor state.
+Leased-VM regressions cover adaptive timing, cold/warm caches, live controls,
+source changes, and main-actor transcript-layout stalls. Those functional results
+do not establish acoustic latency or physical-device performance.
 
 `MixerOfflineRenderer.render(recipe:isCurrent:input:sink:)` uses independent
 instances of the identical processor. It accepts at most five seconds of input

@@ -19,7 +19,7 @@ struct AlignmentTransportBufferingTests {
                 let clip = AlignmentAudioClip(sampleRate: 48_000, samples: Array(repeating: 0.25, count: frames.count))
                 #expect(try AlignmentAudioPlayback.validateTransport([a: clip, b: clip]).duration == duration)
                 if let prior = clock {
-                    try AlignmentAudioPlayback.validateAppend(to: prior, startSeconds: start, now: began)
+                    try AlignmentAudioPlayback.validateAppend(to: prior, startSeconds: start, playedSeconds: 0)
                     clock = AlignmentPlaybackClock(
                         startSeconds: prior.startSeconds, duration: prior.duration + duration, startedAt: prior.startedAt
                     )
@@ -62,15 +62,17 @@ struct AlignmentTransportBufferingTests {
     @Test func lateOrDiscontinuousFillIsAnExplicitFailureNotScheduledSilence() throws {
         let began = Date(timeIntervalSinceReferenceDate: 100)
         let clock = AlignmentPlaybackClock(startSeconds: 10, duration: 1, startedAt: began)
-        try AlignmentAudioPlayback.validateAppend(to: clock, startSeconds: 11, now: began.addingTimeInterval(0.9))
-        for time in [0.98, 1, 2] {
+        for time in [0.9, 0.98, 0.999] {
+            try AlignmentAudioPlayback.validateAppend(to: clock, startSeconds: 11, playedSeconds: time)
+        }
+        for time in [1, 2, Double.nan] {
             #expect(throws: AlignmentTransportFailure.self) {
-                try AlignmentAudioPlayback.validateAppend(to: clock, startSeconds: 11, now: began.addingTimeInterval(time))
+                try AlignmentAudioPlayback.validateAppend(to: clock, startSeconds: 11, playedSeconds: time)
             }
         }
         for start in [10.99, 11.01, Double.nan] {
             #expect(throws: AlignmentTransportFailure.self) {
-                try AlignmentAudioPlayback.validateAppend(to: clock, startSeconds: start, now: began)
+                try AlignmentAudioPlayback.validateAppend(to: clock, startSeconds: start, playedSeconds: 0)
             }
         }
     }

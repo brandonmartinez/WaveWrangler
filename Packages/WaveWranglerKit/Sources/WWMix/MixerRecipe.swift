@@ -184,9 +184,11 @@ public struct MixerPCMWindow: Sendable {
 /// Long source preparation is raw PCM, never preprocessed effect/fader output.
 public enum MixerLiveTiming {
     public static let sourceWindowFrames = 48_000
+    public static let sourcePrefetchWindows = 5
     public static let processingBlockFrames = MixerRecipe.blockFrames
     public static let maximumScheduledAheadFrames = 4096
     public static let startLeadFrames = 2048
+    public static let startupBufferedFrames = maximumScheduledAheadFrames - startLeadFrames
     /// One in-flight block may be added after checking the scheduled horizon.
     public static let maximumPreparedControlFrames = maximumScheduledAheadFrames + processingBlockFrames
 }

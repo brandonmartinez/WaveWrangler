@@ -604,7 +604,10 @@ pitch unit then operates at the destination rate, separately from the ordinary a
 Canonical global five-second cache tiles, including negative time, are witness-bound,
 revision-keyed and memory-admitted. `AdaptiveAudioPCMCache` retains at most sixteen decoded
 multichannel tiles within a 64 MiB sample budget. Its keys include the complete derived-asset
-identity and raw-source witness. A hit avoids another disk payload read, JSON decode, finite-sample
+identity and raw-source witness. New disk payloads are versioned `WWPCM1` planar
+little-endian Float32, with bounded shape/rate/length and finite-sample validation.
+Compatible legacy JSON tiles are migrated to a separate binary asset key before reuse.
+A decoded-memory hit avoids another disk payload read, decode, finite-sample
 scan and native render, but still rechecks the active accepted-map content, source witness and
 current dependencies before returning audio. Shutdown releases the decoded cache. Map/curve,
 source, output-rate and recipe changes cannot reuse an incompatible entry; Undo may reuse an
@@ -630,13 +633,18 @@ as more five-second tiles accumulate; source authorization, accepted-map currenc
 are unchanged. Regression coverage includes a large ready history, duplicate-key slots, cancellation,
 late publication, and Undo/Redo restoration.
 
-Adaptive transport primes one full five-second window before starting the engine and permits
+Regular adaptive listening primes one full five-second window before starting the engine and permits
 ten seconds of queued look-ahead, rather than letting a one-second start and three-second queue
 compete with cold five-second tile preparation. Individual gateway reads remain bounded to five
 output seconds. Ordinary affine-only playback retains its one-second startup and three-second
 look-ahead. Muted-track warming waits until at least half of the configured look-ahead is safely
 queued; live joins retain the existing shared clock. A genuinely missed deadline remains an
 explicit failure, never raw-audio substitution, skipped frames or fabricated silence.
+Production mixing shares the same pre-effect flattened PCM, with bounded raw
+prefetch but a separate sub-100-ms processed-control horizon. Both regular and
+production producers refill independently of the UI; the output queue uses native
+player time for occupancy and `.dataPlayedBack` for final draining. Timing remains
+editable, cache entries remain disposable, and no original recording is modified.
 
 Individual correction acceptance/removal/restoration leaves the shared recorder map unchanged.
 It therefore carries a working range that belongs to the immediately prior accepted revision

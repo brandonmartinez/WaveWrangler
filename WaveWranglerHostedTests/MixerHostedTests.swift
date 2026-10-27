@@ -198,6 +198,101 @@ struct MixerHostedTests {
         #expect(f.document.store.model.episode(f.model.episodeID)?.alignment == before.episode(f.model.episodeID)?.alignment)
     }
 
+    @Test func productionWithTwoSpeakerInsertsAndAMasterInsertRunsThroughTheProgramEnd() async throws {
+        try await runInsertedProduction(drift: false)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_PRODUCTION_TIMING_TESTS"] == "1",
+        "Opt-in drift throughput qualification; real-time completion requires optimized WWRender."))
+    func driftCorrectedProductionWithInsertsCrossesMultipleSourceWindows() async throws {
+        try await runInsertedProduction(drift: true)
+    }
+
+    private func runInsertedProduction(drift: Bool) async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(
+            cleanupPrimaries: 2, durationSeconds: drift ? 8 : 4)
+        defer { f.close() }
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
+        if drift {
+            let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
+            f.model.setPositionLocked(false, group: target.group)
+            f.model.selectWaveform(target)
+            f.model.applyNumeric(ratePPM: 125, offsetMilliseconds: 350)
+            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+                && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
+            try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
+        }
+        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let slots = try (0..<3).map { _ in try appleSlot() }
+        try #require(f.document.store.apply("Add Apple Monitoring Inserts") { model throws(DomainError) in
+            var result = model
+            for (index, assignment) in episode.speakerAssignments.enumerated() {
+                result = try result.settingSpeakerMix(
+                    SpeakerMixState(speaker: assignment.speakerID, inserts: [slots[index]]), in: episode.id)
+            }
+            return try result.settingMasterMix(MasterMixState(inserts: [slots[2]]), in: episode.id)
+        })
+        try await save(f.document)
+        let expected = f.document.store.model
+        let end = drift ? 6.0 : 1.5
+        f.model.playProductionMix(interval: 0...end)
+        try await wait(f.model.lastError ?? f.model.auditionLabel) {
+            !f.model.canStopAudition || f.model.lastError != nil
+        }
+        #expect(f.model.lastError == nil, "\(f.model.lastError ?? ""): \(f.model.auditionLabel)")
+        #expect(f.model.auditionLabel == "Production mix reached the end of the selected program.")
+        #expect(f.model.waveformPlayheadSeconds == end)
+        #expect(f.model.mixer.unitStatuses.count == 3)
+        #expect(f.document.store.model == expected)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_PRODUCTION_TIMING_TESTS"] == "1",
+        "Opt-in source-preparation and controller timing diagnosis on a leased VM."))
+    func syntheticDriftPreparationAndControlRoundTripsReportSeparateTimings() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 8)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
+        let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
+        f.model.setPositionLocked(false, group: target.group)
+        f.model.selectWaveform(target)
+        f.model.applyNumeric(ratePPM: 125, offsetMilliseconds: 350)
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
+        try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
+        _ = try await f.model.mixer.prepare(programFrames: 0..<288_000)
+        func milliseconds(_ value: Duration) -> Double {
+            let parts = value.components
+            return Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15
+        }
+        for window in 0..<6 {
+            let first = Int64(window * 48_000)
+            let start = ContinuousClock.now
+            let input = try await f.model.mixer.preparePCM(first..<(first + 48_000))
+            let prepared = milliseconds(ContinuousClock.now - start)
+            var renderTimes: [Double] = []
+            var next = first
+            while next < input.frames.upperBound {
+                let end = min(next + 512, input.frames.upperBound)
+                let offset = Int(next - first)
+                let channels = input.channels.mapValues { Array($0[offset..<(offset + Int(end - next))]) }
+                let renderedAt = ContinuousClock.now
+                _ = try await f.model.mixer.renderPrepared(.init(frames: next..<end, channels: channels))
+                renderTimes.append(milliseconds(ContinuousClock.now - renderedAt))
+                next = end
+            }
+            print("PRODUCTION_SOURCE_TIMING window=\(window) raw_prepare_ms=\(prepared) "
+                + "control_render_mean_ms=\(renderTimes.reduce(0, +) / Double(renderTimes.count)) "
+                + "control_render_max_ms=\(renderTimes.max() ?? 0)")
+        }
+        #expect(f.model.lastError == nil)
+    }
+
     @Test func editorRestartCapturesNativeKnobAndDismissesTheOldInstance() async throws {
         let f = try await ready()
         defer { f.close() }

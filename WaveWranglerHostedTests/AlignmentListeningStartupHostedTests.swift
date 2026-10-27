@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import WWCore
+import WWMix
 @testable import WaveWrangler
 
 /// Run only in the coordinator's leased macOS VM. These exercise the real engine/model,
@@ -8,6 +9,66 @@ import WWCore
 @MainActor
 @Suite("Aligned listening startup, cycles and live unmute (synthetic only)", .serialized)
 struct AlignmentListeningStartupHostedTests {
+    @Test func staleProducerCannotAppendMuteOrStopANewerPlayback() throws {
+        let playback = AlignmentAudioPlayback()
+        defer { playback.stop() }
+        let old = playback.generation
+        playback.stop()
+        let current = playback.generation
+        let output = MixerPCMOutput(firstFrame: 100, channels: [[0.1, 0.2], [-0.1, -0.2]])
+        try playback.enqueueProduction(output, final: true, generation: current, onBufferDeadline: {})
+        #expect(throws: CancellationError.self) {
+            try playback.enqueueProduction(output, final: true, generation: old, onBufferDeadline: {})
+        }
+        #expect(throws: CancellationError.self) { try playback.setGains([:], generation: old) }
+        playback.stop(ifCurrent: old)
+        #expect(playback.generation == current && playback.clock?.startSeconds == 100.0 / 48_000)
+    }
+
+    @Test func productionPrefillDoesNotStartTheClockOrDeadlineAfterOneSmallBlock() async throws {
+        let playback = AlignmentAudioPlayback()
+        defer { playback.stop() }
+        var failures = 0
+        let block = MixerLiveTiming.processingBlockFrames
+        func output(_ first: Int, _ count: Int) -> MixerPCMOutput {
+            .init(firstFrame: Int64(first), channels: Array(repeating: Array(repeating: 0.1, count: count), count: 2))
+        }
+        try playback.enqueueProduction(output(0, block), final: false) { failures += 1 }
+        try #require(playback.clock == nil, "A single DSP block is not enough verified audio to start playback.")
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(failures == 0 && playback.clock == nil)
+        for first in stride(from: block, to: MixerLiveTiming.startupBufferedFrames, by: block) {
+            try playback.enqueueProduction(output(first, block), final: false) { failures += 1 }
+        }
+        let clock = try #require(playback.clock)
+        #expect(clock.startSeconds == 0)
+        #expect(clock.duration == Double(MixerLiveTiming.startupBufferedFrames) / Double(MixerRecipe.sampleRate))
+        #expect(failures == 0)
+        playback.stop()
+        try playback.enqueueProduction(output(-3, 10), final: true) { failures += 1 }
+        #expect(playback.clock?.startSeconds == -3.0 / 48_000)
+        #expect(playback.clock?.duration == 10.0 / 48_000)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(failures == 0, "A short final program must start immediately without a producer deadline.")
+    }
+
+    @Test func primedProductionStillStopsForARealMissedDeadlineAndPreservesTheClockForItsHandler() async throws {
+        let playback = AlignmentAudioPlayback()
+        defer { playback.stop() }
+        var failures = 0
+        let count = MixerLiveTiming.startupBufferedFrames
+        let output = MixerPCMOutput(firstFrame: 0,
+            channels: Array(repeating: Array(repeating: Float(0), count: count), count: 2))
+        try playback.enqueueProduction(output, final: false) {
+            failures += 1
+            #expect(playback.clock != nil)
+        }
+        try await wait("A real production underrun must still stop playback") { failures == 1 }
+        #expect(playback.clock == nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(failures == 1)
+    }
+
     private func wait(_ reason: @autoclosure () -> String, until ready: () -> Bool) async throws {
         let deadline = ContinuousClock.now.advanced(by: .seconds(25))
         while !ready(), ContinuousClock.now < deadline {

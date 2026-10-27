@@ -24,6 +24,10 @@ final class MixerDocumentTransactions {
         controllers.append(WeakController(value: controller))
     }
 
+    func modelDidChange() {
+        liveControllers.forEach { $0.refreshPlaybackControls() }
+    }
+
     private var liveControllers: [EpisodeMixerController] { controllers.compactMap(\.value) }
     var needsBarrier: Bool {
         operations.pending > 0 || liveControllers.contains(where: \.hasObservedState)

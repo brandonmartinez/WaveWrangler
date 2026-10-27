@@ -76,6 +76,14 @@ public struct DerivedJob: Sendable {
     public let slot: DerivedSlot
     public let key: DerivedAssetKey
     let task: Task<DerivedJobOutcome, Never>
+    let identifier: UInt64?
+
+    init(slot: DerivedSlot, key: DerivedAssetKey, task: Task<DerivedJobOutcome, Never>, identifier: UInt64? = nil) {
+        self.slot = slot
+        self.key = key
+        self.task = task
+        self.identifier = identifier
+    }
 
     public var outcome: DerivedJobOutcome {
         get async { await task.value }
@@ -353,7 +361,13 @@ public actor DerivedJobCoordinator {
         setRecord(record, for: slot)
         continuation.yield(DerivedSlotChange(slot: slot, state: record.state))
         refresh()
-        return DerivedJob(slot: slot, key: key, task: task)
+        return DerivedJob(slot: slot, key: key, task: task, identifier: jobID)
+    }
+
+    /// Cancel this exact submission, never a later job that happens to use the same content key.
+    public func cancel(_ job: DerivedJob) {
+        guard let identifier = job.identifier, slots[job.slot]?.currentJob == identifier else { return }
+        cancel(job.slot)
     }
 
     public func cancel(_ slot: DerivedSlot) {

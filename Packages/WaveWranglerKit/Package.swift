@@ -60,7 +60,9 @@ let package = Package(
         .target(name: "WWDerived", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWPersistence"]),
         .target(name: "WWAlignEstimate", dependencies: ["WWCore", "WWTimeMap"]),
         .target(name: "WWAutoAlign", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
-        .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"]),
+        // Clock-corrected source preparation must keep up with playback in a Debug host, too.
+        .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"],
+            swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
         .target(name: "WWMix", dependencies: ["WWCore", "WWSources", "WWDecode"]),
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWAutoAlign", "WWRender"]),

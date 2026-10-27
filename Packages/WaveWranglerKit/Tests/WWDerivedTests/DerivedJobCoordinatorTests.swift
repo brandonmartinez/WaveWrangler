@@ -53,6 +53,32 @@ struct DerivedJobCoordinatorTests {
         #expect(coordinator.store.payload(for: key) == Data("peaks".utf8))
     }
 
+    @Test func cancelingAnOldSubmissionCannotCancelANewerJobWithTheSameKey() async throws {
+        let directory = try TemporaryDirectory("same-key-cancellation")
+        let coordinator = try coordinator(directory)
+        let key = key()
+        let firstStarted = Latch(), releaseFirst = Latch()
+        let secondStarted = Latch(), releaseSecond = Latch()
+        let first = await coordinator.submit(slot, key: key) {
+            await firstStarted.open()
+            await releaseFirst.wait()
+            return Data("first".utf8)
+        }
+        await firstStarted.wait()
+        let second = await coordinator.submit(slot, key: key) {
+            await secondStarted.open()
+            await releaseSecond.wait()
+            return Data("second".utf8)
+        }
+        await secondStarted.wait()
+        await coordinator.cancel(first)
+        await releaseSecond.open()
+        #expect(await second.outcome == .published(key))
+        await releaseFirst.open()
+        _ = await first.outcome
+        #expect(await coordinator.readyPayload(for: slot) == Data("second".utf8))
+    }
+
     @Test func completeOverviewReusesAcrossOpensAndRebuildsAfterMapOrSourceChanges() async throws {
         let directory = try TemporaryDirectory("overview-cache")
         var current = DerivedInputs()

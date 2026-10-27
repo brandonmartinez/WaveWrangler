@@ -68,6 +68,13 @@ public enum AlignedAuditionWindowReader {
                 witness: witness, interpretation: cursor.interpretation, map: groupMap,
                 revision: revision, channel: decodedChannel, frames: outputFrames
             )
+            if let cache, await cache.persistsTiles {
+                let samples = try await cache.flattenedSamples(sourceURL: sourceURL, source: source,
+                    witness: witness, interpretation: cursor.interpretation, decoder: decoder,
+                    map: groupMap, channel: decodedChannel, frames: outputFrames, revision: revision)
+                try await cursor.verifyUnchanged()
+                return (samples: samples, key: key, cached: true)
+            }
             if let samples = await cache?.samples(for: key) {
                 try await cursor.verifyUnchanged()
                 return (samples: samples, key: key, cached: true)

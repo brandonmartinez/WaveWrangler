@@ -98,6 +98,7 @@ public final class AlignmentPipeline: Sendable {
     public let configuration: AlignmentPipelineConfiguration
     let gate: ResourceGate
     let adaptivePCMCache = AdaptiveAudioPCMCache()
+    let adaptivePCMPreparations = SharedAudioWork<AdaptiveAudioPCMCache.Key, AdaptivePCM>()
     let ledger = AcceptanceLedger()
     let activation = AsyncSerial()
     /// Group renders (they hold gateway cursors outside coordinator jobs); `shutdown()` awaits them.

@@ -53,9 +53,14 @@ actor AlignmentRuntime {
     private var reconciliationFailures: [EpisodeID: String] = [:]
     private var openedDocuments = OpenedDocumentPublications()
     private var publicationReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
-    private let auditionPCM = AlignedAuditionPCMCache()
+    private let auditionPCM: AlignedAuditionPCMCache
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
+    private var productionValidationHook: (@Sendable () async throws -> Void)?
+
+    func setProductionValidationHookForTesting(_ hook: (@Sendable () async throws -> Void)?) {
+        productionValidationHook = hook
+    }
     #endif
 
     private init(
@@ -69,6 +74,7 @@ actor AlignmentRuntime {
         self.access = access
         mediaInspector = SourceMediaInspector(accessStore: accessStore, access: access)
         coordinator = DerivedJobCoordinator(store: derived)
+        auditionPCM = AlignedAuditionPCMCache(coordinator: coordinator)
         pipeline = AlignmentPipeline(coordinator: coordinator, decoder: SourceDecoder(access: access))
     }
 
@@ -993,6 +999,15 @@ actor AlignmentRuntime {
             programFrames: recipe.programFrames, policy: recipe.policy)
         guard current == recipe else { throw MixerFailure.staleDependencies }
         return MixerPCMWindow(frames: frames, channels: channels)
+    }
+
+    func validateProduction(recipe: MixerRecipe, model: ShowDocumentModel) async throws {
+        #if DEBUG
+        if let productionValidationHook { try await productionValidationHook() }
+        #endif
+        let current = try await mixerRecipe(model: model, episode: recipe.episode,
+            programFrames: recipe.programFrames, policy: recipe.policy)
+        guard current == recipe else { throw MixerFailure.staleDependencies }
     }
 
     func renderProductionOffline(

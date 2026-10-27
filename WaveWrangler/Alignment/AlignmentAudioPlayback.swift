@@ -1,6 +1,7 @@
 import AVFAudio
 import Darwin
 import Foundation
+import Synchronization
 import WWAlignPipeline
 import WWCore
 import WWMix
@@ -24,17 +25,24 @@ struct AlignmentAudioClip: Sendable {
     }
 }
 
-struct AlignmentPlaybackClock {
+struct AlignmentPlaybackClock: Sendable {
     let startSeconds: Double
     let duration: Double
     let startedAt: Date
+    var audioPosition: Double? = nil
+    var sampledAt: Date? = nil
 
     func playhead(at now: Date = Date()) -> Double {
-        startSeconds + min(max(0, now.timeIntervalSince(startedAt)), duration)
+        let elapsed = if let audioPosition, let sampledAt {
+            audioPosition + max(0, now.timeIntervalSince(sampledAt))
+        } else {
+            now.timeIntervalSince(startedAt)
+        }
+        return startSeconds + min(max(0, elapsed), duration)
     }
 }
 
-enum AlignmentTransportFailure: LocalizedError {
+enum AlignmentTransportFailure: LocalizedError, Sendable {
     case bufferDeadline
     case discontinuousWindow
 
@@ -65,29 +73,178 @@ struct AlignmentTransportSources {
     }
 }
 
-@MainActor
-final class AlignmentAudioPlayback {
+struct AlignmentProductionBuffer {
+    private(set) var firstFrame: Int64?
+    private(set) var endFrame: Int64?
+    private(set) var frameCount: Int64 = 0
+    private(set) var isFinal = false
+
+    var isReady: Bool { isFinal || frameCount >= MixerLiveTiming.startupBufferedFrames }
+
+    mutating func append(_ output: MixerPCMOutput, final: Bool) throws {
+        guard output.frameCount > 0, !isFinal else { throw MixerFailure.incompletePCM }
+        guard endFrame == nil || endFrame == output.firstFrame else {
+            throw AlignmentTransportFailure.discontinuousWindow
+        }
+        let (end, overflow) = output.firstFrame.addingReportingOverflow(Int64(output.frameCount))
+        let (count, countOverflow) = frameCount.addingReportingOverflow(Int64(output.frameCount))
+        guard !overflow, !countOverflow else { throw MixerFailure.incompletePCM }
+        firstFrame = firstFrame ?? output.firstFrame
+        endFrame = end
+        frameCount = count
+        isFinal = final
+    }
+}
+
+/// The graph has one serial owner; neither refill nor its audio-clock watchdog needs the UI actor.
+final class AlignmentAudioPlayback: @unchecked Sendable {
+    private let queue = DispatchQueue(label: "com.wavewrangler.audio-output", qos: .userInitiated)
+    private let graph: AlignmentAudioPlaybackGraph
+    private var sessionGeneration: UInt64 = 0
+
+    init() { graph = AlignmentAudioPlaybackGraph(queue: queue) }
+    deinit { queue.sync { graph.stop() } }
+
+    var clock: AlignmentPlaybackClock? { queue.sync { graph.readClock() } }
+    var bufferedSeconds: Double { queue.sync { graph.bufferedSeconds } }
+    var failure: AlignmentTransportFailure? { queue.sync { graph.failure } }
+    var isFinished: Bool { queue.sync { graph.isFinished } }
+    var generation: UInt64 { queue.sync { sessionGeneration } }
+    var preparedSources: Set<SourceID> { queue.sync { graph.preparedSources } }
+    var pendingSources: Set<SourceID> { queue.sync { graph.pendingSources } }
+
+    func stop() { queue.sync { sessionGeneration &+= 1; graph.stop() } }
+    func stop(ifCurrent generation: UInt64, preservingClock: Bool = false) {
+        queue.sync {
+            guard sessionGeneration == generation else { return }
+            sessionGeneration &+= 1
+            graph.stop(preservingClock: preservingClock)
+        }
+    }
+    func setGains(_ gains: [SourceID: Float]) { queue.sync { graph.setGains(gains) } }
+    func excludeSource(_ source: SourceID) { queue.sync { graph.excludeSource(source) } }
+    func setGains(_ gains: [SourceID: Float], generation: UInt64) throws {
+        try queue.sync {
+            guard sessionGeneration == generation else { throw CancellationError() }
+            graph.setGains(gains)
+        }
+    }
+    func excludeSource(_ source: SourceID, generation: UInt64) throws {
+        try queue.sync {
+            guard sessionGeneration == generation else { throw CancellationError() }
+            graph.excludeSource(source)
+        }
+    }
+    func play(_ clip: AlignmentAudioClip, startSeconds: Double) throws {
+        try queue.sync { try graph.play(clip, startSeconds: startSeconds) }
+    }
+
+    func enqueueProduction(_ output: MixerPCMOutput, final: Bool, generation: UInt64? = nil,
+                           onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
+        try queue.sync {
+            if let generation, sessionGeneration != generation { throw CancellationError() }
+            try graph.enqueueProduction(output, final: final, onBufferDeadline: onBufferDeadline)
+        }
+    }
+
+    func enqueue(_ clips: [SourceID: AlignmentAudioClip], startSeconds: Double, first: Bool,
+                 availableSources: Set<SourceID>, final: Bool, generation: UInt64? = nil,
+                 onSourcesJoined: @escaping @MainActor @Sendable () -> Void,
+                 onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
+        try queue.sync {
+            if let generation, sessionGeneration != generation { throw CancellationError() }
+            try graph.enqueue(clips, startSeconds: startSeconds, first: first,
+                availableSources: availableSources, final: final, onSourcesJoined: onSourcesJoined,
+                onBufferDeadline: onBufferDeadline)
+        }
+    }
+
+    static func validateProduction(_ output: MixerPCMOutput) throws -> AlignmentAudioClip {
+        try AlignmentAudioPlaybackGraph.validateProduction(output)
+    }
+    static func validateTransport(_ clips: [SourceID: AlignmentAudioClip]) throws -> AlignmentAudioClip {
+        try AlignmentAudioPlaybackGraph.validateTransport(clips)
+    }
+    static func validateAppend(to clock: AlignmentPlaybackClock, startSeconds: Double, playedSeconds: Double? = nil) throws {
+        try AlignmentAudioPlaybackGraph.validateAppend(to: clock, startSeconds: startSeconds, playedSeconds: playedSeconds)
+    }
+}
+
+/// Every mutable field and AVFAudio object is confined to the output queue, including timer events.
+private final class PlaybackCompletion: Sendable {
+    let remaining: Atomic<Int>
+    init(_ count: Int) { remaining = Atomic(count) }
+    func finish() { remaining.wrappingSubtract(1, ordering: .releasing) }
+    var isFinished: Bool { remaining.load(ordering: .acquiring) == 0 }
+}
+
+private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
+    private let queue: DispatchQueue
     private let engine = AVAudioEngine()
     private var players: [SourceID: AVAudioPlayerNode] = [:]
     private var source: AVAudioSourceNode?
     private var productionPlayer: AVAudioPlayerNode?
+    private var productionBuffer = AlignmentProductionBuffer()
     private var transportSampleRate: Double?
     private var transportHostTime: UInt64?
-    private var bufferDeadlineTask: Task<Void, Never>?
+    private var monitor: DispatchSourceTimer?
+    private var finalBuffer = true
+    private var onDeadline: (@MainActor @Sendable () -> Void)?
+    private(set) var failure: AlignmentTransportFailure?
+    private var generation: UInt64 = 0
+    private var completion = PlaybackCompletion(1)
     private var sourceJoinTasks: [SourceID: Task<Void, Never>] = [:]
     private var transportSources = AlignmentTransportSources()
     private(set) var clock: AlignmentPlaybackClock?
+    var isFinished: Bool { finalBuffer && completion.isFinished }
+
+    init(queue: DispatchQueue) { self.queue = queue }
+
+    private var elapsedAudioSeconds: Double? {
+        if let productionPlayer, let time = productionPlayer.lastRenderTime,
+           let player = productionPlayer.playerTime(forNodeTime: time), player.isSampleTimeValid {
+            return Double(player.sampleTime) / player.sampleRate
+        }
+        guard let clock,
+              let entry = transportSources.starts.min(by: { $0.value < $1.value }),
+              let node = players[entry.key], let time = node.lastRenderTime,
+              let player = node.playerTime(forNodeTime: time), player.isSampleTimeValid else { return nil }
+        return entry.value - clock.startSeconds + Double(player.sampleTime) / player.sampleRate
+    }
+
+    func readClock() -> AlignmentPlaybackClock? {
+        if failure == nil, let prior = clock, let elapsed = elapsedAudioSeconds, elapsed >= 0 {
+            clock = AlignmentPlaybackClock(startSeconds: prior.startSeconds, duration: prior.duration,
+                startedAt: prior.startedAt, audioPosition: elapsed, sampledAt: Date())
+        }
+        return clock
+    }
+
+    var bufferedSeconds: Double {
+        guard let clock else { return 0 }
+        if let elapsed = elapsedAudioSeconds { return max(0, clock.duration - elapsed) }
+        return max(0, clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow)
+    }
 
     var preparedSources: Set<SourceID> { transportSources.prepared }
     var pendingSources: Set<SourceID> {
-        guard let clock else { return [] }
+        guard let clock = readClock() else { return [] }
         let playhead = clock.playhead()
         return transportSources.pending(at: playhead)
     }
 
-    func stop() {
-        bufferDeadlineTask?.cancel()
-        bufferDeadlineTask = nil
+    func stop(preservingClock: Bool = false) {
+        let terminal: AlignmentPlaybackClock? = if preservingClock, let current = readClock() {
+            AlignmentPlaybackClock(startSeconds: current.startSeconds,
+                duration: max(0, current.playhead() - current.startSeconds), startedAt: current.startedAt)
+        } else { nil }
+        generation &+= 1
+        monitor?.cancel()
+        monitor = nil
+        onDeadline = nil
+        finalBuffer = true
+        failure = nil
+        completion = PlaybackCompletion(1)
         for task in sourceJoinTasks.values { task.cancel() }
         sourceJoinTasks.removeAll()
         for player in players.values {
@@ -102,9 +259,52 @@ final class AlignmentAudioPlayback {
         }
         if let source, engine.attachedNodes.contains(source) { engine.detach(source) }
         source = nil
-        clock = nil
+        productionBuffer = AlignmentProductionBuffer()
+        clock = terminal
         transportHostTime = nil
         transportSources = AlignmentTransportSources()
+    }
+
+    private func watch(final: Bool, deadline: @escaping @MainActor @Sendable () -> Void) {
+        finalBuffer = final
+        onDeadline = deadline
+        guard monitor == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(5), repeating: .milliseconds(5))
+        timer.setEventHandler { [weak self] in self?.checkDeadline() }
+        monitor = timer
+        timer.resume()
+    }
+
+    private func checkDeadline() {
+        guard !finalBuffer, failure == nil, let scheduled = clock,
+              let elapsed = elapsedAudioSeconds, elapsed >= scheduled.duration else { return }
+        let callback = onDeadline
+        let stopped = readClock()
+        stop()
+        clock = stopped
+        failure = .bufferDeadline
+        let stoppedGeneration = generation
+        if let callback {
+            Task { @MainActor [weak self] in
+                callback()
+                self?.clearTerminalClock(generation: stoppedGeneration)
+            }
+        }
+    }
+
+    private func clearTerminalClock(generation expected: UInt64) {
+        queue.async { [weak self] in
+            guard let self, self.generation == expected else { return }
+            self.clock = nil
+            self.failure = nil
+        }
+    }
+
+    private func validateQueueAppend(startSeconds: Double) throws {
+        if let failure { throw failure }
+        guard let clock else { throw AlignmentTransportFailure.discontinuousWindow }
+        try Self.validateAppend(to: clock, startSeconds: startSeconds, playedSeconds: elapsedAudioSeconds)
     }
 
     private func clearPlayers() {
@@ -150,7 +350,8 @@ final class AlignmentAudioPlayback {
     /// Only pre-rendered stereo reaches the device graph. No vendor code or Swift task is called
     /// from the output callback; the serial mixer worker owns persistent effect state.
     func enqueueProduction(_ output: MixerPCMOutput, final: Bool,
-                           onBufferDeadline: @escaping @MainActor () -> Void) throws {
+                           onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
+        if let failure { throw failure }
         let clip = try Self.validateProduction(output)
         let format = try clip.makeFormat()
         guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(output.frameCount)),
@@ -169,32 +370,32 @@ final class AlignmentAudioPlayback {
             engine.attach(player)
             engine.connect(player, to: engine.mainMixerNode, format: format)
             productionPlayer = player
-            player.scheduleBuffer(buffer)
+        }
+        guard let productionPlayer else { throw MixerFailure.incompletePCM }
+        var scheduled = productionBuffer
+        try scheduled.append(output, final: final)
+        if clock != nil { try validateQueueAppend(startSeconds: start) }
+        if final {
+            let finished = PlaybackCompletion(1)
+            completion = finished
+            productionPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in finished.finish() }
+        } else {
+            productionPlayer.scheduleBuffer(buffer)
+        }
+        productionBuffer = scheduled
+        if clock == nil, scheduled.isReady, let first = scheduled.firstFrame {
             do { try engine.start() }
             catch { stop(); throw error }
             let lead = Double(MixerLiveTiming.startLeadFrames) / Double(MixerRecipe.sampleRate)
-            player.play(at: AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)))
-            clock = AlignmentPlaybackClock(startSeconds: start, duration: clip.duration,
+            productionPlayer.play(at: AVAudioTime(hostTime: mach_absolute_time() + AVAudioTime.hostTime(forSeconds: lead)))
+            clock = AlignmentPlaybackClock(startSeconds: Double(first) / Double(MixerRecipe.sampleRate),
+                duration: Double(scheduled.frameCount) / Double(MixerRecipe.sampleRate),
                 startedAt: Date().addingTimeInterval(lead))
-        } else {
-            guard let clock, let productionPlayer else { throw MixerFailure.discontinuousPCM }
-            try Self.validateAppend(to: clock, startSeconds: start)
-            productionPlayer.scheduleBuffer(buffer)
+        } else if let clock {
             self.clock = AlignmentPlaybackClock(startSeconds: clock.startSeconds,
-                duration: clock.duration + clip.duration, startedAt: clock.startedAt)
+                duration: Double(scheduled.frameCount) / Double(MixerRecipe.sampleRate), startedAt: clock.startedAt)
         }
-        bufferDeadlineTask?.cancel()
-        bufferDeadlineTask = nil
-        if !final, let clock {
-            let remaining = max(0, clock.startedAt.addingTimeInterval(clock.duration - 0.02).timeIntervalSinceNow)
-            bufferDeadlineTask = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(remaining)) }
-                catch { return }
-                guard let self, !Task.isCancelled else { return }
-                stop()
-                onBufferDeadline()
-            }
-        }
+        if clock != nil { watch(final: final, deadline: onBufferDeadline) }
     }
 
     func excludeSource(_ source: SourceID) {
@@ -217,22 +418,24 @@ final class AlignmentAudioPlayback {
     }
 
     static func validateAppend(
-        to clock: AlignmentPlaybackClock, startSeconds: Double, now: Date = Date()
+        to clock: AlignmentPlaybackClock, startSeconds: Double, playedSeconds: Double? = nil
     ) throws {
         guard startSeconds.isFinite,
               abs(startSeconds - clock.startSeconds - clock.duration) < 0.5 / 48_000 else {
             throw AlignmentTransportFailure.discontinuousWindow
         }
-        guard now < clock.startedAt.addingTimeInterval(clock.duration - 0.02) else {
-            throw AlignmentTransportFailure.bufferDeadline
+        if let playedSeconds {
+            guard playedSeconds.isFinite, playedSeconds < clock.duration else {
+                throw AlignmentTransportFailure.bufferDeadline
+            }
         }
     }
 
     func enqueue(
         _ clips: [SourceID: AlignmentAudioClip], startSeconds: Double, first: Bool,
         availableSources: Set<SourceID>, final: Bool,
-        onSourcesJoined: @escaping @MainActor () -> Void,
-        onBufferDeadline: @escaping @MainActor () -> Void
+        onSourcesJoined: @escaping @MainActor @Sendable () -> Void,
+        onBufferDeadline: @escaping @MainActor @Sendable () -> Void
     ) throws {
         let representative = try Self.validateTransport(clips)
         let format = try representative.makeFormat()
@@ -269,7 +472,7 @@ final class AlignmentAudioPlayback {
             transportSampleRate = representative.sampleRate
         } else {
             guard let clock else { throw WaveformWindowError.invalidSamples }
-            try Self.validateAppend(to: clock, startSeconds: startSeconds)
+            try validateQueueAppend(startSeconds: startSeconds)
         }
         guard Set(clips.keys).isSubset(of: Set(players.keys)),
               preparedSources.isSubset(of: Set(clips.keys)),
@@ -292,14 +495,20 @@ final class AlignmentAudioPlayback {
         guard let clock, let transportHostTime else { throw WaveformWindowError.invalidSamples }
         let hostTime = transportHostTime + AVAudioTime.hostTime(forSeconds: max(0, startSeconds - clock.startSeconds))
         let start = AVAudioTime(hostTime: hostTime)
+        let finished: PlaybackCompletion? = final ? PlaybackCompletion(buffers.count) : nil
+        if let finished { completion = finished }
         for (source, buffer) in buffers {
             guard let player = players[source] else { throw WaveformWindowError.invalidSamples }
             if !transportSources.prepared.contains(source) {
-                player.scheduleBuffer(buffer)
+                if let finished {
+                    player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in finished.finish() }
+                } else {
+                    player.scheduleBuffer(buffer)
+                }
                 player.play(at: start)
                 if !first {
                     let remaining = max(0, clock.startedAt.addingTimeInterval(startSeconds - clock.startSeconds).timeIntervalSinceNow)
-                    sourceJoinTasks[source] = Task {
+                    sourceJoinTasks[source] = Task { @MainActor in
                         do { try await Task.sleep(for: .seconds(remaining)) }
                         catch { return }
                         guard !Task.isCancelled else { return }
@@ -307,22 +516,15 @@ final class AlignmentAudioPlayback {
                     }
                 }
             } else {
-                player.scheduleBuffer(buffer)
+                if let finished {
+                    player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in finished.finish() }
+                } else {
+                    player.scheduleBuffer(buffer)
+                }
             }
         }
         transportSources.schedule(Set(clips.keys), startingAt: startSeconds)
-        bufferDeadlineTask?.cancel()
-        bufferDeadlineTask = nil
-        if !final {
-            let remaining = max(0, clock.startedAt.addingTimeInterval(clock.duration - 0.02).timeIntervalSinceNow)
-            bufferDeadlineTask = Task { [weak self] in
-                do { try await Task.sleep(for: .seconds(remaining)) }
-                catch { return }
-                guard let self, !Task.isCancelled, self.clock != nil else { return }
-                onBufferDeadline()
-                stop()
-            }
-        }
+        watch(final: final, deadline: onBufferDeadline)
     }
 }
 

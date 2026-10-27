@@ -359,13 +359,11 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private var auditionTask: Task<Void, Never>?
     @ObservationIgnored private var auditionGeneration: UInt64 = 0
     @ObservationIgnored private var transportTask: Task<Void, Never>?
+    @ObservationIgnored private var sourcePlayback: RegularAudioPlayback?
     @ObservationIgnored private var transportProgressTask: Task<Void, Never>?
-    @ObservationIgnored private var transportWarmupTask: Task<Void, Never>?
-    @ObservationIgnored private var transportWarmup: (source: SourceID, frames: Range<Int64>)?
     @ObservationIgnored private var auditionStopTask: Task<Void, Never>?
     @ObservationIgnored private var auditionUsesOriginalTime = false
     @ObservationIgnored private var productionTimeline: ManualCutTimeline?
-    @ObservationIgnored private var productionPreparationTask: Task<MixerPCMWindow, any Error>?
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime,
          listening: EpisodeListeningState = EpisodeListeningState()) {
@@ -1656,80 +1654,32 @@ final class EpisodeAlignmentModel {
                 let last = min(end, interval?.upperBound ?? end)
                 let schedule = try AlignedAuditionSchedule(startSeconds: start, endSeconds: last)
                 let frames = schedule.firstFrame..<schedule.endFrame
-                let recipe = try await mixer.prepare(programFrames: frames)
+                _ = try await mixer.prepare(programFrames: frames)
                 guard generation == auditionGeneration else { throw CancellationError() }
                 productionTimeline = timeline
-                var next = recipe.programFrames.lowerBound
-                @MainActor func enqueue(_ output: MixerPCMOutput, final: Bool) throws {
-                    guard generation == auditionGeneration else { throw CancellationError() }
-                    guard output.frameCount > 0 else { return }
-                    try audioPlayback.enqueueProduction(output, final: final) { [weak self] in
-                        guard let self else { return }
-                        stopAudition()
-                        let error = AlignmentTransportFailure.bufferDeadline
-                        mixer.fail(error)
-                        lastError = error.localizedDescription
-                        auditionLabel = "Production playback stopped: \(error.localizedDescription)."
-                    }
-                    isAuditioning = true
-                    isPreparingAudition = false
-                    auditionLabel = "Playing the Primary-speaker production mix; source audition choices are unchanged."
-                    if transportProgressTask == nil {
-                        transportProgressTask = Task { [weak self] in
-                            while let self, generation == auditionGeneration, !Task.isCancelled,
-                                  let clock = audioPlayback.clock {
-                                waveformPlayheadSeconds = cutTimeline.editedTime(
-                                    forAlignedTime: timeline.alignedTime(forEditedTime: clock.playhead()))
-                                followPlayheadIfNeeded()
-                                do { try await Task.sleep(for: .milliseconds(50)) }
-                                catch { return }
-                            }
+                let prepared = try mixer.makePlayback(output: audioPlayback)
+                transportProgressTask = Task { [weak self] in
+                    while let self, generation == auditionGeneration, !Task.isCancelled {
+                        if let clock = audioPlayback.clock, audioPlayback.failure == nil {
+                            isAuditioning = true
+                            isPreparingAudition = false
+                            mixer.publishPlaybackMeters()
+                            auditionLabel = "Playing the Primary-speaker production mix; source audition choices are unchanged."
+                            waveformPlayheadSeconds = cutTimeline.editedTime(
+                                forAlignedTime: timeline.alignedTime(forEditedTime: clock.playhead()))
+                            followPlayheadIfNeeded()
                         }
+                        do { try await Task.sleep(for: .milliseconds(50)) }
+                        catch { return }
                     }
                 }
-                @MainActor func prepare(_ start: Int64) -> Task<MixerPCMWindow, any Error> {
-                    let range = start..<min(start + Int64(MixerLiveTiming.sourceWindowFrames),
-                        recipe.programFrames.upperBound)
-                    return Task { try await mixer.preparePCM(range) }
-                }
-                productionPreparationTask = prepare(next)
-                while next < recipe.programFrames.upperBound {
-                    try Task.checkCancellation()
-                    guard let preparation = productionPreparationTask else { throw MixerFailure.incompletePCM }
-                    let input = try await preparation.value
-                    guard generation == auditionGeneration else { throw CancellationError() }
-                    productionPreparationTask = input.frames.upperBound < recipe.programFrames.upperBound
-                        ? prepare(input.frames.upperBound) : nil
-                    while next < input.frames.upperBound {
-                        let end = min(next + Int64(MixerLiveTiming.processingBlockFrames), input.frames.upperBound)
-                        let range = next..<end
-                        let offset = Int(next - input.frames.lowerBound)
-                        let samples = input.channels.mapValues { Array($0[offset..<(offset + range.count)]) }
-                        let output = try await mixer.renderPrepared(.init(frames: range, channels: samples))
-                        let lastInput = range.upperBound == recipe.programFrames.upperBound
-                        try enqueue(output, final: lastInput && mixer.processor?.latencyFrames == 0)
-                        next = range.upperBound
-                        let horizon = Double(MixerLiveTiming.maximumScheduledAheadFrames) / Double(MixerRecipe.sampleRate)
-                        while let clock = audioPlayback.clock,
-                              clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow > horizon {
-                            try await Task.sleep(for: .milliseconds(5))
-                        }
-                    }
-                }
-                while let output = try await mixer.finishNext() {
-                    let final = output.firstFrame + Int64(output.frameCount) == recipe.programFrames.upperBound
-                    try enqueue(output, final: final)
-                    let horizon = Double(MixerLiveTiming.maximumScheduledAheadFrames) / Double(MixerRecipe.sampleRate)
-                    while let clock = audioPlayback.clock,
-                          clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow > horizon {
-                        try await Task.sleep(for: .milliseconds(5))
-                    }
-                }
-                while let clock = audioPlayback.clock,
-                      clock.startedAt.addingTimeInterval(clock.duration) > Date() {
-                    waveformPlayheadSeconds = cutTimeline.editedTime(
-                        forAlignedTime: timeline.alignedTime(forEditedTime: clock.playhead()))
-                    try await Task.sleep(for: .milliseconds(50))
+                try await prepared.play(output: audioPlayback) { [weak self] in
+                    guard let self, generation == auditionGeneration else { return }
+                    stopAudition()
+                    let error = AlignmentTransportFailure.bufferDeadline
+                    mixer.fail(error)
+                    lastError = error.localizedDescription
+                    auditionLabel = "Production playback stopped: \(error.localizedDescription)."
                 }
                 guard generation == auditionGeneration else { return }
                 stopPlayback(updatePlayhead: false)
@@ -1798,7 +1748,7 @@ final class EpisodeAlignmentModel {
             guard let self else { return }
             let end = min(lastPosition, self.timelineEnd(for: Set(availableSources), applyingCuts: applyingCuts), 86_400)
             let rate = Double(AlignedAuditionWindowReader.outputRate)
-            var schedule: AlignedAuditionSchedule
+            let schedule: AlignedAuditionSchedule
             do {
                 schedule = try AlignedAuditionSchedule(startSeconds: firstPosition, endSeconds: end,
                     usesAdaptiveTiming: availableSources.contains { adaptiveSources.contains($0) })
@@ -1812,129 +1762,53 @@ final class EpisodeAlignmentModel {
                 return
             }
             let start = Double(schedule.firstFrame) / rate
-            var preparedSources = sources
-            var warmedSources: Set<SourceID> = []
-            while !Task.isCancelled, generation == auditionGeneration, let frames = schedule.next() {
-                do {
-                    isPreparingAudition = true
-                    if !isAuditioning {
-                        auditionLabel = "Preparing timed tracks for live listening at the displayed map revision…"
-                            + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track is" : "tracks are") excluded.")
-                    }
-                    var joining: SourceID?
-                    if let warm = transportWarmup {
-                        warmedSources.insert(warm.source)
-                        if enabledSources.contains(warm.source),
-                           warm.frames.lowerBound <= frames.lowerBound, warm.frames.upperBound >= frames.upperBound {
-                            joining = warm.source
-                            transportWarmup = nil
-                        } else if !enabledSources.contains(warm.source) || warm.frames.upperBound < frames.upperBound {
-                            transportWarmup = nil
-                        }
-                    }
-                    var requestedSources = preparedSources + (joining.map { [$0] } ?? [])
-                    var clips: [SourceID: AlignmentRuntime.AuditionClip] = [:]
-                    while true {
-                        do {
-                            clips = try await runtime.sourceAuditions(
-                                model: snapshot, episode: episodeID,
-                                sources: requestedSources, outputFrames: frames, applyingCuts: applyingCuts,
-                                revealingCut: revealingCut
-                            )
-                            preparedSources = requestedSources
-                            break
-                        } catch is CancellationError {
-                            throw CancellationError()
-                        } catch let error as AlignmentRuntime.AuditionSourceFailure {
-                            guard requestedSources.contains(error.source),
-                                  error.source == joining || !enabledSources.contains(error.source) else {
-                                throw error
-                            }
-                            transportUnavailable[error.source] = error.reason
-                            audioPlayback.excludeSource(error.source)
-                            requestedSources.removeAll { $0 == error.source }
-                            guard !requestedSources.isEmpty else { throw error }
-                        }
-                    }
-                    try Task.checkCancellation()
-                    guard generation == auditionGeneration,
-                          document.store.model.hasSameMediaInputs(as: snapshot, in: episodeID),
-                          document.store.model.episode(episodeID)?.mix?.inputGains == snapshot.episode(episodeID)?.mix?.inputGains,
-                          timingIsVerified(snapshot) else { throw CancellationError() }
-                    guard !clips.isEmpty else { throw WaveformWindowError.invalidSamples }
-                    isPreparingAudition = false
-                    try enqueueTransport(
-                        clips, startSeconds: Double(frames.lowerBound) / rate, first: !isAuditioning,
-                        availableSources: Set(availableSources), final: frames.upperBound == schedule.endFrame
-                    )
-                    auditionUsesOriginalTime = !applyingCuts
-                    if !isAuditioning {
-                        let time = Double(frames.lowerBound) / rate
-                        auditionPlayheadSeconds = applyingCuts ? time : cutTimeline.editedTime(forAlignedTime: time)
-                    }
-                    isAuditioning = true
-                    refreshTransportGains()
-                    let buffered = audioPlayback.clock.map {
-                        $0.startedAt.addingTimeInterval($0.duration).timeIntervalSinceNow
-                    } ?? 0
-                    if transportWarmupTask == nil, transportWarmup == nil, schedule.nextFrame < schedule.endFrame,
-                       buffered >= schedule.maximumBufferedSeconds / 2 {
-                        let remaining = availableSources.filter {
-                            !preparedSources.contains($0) && transportUnavailable[$0] == nil
-                                && (!warmedSources.contains($0) || enabledSources.contains($0))
-                        }
-                        let warmStart = schedule.nextFrame + AlignedAuditionSchedule.followingFrames
-                        if let source = remaining.first(where: { enabledSources.contains($0) }) ?? remaining.first,
-                           warmStart < schedule.endFrame {
-                            warmTransportSource(
-                                source, model: snapshot, generation: generation,
-                                frames: warmStart..<min(
-                                    schedule.endFrame, warmStart + AlignedAuditionSchedule.initialFrames
-                                ), applyingCuts: applyingCuts
-                            )
-                        }
-                    }
-                    if transportProgressTask == nil {
-                        transportProgressTask = Task { [weak self] in
-                            while let self, !Task.isCancelled, generation == auditionGeneration,
-                                  isAuditioning, let started = audioPlayback.clock?.startedAt {
-                                let time = min(end, start + max(0, -started.timeIntervalSinceNow))
-                                waveformPlayheadSeconds = applyingCuts ? time : cutTimeline.editedTime(forAlignedTime: time)
-                                refreshTransportGains()
-                                followPlayheadIfNeeded()
-                                try? await Task.sleep(for: .milliseconds(100))
-                            }
-                        }
-                    }
-                    while let started = audioPlayback.clock?.startedAt,
-                          Double(frames.upperBound) / rate - start - max(0, -started.timeIntervalSinceNow)
-                            >= schedule.maximumBufferedSeconds {
-                        try await Task.sleep(for: .milliseconds(20))
-                    }
-                } catch is CancellationError {
-                    if generation == auditionGeneration {
+            guard generation == auditionGeneration, let episode = snapshot.episode(episodeID) else { return }
+            let prepared = RegularAudioPlayback(runtime: runtime, model: snapshot, episode: episode,
+                output: audioPlayback, sources: sources, availableSources: availableSources,
+                applyingCuts: applyingCuts, revealingCut: revealingCut)
+            sourcePlayback = prepared
+            document.store.registerListening(prepared)
+            auditionLabel = "Preparing timed tracks for live listening at the displayed map revision…"
+                + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track is" : "tracks are") excluded.")
+            auditionPlayheadSeconds = applyingCuts ? start : cutTimeline.editedTime(forAlignedTime: start)
+            transportProgressTask = Task { [weak self] in
+                while let self, generation == auditionGeneration, !Task.isCancelled {
+                    if let clock = audioPlayback.clock, audioPlayback.failure == nil {
+                        isAuditioning = true
                         isPreparingAudition = false
-                        stopPlayback(updatePlayhead: true)
-                        transportTask = nil
-                        auditionLabel = "Playback canceled or media inputs changed. No substitute audio was played."
+                        transportUnavailable = prepared.unavailable
+                        let time = min(end, clock.playhead())
+                        waveformPlayheadSeconds = applyingCuts ? time : cutTimeline.editedTime(forAlignedTime: time)
+                        refreshTransportGains()
+                        followPlayheadIfNeeded()
                     }
-                    return
-                } catch {
-                    guard generation == auditionGeneration else { return }
-                    isPreparingAudition = false
-                    lastError = AlignmentPresentation.errorDescription(error)
-                    stopPlayback(updatePlayhead: true)
-                    transportTask = nil
-                    let reason = error is LocalizedError ? error.localizedDescription : String(describing: error)
-                    auditionLabel = "Playback stopped: \(reason). No substitute audio was played."
-                    return
+                    do { try await Task.sleep(for: .milliseconds(100)) }
+                    catch { return }
                 }
             }
-            guard generation == auditionGeneration else { return }
-            while let started = audioPlayback.clock?.startedAt,
-                  max(0, -started.timeIntervalSinceNow) < Double(schedule.endFrame) / rate - start {
-                do { try await Task.sleep(for: .milliseconds(100)) }
-                catch { return }
+            do {
+                try await prepared.play(schedule: schedule, onSourcesJoined: { [weak self] in
+                    guard let self, generation == auditionGeneration else { return }
+                    refreshTransportGains()
+                }, onBufferDeadline: { [weak self] in
+                    guard let self, generation == auditionGeneration else { return }
+                    let error = AlignmentTransportFailure.bufferDeadline
+                    stopAudition()
+                    lastError = error.localizedDescription
+                    auditionLabel = "Playback stopped: \(error.localizedDescription). No substitute audio was played."
+                })
+            } catch {
+                guard generation == auditionGeneration else { return }
+                stopPlayback(updatePlayhead: true)
+                transportTask = nil
+                isPreparingAudition = false
+                if error is CancellationError {
+                    auditionLabel = "Playback canceled or media inputs changed. No substitute audio was played."
+                } else {
+                    lastError = AlignmentPresentation.errorDescription(error)
+                    auditionLabel = "Playback stopped: \(error.localizedDescription). No substitute audio was played."
+                }
+                return
             }
             guard generation == auditionGeneration else { return }
             stopPlayback(updatePlayhead: true)
@@ -1948,34 +1822,6 @@ final class EpisodeAlignmentModel {
                 waveformPlayheadSeconds = applyingCuts ? end : cutTimeline.editedTime(forAlignedTime: end)
                 auditionLabel = requestedRange == nil
                     ? "Playback reached the end of the available timeline." : "Finished selection audition."
-            }
-        }
-    }
-
-    private func warmTransportSource(
-        _ source: SourceID, model: ShowDocumentModel, generation: UInt64, frames: Range<Int64>,
-        applyingCuts: Bool = true
-    ) {
-        transportWarmupTask = Task { [weak self] in
-            guard let self else { return }
-            defer { if generation == auditionGeneration { transportWarmupTask = nil } }
-            do {
-                let clips = try await runtime.sourceAuditions(
-                    model: model, episode: episodeID, sources: [source], outputFrames: frames,
-                    applyingCuts: applyingCuts, revealingCut: listening.expandedManualCutID
-                )
-                try Task.checkCancellation()
-                guard generation == auditionGeneration,
-                      document?.store.model.hasSameMediaInputs(as: model, in: episodeID) == true,
-                      timingIsVerified(model), clips[source] != nil else { throw CancellationError() }
-                transportWarmup = (source, frames)
-            } catch is CancellationError {
-                return
-            } catch {
-                guard generation == auditionGeneration, !Task.isCancelled else { return }
-                transportUnavailable[source] = error is LocalizedError
-                    ? error.localizedDescription : String(describing: error)
-                refreshTransportGains()
             }
         }
     }
@@ -3037,13 +2883,8 @@ final class EpisodeAlignmentModel {
         auditionGeneration += 1
         transportTask?.cancel()
         transportTask = nil
-        productionPreparationTask?.cancel()
-        productionPreparationTask = nil
         transportProgressTask?.cancel()
         transportProgressTask = nil
-        transportWarmupTask?.cancel()
-        transportWarmupTask = nil
-        transportWarmup = nil
         auditionTask?.cancel()
         auditionTask = nil
         isPreparingAudition = false
@@ -3053,7 +2894,7 @@ final class EpisodeAlignmentModel {
     }
 
     private func stopPlayback(updatePlayhead: Bool) {
-        if updatePlayhead, isAuditioning, let clock = audioPlayback.clock {
+        if updatePlayhead, let clock = audioPlayback.clock {
             let time = clock.playhead()
             if listeningMode == .productionMix, let productionTimeline {
                 auditionPlayheadSeconds = cutTimeline.editedTime(
@@ -3062,16 +2903,13 @@ final class EpisodeAlignmentModel {
                 auditionPlayheadSeconds = auditionUsesOriginalTime ? cutTimeline.editedTime(forAlignedTime: time) : time
             }
         }
+        sourcePlayback?.cancel()
+        sourcePlayback = nil
         audioPlayback.stop()
         mixer.stop()
-        productionPreparationTask?.cancel()
-        productionPreparationTask = nil
         transportProgressTask?.cancel()
         transportProgressTask = nil
         productionTimeline = nil
-        transportWarmupTask?.cancel()
-        transportWarmupTask = nil
-        transportWarmup = nil
         transportUnavailable.removeAll()
         isAuditioning = false
         auditionUsesOriginalTime = false
@@ -3120,6 +2958,7 @@ final class EpisodeAlignmentModel {
     private func refreshTransportGains() {
         guard transportTask != nil, listeningMode == .sourceAudition else { return }
         let enabled = enabledSources
+        sourcePlayback?.setEnabled(enabled)
         let pendingStarts = audioPlayback.pendingSources
         let gains = AlignmentTransportSelection.gains(
             prepared: audioPlayback.preparedSources.subtracting(transportUnavailable.keys).subtracting(pendingStarts),
@@ -3147,28 +2986,6 @@ final class EpisodeAlignmentModel {
         if let source = missing.first, let reason = transportUnavailable[source] {
             let name = waveformTracks.first(where: { $0.id == source })?.name ?? "Track"
             auditionLabel += " \(name) cannot be heard: \(reason). Restart playback to retry."
-        }
-    }
-
-    private func enqueueTransport(
-        _ clips: [SourceID: AlignmentRuntime.AuditionClip], startSeconds: Double, first: Bool,
-        availableSources: Set<SourceID>, final: Bool
-    ) throws {
-        if first {
-            stopPlayback(updatePlayhead: false)
-        }
-        try audioPlayback.enqueue(
-            clips, startSeconds: startSeconds, first: first, availableSources: availableSources, final: final,
-            onSourcesJoined: { [weak self] in self?.refreshTransportGains() }
-        ) { [weak self] in
-            guard let self else { return }
-            let error = AlignmentTransportFailure.bufferDeadline
-            stopAudition()
-            lastError = error.localizedDescription
-            auditionLabel = "Playback stopped: \(error.localizedDescription). No substitute audio was played."
-        }
-        if first {
-            auditionPlayheadSeconds = startSeconds
         }
     }
 

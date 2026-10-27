@@ -17,9 +17,10 @@ final class EpisodeMixerController {
     private(set) var unitStatuses: [MixerUnitStatus] = []
     private(set) var instanceRevision: UInt64 = 0
     private(set) var dependencyFailure: String?
-    var mutedSpeakers: Set<SpeakerID> = []
-    var soloedSpeakers: Set<SpeakerID> = []
-    var masterMuted = false
+    var mutedSpeakers: Set<SpeakerID> = [] { didSet { refreshPlaybackControls() } }
+    var soloedSpeakers: Set<SpeakerID> = [] { didSet { refreshPlaybackControls() } }
+    var masterMuted = false { didSet { refreshPlaybackControls() } }
+    @ObservationIgnored private var playback: ProductionMixPlayback?
     @ObservationIgnored private(set) var processor: MixerProcessor?
     @ObservationIgnored private var snapshot: ShowDocumentModel?
     @ObservationIgnored private var expectedMix: EpisodeMixState?
@@ -63,6 +64,8 @@ final class EpisodeMixerController {
     }
 
     private func load(programFrames: Range<Int64>, policy: MixerRenderPolicy) async throws -> MixerRecipe {
+        playback?.cancel()
+        playback = nil
         generation &+= 1
         let generation = generation
         editorPolling?.cancel()
@@ -143,6 +146,13 @@ final class EpisodeMixerController {
     /// Call after document controls change. Source admission/cut/insert edits are restart boundaries.
     func synchronizeControls() async throws {
         try validateCurrent()
+        guard let processor else { throw MixerFailure.staleDependencies }
+        let controls = try liveControls()
+        playback?.setControls(controls)
+        try await processor.setLiveControls(controls)
+    }
+
+    private func liveControls() throws -> MixerLiveControls {
         guard let processor, let episode = document?.store.model.episode(episodeID) else {
             throw MixerFailure.staleDependencies
         }
@@ -164,7 +174,31 @@ final class EpisodeMixerController {
         controls.mutedSpeakers = mutedSpeakers
         controls.soloedSpeakers = soloedSpeakers
         controls.masterMuted = masterMuted
-        try await processor.setLiveControls(controls)
+        return controls
+    }
+
+    func makePlayback(output: AlignmentAudioPlayback) throws -> ProductionMixPlayback {
+        try validateCurrent()
+        guard let processor, let snapshot else { throw MixerFailure.staleDependencies }
+        let prepared = ProductionMixPlayback(processor: processor, runtime: runtime,
+            model: snapshot, controls: try liveControls(), outputGeneration: output.generation)
+        playback?.cancel()
+        playback = prepared
+        return prepared
+    }
+
+    func refreshPlaybackControls() {
+        guard let playback else { return }
+        do {
+            try validateCurrent()
+            playback.setControls(try liveControls())
+        } catch { playback.invalidate(error) }
+    }
+
+    func publishPlaybackMeters() {
+        guard let playback else { return }
+        meters = playback.latestOutput
+        if meters != nil { state = .playing }
     }
 
     func setParameter(slot: AudioUnitSlotID, address: UInt64, value: Float,
@@ -255,6 +289,7 @@ final class EpisodeMixerController {
             try model.settingMix(captured, in: episodeID)
         }) else { throw MixerFailure.invalidRecipe("the document refused the Audio Unit state transaction") }
         expectedMix = mix
+        refreshPlaybackControls()
         nativeStateBaseline = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
         if mix != originalMix { document.mixerTransactions.didCapture(from: self) }
         let statuses = await processor.unitStatuses()
@@ -289,6 +324,8 @@ final class EpisodeMixerController {
     /// Save/Undo/Redo/close must await capture, suspend polling, then restore/reload from the document.
     /// Never let a stale vendor editor overwrite Undo or a changed Primary/insert chain.
     func stop() {
+        playback?.cancel()
+        playback = nil
         // Stopping the transport does not discard an editor's unsaved native state.
         if state == .loading { generation &+= 1 }
         state = processor == nil ? .idle : .ready
@@ -299,6 +336,8 @@ final class EpisodeMixerController {
     func invalidatePreparedInstance() {
         precondition(editorPolling == nil)
         generation &+= 1
+        playback?.invalidate(MixerFailure.staleDependencies)
+        playback = nil
         processor = nil
         snapshot = nil
         expectedMix = nil
@@ -315,6 +354,7 @@ final class EpisodeMixerController {
     }
 
     func fail(_ error: Error) {
+        playback?.invalidate(error)
         generation &+= 1
         editorPolling?.cancel()
         editorPolling = nil

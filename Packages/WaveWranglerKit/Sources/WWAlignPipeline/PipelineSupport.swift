@@ -155,7 +155,7 @@ extension DerivedJobCoordinator {
         let outcome = await withTaskCancellationHandler {
             await job.outcome
         } onCancel: {
-            Task { await self.cancel(slot, ifRunning: key) }
+            Task { await self.cancel(job) }
         }
         return PipelineJobResult(slot: slot, key: key, outcome: outcome, failure: box.failure)
     }
