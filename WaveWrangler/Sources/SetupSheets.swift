@@ -15,8 +15,15 @@ struct ImportReviewSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.setupTextScale) private var scale
 
-    private static let noneTag = "__none"
-    private static let suggestedTag = "__suggested"
+    private enum ChoiceTag: Hashable {
+        case none, suggested, value(String), newGroup
+    }
+
+    private struct NewGroup: Identifiable {
+        let id: UUID
+    }
+
+    @State private var newGroup: NewGroup?
 
     init(model: EpisodeSetupModel, review: ImportReview) {
         self.model = model
@@ -63,7 +70,9 @@ struct ImportReviewSheet: View {
                         choice: row.group,
                         noneTitle: "Ungrouped",
                         options: review.groupOptions(existing: model.episode?.recorderGroups.map(\.name) ?? []),
-                        set: { review.setGroup(row.id, $0) }
+                        identifier: "ww.import.row.\(index(of: row.id)).group",
+                        set: { review.setGroup(row.id, $0) },
+                        createGroup: { newGroup = NewGroup(id: row.id) }
                     )
                 }
                 .width(min: 130, ideal: 180)
@@ -73,6 +82,7 @@ struct ImportReviewSheet: View {
                         choice: row.speaker,
                         noneTitle: "Unassigned",
                         options: model.store.model.speakers.map(\.name),
+                        identifier: "ww.import.row.\(index(of: row.id)).speaker",
                         set: { review.setSpeaker(row.id, $0) }
                     )
                 }
@@ -137,6 +147,19 @@ struct ImportReviewSheet: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(review.title)
         .accessibilityIdentifier("ww.import.review")
+        .sheet(item: $newGroup) { target in
+            SetupNameForm(context: NameSheetContext(kind: .newGroup, initial: ""),
+                cancel: { newGroup = nil },
+                apply: { name in
+                    review.setGroup(target.id, name)
+                    newGroup = nil
+                },
+                validate: { name in
+                    review.groupOptions(existing: model.episode?.recorderGroups.map(\.name) ?? []).contains(name)
+                        ? "That name is already available in the group list. Choose it from the list instead."
+                        : nil
+                })
+        }
         .onAppear {
             tableFocused = true
             if let first = review.rows.first { selection = [first.id] }
@@ -152,16 +175,18 @@ struct ImportReviewSheet: View {
         )
     }
 
-    private func choicePicker(label: String, choice: ImportReview.Choice, noneTitle: String, options: [String], set: @escaping (String?) -> Void) -> some View {
+    private func choicePicker(label: String, choice: ImportReview.Choice, noneTitle: String, options: [String],
+                              identifier: String, set: @escaping (String?) -> Void,
+                              createGroup: (() -> Void)? = nil) -> some View {
         let suggestion: Suggestion? = {
             if case let .suggested(s) = choice { return s }
             return nil
         }()
-        let selected: String = {
+        let selected: ChoiceTag = {
             switch choice {
-            case .suggested: Self.suggestedTag
-            case let .confirmed(value?): value
-            case .none, .confirmed(nil): Self.noneTag
+            case .suggested: .suggested
+            case let .confirmed(value?): .value(value)
+            case .none, .confirmed(nil): .none
             }
         }()
         var names = options
@@ -174,22 +199,28 @@ struct ImportReviewSheet: View {
             }
             Picker(label, selection: Binding(get: { selected }, set: { tag in
                 switch tag {
-                case Self.suggestedTag: set(suggestion?.value)
-                case Self.noneTag: set(nil)
-                default: set(tag)
+                case .suggested: set(suggestion?.value)
+                case .none: set(nil)
+                case let .value(value): set(value)
+                case .newGroup: createGroup?()
                 }
             })) {
                 if let suggestion {
-                    Text("\(suggestion.value) (suggested)").tag(Self.suggestedTag)
+                    Text("\(suggestion.value) (suggested)").tag(ChoiceTag.suggested)
                     Divider()
                 }
-                Text(noneTitle).tag(Self.noneTag)
+                Text(noneTitle).tag(ChoiceTag.none)
                 ForEach(names, id: \.self) { name in
-                    Text(name).tag(name)
+                    Text(name).tag(ChoiceTag.value(name))
+                }
+                if createGroup != nil {
+                    Divider()
+                    Text("New Recorder Group…").tag(ChoiceTag.newGroup)
                 }
             }
             .labelsHidden()
             .setupFont(.body)
+            .accessibilityIdentifier(identifier)
             .help(suggestion?.reason ?? "")
             .accessibilityValue(choice.accessibilityValue(none: noneTitle))
             .accessibilityHint(suggestion?.reason ?? "")
@@ -420,23 +451,32 @@ struct SetupNameForm: View {
     let context: NameSheetContext
     let cancel: () -> Void
     let apply: (String) -> Void
+    let validate: (String) -> String?
     @State private var draft: String
     @FocusState private var focused: Bool
 
-    init(context: NameSheetContext, cancel: @escaping () -> Void, apply: @escaping (String) -> Void) {
+    init(context: NameSheetContext, cancel: @escaping () -> Void, apply: @escaping (String) -> Void,
+         validate: @escaping (String) -> String? = { _ in nil }) {
         self.context = context
         self.cancel = cancel
         self.apply = apply
+        self.validate = validate
         _draft = State(initialValue: context.initial)
     }
 
     var body: some View {
+        let name = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+        let issue = validate(name)
         VStack(alignment: .leading, spacing: 10) {
             Text(context.title).setupFont(.title3, weight: .semibold).accessibilityAddTraits(.isHeader)
             TextField("Name", text: $draft)
                 .setupFont(.body)
                 .focused($focused)
                 .accessibilityIdentifier("ww.setup.nameField")
+            if let issue {
+                Text(issue).setupFont(.callout).foregroundStyle(.red)
+                    .accessibilityIdentifier("ww.setup.nameValidation")
+            }
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel, action: cancel)
@@ -445,7 +485,7 @@ struct SetupNameForm: View {
                     apply(draft.trimmingCharacters(in: .whitespacesAndNewlines))
                 }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(name.isEmpty || issue != nil)
             }
         }
         .padding(16)

@@ -452,7 +452,8 @@ final class EpisodeSetupModel {
         return applied
     }
 
-    func assign(_ sourceIDs: [SourceID], toGroup groupID: RecorderGroupID?) {
+    @discardableResult
+    func assign(_ sourceIDs: [SourceID], toGroup groupID: RecorderGroupID?) -> Bool {
         edit { $0.assign(sourceIDs, toGroup: groupID) }
     }
 
@@ -557,6 +558,10 @@ final class EpisodeSetupModel {
     // MARK: Import (IA §5)
 
     func beginImport() {
+        guard canImportSources else {
+            message = sourceActionUnavailableReason
+            return
+        }
         if SetupFixtures.isActive {
             // UI-test fixture: the scripted engine supplies a synthetic scan; no panel, no files.
             scan([])
@@ -582,6 +587,7 @@ final class EpisodeSetupModel {
     func scan(_ urls: [URL]) {
         guard let episode else { return }
         isScanning = true
+        message = nil
         let ids = episode.sources.map(\.id)
         let speakers = store.model.speakers.map(\.name)
         let title = episode.title

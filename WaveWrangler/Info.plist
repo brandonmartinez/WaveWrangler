@@ -53,6 +53,16 @@
 	<array>
 		<dict>
 			<key>UTTypeIdentifier</key>
+			<string>com.brandonmartinez.wavewrangler.source-drag</string>
+			<key>UTTypeDescription</key>
+			<string>WaveWrangler Recording Selection</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>public.data</string>
+			</array>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
 			<string>com.brandonmartinez.wavewrangler.show</string>
 			<key>UTTypeDescription</key>
 			<string>WaveWrangler Show</string>

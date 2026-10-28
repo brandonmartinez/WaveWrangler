@@ -108,7 +108,9 @@ struct TracksAlignmentReviewView: View {
         .frame(minWidth: 600, idealWidth: 720, maxWidth: .infinity,
                minHeight: 420, idealHeight: 600, maxHeight: .infinity)
         .presentationSizing(.fitted)
-        .disabled(model.isWorking)
+        .modifier(TrackProcessingPresentation(
+            operation: model.isWorking ? model.trackProcessingOperation : nil,
+            cancel: { model.cancelTrackProcessing() }))
         .interactiveDismissDisabled(model.isWorking)
         .confirmationDialog("Apply selected adaptive file timing?", isPresented: $confirmingAdaptiveAcceptance) {
             Button("Accept selected alignment") { model.acceptTracksReview() }

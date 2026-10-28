@@ -12,6 +12,80 @@ struct AudioTimelineWordLayoutTests {
                        alignedStart: start, alignedEnd: end)
     }
 
+    @Test func repeatedPlayheadUpdatesReuseTheExactViewportLayout() {
+        let words = (0..<30_000).map { word("word\($0)", Double($0) * 0.4, Double($0) * 0.4 + 0.3) }
+        let index = AudioTimelineWordIndex(words: words)
+        let cache = AudioTimelineWordLayoutCache(index: index)
+        let expected = AudioTimelineWordLayout.make(index: index, start: 0, duration: 12_000, width: 1400)
+        for _ in 0..<1_000 {
+            #expect(cache.layout(start: 0, duration: 12_000, width: 1400) == expected)
+        }
+        #expect(cache.preparationCount == 1, "Playhead/selection-only renders must not rebuild transcript geometry.")
+    }
+
+    @Test func viewportAndUncertaintyChangesInvalidateGeometryButNotTheWordIndex() {
+        let words = [word("left", 0, 1), word("right", 2, 3)]
+        let index = AudioTimelineWordIndex(words: words)
+        let cache = AudioTimelineWordLayoutCache(index: index)
+        for (start, duration, width, uncertain) in [
+            (0.0, 4.0, 600.0, Set<UUID>()),
+            (1.0, 4.0, 600.0, Set<UUID>()),
+            (1.0, 2.0, 600.0, Set<UUID>()),
+            (1.0, 2.0, 1200.0, Set<UUID>()),
+            (1.0, 2.0, 1200.0, Set([words[1].id])),
+        ] {
+            let layout = cache.layout(start: start, duration: duration, width: width, uncertainWordIDs: uncertain)
+            #expect(layout == AudioTimelineWordLayout.make(index: index, start: start, duration: duration,
+                width: width, uncertainWordIDs: uncertain))
+        }
+        #expect(cache.preparationCount == 5)
+        #expect(index.words == words)
+    }
+
+    @Test func replacementWordsCutsAndSourceBoundsUseIndependentLayoutCaches() throws {
+        let original = [word("before", 0, 1), word("after", 2, 3)]
+        let cuts = try ManualCutTimeline(cuts: [
+            ManualEpisodeCut(alignmentRevision: 1, startFrame: 0, endFrame: 48_000)
+        ])
+        for index in [
+            AudioTimelineWordIndex(words: original),
+            AudioTimelineWordIndex(words: original, cuts: cuts),
+            AudioTimelineWordIndex(words: original, sourceBounds: 1...4),
+            AudioTimelineWordIndex(words: [word("replacement", 1, 2)]),
+        ] {
+            let cache = AudioTimelineWordLayoutCache(index: index)
+            #expect(cache.layout(start: 0, duration: 4, width: 600)
+                == AudioTimelineWordLayout.make(index: index, start: 0, duration: 4, width: 600))
+            #expect(cache.preparationCount == 1)
+        }
+    }
+
+    @Test func acceptedAdaptiveMarkerIdentityContainsOnlyTimingAndViewportInputs() throws {
+        let segment = SourceTimingSegment(sourceStart: 10, sourceEnd: 20, alignedStart: 12,
+            rateRatio: 1, kind: .estimated)
+        let markers = AcceptedAdaptiveTimingMarkers(segments: [segment], start: 10, duration: 10,
+            size: CGSize(width: 600, height: 100))
+        #expect(markers.position(for: segment) == 120)
+        #expect(markers == AcceptedAdaptiveTimingMarkers(segments: [segment], start: 10, duration: 10,
+            size: CGSize(width: 600, height: 100)))
+        #expect(markers != AcceptedAdaptiveTimingMarkers(segments: [segment], start: 11, duration: 10,
+            size: markers.size))
+        #expect(markers != AcceptedAdaptiveTimingMarkers(segments: [segment], start: 10, duration: 5,
+            size: markers.size))
+        #expect(markers != AcceptedAdaptiveTimingMarkers(segments: [segment], start: 10, duration: 10,
+            size: CGSize(width: 1200, height: 100)))
+        var changed = segment
+        changed.kind = .anchorGuided
+        #expect(markers != AcceptedAdaptiveTimingMarkers(segments: [changed], start: 10, duration: 10,
+            size: markers.size))
+        changed.alignedStart = 9
+        #expect(markers.position(for: changed) == nil)
+        changed.alignedStart = 20
+        #expect(markers.position(for: changed) == 600)
+        changed.alignedStart = 20.001
+        #expect(markers.position(for: changed) == nil)
+    }
+
     @Test func indexedQueriesMatchScanningWithOverlapsCutsAndStableTies() throws {
         let long = word("overlap", 0, 100)
         let a = word("first", 50, 51), b = word("second", 50, 51)

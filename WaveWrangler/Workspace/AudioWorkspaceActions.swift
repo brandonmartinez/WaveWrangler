@@ -11,9 +11,11 @@ struct AudioWorkspaceActions: View {
     @State private var workingRangeRevision: Int?
 
     var body: some View {
+        let operation = TrackProcessingOperation.current(alignment: alignment, cleanup: state.cleanupModel)
         VStack(alignment: .leading, spacing: 5) {
             AudioTimelineAdaptiveRow {
                 recordingActions
+                    .disabled(operation != nil)
                 if let cleanup = state.cleanupModel {
                     HStack {
                         Text(cleanup.transcriptionSettings.selection.title).font(.caption).lineLimit(1)
@@ -24,14 +26,7 @@ struct AudioWorkspaceActions: View {
                     .frame(maxWidth: .infinity, alignment: .trailing)
                 }
             }
-            if alignment.isWorking {
-                HStack {
-                    ProgressView(alignment.message).controlSize(.small)
-                    if alignment.isAnalyzingTracks {
-                        Button("Cancel alignment") { alignment.cancelTracksAnalysis() }
-                    }
-                }
-            } else {
+            if operation == nil {
                 Text(alignment.message).font(.caption).foregroundStyle(.secondary)
             }
             if let error = alignment.lastError {
@@ -41,18 +36,9 @@ struct AudioWorkspaceActions: View {
                 Label(listeningPresetError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
             }
             if let cleanup = state.cleanupModel {
-                if cleanup.isBusy {
-                    HStack {
-                        ProgressView(value: cleanup.transcriptionStatus?.progress?.fraction ?? 0)
-                        Text(cleanup.message).font(.caption).lineLimit(2)
-                        Button("Cancel transcription", systemImage: "xmark.circle") {
-                            cleanup.cancelTranscription()
-                            cleanup.message = "Transcription canceled. No partial result was saved."
-                        }
-                    }
-                } else if let error = cleanup.error {
+                if !cleanup.isBusy, let error = cleanup.error {
                     Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
-                } else if !cleanup.canTranscribe {
+                } else if operation == nil, !cleanup.canTranscribe {
                     Text("Transcription: \(cleanup.transcriptionReadinessMessage)")
                         .font(.caption).foregroundStyle(.secondary)
                 }
@@ -64,7 +50,7 @@ struct AudioWorkspaceActions: View {
                         workingRangeRevision = revision
                         reviewingWorkingRange = true
                     }
-                        .disabled(cleanup.isBusy || alignment.isWorking || !state.canEdit)
+                        .disabled(operation != nil || !state.canEdit)
                         .accessibilityIdentifier("ww.audioWorkspace.reviewWorkingRange")
                 }
             }
@@ -176,23 +162,22 @@ struct AudioWorkspaceWorkflowActions: View {
     @Bindable var alignment: EpisodeAlignmentModel
 
     var body: some View {
+        let operation = TrackProcessingOperation.current(alignment: alignment, cleanup: state.cleanupModel)
         HStack {
             Button("Align Tracks", systemImage: "waveform.path") { alignment.requestAlignTracks() }
-                .disabled(alignment.isWorking || !state.canEdit || state.cleanupModel?.isBusy == true)
+                .disabled(operation != nil || !state.canEdit)
                 .accessibilityIdentifier("ww.workflow.alignTracks")
                 .help("Analyze all eligible recorder groups using shared speaker channels, then review proposals before acceptance. Resolve grouping, channels and source access in Recordings & Speakers.")
             Button("Reset Alignment…", systemImage: "arrow.counterclockwise") { alignment.requestResetAlignment() }
-                .disabled(!alignment.canResetAlignment || !state.canEdit || state.cleanupModel?.isBusy == true)
+                .disabled(!alignment.canResetAlignment || !state.canEdit || operation != nil)
                 .accessibilityIdentifier("ww.workflow.resetAlignment")
                 .help("Return all recorder groups to zero offset and normal speed, removing active automatic, adaptive and manual timing. Also resets active transcription, reviews, cuts and episode IN/OUT. Requires confirmation; Undo restores the previous work.")
             if let cleanup = state.cleanupModel {
-                let help = alignment.isWorking
-                    ? "Alignment is running. Wait for accepted timing to finish saving before transcription."
-                    : cleanup.transcriptionReadinessMessage
+                let help = operation?.detail ?? cleanup.transcriptionReadinessMessage
                 TranscriptionActionButton(help: help) {
                     cleanup.requestTranscription()
                 }
-                .disabled(!cleanup.canTranscribe || alignment.isWorking)
+                .disabled(!cleanup.canTranscribe || operation != nil)
             }
         }
     }

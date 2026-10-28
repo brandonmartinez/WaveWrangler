@@ -99,6 +99,7 @@ public final class AlignmentPipeline: Sendable {
     let gate: ResourceGate
     let adaptivePCMCache = AdaptiveAudioPCMCache()
     let adaptivePCMPreparations = SharedAudioWork<AdaptiveAudioPCMCache.Key, AdaptivePCM>()
+    let mapContexts = AcceptedMapContextCache()
     let ledger = AcceptanceLedger()
     let activation = AsyncSerial()
     /// Group renders (they hold gateway cursors outside coordinator jobs); `shutdown()` awaits them.
@@ -158,6 +159,7 @@ public final class AlignmentPipeline: Sendable {
         await coordinator.shutdown()
         for entry in running { await entry.wait() }
         await adaptivePCMCache.removeAll()
+        await mapContexts.clear()
     }
 
     // MARK: Plan (metadata only)
@@ -1252,39 +1254,40 @@ public final class AlignmentPipeline: Sendable {
             )
             return
         }
-        guard let applicability = try? episode.applicability(ofMapRevision: revision), applicability.isCurrent else {
-            throw .history(.mapNotFound(revision: revision))
-        }
-        guard let version = episode.alignment?.map(revision: revision) else {
-            throw .history(.mapNotFound(revision: revision))
-        }
-        let map: AlignedTimelineMap
-        do throws(MapHistoryError) {
-            map = try model.timeMap(revision: revision, in: episodeID)
-        } catch {
-            throw .history(error)
-        }
         let inputs = await coordinator.inputs
-        let changes = MapDependencies.verify(
-            version: version,
-            map: map,
-            episode: episode,
-            registered: inputs.sources,
-            format: inputs.format
-        )
-        guard changes.isEmpty else { throw .analysisStale(changes) }
-        let reference = MapRevisionReference(episode: episodeID, revision: revision)
-        let identity: AcceptedMapIdentity
-        do {
-            identity = try mapIdentity(
-                revision: reference,
-                version: version,
-                map: map,
-                registered: inputs.sources
+        let key = AcceptedMapContextCache.Key(episode: episode, inputs: inputs)
+        let context: AcceptedMapContextCache.Context
+        if let prepared = await mapContexts.context(for: key) {
+            context = prepared
+        } else {
+            guard let applicability = try? episode.applicability(ofMapRevision: revision), applicability.isCurrent else {
+                throw .history(.mapNotFound(revision: revision))
+            }
+            guard let version = episode.alignment?.map(revision: revision) else {
+                throw .history(.mapNotFound(revision: revision))
+            }
+            let map: AlignedTimelineMap
+            do throws(MapHistoryError) {
+                map = try model.timeMap(revision: revision, in: episodeID)
+            } catch {
+                throw .history(error)
+            }
+            let changes = MapDependencies.verify(
+                version: version, map: map, episode: episode, registered: inputs.sources, format: inputs.format
             )
-        } catch {
-            throw .invalidMap(String(describing: error))
+            guard changes.isEmpty else { throw .analysisStale(changes) }
+            let reference = MapRevisionReference(episode: episodeID, revision: revision)
+            let identity: AcceptedMapIdentity
+            do {
+                identity = try mapIdentity(revision: reference, version: version, map: map, registered: inputs.sources)
+            } catch {
+                throw .invalidMap(String(describing: error))
+            }
+            context = .init(map: map, revision: reference, identity: identity)
+            await mapContexts.retain(context, for: key)
         }
+        let reference = context.revision
+        let identity = context.identity
         await coordinator.acceptMap(reference)
         await coordinator.setRecipe(identity.recipe)
         await coordinator.setAssetRevision(AlignmentAssetKinds.acceptedMapIdentity)
@@ -1615,31 +1618,41 @@ public final class AlignmentPipeline: Sendable {
         guard let episode = model.episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let revisionNumber = episode.alignment?.acceptedRevision else { throw .noAcceptedMap }
         if await coordinator.isShutdown { throw .coordinatorShutDown }
-        let active = await coordinator.inputs.acceptedMaps[episodeID]
-        guard active == revisionNumber else { throw .acceptedMapNotActive(document: revisionNumber, coordinator: active) }
-        let map: AlignedTimelineMap
-        let applicability: MapApplicability
-        do throws(MapHistoryError) {
-            applicability = try episode.applicability(ofMapRevision: revisionNumber)
-            map = try model.timeMap(revision: revisionNumber, in: episodeID)
-        } catch {
-            throw .mapUnreadable(error)
-        }
-        guard applicability.isCurrent else { throw .mapNotApplicable(applicability.staleness) }
-        let revision = MapRevisionReference(episode: episodeID, revision: revisionNumber)
-        guard let version = episode.alignment?.map(revision: revisionNumber) else { throw .mapUnreadable(.mapNotFound(revision: revisionNumber)) }
         let currentInputs = await coordinator.inputs
-        let changes = MapDependencies.verify(
-            version: version, map: map, episode: episode, registered: currentInputs.sources, format: currentInputs.format
-        )
-        guard changes.isEmpty else { throw .mapStale(changes) }
-        // The coordinator must be publishing for this exact map content, not just this revision number.
-        // Its key carries every source revision the map uses, so a change to any of them (not only the
-        // rendered sources') invalidates the identity and, through `upstream`, every segment keyed on it.
-        guard let identity = try? mapIdentity(revision: revision, version: version, map: map, registered: currentInputs.sources),
-              await coordinator.state(of: identity.slot) == .ready(identity.key)
+        let active = currentInputs.acceptedMaps[episodeID]
+        guard active == revisionNumber else { throw .acceptedMapNotActive(document: revisionNumber, coordinator: active) }
+        let key = AcceptedMapContextCache.Key(episode: episode, inputs: currentInputs)
+        let context: AcceptedMapContextCache.Context
+        if let prepared = await mapContexts.context(for: key) {
+            context = prepared
+        } else {
+            let map: AlignedTimelineMap
+            let applicability: MapApplicability
+            do throws(MapHistoryError) {
+                applicability = try episode.applicability(ofMapRevision: revisionNumber)
+                map = try model.timeMap(revision: revisionNumber, in: episodeID)
+            } catch {
+                throw .mapUnreadable(error)
+            }
+            guard applicability.isCurrent else { throw .mapNotApplicable(applicability.staleness) }
+            let revision = MapRevisionReference(episode: episodeID, revision: revisionNumber)
+            guard let version = episode.alignment?.map(revision: revisionNumber) else {
+                throw .mapUnreadable(.mapNotFound(revision: revisionNumber))
+            }
+            let changes = MapDependencies.verify(
+                version: version, map: map, episode: episode, registered: currentInputs.sources, format: currentInputs.format
+            )
+            guard changes.isEmpty else { throw .mapStale(changes) }
+            guard let identity = try? mapIdentity(
+                revision: revision, version: version, map: map, registered: currentInputs.sources
+            ) else { throw .acceptedMapContentNotActive }
+            context = .init(map: map, revision: revision, identity: identity)
+            await mapContexts.retain(context, for: key)
+        }
+        // Even a matching pure calculation needs this live, exact-content publication check.
+        guard await coordinator.state(of: context.identity.slot) == .ready(context.identity.key)
         else { throw .acceptedMapContentNotActive }
-        return (map, revision, identity)
+        return (context.map, context.revision, context.identity)
     }
 
     /// Streams the accepted map's aligned audio for every same-group channel into the derived store (app

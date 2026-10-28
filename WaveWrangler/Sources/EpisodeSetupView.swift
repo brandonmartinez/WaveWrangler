@@ -263,6 +263,7 @@ private struct SourcesSection: View {
     @Bindable var model: EpisodeSetupModel
     var focusedTable: FocusState<EpisodeSetupModel.FocusedTable?>.Binding
     @Environment(\.setupTextScale) private var textScale
+    @State private var importDropTargeted = false
 
     var body: some View {
         let presentation = model.presentation
@@ -312,22 +313,37 @@ private struct SourcesSection: View {
                     if model.episode?.sources.isEmpty ?? true {
                         VStack(spacing: 8) {
                             Label("No sources yet", systemImage: "waveform.path").setupFont(.title3)
-                            Text("Import recordings to reference them in this episode. WaveWrangler never moves, renames or changes them.")
+                            Text("Drop recordings or folders here, or choose Import Sources. WaveWrangler adds references and never moves, renames or changes originals.")
                                 .setupFont(.body)
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
                                 .accessibilityIdentifier("ww.setup.empty.importExplanation")
                             Button("Import Sources…") { model.beginImport() }
+                                .disabled(!model.canImportSources)
                         }
                         .padding()
                         .frame(maxWidth: 420)
                         .background(.background, in: RoundedRectangle(cornerRadius: 8))
                         .accessibilityElement(children: .contain)
                         .accessibilityIdentifier("ww.setup.empty")
+                        .dropDestination(for: SetupFileDrop.self) { files, _ in
+                            model.importDroppedURLs(files.map(\.url))
+                        }
                     }
                 }
         }
         .padding([.horizontal, .top], 10)
+        .contentShape(Rectangle())
+        .dropDestination(for: SetupFileDrop.self, action: { files, _ in
+            model.importDroppedURLs(files.map(\.url))
+        }, isTargeted: { importDropTargeted = $0 && model.canImportSources })
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(importDropTargeted ? Color.accentColor : .clear, lineWidth: 3)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
+        }
+        .help("Drop recordings or folders to import. Original files stay unchanged.")
     }
 
     private func header(_ presentation: SetupPresentation) -> some View {
@@ -358,6 +374,7 @@ private struct SourcesSection: View {
             }
             Spacer()
             Button("Import Sources…") { model.beginImport() }
+                .disabled(!model.canImportSources)
                 .accessibilityIdentifier("ww.setup.import")
         }
     }
@@ -461,14 +478,33 @@ private struct SourcesTable: View {
                     }
                 )) {
                     ForEach(Self.flattened(group.children ?? [])) { row in
-                        TableRow(row)
+                        if let sourceID = row.id.sourceID {
+                            TableRow(row)
+                                .draggable(SetupSourceDrag(showID: model.store.model.show.id,
+                                    episodeID: model.episodeID, sourceID: sourceID))
+                                .dropDestination(for: SetupSourceDrop.self) { items in
+                                    model.acceptSourceRowDrop(items, on: row.id)
+                                }
+                        } else {
+                            TableRow(row)
+                        }
+                    }
+                    .dropDestination(for: SetupFileDrop.self) { _, files in
+                        model.importDroppedURLs(files.map(\.url))
                     }
                 }
+                .dropDestination(for: SetupSourceDrop.self) { items in
+                    model.acceptSourceRowDrop(items, on: group.id)
+                }
+            }
+            .dropDestination(for: SetupFileDrop.self) { _, files in
+                model.importDroppedURLs(files.map(\.url))
             }
         }
         .accessibilityLabel("Sources")
         .accessibilityValue(model.selection.isEmpty ? "No selection" : "\(model.selection.count) selected")
         .accessibilityIdentifier("ww.setup.sources")
+        .accessibilityHint("Drag a recording onto a recorder group or one of its rows to change its group.")
         .contextMenu(forSelectionType: SetupRowID.self) { ids in
             SourceContextMenu(model: model, ids: ids)
         } primaryAction: { _ in

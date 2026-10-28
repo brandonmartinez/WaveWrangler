@@ -354,7 +354,7 @@ final class VisualAlignmentUITests: XCTestCase {
             XCTAssertGreaterThan(width, 100)
             let start = surface.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
             start.click(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 12, dy: 0)))
-            let status = app.staticTexts["alignment.waveforms.status"]
+            let status = app.scrollViews["ww.alignment.workspace"]
             XCTAssertTrue(surface.exists, "Saving must retain the measured waveform surface")
             let shownRecordings = app.scrollViews["ww.alignment.workspace"].buttons.matching(NSPredicate(
                 format: "label BEGINSWITH %@", "Mute synthetic-"
@@ -938,12 +938,12 @@ final class VisualAlignmentUITests: XCTestCase {
     }
 
     private func recordingsAreLoaded(_ count: Int, in app: XCUIApplication) -> Bool {
-        let status = app.staticTexts["alignment.waveforms.status"]
-        return status.exists && (status.value as? String ?? status.label).contains("\(count) recordings loaded")
+        let status = app.scrollViews["ww.alignment.workspace"]
+        return status.exists && !app.descendants(matching: .any)["ww.trackProcessing.overlay"].exists
+            && (status.value as? String ?? status.label).contains("\(count) recordings loaded")
     }
 
     private func assertLoadedRecordings(_ names: [String], in app: XCUIApplication) {
-        scrollTo(app.staticTexts["alignment.waveforms.status"], in: app)
         XCTAssertTrue(waitUntil { recordingsAreLoaded(names.count, in: app) }, app.debugDescription)
         assertMeasuredRecordings(names, in: app)
     }

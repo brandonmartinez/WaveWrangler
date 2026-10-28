@@ -12,6 +12,7 @@ struct InspectorContainer: View {
            let model = state.alignmentModel {
             AlignmentDetailInspector(model: model)
                 .wwFont(.body)
+                .disabled(TrackProcessingOperation.current(alignment: model, cleanup: state.cleanupModel) != nil)
         } else {
             InspectorScrollContent(state: state)
         }
@@ -39,6 +40,8 @@ private struct InspectorScrollContent: View {
                             EpisodeInspector(state: state, episodeID: model.episodeID)
                         }
                     }
+                    .disabled(state.workspaceInspector != .episode
+                        && TrackProcessingOperation.current(alignment: model, cleanup: state.cleanupModel) != nil)
                 } else if state.destination == .review, let model = state.cleanupModel {
                     CleanupInspectorView(model: model)
                 } else if let episode = state.selectedEpisode {

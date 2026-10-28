@@ -35,6 +35,17 @@ struct AppConfigurationTests {
         #expect(show["CFBundleTypeRole"] as? String == "Editor")
     }
 
+    @Test func recordingDragsAreDataNotAnOpenableDocumentType() throws {
+        let info = try Self.plist("Info.plist")
+        let identifier = "com.brandonmartinez.wavewrangler.source-drag"
+        let exported = try #require(info["UTExportedTypeDeclarations"] as? [[String: Any]])
+        let declaration = try #require(exported.first { $0["UTTypeIdentifier"] as? String == identifier })
+        #expect(declaration["UTTypeConformsTo"] as? [String] == ["public.data"])
+        #expect(declaration["UTTypeTagSpecification"] == nil)
+        let documents = try #require(info["CFBundleDocumentTypes"] as? [[String: Any]])
+        #expect(!documents.contains { ($0["LSItemContentTypes"] as? [String])?.contains(identifier) == true })
+    }
+
     @Test func appIconIncludesEveryMacSizeAndScale() throws {
         struct Catalog: Decodable {
             struct Image: Decodable {

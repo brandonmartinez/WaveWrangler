@@ -50,6 +50,9 @@ struct AlignmentWaveformView: View {
     @State private var newGroupSource: SourceRecord?
 
     private let headerWidth: CGFloat = 190
+    private var processingOperation: TrackProcessingOperation? {
+        .current(alignment: model, cleanup: cleanup)
+    }
 
     private typealias WaveformTrackDrawing = AudioTimelineWaveformDrawing
     private enum ScrollTarget: Hashable {
@@ -165,17 +168,6 @@ struct AlignmentWaveformView: View {
                     Text("Refresh audio reads a bounded portion of authorized, grouped recordings. Review older recordings' access in Recordings & Speakers.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                Text(model.waveformMessage)
-                    .font(.caption)
-                    .accessibilityIdentifier("alignment.waveforms.status")
-                if model.isLoadingOverview {
-                    ProgressView(model.waveformOverviewMessage, value: model.waveformOverviewProgress)
-                        .font(.caption)
-                } else if !model.waveformOverviewTracks.isEmpty {
-                    Text(model.waveformOverviewMessage)
-                        .font(.caption).foregroundStyle(.secondary)
-                        .accessibilityIdentifier("alignment.waveforms.overviewStatus")
-                }
                 ForEach(model.waveformOverviewRefusals) { refusal in
                     Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
                         .font(.caption)
@@ -226,6 +218,7 @@ struct AlignmentWaveformView: View {
                     trackScrollPosition.scrollTo(y: model.listening.workspace.trackScrollOffset)
                 }
                 .accessibilityLabel("Alignment workspace scroll area")
+                .accessibilityValue(model.waveformMessage)
                 .accessibilityIdentifier("ww.alignment.workspace")
                 .task(id: model.requestedWaveformFocus) {
                     guard let focus = model.requestedWaveformFocus else { return }
@@ -247,6 +240,9 @@ struct AlignmentWaveformView: View {
                     model.requestedWaveformFocus = nil
                 }
             }
+            .modifier(TrackProcessingPresentation(operation: processingOperation, cancel: {
+                TrackProcessingOperation.cancel(alignment: model, cleanup: cleanup)
+            }))
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .focusable(interactions: .edit)
@@ -260,7 +256,7 @@ struct AlignmentWaveformView: View {
         .modifier(floatingToolbar)
         .background(alignment: .leading) {
             AudioTimelineScrollSurface(headerWidth: headerWidth + 48) { action, width in
-                guard dragSession == nil, model.pendingWaveformMove == nil else { return false }
+                guard processingOperation == nil, dragSession == nil, model.pendingWaveformMove == nil else { return false }
                 switch action {
                 case .pan(let delta):
                     guard let start = AlignmentWaveformProjection.rulerPanStart(
@@ -384,7 +380,9 @@ struct AlignmentWaveformView: View {
                 .accessibilityIdentifier("alignment.waveforms.viewControls")
             }
             .controlSize(.small)
+            .disabled(processingOperation != nil)
             ruler
+                .disabled(processingOperation != nil)
         }
         .padding(.horizontal, 12)
         .padding(.top, 8)
@@ -473,8 +471,8 @@ struct AlignmentWaveformView: View {
     private var transport: some View {
         AudioTimelineTransport(
             prefix: "alignment.waveforms", isPlaying: model.canStopAudition,
-            isPreparing: model.isPreparingAudition, canPlay: model.pendingWaveformMove == nil,
-            canNavigate: model.pendingWaveformMove == nil,
+            isPreparing: model.isPreparingAudition, canPlay: processingOperation == nil,
+            canNavigate: processingOperation == nil,
             playhead: model.waveformPlayheadSeconds, status: model.auditionLabel,
             back: { model.jumpEnabledTracks(by: -AppSettings.shared.timelineJumpInterval.seconds) },
             playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() },
@@ -1081,24 +1079,16 @@ struct AlignmentWaveformView: View {
     @ViewBuilder
     private func anchorMarkers(for track: AlignmentWaveformTrack, size: CGSize) -> some View {
         if let correction = model.adaptiveCorrection(for: track.id) {
-            ForEach(Array(correction.segments.enumerated()), id: \.offset) { _, segment in
-                let position = x(segment.alignedStart, width: size.width)
-                if (0...size.width).contains(position) {
-                    let style = adaptiveMarkerStyle(segment.kind, accepted: true)
-                    Image(systemName: style.symbol)
-                        .foregroundStyle(style.color).font(.caption)
-                        .position(x: position, y: 12)
-                        .help("Accepted \(style.label) at source \(AlignmentPresentation.formatTime(segment.sourceStart)). Pitch preserved; all file channels share this curve.")
-                        .accessibilityLabel("Accepted \(style.label), pitch preserved")
-                }
-            }
+            AcceptedAdaptiveTimingMarkers(segments: correction.segments, start: model.waveformStartSeconds,
+                duration: model.waveformDurationSeconds, size: size)
+                .equatable()
         }
         if showProposedAlignment, let record = model.currentAdaptiveAnalysis {
             ForEach(AlignmentWaveformProjection.adaptiveMarkers(
                 track: track, record: record, includeEstimated: true)) { marker in
                 let position = x(model.cutTimeline.editedTime(forAlignedTime: marker.alignedSeconds), width: size.width)
                 if (0...size.width).contains(position) {
-                    let style = adaptiveMarkerStyle(marker.kind, accepted: false)
+                    let style = Self.adaptiveMarkerStyle(marker.kind, accepted: false)
                     Image(systemName: style.symbol)
                         .foregroundStyle(style.color).font(.caption)
                         .position(x: position, y: 12)
@@ -1137,7 +1127,7 @@ struct AlignmentWaveformView: View {
         }
     }
 
-    private func adaptiveMarkerStyle(
+    static func adaptiveMarkerStyle(
         _ kind: SourceTimingSegment.Kind?, accepted: Bool
     ) -> (symbol: String, color: Color, label: String) {
         switch kind {

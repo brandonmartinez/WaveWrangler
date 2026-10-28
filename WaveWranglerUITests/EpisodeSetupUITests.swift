@@ -10,6 +10,7 @@ import XCTest
 @MainActor
 final class EpisodeSetupUITests: XCTestCase {
     private var app: XCUIApplication!
+    private enum SetupFailure: Error { case missingViews, missingSetupMenu, missingSources }
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -44,11 +45,25 @@ final class EpisodeSetupUITests: XCTestCase {
         add(XCTAttachment(screenshot: app.screenshot()))
     }
 
-    /// The synthetic show opens on its first episode; View › Setup (⌘1) makes sure Setup is shown.
+    /// Select the retained Setup surface explicitly from the native Views menu.
     private func openSetup() throws {
         let sources = app.descendants(matching: .any)["ww.setup.sources"]
-        app.typeKey("1", modifierFlags: .command)
-        XCTAssertTrue(sources.waitForExistence(timeout: 10), "Setup content not reachable")
+        let views = element("ww.show.views")
+        guard views.waitForExistence(timeout: 10) else {
+            attachState("Views control unavailable")
+            throw SetupFailure.missingViews
+        }
+        views.click()
+        let setup = app.menuItems["Legacy Setup"]
+        guard setup.waitForExistence(timeout: 5) else {
+            attachState("Setup menu unavailable")
+            throw SetupFailure.missingSetupMenu
+        }
+        setup.click()
+        guard sources.waitForExistence(timeout: 10) else {
+            attachState("Setup content unavailable")
+            throw SetupFailure.missingSources
+        }
     }
 
     private func element(_ identifier: String) -> XCUIElement {
@@ -210,6 +225,84 @@ final class EpisodeSetupUITests: XCTestCase {
         XCTAssertTrue(element("ww.import.review").waitForExistence(timeout: 5))
         app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
         XCTAssertTrue(text("Ungrouped · 0 sources").waitForExistence(timeout: 3))
+    }
+
+    private func createImportGroup(_ name: String, row: Int = 0) {
+        let picker = app.popUpButtons["ww.import.row.\(row).group"]
+        XCTAssertTrue(picker.waitForExistence(timeout: 5))
+        picker.click()
+        picker.menuItems["New Recorder Group…"].click()
+        let field = app.textFields["ww.setup.nameField"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.click()
+        field.typeText(name)
+        app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+        XCTAssertTrue(field.waitForNonExistence(timeout: 5))
+    }
+
+    func testImportGroupCreationStaysInTheReviewUntilImport() {
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        XCTAssertTrue(element("ww.import.review").waitForExistence(timeout: 5))
+        createImportGroup("Portable recorder")
+        XCTAssertTrue(waitForValue("ww.import.row.0.group", beginsWith: "Portable recorder"))
+        let other = app.popUpButtons["ww.import.row.1.group"]
+        other.click()
+        XCTAssertTrue(app.menuItems["Portable recorder"].exists)
+        other.menuItems["New Recorder Group…"].click()
+        let name = app.textFields["ww.setup.nameField"]
+        XCTAssertTrue(name.waitForExistence(timeout: 5))
+        name.click()
+        name.typeText("Portable recorder")
+        XCTAssertFalse(app.buttons["Create"].isEnabled)
+        XCTAssertTrue(element("ww.setup.nameValidation").exists)
+        app.typeKey(XCUIKeyboardKey.escape.rawValue, modifierFlags: [])
+        XCTAssertTrue(element("ww.import.review").exists)
+        element("ww.import.review").buttons["Cancel"].click()
+        XCTAssertTrue(text("Ungrouped · 0 sources").waitForExistence(timeout: 5))
+        XCTAssertFalse(text("Portable recorder — recorder group · 1 source").exists)
+    }
+
+    func testNewImportGroupAndItsSourcesShareUndo() {
+        app.typeKey("i", modifierFlags: [.command, .shift])
+        XCTAssertTrue(element("ww.import.review").waitForExistence(timeout: 5))
+        createImportGroup("Portable recorder")
+        app.buttons["ww.import.confirm"].click()
+        XCTAssertTrue(text("Portable recorder — recorder group · 1 source").waitForExistence(timeout: 5))
+        XCTAssertTrue(text("Ungrouped · 8 sources").exists)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(text("Ungrouped · 0 sources").waitForExistence(timeout: 5))
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(text("Portable recorder — recorder group · 1 source").waitForExistence(timeout: 5))
+    }
+
+    func testRecordingDragBetweenGroupsIsUndoable() {
+        importFixture()
+        for (recording, group) in [("tr1.wav", "First recorder"), ("tr2.wav", "Second recorder")] {
+            select(recording)
+            menu("Source", "Assign to Recorder Group", "New Recorder Group…")
+            let field = app.textFields["ww.setup.nameField"]
+            XCTAssertTrue(field.waitForExistence(timeout: 5))
+            field.click()
+            field.typeText(group)
+            app.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+            XCTAssertTrue(text("\(group) — recorder group · 1 source").waitForExistence(timeout: 5))
+        }
+        let outline = app.outlines["ww.setup.sources"]
+        let source = outline.outlineRows.containing(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.setup.source.' AND (label == %@ OR value == %@)", "tr1.wav", "tr1.wav")).firstMatch
+        let target = outline.outlineRows.containing(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.setup.group.' AND (label CONTAINS %@ OR value CONTAINS %@)",
+            "Second recorder", "Second recorder")).firstMatch
+        XCTAssertTrue(source.exists && target.exists)
+        source.coordinate(withNormalizedOffset: CGVector(dx: 0.03, dy: 0.5))
+            .click(forDuration: 0.3, thenDragTo: target.coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.5)))
+        XCTAssertTrue(text("Second recorder — recorder group · 2 sources").waitForExistence(timeout: 5))
+        XCTAssertTrue(text("First recorder — recorder group · 0 sources").exists)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(text("First recorder — recorder group · 1 source").waitForExistence(timeout: 5))
+        XCTAssertTrue(text("Second recorder — recorder group · 1 source").exists)
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(text("Second recorder — recorder group · 2 sources").waitForExistence(timeout: 5))
     }
 
     // MARK: T08/T09 — grouping and numeric epoch/channel

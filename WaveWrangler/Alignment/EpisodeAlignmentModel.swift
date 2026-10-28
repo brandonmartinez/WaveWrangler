@@ -58,6 +58,61 @@ final class EpisodeAlignmentModel {
     private(set) var adaptiveProgress = 0.0
     private var isMeasuringAdaptiveTiming = false
     var isAnalyzingAdaptively: Bool { isWorking && adaptiveTask != nil && isMeasuringAdaptiveTiming }
+    var trackProcessingOperation: TrackProcessingOperation? {
+        if isWorking {
+            if tracksAnalysisTask != nil {
+                return .init(kind: .alignmentAnalysis, title: "Aligning tracks", detail: message,
+                    fraction: nil, canCancel: true)
+            }
+            if adaptiveTask != nil {
+                return .init(kind: .adaptiveAnalysis,
+                    title: isMeasuringAdaptiveTiming ? "Measuring adaptive timing" : "Aligning recording",
+                    detail: message, fraction: isMeasuringAdaptiveTiming ? adaptiveProgress : nil, canCancel: true)
+            }
+            if tracksAcceptanceTask != nil {
+                return .init(kind: .alignmentAcceptance, title: "Accepting alignment",
+                    detail: "Preparing the selected alignment. Current timing stays unchanged until acceptance succeeds.",
+                    fraction: nil, canCancel: true)
+            }
+            return .init(kind: .timingUpdate, title: "Updating timing",
+                detail: "Preparing and verifying the timing change. Original recordings remain unchanged.",
+                fraction: nil, canCancel: false)
+        }
+        if pendingWaveformMove != nil {
+            return .init(kind: .timingUpdate, title: "Saving timing",
+                detail: "Track editing resumes after the new timing and measured audio are independently verified.",
+                fraction: nil, canCancel: false)
+        }
+        if isPreparingAudition {
+            return .init(kind: .audioPreparation, title: "Preparing playback", detail: auditionLabel,
+                fraction: nil, canCancel: true)
+        }
+        if isLoadingWaveforms || isLoadingOverview {
+            return .init(kind: .waveforms, title: "Preparing waveforms",
+                detail: isLoadingOverview ? waveformOverviewMessage : waveformMessage,
+                fraction: isLoadingOverview ? waveformOverviewProgress : nil, canCancel: true)
+        }
+        return nil
+    }
+
+    func cancelTrackProcessing() {
+        if let tracksAnalysisTask {
+            tracksAnalysisTask.cancel()
+            message = "Canceling alignment analysis… Current timing and edits stay unchanged."
+        } else if let adaptiveTask {
+            adaptiveTask.cancel()
+            message = "Canceling recording analysis… No timing was applied."
+        } else if let tracksAcceptanceTask {
+            tracksAcceptanceTask.cancel()
+            message = "Canceling alignment acceptance… Current timing and edits stay unchanged."
+        } else if isPreparingAudition {
+            stopAudition()
+        } else if pendingWaveformMove == nil, !isWorking, isLoadingWaveforms || isLoadingOverview {
+            cancelWaveforms(keepingSnapshot: true)
+            cancelWaveformOverview(keepingSnapshot: true)
+            message = "Waveform preparation canceled. Verified cached audio is retained; original recordings are unchanged."
+        }
+    }
     var currentAdaptiveAnalysis: AdaptiveAnalysisRecord? {
         guard let record = adaptiveAnalysis, let snapshot = adaptiveEpisode,
               let live = document?.store.model.episode(episodeID),
@@ -1936,7 +1991,8 @@ final class EpisodeAlignmentModel {
 
     var canCorrect: Bool {
         guard let row = selectedRow else { return false }
-        return !isWorking && !positionIsLocked(row.groupID) && row.state.remedies.contains("Edit Numerically…")
+        return trackProcessingOperation == nil && !positionIsLocked(row.groupID)
+            && row.state.remedies.contains("Edit Numerically…")
     }
     /// Splitting at an endpoint produces an empty span, which the pipeline rejects. Only an anchor
     /// strictly inside the selected occurrence's span can start a new epoch.
@@ -1944,7 +2000,7 @@ final class EpisodeAlignmentModel {
         canCorrect && selectedAnchorSplit() != nil
     }
     var canAudition: Bool {
-        selectedRow?.state.remedies.contains("Audition") == true && !isWorking
+        selectedRow?.state.remedies.contains("Audition") == true && trackProcessingOperation == nil
     }
     var canStopAudition: Bool { isPreparingAudition || isAuditioning }
     var canPlaceAnchorAtPlayhead: Bool {

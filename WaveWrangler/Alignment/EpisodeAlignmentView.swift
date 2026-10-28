@@ -732,7 +732,9 @@ enum AlignmentKeyHandler {
             return true
         }
         if (event.keyCode == 36 || event.keyCode == 76), modifiers == .command {
-            model.auditionSelection()
+            if TrackProcessingOperation.current(alignment: model, cleanup: state.cleanupModel) == nil {
+                model.auditionSelection()
+            }
             return true
         }
         guard modifiers.isEmpty else { return false }
@@ -742,6 +744,7 @@ enum AlignmentKeyHandler {
         let right = event.keyCode == 124 || event.charactersIgnoringModifiers == "\u{f703}"
         if (left || right),
            handleTimelineKey(left ? .leftArrow : .rightArrow, repeating: event.isARepeat, in: window) { return true }
+        guard TrackProcessingOperation.current(alignment: model, cleanup: state.cleanupModel) == nil else { return false }
         guard !(window.firstResponder is NSTextView) else { return false }
         if event.keyCode == 51, isInside("ww.alignment.anchors", responder: window.firstResponder) {
             model.requestDeleteSelectedAnchor()
@@ -767,6 +770,10 @@ enum AlignmentKeyHandler {
         guard let window, window.attachedSheet == nil,
               let state = ShowWindowRegistry.state(for: window), state.destination == .alignment,
               let model = state.alignmentModel, !hasInteractiveFocus(in: window) else { return false }
+        if TrackProcessingOperation.current(alignment: model, cleanup: state.cleanupModel) != nil {
+            if key == .space, !repeating, model.canStopAudition { model.pauseEnabledTracks() }
+            return key == .space || key == .leftArrow || key == .rightArrow
+        }
         if key == .space {
             if !repeating { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() }
             return true

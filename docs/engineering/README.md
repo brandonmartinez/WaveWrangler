@@ -173,7 +173,15 @@ Waveform projection/reprojection runs off the main actor with cancellation and
 snapshot checks before publication. Waveform pixel aggregation and path drawing
 use an asynchronous Canvas. Transcript preparation projects and indexes words once
 per input/cut snapshot; pan/zoom queries use binary viewport lookup, preserving
-overlapping words and stable ordering. Marker neighbor distances use one sorted
+overlapping words and stable ordering. Each prepared word index retains one
+viewport layout keyed by start, duration, width, and uncertain-word IDs. Playhead
+and selection changes reuse geometry; changing words, cuts, or source bounds
+replaces the index and its layout cache. Accepted adaptive markers live in a
+value-only equatable subtree keyed by segments and viewport geometry, so moving
+the playhead does not rebuild hundreds of timing icons and accessibility/help labels.
+That subtree is a viewport-sized `ZStack`; positioned icons must not stack
+vertically or enlarge the surrounding waveform layout during resizing or zooming.
+Marker neighbor distances use one sorted
 pass rather than pairwise scans. Listening reuses the existing bounded, witnessed
 PCM cache, including adjacent/overlapping cached windows for indexed seeks.
 Cache hits still require current source identity, format/channel, and map-revision
@@ -734,6 +742,34 @@ Its metadata-only source references are neither timed nor playable. **Add to Gro
 uses existing groups or the shared new-recorder-group form and the normal named Undo/Redo
 commands; no waveform, epoch, or alignment is fabricated for a placeholder.
 
+Finder file/folder drops anywhere in the Sources area, including its empty-state card
+and existing rows, enter the same metadata-only Import Review as **Import Sources…**.
+The native table also accepts file locations at insertion gaps and below its last row;
+those drops import references rather than rearranging groups.
+Keep accessibility identifiers on the actual controls, not on the drop-region wrapper:
+SwiftUI propagates a wrapper identifier over the native table and empty-card identifiers.
+The transfer requests file locations, never a file representation that could copy or
+materialize recording contents. Review confirmation remains the authorization boundary.
+Native recording-row drags use process-local logical IDs scoped to the current show
+and episode. Dropping onto a group or one of its rows uses the existing one-step
+group-assignment command, retaining epoch numbers, speaker/channel assignments and roles.
+Foreign, stale or mixed file/recording drops are refused before any canonical change.
+
+The Import Review recorder-group chooser includes **New Recorder Group…**. Naming
+only confirms that row's draft choice; it does not accept its speaker suggestion.
+Other review rows can select the draft group. Cancel leaves the episode unchanged;
+confirmed Import creates the group and sources in the same Undo step.
+
+Track-blocking alignment, waveform preparation, playback preparation and transcription
+use a bounded overlay inside the track viewport instead of duplicated top processing
+rows or a bottom waveform status bar. Progress is determinate only when the worker
+reports a real fraction. Cancel uses the existing worker cancellation; final verified
+timing updates explain why they cannot be interrupted. Track editing, pan/zoom and
+navigation shortcuts and conflicting inspector actions are blocked, while transport
+Pause/Stop remains available.
+Errors and non-blocking readiness notices remain visible, and the workspace's
+accessibility value retains the measured-recording status without a visual footer.
+
 The app icon is the complete macOS 16/32/128/256/512 pt, 1x/2x set in
 `WaveWrangler/Assets.xcassets/AppIcon.appiconset`, selected for both Debug and Release.
 To regenerate from the original square SVG, run
@@ -1156,6 +1192,18 @@ fully prefetched short programs; any failure invalidates DSP immediately.
 Bookmark/File Provider and full-map checks must never block the sub-100-ms
 processed-output horizon. Each newly prepared source window still performs its
 normal witnessed-read and current-map checks.
+The pipeline retains one pure accepted-map calculation keyed by the complete
+media/timing inputs, registered source revision tokens, and format revision.
+Persisted activation and read admission share the decoded map, dependency
+verification, and canonical identity calculation while those values are equal.
+Reuse additionally requires the same retained immutable map-history snapshot;
+re-created values recompute rather than equating distinct canonical bytes such
+as positive and negative zero.
+Every read still checks the live accepted revision and exact ready coordinator
+identity; shutdown, changed publications, sources, formats, placements, or
+same-revision map/correction content cannot reuse an old admission. This cache
+contains no source grant, bookmark resolution, original-file witness, or PCM,
+and does not skip the read gateway or ongoing source surveillance.
 `ProductionMixPlayback` reads a value snapshot of live controls on **every**
 512-frame block, including latency drain; no gains or effects are baked into the
 raw cache. Document edits synchronously update controls or invalidate incompatible
