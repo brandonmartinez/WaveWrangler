@@ -194,7 +194,7 @@ struct AlignmentPresentationTests {
         let anchors = AlignmentPresentation.copy(for: .manual(.anchors, revision: 3))
         let accepted = AlignmentPresentation.copy(for: .manual(.acceptedAcousticProposal, revision: 4))
         #expect(numeric.heading == "Set by you")
-        #expect(numeric.evidence.contains("You typed the rate and offset."))
+        #expect(numeric.evidence.contains("You set the recorder's rate and offset."))
         #expect(anchors.evidence.contains("Fitted from the anchors you placed."))
         #expect(accepted.evidence.contains("You reviewed and accepted WaveWrangler's proposal."))
     }

@@ -637,9 +637,11 @@ enum AlignmentWaveformProjection {
         selectedEpoch: RecordingEpochID, map: AlignedTimelineMap?
     ) -> Bool {
         guard let map else { return initialEpoch == selectedEpoch }
-        return map.groups.first(where: { $0.group == group })?
-            .placements.first(where: { $0.occurrence.source == source })?
-            .spans.contains(where: { $0.epoch == selectedEpoch }) == true
+        guard let placement = map.groups.first(where: { $0.group == group })?
+            .placements.first(where: { $0.occurrence.source == source }) else {
+            return initialEpoch == selectedEpoch
+        }
+        return placement.spans.contains(where: { $0.epoch == selectedEpoch })
     }
 
     static func adaptiveStrokes(

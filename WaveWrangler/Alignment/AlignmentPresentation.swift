@@ -589,7 +589,7 @@ enum AlignmentPresentation {
             )
         case let .manual(basis, revision):
             let basisText: String = switch basis {
-            case .numericEntry: "You typed the rate and offset."
+            case .numericEntry: "You set the recorder's rate and offset."
             case .anchors: "Fitted from the anchors you placed."
             case .acceptedAcousticProposal: "You reviewed and accepted WaveWrangler's proposal."
             }

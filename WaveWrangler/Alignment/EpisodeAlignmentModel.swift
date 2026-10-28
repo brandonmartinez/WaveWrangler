@@ -253,10 +253,11 @@ final class EpisodeAlignmentModel {
         let id = UUID()
         let source: SourceID
         let group: RecorderGroupID
-        let speaker: SpeakerID
+        let speaker: SpeakerID?
         let trackName: String
         let alignedSeconds: Double
         let sourceSeconds: Double
+        let generation: UInt64
     }
     private(set) var waveformReferenceMarkers: [WaveformReferenceMarker] = []
     private(set) var waveformPickedPoint: (source: SourceID, epoch: RecordingEpochID, sourceSeconds: Double, mapped: Bool)?
@@ -402,8 +403,9 @@ final class EpisodeAlignmentModel {
     let episodeID: EpisodeID
     let mixer: EpisodeMixerController
     var mixerStore: ShowDocumentStore? { document?.store }
-    enum ListeningMode { case sourceAudition, productionMix }
+    enum ListeningMode { case sourceAudition, sourceTimePreview, productionMix }
     private(set) var listeningMode: ListeningMode = .sourceAudition
+    private(set) var sourceTimePreviewSource: SourceID?
     private weak var document: ShowDocument?
     private let runtime: AlignmentRuntime
     @ObservationIgnored private let audioPlayback = AlignmentAudioPlayback()
@@ -814,7 +816,35 @@ final class EpisodeAlignmentModel {
         return reference.nextGroup ?? document?.store.model.episode(episodeID)?.recorderGroups.first?.id
     }
     func positionIsLocked(_ group: RecorderGroupID) -> Bool {
-        group == referenceGroup || document?.store.model.episode(episodeID)?.positionIsLocked(group) != false
+        guard group != referenceGroup, let episode = document?.store.model.episode(episodeID) else { return true }
+        if manualTimingBlockReason(for: group) != nil { return true }
+        if let explicit = episode.workspace?.positionLocks.first(where: { $0.group == group }) {
+            return explicit.isLocked
+        }
+        guard hasAcceptedRevision else { return false }
+        guard let map = loadedWaveformMap ?? acceptedMap else { return true }
+        return map.groups.first(where: { $0.group == group })?.epochs.contains {
+            guard case let .mapped(_, provenance) = $0.mapping else { return false }
+            if case let .manual(correction) = provenance {
+                return correction.basis == .acceptedAcousticProposal
+            }
+            return true
+        } == true
+    }
+
+    func manualTimingBlockReason(for group: RecorderGroupID) -> String? {
+        guard let episode = document?.store.model.episode(episodeID) else {
+            return "This episode is no longer available."
+        }
+        let map = loadedWaveformMap ?? acceptedMap
+        if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { correction in
+            correction.group == group || map?.groups.first(where: {
+                $0.placements.contains { $0.occurrence.source == correction.reference }
+            })?.group == group
+        }) == true {
+            return "Reset the confirmed dynamic timing before moving this recorder or changing its anchors or numeric timing."
+        }
+        return nil
     }
     func setPositionLocked(_ locked: Bool, group: RecorderGroupID) {
         guard let document, !isWorking, group != referenceGroup else {
@@ -838,12 +868,11 @@ final class EpisodeAlignmentModel {
         return canMoveWaveform(source: source, group: row.groupID, epoch: row.epochID)
     }
     func canMoveWaveform(source: SourceID, group: RecorderGroupID, epoch: RecordingEpochID) -> Bool {
-        guard !isWorking, !isLoadingWaveforms, pendingWaveformMove == nil,
-              document?.store.model.episode(episodeID)?.alignment?.acceptedMap?.sourceCorrections?.isEmpty != false
+        guard trackProcessingOperation == nil, !waveformTimingIsDraft,
+              manualTimingBlockReason(for: group) == nil,
+              !hasAcceptedRevision || loadedWaveformMap != nil
         else { return false }
-        let reference = loadedWaveformMap?.reference.group
-            ?? document?.store.model.episode(episodeID)?.recorderGroups.first?.id
-        return group != reference && document?.store.model.episode(episodeID)?.positionIsLocked(group) == false
+        return group != referenceGroup && !positionIsLocked(group)
             && waveformTracks.contains(where: { $0.group == group && $0.id == source })
             && (loadedWaveformMap == nil || AlignmentWaveformProjection.hasAcceptedTiming(
                 source: source, epoch: epoch, group: group, map: loadedWaveformMap
@@ -1032,39 +1061,48 @@ final class EpisodeAlignmentModel {
     func markWaveformReference(_ track: AlignmentWaveformTrack) {
         guard let document, loadedWaveformGeneration == document.store.modelGeneration,
               timingIsVerified(document.store.model),
-              let point = waveformPickedPoint, point.source == track.id, point.mapped,
-              sourceHasAcceptedTiming(track.id), let speaker = trackSpeakerID(track.id),
-              let map = waveformMap, let group = map.groups.first(where: { $0.group == track.group }),
-              let placement = group.placements.first(where: { $0.occurrence.source == track.id }),
-              let span = placement.spans.first(where: { $0.epoch == point.epoch }),
-              let mapping = group.epochs.first(where: { $0.epoch == point.epoch })?.mapping,
-              case let .mapped(segments, _) = mapping,
-              let segment = segments.first(where: {
-                  let clock = point.sourceSeconds + span.groupClockOffset.approximateDouble
-                  return clock >= $0.groupClockStart.approximateDouble
-                      && clock < $0.groupClockEnd.approximateDouble
-              })
+              let point = waveformPickedPoint, point.source == track.id,
+              point.mapped || !hasAcceptedRevision && track.group == referenceGroup,
+              let aligned = waveformAlignedTime(track: track, epoch: point.epoch, sourceSeconds: point.sourceSeconds)
         else {
-            waveformMessage = "Click covered audio on an already timed speaker track to mark a reference point."
+            waveformMessage = "Click covered audio on a timed recording or the fixed reference to mark the first point."
             return
         }
-        let clock = point.sourceSeconds + span.groupClockOffset.approximateDouble
-        let aligned = segment.rateRatio.approximateDouble * clock + segment.alignedOffset.approximateDouble
         guard aligned.isFinite else {
             waveformMessage = "The selected reference point cannot be represented on the aligned timeline."
             return
         }
         waveformReferenceMarkers.append(WaveformReferenceMarker(
-            source: track.id, group: track.group, speaker: speaker,
+            source: track.id, group: track.group, speaker: trackSpeakerID(track.id),
             trackName: track.name,
-            alignedSeconds: aligned, sourceSeconds: point.sourceSeconds
+            alignedSeconds: aligned, sourceSeconds: point.sourceSeconds, generation: document.store.modelGeneration
         ))
-        waveformMessage = "Reference marker placed. Click the matching sound on another recorder for \(speakerName(speaker)), then link it."
+        waveformMessage = "First point marked. Click the same sound on another recorder, link the pair, then apply its offset."
     }
 
     func referenceMarkers(for track: AlignmentWaveformTrack) -> [WaveformReferenceMarker] {
-        guard let speaker = trackSpeakerID(track.id) else { return [] }
-        return waveformReferenceMarkers.filter { $0.speaker == speaker && $0.group != track.group }
+        waveformReferenceMarkers.filter {
+            $0.group != track.group && $0.generation == document?.store.modelGeneration
+        }
+    }
+
+    private func waveformAlignedTime(
+        track: AlignmentWaveformTrack, epoch: RecordingEpochID, sourceSeconds: Double
+    ) -> Double? {
+        if let correction = adaptiveCorrection(for: track.id) {
+            return correction.alignedTime(at: sourceSeconds)
+        }
+        guard let map = waveformMap else {
+            return !hasAcceptedRevision && track.group == referenceGroup ? sourceSeconds : nil
+        }
+        guard let group = map.groups.first(where: { $0.group == track.group }),
+              let placement = group.placements.first(where: { $0.occurrence.source == track.id }),
+              let span = placement.spans.first(where: { $0.epoch == epoch }),
+              let mapping = group.epochs.first(where: { $0.epoch == epoch })?.mapping,
+              case let .mapped(segments, _) = mapping else { return nil }
+        let clock = sourceSeconds + span.groupClockOffset.approximateDouble
+        return segments.first { clock >= $0.groupClockStart.approximateDouble && clock < $0.groupClockEnd.approximateDouble }
+            .map { $0.rateRatio.approximateDouble * clock + $0.alignedOffset.approximateDouble }
     }
 
     func acceptedAnchorRows(for track: AlignmentWaveformTrack) -> [AlignmentAnchorRow] {
@@ -1097,7 +1135,9 @@ final class EpisodeAlignmentModel {
         waveformTargetPoint = point.sourceSeconds
         waveformReferencePoint = marker.alignedSeconds
         addWaveformAnchor()
-        waveformMessage = "\(waveformDraftAnchors.count) linked anchor\(waveformDraftAnchors.count == 1 ? "" : "s") staged. Place at least two pairs on this recording segment, then apply; nothing has changed yet."
+        waveformMessage = waveformDraftAnchors.count == 1
+            ? "One pair staged. Apply to match this sound without changing the recorder's rate, or add another pair to fit drift."
+            : "\(waveformDraftAnchors.count) pairs staged. Apply to fit offset and drift; nothing has changed yet."
     }
 
     func loadWaveforms(keepingSnapshot: Bool = false, preload: Bool = false) {
@@ -1676,9 +1716,22 @@ final class EpisodeAlignmentModel {
     }
 
     var waveformAuditionBounds: ClosedRange<Double> {
-        AlignmentWaveformProjection.overviewExtent(
+        if let track = sourceTimeSoloTrack {
+            return 0...max(0.1, Double(track.envelope.totalFrames) / Double(track.envelope.sampleRate))
+        }
+        return AlignmentWaveformProjection.overviewExtent(
             indices: waveformOverviewIndices.values, mappedOnly: true
         ) ?? 0...max(0.1, enabledTimelineEnd)
+    }
+
+    private var sourceTimeSoloTrack: AlignmentWaveformTrack? {
+        let enabled = enabledSources
+        guard enabled.count == 1, let source = enabled.first, !sourceHasAcceptedTiming(source) else { return nil }
+        return waveformTracks.first { $0.id == source }
+    }
+
+    var isSourceTimePreview: Bool {
+        canStopAudition ? listeningMode == .sourceTimePreview : sourceTimeSoloTrack != nil
     }
 
     /// Explicit production listening. Panel visibility, source Solo/Mute, and comparison layouts
@@ -1757,13 +1810,17 @@ final class EpisodeAlignmentModel {
     func playEnabledTracks(interval: ClosedRange<Double>? = nil, repeatInterval: Bool? = nil,
                            repeatWhile: (() -> Bool)? = nil, applyingCuts: Bool = true) {
         adoptCachedPresentation()
+        let sourceTimeTrack = sourceTimeSoloTrack
+        let usesCuts = applyingCuts && sourceTimeTrack == nil
+        let timebase: AlignmentRuntime.AuditionTimebase = sourceTimeTrack == nil ? .acceptedTimeline : .sourceTime
         guard let document, !enabledSources.isEmpty,
               loadedWaveformGeneration == document.store.modelGeneration,
-              loadedWaveformMap != nil, groupDraftMilliseconds == 0, pendingWaveformMove == nil,
+              loadedWaveformMap != nil || sourceTimeTrack != nil,
+              groupDraftMilliseconds == 0, pendingWaveformMove == nil,
               !waveformTimingIsDraft, waveformPlayheadSeconds.isFinite,
               waveformPlayheadSeconds >= -86_400
         else {
-            auditionLabel = "Place and apply timing before playing; only confirmed, enabled tracks can be heard."
+            auditionLabel = "Solo an untimed recording to hear its original source time, or apply timing to play aligned tracks."
             return
         }
         guard timingIsVerified(document.store.model) else {
@@ -1772,9 +1829,9 @@ final class EpisodeAlignmentModel {
         }
         let enabled = enabledSources
         let timed = playableWaveformSources
-        let sources = enabled.filter { timed.contains($0) }
+        let sources = sourceTimeTrack.map { [$0.id] } ?? enabled.filter { timed.contains($0) }
         let availableSources = sources
-            + waveformTracks.map(\.id).filter { timed.contains($0) && !enabled.contains($0) }
+            + (sourceTimeTrack == nil ? waveformTracks.map(\.id).filter { timed.contains($0) && !enabled.contains($0) } : [])
         let adaptiveSources = Set(loadedWaveformEpisode?.alignment?.acceptedMap?.sourceCorrections?.map(\.source) ?? [])
         guard !sources.isEmpty else {
             auditionLabel = "No enabled track has accepted timing. Set timing manually or enable a timed track."
@@ -1782,10 +1839,12 @@ final class EpisodeAlignmentModel {
         }
         let requestedRange = interval ?? (listening.cycleEnabled ? listening.cycleRange : nil)
         let loops = repeatInterval ?? (listening.cycleEnabled && requestedRange != nil)
-        let auditionBounds = applyingCuts ? waveformAuditionBounds : manualCutBounds ?? waveformAuditionBounds
-        let timelineEnd = timelineEnd(for: Set(enabled), applyingCuts: applyingCuts)
-        let firstPosition = requestedRange.map { max(auditionBounds.lowerBound, $0.lowerBound) }
+        let auditionBounds = usesCuts || sourceTimeTrack != nil ? waveformAuditionBounds : manualCutBounds ?? waveformAuditionBounds
+        let sourceTimeEnd = sourceTimeTrack.map { Double($0.envelope.totalFrames) / Double($0.envelope.sampleRate) }
+        let timelineEnd = sourceTimeEnd ?? timelineEnd(for: Set(enabled), applyingCuts: usesCuts)
+        let requestedPosition = requestedRange.map { max(auditionBounds.lowerBound, $0.lowerBound) }
             ?? waveformPlayheadSeconds
+        let firstPosition = sourceTimeTrack == nil ? requestedPosition : max(0, requestedPosition)
         let lastPosition = min(timelineEnd, requestedRange?.upperBound ?? timelineEnd)
         guard firstPosition.isFinite, lastPosition.isFinite, firstPosition < lastPosition else {
             auditionLabel = "Choose a playhead time covered by an enabled track with accepted timing."
@@ -1793,20 +1852,21 @@ final class EpisodeAlignmentModel {
         }
         let omitted = enabled.count - sources.count
         stopAudition()
-        listeningMode = .sourceAudition
-        auditionUsesOriginalTime = !applyingCuts
+        listeningMode = sourceTimeTrack == nil ? .sourceAudition : .sourceTimePreview
+        sourceTimePreviewSource = sourceTimeTrack?.id
+        auditionUsesOriginalTime = !usesCuts && sourceTimeTrack == nil
         let snapshot = document.store.model
         let generation = auditionGeneration
         let revealingCut = listening.expandedManualCutID
         isPreparingAudition = true
         transportTask = Task { [weak self] in
             guard let self else { return }
-            let end = min(lastPosition, self.timelineEnd(for: Set(availableSources), applyingCuts: applyingCuts), 86_400)
+            let end = min(lastPosition, sourceTimeEnd ?? self.timelineEnd(for: Set(availableSources), applyingCuts: usesCuts), 86_400)
             let rate = Double(AlignedAuditionWindowReader.outputRate)
             let schedule: AlignedAuditionSchedule
             do {
                 schedule = try AlignedAuditionSchedule(startSeconds: firstPosition, endSeconds: end,
-                    usesAdaptiveTiming: availableSources.contains { adaptiveSources.contains($0) })
+                    usesAdaptiveTiming: sourceTimeTrack == nil && availableSources.contains { adaptiveSources.contains($0) })
             }
             catch {
                 stopPlayback(updatePlayhead: false)
@@ -1820,12 +1880,13 @@ final class EpisodeAlignmentModel {
             guard generation == auditionGeneration, let episode = snapshot.episode(episodeID) else { return }
             let prepared = RegularAudioPlayback(runtime: runtime, model: snapshot, episode: episode,
                 output: audioPlayback, sources: sources, availableSources: availableSources,
-                applyingCuts: applyingCuts, revealingCut: revealingCut)
+                applyingCuts: usesCuts, revealingCut: revealingCut, timebase: timebase)
             sourcePlayback = prepared
             document.store.registerListening(prepared)
-            auditionLabel = "Preparing timed tracks for live listening at the displayed map revision…"
-                + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track is" : "tracks are") excluded.")
-            auditionPlayheadSeconds = applyingCuts ? start : cutTimeline.editedTime(forAlignedTime: start)
+            auditionLabel = sourceTimeTrack.map { "Preparing original source-time audition of \($0.name). No alignment is assumed or saved." }
+                ?? ("Preparing timed tracks for live listening at the displayed map revision…"
+                    + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track is" : "tracks are") excluded."))
+            auditionPlayheadSeconds = usesCuts || sourceTimeTrack != nil ? start : cutTimeline.editedTime(forAlignedTime: start)
             transportProgressTask = Task { [weak self] in
                 while let self, generation == auditionGeneration, !Task.isCancelled {
                     if let clock = audioPlayback.clock, audioPlayback.failure == nil {
@@ -1833,7 +1894,7 @@ final class EpisodeAlignmentModel {
                         isPreparingAudition = false
                         transportUnavailable = prepared.unavailable
                         let time = min(end, clock.playhead())
-                        waveformPlayheadSeconds = applyingCuts ? time : cutTimeline.editedTime(forAlignedTime: time)
+                        waveformPlayheadSeconds = usesCuts || sourceTimeTrack != nil ? time : cutTimeline.editedTime(forAlignedTime: time)
                         refreshTransportGains()
                         followPlayheadIfNeeded()
                     }
@@ -1874,8 +1935,8 @@ final class EpisodeAlignmentModel {
                 playEnabledTracks(interval: requestedRange, repeatInterval: true,
                                   repeatWhile: repeatWhile, applyingCuts: applyingCuts)
             } else {
-                waveformPlayheadSeconds = applyingCuts ? end : cutTimeline.editedTime(forAlignedTime: end)
-                auditionLabel = requestedRange == nil
+                waveformPlayheadSeconds = usesCuts || sourceTimeTrack != nil ? end : cutTimeline.editedTime(forAlignedTime: end)
+                auditionLabel = sourceTimeTrack != nil ? "Finished original source-time audition. No timing was applied." : requestedRange == nil
                     ? "Playback reached the end of the available timeline." : "Finished selection audition."
             }
         }
@@ -1972,6 +2033,12 @@ final class EpisodeAlignmentModel {
     }
 
     func addWaveformAnchor() {
+        if waveformDraftAnchors.isEmpty, let source = selectedWaveformSource,
+           let epoch = selection, existingAnchorSource(for: epoch) == source {
+            waveformDraftAnchors = selectedAnchors.map {
+                AlignmentAnchor(sourceSeconds: $0.sourceSeconds, alignedSeconds: $0.alignedSeconds)
+            }
+        }
         guard waveformReferencePoint.isFinite, waveformTargetPoint.isFinite,
               waveformTargetPoint >= 0 else {
             lastError = "Anchor times must be finite, with a non-negative target source time."
@@ -1985,6 +2052,26 @@ final class EpisodeAlignmentModel {
     }
 
     func applyWaveformAnchors() {
+        guard canCorrect, let epoch = selection, let source = selectedWaveformSource else { return }
+        if waveformDraftAnchors.count == 1, let anchor = waveformDraftAnchors.first {
+            guard let track = selectedWaveform, anchor.sourceSeconds.isFinite, anchor.sourceSeconds >= 0,
+                  anchor.sourceSeconds < Double(track.envelope.totalFrames) / Double(track.envelope.sampleRate),
+                  anchor.alignedSeconds.isFinite else {
+                lastError = "Choose an anchor inside the original recording before matching its offset."
+                return
+            }
+            let ratePPM = selectedRow?.ratePPM ?? 0
+            let clockOffset = (loadedWaveformMap ?? acceptedMap)?.groups
+                .first(where: { $0.group == selectedRow?.groupID })?
+                .placements.first(where: { $0.occurrence.source == source })?
+                .spans.first(where: { $0.epoch == epoch })?.groupClockOffset.approximateDouble ?? 0
+            let offset = anchor.alignedSeconds - (anchor.sourceSeconds + clockOffset) * (1 + ratePPM / 1_000_000)
+            accept(actionName: UndoActionName.placeAnchor, decisions: [
+                epoch: .numeric(ppm: ratePPM, offsetMilliseconds: offset * 1_000,
+                    note: AlignmentAnchorNote.encode([anchor], source: source))
+            ])
+            return
+        }
         guard waveformDraftAnchors.count >= 2 else { return }
         placeAnchors(waveformDraftAnchors, source: selectedWaveformSource)
     }
@@ -1992,6 +2079,7 @@ final class EpisodeAlignmentModel {
     var canCorrect: Bool {
         guard let row = selectedRow else { return false }
         return trackProcessingOperation == nil && !positionIsLocked(row.groupID)
+            && manualTimingBlockReason(for: row.groupID) == nil
             && row.state.remedies.contains("Edit Numerically…")
     }
     /// Splitting at an endpoint produces an empty span, which the pipeline rejects. Only an anchor
@@ -2360,6 +2448,7 @@ final class EpisodeAlignmentModel {
 
     func load() {
         guard let document else { return }
+        waveformReferenceMarkers.removeAll { $0.generation != document.store.modelGeneration }
         synchronizeCuts()
         if let prior = inspectedEpisode, let current = document.store.model.episode(episodeID),
            EpisodeMediaInputs(prior) == EpisodeMediaInputs(current) {
@@ -2825,10 +2914,11 @@ final class EpisodeAlignmentModel {
         let targetSource = source ?? restoringAudio ?? record?.target.source
         guard let targetSource, let episode = document.store.model.episode(episodeID),
               let group = episode.source(targetSource)?.placement.recorderGroupID,
-              !positionIsLocked(group) else {
-            lastError = "Unlock this recorder before applying or removing file-local timing."
+              source != nil || restoringAudio != nil || !positionIsLocked(group) else {
+            lastError = "Unlock this recorder before applying file-local timing; reset an existing dynamic correction before replacing it."
             return
         }
+
         guard source != nil || restoringAudio != nil || record?.timing.regions.isEmpty == false else { return }
         guard !pendingResetVerification || timingIsVerified(document.store.model) else { return }
         let prior = document.store.model
@@ -2863,6 +2953,24 @@ final class EpisodeAlignmentModel {
                 lastError = AlignmentPresentation.errorDescription(error)
                 message = "Adaptive timing was not changed."
             }
+        }
+    }
+
+    func requestResetDynamicTiming(for source: SourceID) {
+        guard let document, !isWorking,
+              let record = document.store.model.episode(episodeID)?.source(source),
+              adaptiveCorrection(for: source) != nil else { return }
+        let prior = document.store.model
+        Task {
+            guard await Dialogs.confirm(in: document.windowControllers.first?.window,
+                message: "Reset dynamic timing for \(record.displayNameHint)?",
+                informative: "Remove only this file's confirmed dynamic correction. Recorder-group timing and original recordings stay unchanged. Manual movement and anchor controls become available where the recorder is otherwise unlocked. Undo restores the correction.",
+                confirmTitle: "Reset Dynamic Timing") else { return }
+            guard document.store.model == prior else {
+                lastError = "Timing changed while the reset was awaiting confirmation. Review the current recording first."
+                return
+            }
+            saveAdaptiveCorrection(removing: source)
         }
     }
 
@@ -2961,6 +3069,7 @@ final class EpisodeAlignmentModel {
         }
         sourcePlayback?.cancel()
         sourcePlayback = nil
+        sourceTimePreviewSource = nil
         audioPlayback.stop()
         mixer.stop()
         transportProgressTask?.cancel()
@@ -3012,7 +3121,7 @@ final class EpisodeAlignmentModel {
     }
 
     private func refreshTransportGains() {
-        guard transportTask != nil, listeningMode == .sourceAudition else { return }
+        guard transportTask != nil, listeningMode != .productionMix else { return }
         let enabled = enabledSources
         sourcePlayback?.setEnabled(enabled)
         let pendingStarts = audioPlayback.pendingSources
@@ -3029,6 +3138,12 @@ final class EpisodeAlignmentModel {
                 && (!audioPlayback.preparedSources.contains($0) || pendingStarts.contains($0))
         }
         let audible = gains.values.filter { $0 > 0 }.count
+        if listeningMode == .sourceTimePreview {
+            auditionLabel = audible == 0
+                ? "Original source-time audition is muted. No alignment is assumed or saved."
+                : "Auditioning the solo recording in original source time, not aligned time. Other recordings are not mixed."
+            return
+        }
         auditionLabel = audible == 0
             ? (pending.isEmpty ? "Playing the stored timeline silently; all timed tracks are muted."
                 : "Waiting for enabled timed tracks to join; the stored clock continues.")
@@ -3133,10 +3248,16 @@ final class EpisodeAlignmentModel {
         onAccepted: @escaping @MainActor () -> Void = {}
     ) {
         guard let document, !isWorking else { return }
-        guard let episode = document.store.model.episode(episodeID),
-              !episode.recorderGroups.contains(where: { group in
-                  group.epochs.contains { decisions[$0.id] != nil } && episode.positionIsLocked(group.id)
-              }) else {
+        guard let episode = document.store.model.episode(episodeID) else { return }
+        if let reason = episode.recorderGroups.first(where: {
+            $0.epochs.contains { decisions[$0.id] != nil } && manualTimingBlockReason(for: $0.id) != nil
+        }).flatMap({ manualTimingBlockReason(for: $0.id) }) {
+            lastError = reason
+            return
+        }
+        guard !episode.recorderGroups.contains(where: { group in
+            group.epochs.contains { decisions[$0.id] != nil } && positionIsLocked(group.id)
+        }) else {
             lastError = "Unlock the affected recorder positions before changing timing."
             return
         }
@@ -3149,7 +3270,11 @@ final class EpisodeAlignmentModel {
         lastError = nil
         Task {
             do {
-                if prior.episode(episodeID)?.alignment?.acceptedRevision == nil,
+                let placement = selectedWaveformSource.flatMap { source -> SourceID? in
+                    guard let selection, decisions[selection] != nil, !sourceHasAcceptedTiming(source) else { return nil }
+                    return source
+                }
+                if placement != nil || prior.episode(episodeID)?.alignment?.acceptedRevision == nil,
                    !decisions.values.contains(where: {
                        if case .acceptProposal = $0 { return true }
                        return false
@@ -3161,7 +3286,8 @@ final class EpisodeAlignmentModel {
                     accepted = try await runtime.reviewSavedProposal(
                         model: prior, episode: episodeID, decisions: decisions)
                 } else {
-                    accepted = try await runtime.accept(model: prior, episode: episodeID, decisions: decisions)
+                    accepted = try await runtime.accept(model: prior, episode: episodeID, decisions: decisions,
+                        requiringPlacementOf: placement)
                 }
                 let applied = publishAlignment(accepted, expecting: prior, actionName: actionName)
                 if applied {

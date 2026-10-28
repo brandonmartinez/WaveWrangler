@@ -374,6 +374,21 @@ The compact primary and Command-click tool menus contain only Pointer, Move reco
 and Reject. Command temporarily selects the second tool; release or window deactivation restores
 the primary. Review tools target existing filler regions through the same undoable model actions;
 they never cut or erase audio. Move recorder retains position locks and reference protection.
+Unplaced groups and directly entered manual timing remain movable unless explicitly locked;
+accepted automatic proposals retain their default protection. Confirmed dynamic timing blocks
+manual movement, anchors and numeric edits only for its own recorder and timing reference.
+**Reset dynamic timing** removes that file correction through the existing verified-save and
+Undo/Redo path; unrelated recorders remain editable, and their changes preserve the correction
+and its unchanged reference map.
+
+**Anchor points** above the tracks also exposes the Recording inspector's picked-point actions.
+Click a sound on a timed track or the fixed reference and choose **Mark reference point**;
+click the matching sound on another recorder and choose **Link matching point**.
+One pair applies offset at the current rate; another pair can fit offset and drift.
+Saved pairs use the existing source-specific anchor note, and subsequent recorder drags
+translate their aligned times without changing rate or originals. Pairing is an explicit manual
+decision, not acoustic or clock proof, and does not require matching speaker assignments.
+Reference points are discarded when the document generation changes.
 The single marker toolbar is centered on the visible selected interval and clamped to its track.
 It retains audition/context/loop access and adds Reviewed, Reject, Clear review, and Revert to
 detected. Clear review resets only the decision; it keeps adjusted bounds, detection, audio, and text.
@@ -455,8 +470,12 @@ resource gate admits 16 MiB plus the configured bounded decode chunks for the ov
 extrema/encoding work; decoding remains
 streamed and range/channel/witness checked. The cap can coarsen detail for very long sources;
 only pauses resolvable in the measured bins and viewport can be shown. Untimed recordings begin as dashed source-origin previews at aligned zero,
-including when another group has accepted timing; they cannot play through the shared transport
-until a manual placement is accepted and verified. `WaveformViewport` inverts each supported affine segment into the correct source
+including when another group has accepted timing. Soloing one untimed recording makes Play
+an explicitly labeled **original source-time** audition: no alignment is assumed or saved,
+episode cuts are not applied, and no other recordings are mixed. It uses the same witnessed
+renderer and bounded playback worker with an ephemeral identity map that is never persisted,
+activated or supplied to production mixing. Normal multi-track listening still requires accepted,
+verified timing. `WaveformViewport` inverts each supported affine segment into the correct source
 frame windows, clips to occurrence spans, and never reads gap frames into an envelope. Unsupported
 spans are visibly unplaced source-origin previews. Opposite-polarity channels retain their peaks;
 the envelope is not mono PCM, an alignment estimate or edit authority.

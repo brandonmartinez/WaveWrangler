@@ -98,37 +98,55 @@ struct AlignmentAnchorControls: View {
     let track: AlignmentWaveformTrack
 
     var body: some View {
+        Text("Click a sound on the reference and mark its point. Click the matching sound on another recorder, link it, then apply.")
+            .font(.caption).foregroundStyle(.secondary)
         if let point = model.waveformPickedPoint, point.source == track.id {
             Text("Source point: \(AlignmentPresentation.formatTime(point.sourceSeconds))")
                 .font(.caption).foregroundStyle(.secondary)
                 .accessibilityIdentifier("alignment.waveforms.anchor.point.\(track.id)")
-            if point.mapped && model.sourceHasAcceptedTiming(track.id) {
+            if point.mapped && model.sourceHasAcceptedTiming(track.id)
+                || !model.hasAcceptedRevision && track.group == model.referenceGroup {
                 Button("Mark reference point") { model.markWaveformReference(track) }
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("alignment.waveforms.anchor.mark.\(track.id)")
             }
             let markers = model.referenceMarkers(for: track)
             if !markers.isEmpty && model.canCorrect {
-                Menu("Link to reference marker…") {
-                    ForEach(markers) { marker in
-                        Button("\(marker.trackName) · \(AlignmentPresentation.formatTime(marker.alignedSeconds))") {
-                            model.linkWaveformAnchor(marker, to: track)
+                if markers.count == 1, let marker = markers.first {
+                    Button("Link matching point") { model.linkWaveformAnchor(marker, to: track) }
+                        .help("Match \(marker.trackName) at \(AlignmentPresentation.formatTime(marker.alignedSeconds)).")
+                        .accessibilityIdentifier("alignment.waveforms.anchor.link.\(track.id)")
+                } else {
+                    Menu("Link matching point…") {
+                        ForEach(markers) { marker in
+                            Button("\(marker.trackName) · \(AlignmentPresentation.formatTime(marker.alignedSeconds))") {
+                                model.linkWaveformAnchor(marker, to: track)
+                            }
                         }
                     }
+                    .disabled(model.isWorking)
+                    .accessibilityIdentifier("alignment.waveforms.anchor.link.\(track.id)")
                 }
-                .disabled(model.isWorking)
-                .accessibilityIdentifier("alignment.waveforms.anchor.link.\(track.id)")
             }
         }
         if model.selectedWaveformSource == track.id, !model.waveformDraftAnchors.isEmpty {
             Text("\(model.waveformDraftAnchors.count) linked \(model.waveformDraftAnchors.count == 1 ? "point" : "points")")
                 .font(.caption).foregroundStyle(.secondary)
-            Button("Apply anchors") { model.applyWaveformAnchors() }
-                .disabled(model.waveformDraftAnchors.count < 2 || !model.canCorrect)
+            Button(model.waveformDraftAnchors.count == 1 ? "Apply offset from this pair" : "Apply offset and drift") {
+                model.applyWaveformAnchors()
+            }
+                .disabled(!model.canCorrect)
                 .accessibilityIdentifier("alignment.waveforms.anchor.apply.\(track.id)")
             if model.waveformDraftAnchors.count < 2 {
-                Text("Link a second point on this recording segment to calculate offset and drift.")
+                Text("One pair sets offset without changing rate. A second pair can also fit drift.")
                     .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+        if let reason = model.manualTimingBlockReason(for: track.group) {
+            Text(reason).font(.caption).foregroundStyle(.secondary)
+            if model.adaptiveCorrection(for: track.id) != nil {
+                Button("Reset dynamic timing…") { model.requestResetDynamicTiming(for: track.id) }
+                    .accessibilityIdentifier("alignment.waveforms.resetDynamic.\(track.id)")
             }
         }
     }
@@ -158,6 +176,9 @@ struct AlignmentTimingControls: View {
                 Button("Reset group preview") { model.groupDraftMilliseconds = 0 }
                     .help("The unsaved preview is not audible until applied.")
             }
+            if let group = model.selectedRow?.groupID, let reason = model.manualTimingBlockReason(for: group) {
+                Text(reason).font(.caption).foregroundStyle(.secondary)
+            }
             DisclosureGroup("Advanced timing") {
                 VStack(alignment: .leading, spacing: 8) {
                     numberField("Offset (ms)", value: $model.waveformOffsetMilliseconds, identifier: "offset")
@@ -175,8 +196,9 @@ struct AlignmentTimingControls: View {
                     numberField("Target source point (s)", value: $model.waveformTargetPoint, identifier: "targetPoint")
                     Button("Match Anchor") { model.addWaveformAnchor() }
                     Button("Apply \(model.waveformDraftAnchors.count) Anchors") { model.applyWaveformAnchors() }
-                        .disabled(model.waveformDraftAnchors.count < 2 || !model.canCorrect)
+                        .disabled(model.waveformDraftAnchors.isEmpty || !model.canCorrect)
                 }
+                .disabled(!model.canCorrect)
             }
             .padding(.leading, 24)
         }

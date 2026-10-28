@@ -354,6 +354,11 @@ struct AlignmentWaveformView: View {
     private var timelineChrome: some View {
         VStack(alignment: .leading, spacing: 8) {
             transport
+            if model.isSourceTimePreview {
+                Label("Original source time - not aligned. No timing is assumed or saved.", systemImage: "waveform")
+                    .font(.caption).foregroundStyle(.orange)
+                    .accessibilityIdentifier("alignment.waveforms.sourceTime")
+            }
             AudioTimelineAdaptiveRow(horizontalSpacing: 8, verticalSpacing: 8) {
                 HStack(spacing: 8) {
                     layoutPicker
@@ -367,6 +372,18 @@ struct AlignmentWaveformView: View {
                     navigationControls.heightGroup
                     TimelineToolControls(listening: model.listening)
                         .frame(maxWidth: .infinity, alignment: .trailing)
+                    Menu("Anchor points", systemImage: "pin") {
+                        if let track = model.selectedWaveform {
+                            AlignmentAnchorControls(model: model, track: track)
+                        } else {
+                            Text("Click a point on a waveform first.")
+                        }
+                    }
+                    .labelStyle(.iconOnly)
+                    .fixedSize()
+                    .help("Mark a sound on the reference, link the same sound on another recording, then apply one pair for offset or multiple pairs for drift.")
+                    .accessibilityLabel("Anchor points")
+                    .accessibilityIdentifier("alignment.waveforms.anchorPoints")
                     AudioTimelineRefresh(
                         prefix: "alignment.waveforms", isLoading: model.isLoadingWaveforms,
                         canNavigate: model.pendingWaveformMove == nil && !model.isWorking
@@ -478,7 +495,8 @@ struct AlignmentWaveformView: View {
             playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() },
             stop: { model.stopEnabledTracks() },
             forward: { model.jumpEnabledTracks(by: AppSettings.shared.timelineJumpInterval.seconds) },
-            seek: { model.seekEnabledTracks(to: $0) }, isEdited: !model.cutTimeline.removals.isEmpty,
+            seek: { model.seekEnabledTracks(to: $0) },
+            isEdited: !model.isSourceTimePreview && !model.cutTimeline.removals.isEmpty,
             cycleEnabled: model.listening.cycleEnabled,
             toggleCycle: {
                 if model.listening.cycleRange == nil {
@@ -816,8 +834,9 @@ struct AlignmentWaveformView: View {
                 }
                 inlineMatchControls(for: track)
                 if !model.sourceHasAcceptedTiming(track.id) {
-                    Label("Not timed · not played", systemImage: "speaker.slash")
+                    Label("Not aligned · Solo to listen", systemImage: "waveform")
                         .font(.caption).foregroundStyle(.secondary)
+                        .help("Solo this recording, then Play to audition its original source time without accepting alignment.")
                         .accessibilityIdentifier("alignment.waveforms.state.\(track.id)")
                 }
             }
@@ -1000,11 +1019,12 @@ struct AlignmentWaveformView: View {
                   : model.positionIsLocked(group) ? "lock.fill" : "lock.open")
         }
         .buttonStyle(.plain)
-        .disabled(model.isWorking || group == model.referenceGroup)
+        .disabled(model.isWorking || group == model.referenceGroup || model.manualTimingBlockReason(for: group) != nil)
         .accessibilityLabel(group == model.referenceGroup ? "Fixed alignment reference" : "Lock position")
         .accessibilityValue(model.positionIsLocked(group) ? "Locked" : "Unlocked")
         .accessibilityIdentifier("alignment.waveforms.positionLock.\(group)")
-        .help("Accepted positions are protected. Unlock deliberately before automatic alignment or an advanced timing correction; the reference stays fixed.")
+        .help(model.manualTimingBlockReason(for: group)
+            ?? "Lock manual positions when finished. Automatic positions require deliberate unlocking; the reference stays fixed.")
     }
 
     private func recordingSettings(for track: AlignmentWaveformTrack) -> some View {
@@ -1368,6 +1388,7 @@ struct AlignmentWaveformView: View {
                     * model.waveformDurationSeconds, seek: false),
                 model.canMoveGroup, model.selectedRow?.groupID == track.group
             else { return }
+            model.stopAudition()
             dragSession = AlignmentWaveformDrag(
                 startX: drag.startLocation.x, width: width,
                 durationSeconds: model.waveformDurationSeconds,

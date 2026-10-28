@@ -32,7 +32,7 @@ struct AlignmentWaveformRetentionHostedTests {
 
     func fixture(cleanupPrimaries: Int = 0, durationSeconds: Int = 40,
                  pauses: [Range<Double>] = [], extraSources: Int = 0,
-                 targetStepSeconds: Double = 0) async throws -> Fixture {
+                 targetStepSeconds: Double = 0, extraGroups: Int = 0) async throws -> Fixture {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let referenceEpoch = RecordingEpoch(label: "Reference")
@@ -54,6 +54,13 @@ struct AlignmentWaveformRetentionHostedTests {
         for index in 0..<extraSources {
             episode.sources.append(SourceRecord(displayNameHint: "extra-\(index).wav",
                 placement: .init(recorderGroupID: targetGroup.id, epochID: targetEpoch.id)))
+        }
+        for index in 0..<extraGroups {
+            let epoch = RecordingEpoch(label: "Unplaced \(index)")
+            let group = RecorderGroup(name: "Unplaced \(index)", epochs: [epoch])
+            episode.recorderGroups.append(group)
+            episode.sources.append(SourceRecord(displayNameHint: "unplaced-\(index).wav",
+                placement: .init(recorderGroupID: group.id, epochID: epoch.id)))
         }
         if cleanupPrimaries > 0 {
             episode.sources[0].role = .primary
@@ -103,9 +110,10 @@ struct AlignmentWaveformRetentionHostedTests {
         let model = EpisodeAlignmentModel(document: document, episodeID: episode.id, runtime: runtime)
         model.load()
         model.loadWaveforms()
-        try await wait { model.rows.count == 2 && model.waveformTracks.count == 2 + extraSources && !model.isLoadingWaveforms }
+        try await wait { model.rows.count == 2 + extraGroups
+            && model.waveformTracks.count == 2 + extraSources + extraGroups && !model.isLoadingWaveforms }
         model.ensureWaveformOverview()
-        try await wait { !model.isLoadingOverview && model.waveformOverviewTracks.count == 2 + extraSources }
+        try await wait { !model.isLoadingOverview && model.waveformOverviewTracks.count == 2 + extraSources + extraGroups }
         return Fixture(folder: folder, document: document, model: model, runtime: runtime, target: target.id, files: files)
     }
 

@@ -27,6 +27,7 @@ final class RegularAudioPlayback: Sendable {
     private let media: EpisodeMediaInputs
     private let applyingCuts: Bool
     private let revealingCut: UUID?
+    private let timebase: AlignmentRuntime.AuditionTimebase
     private let initialSources: [SourceID]
     private let availableSources: [SourceID]
     private let state: Mutex<State>
@@ -34,7 +35,8 @@ final class RegularAudioPlayback: Sendable {
 
     init(runtime: AlignmentRuntime, model: ShowDocumentModel, episode: Episode,
          output: AlignmentAudioPlayback, sources: [SourceID], availableSources: [SourceID],
-         applyingCuts: Bool, revealingCut: UUID?) {
+         applyingCuts: Bool, revealingCut: UUID?,
+         timebase: AlignmentRuntime.AuditionTimebase = .acceptedTimeline) {
         self.runtime = runtime
         self.model = model
         self.episode = episode.id
@@ -45,6 +47,7 @@ final class RegularAudioPlayback: Sendable {
         self.availableSources = availableSources
         self.applyingCuts = applyingCuts
         self.revealingCut = revealingCut
+        self.timebase = timebase
         state = Mutex(State(enabled: Set(sources)))
     }
 
@@ -122,7 +125,8 @@ final class RegularAudioPlayback: Sendable {
             while true {
                 do {
                     clips = try await runtime.sourceAuditions(model: model, episode: episode,
-                        sources: requested, outputFrames: frames, applyingCuts: applyingCuts, revealingCut: revealingCut)
+                        sources: requested, outputFrames: frames, applyingCuts: applyingCuts, revealingCut: revealingCut,
+                        timebase: timebase)
                     prepared = requested
                     break
                 } catch let error as AlignmentRuntime.AuditionSourceFailure {
@@ -156,7 +160,8 @@ final class RegularAudioPlayback: Sendable {
                     warmingTask = Task { [self] in
                         do {
                             _ = try await runtime.sourceAuditions(model: model, episode: episode,
-                                sources: [source], outputFrames: range, applyingCuts: applyingCuts, revealingCut: revealingCut)
+                                sources: [source], outputFrames: range, applyingCuts: applyingCuts, revealingCut: revealingCut,
+                                timebase: timebase)
                             try Task.checkCancellation()
                             state.withLock { $0.warm = Warm(source: source, frames: range); $0.warming = nil }
                         } catch {

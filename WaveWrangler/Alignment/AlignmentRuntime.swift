@@ -11,6 +11,10 @@ import WWSpeech
 import WWMix
 
 actor AlignmentRuntime {
+    enum AuditionTimebase: Sendable, Equatable {
+        case acceptedTimeline, sourceTime
+    }
+
     enum OverviewActivity: Sendable {
         case checkingCache, measuring
 
@@ -841,7 +845,8 @@ actor AlignmentRuntime {
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         sources requested: [SourceID], outputFrames: Range<Int64>, applyingCuts: Bool = true,
         revealingCut: UUID? = nil, decodedChannels: [SourceID: Int] = [:],
-        applyingInputGain: Bool = true, frozenSources: [MixerSourceSnapshot] = []
+        applyingInputGain: Bool = true, frozenSources: [MixerSourceSnapshot] = [],
+        timebase: AuditionTimebase = .acceptedTimeline
     ) async throws -> [SourceID: AuditionClip] {
         guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
         guard !requested.isEmpty, Set(requested).count == requested.count else {
@@ -854,12 +859,18 @@ actor AlignmentRuntime {
                 * AlignedAuditionWindowReader.maximumDurationSeconds) else {
             throw WaveformWindowError.invalidWindow
         }
+        guard timebase != .sourceTime || !applyingCuts else { throw WaveformWindowError.invalidWindow }
         let alignedRanges = applyingCuts
             ? try episode.manualCutTimeline(revealing: revealingCut).alignedRanges(forEditedFrames: outputFrames)
             : [outputFrames]
         let sources = try await resolveSources(episode.sources)
-        try await pipeline.activate(model: model, episode: episodeID)
-        let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        let map: AlignedTimelineMap?
+        if timebase == .acceptedTimeline {
+            try await pipeline.activate(model: model, episode: episodeID)
+            map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        } else {
+            map = nil
+        }
         let revision = episode.alignment?.acceptedRevision.map {
             MapRevisionReference(episode: episodeID, revision: $0)
         }
@@ -883,7 +894,14 @@ actor AlignmentRuntime {
                 }
                 var samples: [Float] = []
                 for alignedFrames in alignedRanges {
-                    if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
+                    if timebase == .sourceTime {
+                        guard let record = episode.source(source) else { throw DecodeFailure.notFound }
+                        samples += try await AlignedAuditionWindowReader.readWindow(
+                            sourceURL: admission.url, source: source, matching: admission.witness,
+                            decoder: pipeline.decoder,
+                            groupMap: Self.sourceTimeMap(record: record, interpretation: interpretation),
+                            decodedChannel: channel, outputFrames: alignedFrames)
+                    } else if episode.alignment?.acceptedMap?.sourceCorrections?.contains(where: { $0.source == source }) == true {
                         let channels = try await pipeline.adaptiveAudioWindow(
                             model: model, episode: episodeID, source: source,
                             sourceURL: admission.url, matching: admission.witness, outputFrames: alignedFrames
@@ -893,7 +911,7 @@ actor AlignmentRuntime {
                     } else {
                         guard let record = episode.source(source),
                               let groupID = record.placement.recorderGroupID,
-                              let group = map.groups.first(where: { $0.group == groupID }),
+                              let group = map?.groups.first(where: { $0.group == groupID }),
                               group.placements.contains(where: { $0.occurrence.source == source })
                         else { throw WaveformWindowError.mapDoesNotMatchSource }
                         samples += try await AlignedAuditionWindowReader.readWindow(
@@ -933,9 +951,36 @@ actor AlignmentRuntime {
                 )
             }
         }
-        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        if timebase == .acceptedTimeline {
+            _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        }
         try Task.checkCancellation()
         return clips
+    }
+
+    /// Ephemeral renderer coordinates only; never persisted, activated, or supplied to production mixing.
+    private static func sourceTimeMap(
+        record: SourceRecord, interpretation: FormatInterpretation
+    ) throws -> GroupTimeMap {
+        guard let group = record.placement.recorderGroupID, let epoch = record.placement.epochID else {
+            throw WaveformWindowError.mapDoesNotMatchSource
+        }
+        let rate = try NominalRate(Int64(interpretation.sourceSampleRate))
+        let frames = interpretation.frames.validFrames
+        let occurrence = try SourceOccurrence(id: alignmentOccurrenceID(for: record.id), source: record.id,
+            nominalRate: rate, frameCount: frames)
+        let reference = TimelineReference(group: group, epoch: epoch, occurrence: occurrence.id)
+        let end = try ExactRational(numerator: Int128(frames), denominator: Int128(interpretation.sourceSampleRate))
+        return try GroupTimeMap(group: group, reference: reference, epochs: [
+            EpochClockMap(epoch: epoch, mapping: .mapped(segments: [
+                try AffineClockSegment(groupClockStart: .zero, groupClockEnd: end,
+                    rateRatio: .one, alignedOffset: .zero)
+            ], provenance: .timelineReference))
+        ], placements: [
+            OccurrencePlacement(occurrence: occurrence, spans: [
+                EpochSpan(startFrame: 0, endFrame: frames, epoch: epoch, groupClockOffset: .zero)
+            ])
+        ])
     }
 
     /// Freeze actual admitted identities/channels, not metadata guesses or sparse strip entries.

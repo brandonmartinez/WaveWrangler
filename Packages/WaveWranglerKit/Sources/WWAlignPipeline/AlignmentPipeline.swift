@@ -778,9 +778,6 @@ public final class AlignmentPipeline: Sendable {
               adaptiveSelections.keys.allSatisfy({ report.adaptiveRecords[$0] != nil }) else {
             throw .invalidMap("Select either recorder timing or measured file-local timing for each recording segment.")
         }
-        guard replacingAlignment || episode.alignment?.acceptedMap?.sourceCorrections?.isEmpty != false else {
-            throw .invalidMap("Remove adaptive file timing before editing recorder-group timing.")
-        }
         guard report.references.isEmpty || report.referenceRevision == episode.alignment?.acceptedRevision else {
             throw .invalidMap("The accepted timing changed since this speaker match. Analyze again.")
         }
@@ -872,15 +869,12 @@ public final class AlignmentPipeline: Sendable {
             }
         }
         let selectedSources = Set(adaptiveSelections.keys.compactMap { report.adaptiveRecords[$0]?.target.source })
-        for correction in corrections where !selectedSources.contains(correction.source) {
-            guard keepsReference, priorIsCurrent,
-                  prior?.groups.first(where: { $0.group == correction.group })
-                    == built.map.groups.first(where: { $0.group == correction.group }),
-                  prior?.groups.first(where: { $0.placements.contains { $0.occurrence.source == correction.reference } })
-                    == built.map.groups.first(where: { $0.placements.contains { $0.occurrence.source == correction.reference } })
-            else {
-                throw .invalidMap("A timing change would invalidate saved adaptive audio. Remove or reanalyze that file correction before changing its recorder or reference.")
+        let retainedCorrections = corrections.filter { !selectedSources.contains($0.source) }
+        if !retainedCorrections.isEmpty {
+            guard keepsReference, priorIsCurrent, let prior else {
+                throw .invalidMap("Reset confirmed dynamic timing before changing its recorder or timing reference.")
             }
+            try Self.verifyRetainedCorrections(retainedCorrections, prior: prior, revised: built.map)
         }
         guard corrections.allSatisfy({ correction in
             !corrections.contains { $0.source == correction.reference }
@@ -1318,13 +1312,11 @@ public final class AlignmentPipeline: Sendable {
         guard let episode = model.episode(episodeID),
               let priorVersion = episode.alignment?.map(revision: derivedFrom)
         else { throw .episodeNotFound(episodeID) }
-        guard priorVersion.sourceCorrections?.isEmpty != false else {
-            throw .invalidMap("Remove adaptive file timing before editing recorder-group timing.")
-        }
+        let corrections = priorVersion.sourceCorrections ?? []
         if await coordinator.isShutdown { throw .coordinatorShutDown }
         let inputs = await coordinator.inputs
         guard let dependencies = MapDependencies.digest(
-            map: map, tokens: inputs.sources, format: inputs.format
+            map: map, tokens: inputs.sources, format: inputs.format, corrections: corrections
         ) else {
             throw .analysisStale([.dependenciesMissing])
         }
@@ -1338,6 +1330,7 @@ public final class AlignmentPipeline: Sendable {
         } catch {
             throw .priorMapUnreadable(error)
         }
+        try Self.verifyRetainedCorrections(corrections, prior: priorMap, revised: map)
         let previous = MapDependencies.acceptedProposals(priorVersion)
         let unchangedProposals = Dictionary(uniqueKeysWithValues: map.groups.flatMap(\.epochs).compactMap {
             epoch -> (String, String)? in
@@ -1354,7 +1347,7 @@ public final class AlignmentPipeline: Sendable {
             (recorded, revision) = try model.recordingMap(
                 map, in: episodeID, inputs: priorVersion.inputs.sources,
                 recipe: MapDependencies.recipe(digest: dependencies, acceptedProposals: unchangedProposals),
-                derivedFrom: derivedFrom
+                derivedFrom: derivedFrom, sourceCorrections: corrections.isEmpty ? nil : corrections
             )
             accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)
             guard let updated = accepted.episode(episodeID),
@@ -1390,6 +1383,22 @@ public final class AlignmentPipeline: Sendable {
             base: base,
             result: result
         )
+    }
+
+    private static func verifyRetainedCorrections(
+        _ corrections: [SourceTimingCorrection], prior: AlignedTimelineMap, revised: AlignedTimelineMap
+    ) throws(AlignmentAcceptanceError) {
+        for correction in corrections {
+            guard prior.reference == revised.reference,
+                  let group = prior.groups.first(where: { $0.group == correction.group }),
+                  revised.groups.first(where: { $0.group == correction.group }) == group,
+                  let reference = prior.groups.first(where: {
+                      $0.placements.contains { $0.occurrence.source == correction.reference }
+                  }),
+                  revised.groups.first(where: { $0.group == reference.group }) == reference else {
+                throw .invalidMap("Reset confirmed dynamic timing before changing its recorder or timing reference.")
+            }
+        }
     }
 
     private func verifyPriorRevision(
