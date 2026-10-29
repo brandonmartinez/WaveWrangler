@@ -9,6 +9,28 @@ import WWPersistence
 @MainActor
 @Suite("Episode-bound editors and Library management", .serialized)
 struct EpisodeWindowTests {
+    @MainActor private final class RestorationResult {
+        var window: NSWindow?
+        var error: (any Error)?
+        var invoked = false
+    }
+
+    private func restore(
+        _ document: ShowDocument, identifier: NSUserInterfaceItemIdentifier, decoder: NSCoder
+    ) throws -> NSWindow? {
+        let result = RestorationResult()
+        document.restoreWindow(withIdentifier: identifier, state: decoder) { window, error in
+            MainActor.assumeIsolated {
+                result.window = window
+                result.error = error
+                result.invoked = true
+            }
+        }
+        try #require(result.invoked)
+        if let error = result.error { throw error }
+        return result.window
+    }
+
     private func document(_ title: String = "Synthetic Show") -> ShowDocument {
         let document = ShowDocument()
         document.store.replaceLoadedModel(ShowDocumentModel(
@@ -217,5 +239,150 @@ struct EpisodeWindowTests {
         decoder.finishDecoding()
         #expect(restored.state.boundEpisodeID == second)
         #expect(restored.state.selectedEpisode?.id == second)
+    }
+
+    @Test func aRemovedArchivedEpisodeCannotReplaceAValidEditor() throws {
+        let document = document()
+        defer { document.close() }
+        let first = document.store.model.episodes[0].id
+        let removed = document.store.model.episodes[1].id
+        let archived = EpisodeWindowController(store: document.store, episodeID: removed)
+        let coder = NSKeyedArchiver(requiringSecureCoding: true)
+        archived.encodeRestorableState(with: coder)
+        coder.finishEncoding()
+        document.store.replaceLoadedModel(try document.store.model.removingEpisode(removed))
+        let restored = EpisodeWindowController(store: document.store, episodeID: first)
+        let decoder = try NSKeyedUnarchiver(forReadingFrom: coder.encodedData)
+        restored.restoreState(with: decoder)
+        decoder.finishDecoding()
+        #expect(restored.state.boundEpisodeID == first)
+        #expect(restored.state.selectedEpisode?.id == first)
+        #expect(restored.state.canEdit)
+    }
+
+    @Test func restorationDoesNotUseAnotherShowsEpisodeEvenWhenItsIDExistsHere() throws {
+        let firstShow = document("First show")
+        let secondShow = document("Second show")
+        defer { firstShow.close(); secondShow.close() }
+        let foreign = firstShow.store.model.episodes[1]
+        var target = secondShow.store.model
+        target.episodes[1] = foreign
+        secondShow.store.replaceLoadedModel(target)
+        let first = target.episodes[0].id
+        let archived = EpisodeWindowController(store: firstShow.store, episodeID: foreign.id)
+        let coder = NSKeyedArchiver(requiringSecureCoding: true)
+        archived.encodeRestorableState(with: coder)
+        coder.finishEncoding()
+        let restored = EpisodeWindowController(store: secondShow.store, episodeID: first)
+        let decoder = try NSKeyedUnarchiver(forReadingFrom: coder.encodedData)
+        restored.restoreState(with: decoder)
+        decoder.finishDecoding()
+        #expect(restored.state.boundEpisodeID == first)
+        #expect(restored.state.selectedEpisode?.id == first)
+    }
+
+    @Test func episodeWindowsHaveDistinctRestorationIdentitiesIncludingDuplicateViews() throws {
+        let document = document()
+        defer { document.close() }
+        let first = try #require(document.openEpisode(document.store.model.episodes[0].id))
+        let second = try #require(document.openEpisode(document.store.model.episodes[1].id))
+        let duplicate = try #require(document.openEpisode(document.store.model.episodes[0].id, inNewWindow: true))
+        let identifiers = try [first, second, duplicate].map { try #require($0.window?.identifier) }
+        #expect(Set(identifiers).count == 3)
+    }
+
+    @Test func documentRestorationCreatesTheRequestedEpisodesAndDuplicateViewsIndependently() async throws {
+        let original = document()
+        let reopened = ShowDocument()
+        defer { original.close(); reopened.close() }
+        let model = original.store.model
+        reopened.store.replaceLoadedModel(model)
+        let first = try #require(original.openEpisode(model.episodes[0].id))
+        let second = try #require(original.openEpisode(model.episodes[1].id))
+        let duplicate = try #require(original.openEpisode(model.episodes[1].id, inNewWindow: true))
+        var windows: [NSWindow] = []
+        for controller in [second, first, duplicate] {
+            let coder = NSKeyedArchiver(requiringSecureCoding: true)
+            controller.encodeRestorableState(with: coder)
+            coder.finishEncoding()
+            let decoder = try NSKeyedUnarchiver(forReadingFrom: coder.encodedData)
+            let identifier = try #require(controller.window?.identifier)
+            let result = try restore(reopened, identifier: identifier, decoder: decoder)
+            let restored = try #require(result)
+            let restoredController = try #require(restored.windowController as? EpisodeWindowController)
+            restoredController.restoreState(with: decoder)
+            decoder.finishDecoding()
+            #expect(restoredController.state.boundEpisodeID == controller.state.boundEpisodeID)
+            #expect(restoredController.state.selectedEpisode != nil)
+            restored.orderFront(nil)
+            windows.append(restored)
+        }
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(Set(windows.map(ObjectIdentifier.init)).count == 3)
+        #expect(reopened.store.model == model)
+        for window in windows {
+            let state = try #require((window.windowController as? EpisodeWindowController)?.state)
+            #expect(ShowWindowRegistry.state(for: window) === state)
+            #expect(!window.title.contains("Unavailable"))
+        }
+    }
+
+    @Test func legacyRestorationChecksMembershipAndTrackEditsKeepTheBoundEpisodeThroughUndoRedo() async throws {
+        let document = document()
+        defer { document.updateChangeCount(.changeCleared); document.close() }
+        let episode = document.store.model.episodes[1].id
+        let coder = NSKeyedArchiver(requiringSecureCoding: true)
+        coder.encode(episode.description, forKey: "ww.episodeID")
+        coder.finishEncoding()
+        let decoder = try NSKeyedUnarchiver(forReadingFrom: coder.encodedData)
+        let result = try restore(document, identifier: .init("legacy-window"), decoder: decoder)
+        let restored = try #require(result)
+        let controller = try #require(restored.windowController as? EpisodeWindowController)
+        controller.restoreState(with: decoder)
+        decoder.finishDecoding()
+        controller.state.select(.setup)
+        restored.orderFront(nil)
+        let undo = try #require(document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.removeAllActions()
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        undo.beginUndoGrouping()
+        let source = SourceRecord(displayNameHint: "Synthetic track.wav")
+        let added = document.store.apply("Add synthetic track") { model throws(DomainError) in
+            try model.addingSource(source, to: episode)
+        }
+        undo.endUndoGrouping()
+        try #require(added)
+        for operation in [0, 1, 2] {
+            if operation == 1 { undo.undo() }
+            if operation == 2 { undo.redo() }
+            try await Task.sleep(for: .milliseconds(100))
+            #expect(controller.state.boundEpisodeID == episode)
+            #expect(controller.state.selectedEpisode?.id == episode)
+            #expect(controller.state.selectedEpisode?.sources.count == (operation == 1 ? 0 : 1))
+            #expect(ShowWindowRegistry.state(for: restored) === controller.state)
+            #expect(!restored.title.contains("Unavailable"))
+        }
+    }
+
+    @Test func missingOrForeignEpisodeArchivesDoNotCreateDocumentWindows() throws {
+        let document = document()
+        let foreign = self.document("Foreign")
+        defer { document.close(); foreign.close() }
+        let missing = EpisodeWindowController(store: document.store, episodeID: EpisodeID())
+        let otherShow = EpisodeWindowController(store: foreign.store, episodeID: foreign.store.model.episodes[0].id)
+        let original = document.store.model
+        for controller in [missing, otherShow] {
+            let coder = NSKeyedArchiver(requiringSecureCoding: true)
+            controller.encodeRestorableState(with: coder)
+            coder.finishEncoding()
+            let decoder = try NSKeyedUnarchiver(forReadingFrom: coder.encodedData)
+            let identifier = try #require(controller.window?.identifier)
+            #expect(try restore(document, identifier: identifier, decoder: decoder) == nil)
+            decoder.finishDecoding()
+        }
+        #expect(document.windowControllers.isEmpty)
+        #expect(document.store.model == original)
     }
 }

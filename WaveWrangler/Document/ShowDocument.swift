@@ -136,6 +136,31 @@ final class ShowDocument: NSDocument {
         addWindowController(EpisodeWindowController(store: store, episodeID: episode.id))
     }
 
+    override func restoreWindow(
+        withIdentifier identifier: NSUserInterfaceItemIdentifier, state: NSCoder,
+        completionHandler: @escaping @Sendable (NSWindow?, (any Error)?) -> Void
+    ) {
+        guard state.containsValue(forKey: EpisodeWindowController.episodeStateKey) else {
+            super.restoreWindow(withIdentifier: identifier, state: state, completionHandler: completionHandler)
+            return
+        }
+        guard let episode = EpisodeWindowController.restoredEpisode(from: state, in: store.model) else {
+            completionHandler(nil, nil)
+            return
+        }
+        if let existing = windowControllers.compactMap({ $0 as? EpisodeWindowController }).first(where: {
+            $0.window?.identifier == identifier && $0.state.boundEpisodeID == episode
+                && !$0.state.mixerPresentation.isClosed
+        }) {
+            completionHandler(existing.window, nil)
+            return
+        }
+        let controller = EpisodeWindowController(store: store, episodeID: episode)
+        if identifier.rawValue.hasPrefix("ww.episode.") { controller.window?.identifier = identifier }
+        addWindowController(controller)
+        completionHandler(controller.window, nil)
+    }
+
     /// A windowless controller keeps a browsed show in NSDocument's normal save/quit lifecycle
     /// when its last episode editor closes. It never creates a hidden NSWindow.
     func retainForLibrary(in window: NSWindow?) {

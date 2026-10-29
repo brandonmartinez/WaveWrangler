@@ -1044,6 +1044,11 @@ state, while cancellation remains cancellation.
 Episode windows: `EpisodeWindowController` hosts `ShowWorkspaceView(state:)` with a fixed
 `ShowWindowState.boundEpisodeID`, restored by logical episode ID. Opening the same episode reuses its
 window unless a new window was explicitly requested. Deleting its episode never retargets that editor.
+Each editor, including duplicate views, has a distinct AppKit restoration identifier. Document
+restoration creates the archived episode's controller rather than reusing an arbitrary first window.
+Archives include the show ID; foreign or missing episodes are refused with a local diagnostic, not
+rebound into a valid editor. Older archives without a show ID still require episode membership in
+the loaded document. Track edits and Undo/Redo retain the editor's bound logical episode ID.
 The states are registered for menu routing (`CommandRouter`); all windows for a show share one
 `ShowDocument`/`ShowDocumentStore`, save status, and document undo manager.
 

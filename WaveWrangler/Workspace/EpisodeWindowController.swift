@@ -1,9 +1,14 @@
 import AppKit
+import OSLog
 import SwiftUI
 import WWCore
 
 @MainActor
 final class EpisodeWindowController: NSWindowController {
+    static let episodeStateKey = "ww.episodeID"
+    private static let showStateKey = "ww.showID"
+    private static let restorationLog = Logger(
+        subsystem: "com.brandonmartinez.wavewrangler", category: "episode.restoration")
     private(set) var state: ShowWindowState
 
     convenience init(store: ShowDocumentStore, episodeID: EpisodeID) {
@@ -16,6 +21,8 @@ final class EpisodeWindowController: NSWindowController {
         hosting.sizingOptions = []
         let window = EpisodeEditorWindow(contentViewController: hosting)
         window.originatingState = state
+        window.identifier = NSUserInterfaceItemIdentifier(
+            "ww.episode.\(state.store.model.show.id).\(UUID().uuidString)")
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.contentMinSize = NSSize(width: 760, height: 440)
         #if DEBUG
@@ -37,18 +44,37 @@ final class EpisodeWindowController: NSWindowController {
 
     override func encodeRestorableState(with coder: NSCoder) {
         super.encodeRestorableState(with: coder)
-        coder.encode(state.boundEpisodeID?.description, forKey: "ww.episodeID")
+        coder.encode(state.store.model.show.id.description, forKey: Self.showStateKey)
+        coder.encode(state.boundEpisodeID?.description, forKey: Self.episodeStateKey)
     }
 
     override func restoreState(with coder: NSCoder) {
         super.restoreState(with: coder)
-        guard let value = coder.decodeObject(of: NSString.self, forKey: "ww.episodeID") as String?,
-              let id = EpisodeID(uuidString: value), id != state.boundEpisodeID else { return }
+        guard let id = Self.restoredEpisode(from: coder, in: state.store.model),
+              id != state.boundEpisodeID else { return }
+        state.reviewWindowDidClose()
         state = ShowWindowState(store: state.store, episodeID: id)
         (window as? EpisodeEditorWindow)?.originatingState = state
         if let hosting = window?.contentViewController as? NSHostingController<ShowWorkspaceView> {
             hosting.rootView = ShowWorkspaceView(state: state)
         }
+    }
+
+    static func restoredEpisode(from coder: NSCoder, in model: ShowDocumentModel) -> EpisodeID? {
+        if coder.containsValue(forKey: showStateKey) {
+            guard let value = coder.decodeObject(of: NSString.self, forKey: showStateKey) as String?,
+                  ShowID(uuidString: value) == model.show.id else {
+                restorationLog.warning("Ignored episode restoration for a different or invalid show identity.")
+                return nil
+            }
+        }
+        guard coder.containsValue(forKey: episodeStateKey),
+              let value = coder.decodeObject(of: NSString.self, forKey: episodeStateKey) as String?,
+              let id = EpisodeID(uuidString: value), model.episode(id) != nil else {
+            restorationLog.warning("Ignored episode restoration for an episode absent from the loaded show.")
+            return nil
+        }
+        return id
     }
 }
 
