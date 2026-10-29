@@ -61,7 +61,8 @@ private struct DeferredTrackProcessingOverlay: View {
             }
             .allowsHitTesting(isVisible)
             .task {
-                do { try await Task.sleep(for: .milliseconds(300)) }
+                let grace: Duration = operation.kind == .waveforms ? .seconds(1) : .milliseconds(300)
+                do { try await Task.sleep(for: grace) }
                 catch { return }
                 guard !Task.isCancelled else { return }
                 isVisible = true

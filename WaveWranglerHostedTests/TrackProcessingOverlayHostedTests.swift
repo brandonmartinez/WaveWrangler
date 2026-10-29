@@ -35,7 +35,7 @@ struct TrackProcessingOverlayHostedTests {
             $0.accessibilityIdentifier() == "test.trackAction"
         })
         #expect(!track.isEnabled)
-        try await Task.sleep(for: .milliseconds(250))
+        try await Task.sleep(for: .seconds(1))
         try await host.settle()
         let cancel = try cancelFrame(in: host)
         #expect(host.view.bounds.contains(cancel),
@@ -87,7 +87,7 @@ struct TrackProcessingOverlayHostedTests {
 
     @Test func progressUpdatesDoNotRestartTheGracePeriodAndANewBusyIntervalGetsItsOwnDelay() async throws {
         func operation(_ fraction: Double) -> TrackProcessingOperation {
-            .init(kind: .waveforms, title: "Preparing waveforms",
+            .init(kind: .audioPreparation, title: "Preparing playback",
                   detail: "Synthetic progress \(fraction).", fraction: fraction, canCancel: true)
         }
         let started = ContinuousClock.now
@@ -128,6 +128,19 @@ struct TrackProcessingOverlayHostedTests {
         host.view.rootView = presentation(nil)
         try await host.settle()
         #expect(!hasCancel(host))
+    }
+
+    @Test func blockingWaveformPreparationHasALongerVisualGraceThanPlayback() async throws {
+        let operation = TrackProcessingOperation(kind: .waveforms, title: "Preparing waveforms",
+            detail: "No usable measured snapshot is available yet.", fraction: nil, canCancel: true)
+        let host = HostedTimelineWindow(width: 520, height: 240, content: presentation(operation))
+        defer { host.close() }
+        try await host.settle()
+        try await Task.sleep(for: .milliseconds(350))
+        #expect(!hasCancel(host), "Cold waveform preparation must not use the shorter playback grace period.")
+        try await Task.sleep(for: .milliseconds(650))
+        try await host.settle()
+        #expect(hasCancel(host))
     }
 
     @Test func alignmentCancellationLeavesTheDocumentAndOriginalsUnchanged() async throws {

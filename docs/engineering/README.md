@@ -792,8 +792,12 @@ confirmed Import creates the group and sources in the same Undo step.
 Track-blocking alignment, waveform preparation, playback preparation and transcription
 use a bounded overlay inside the track viewport instead of duplicated top processing
 rows or a bottom waveform status bar. Progress is determinate only when the worker
-reports a real fraction. Track interaction is blocked immediately, but the visual overlay
-waits 300 ms so brief segment preparation does not flash over the recordings. Progress updates
+reports a real fraction. Routine waveform detail and overview refinement are nonblocking
+when the current verified presentation already has usable measured strokes. Panning and editing
+remain available, and Cancel on the refresh control retains that presentation. Initial loads,
+timing revalidation and cut-coordinate projection still block until their required work is ready;
+the waveform overlay waits one second to avoid flashes. Other blocking overlays wait 300 ms.
+Progress updates
 and adjacent blocking phases do not restart the delay; a completed operation cancels it.
 Cancel uses the existing worker cancellation; final verified
 timing updates explain why they cannot be interrupted. Track editing, pan/zoom and
@@ -801,6 +805,10 @@ navigation shortcuts and conflicting inspector actions are blocked, while transp
 Pause/Stop remains available.
 Errors and non-blocking readiness notices remain visible, and the workspace's
 accessibility value retains the measured-recording status without a visual footer.
+After a cut, retained source-coordinate bins are projected into the edited timeline and the
+overview is adopted as current before any detail prefetch. Overview preparation cannot race
+that projection or repeat solely because the cut changed; no new source decode is needed to
+update the overview's coordinates.
 
 The app icon is the complete macOS 16/32/128/256/512 pt, 1x/2x set in
 `WaveWrangler/Assets.xcassets/AppIcon.appiconset`, selected for both Debug and Release.

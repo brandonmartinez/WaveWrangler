@@ -400,7 +400,7 @@ struct AlignmentWaveformView: View {
                     .accessibilityLabel("Anchor points")
                     .accessibilityIdentifier("alignment.waveforms.anchorPoints")
                     AudioTimelineRefresh(
-                        prefix: "alignment.waveforms", isLoading: model.isLoadingWaveforms,
+                        prefix: "alignment.waveforms", isLoading: model.isLoadingWaveforms || model.isLoadingOverview,
                         canNavigate: model.pendingWaveformMove == nil && !model.isWorking
                             && cleanup?.isBusy != true && cleanup?.isRefreshing != true,
                         refresh: refreshWaveforms)
@@ -551,8 +551,9 @@ struct AlignmentWaveformView: View {
     }
 
     private func refreshWaveforms() {
-        if model.isLoadingWaveforms {
-            model.cancelWaveforms()
+        if model.isLoadingWaveforms || model.isLoadingOverview {
+            model.cancelWaveforms(keepingSnapshot: true)
+            model.cancelWaveformOverview(keepingSnapshot: true)
         } else {
             model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
             if let cleanup, !cleanup.isBusy, !cleanup.isRefreshing, !model.isWorking {
@@ -1396,7 +1397,7 @@ struct AlignmentWaveformView: View {
         guard model.listening.effectiveTool == .move else { return }
         if dragSession == nil {
             let width = geometry.size.width
-            guard width > 0, !model.isWorking, !model.isLoadingWaveforms,
+            guard width > 0, model.trackProcessingOperation == nil,
                   model.waveformMap?.reference.group != track.group else { return }
             guard pick(track, strokes: strokes, time: model.waveformStartSeconds
                 + Double((drag.startLocation.x - geometry.frame(in: .global).minX) / width)

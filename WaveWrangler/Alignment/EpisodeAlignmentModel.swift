@@ -87,12 +87,25 @@ final class EpisodeAlignmentModel {
             return .init(kind: .audioPreparation, title: "Preparing playback", detail: auditionLabel,
                 fraction: nil, canCancel: true)
         }
-        if isLoadingWaveforms || isLoadingOverview {
+        if (isLoadingWaveforms || isLoadingOverview), !hasUsableWaveformPresentation {
             return .init(kind: .waveforms, title: "Preparing waveforms",
                 detail: isLoadingOverview ? waveformOverviewMessage : waveformMessage,
                 fraction: isLoadingOverview ? waveformOverviewProgress : nil, canCancel: true)
         }
         return nil
+    }
+
+    var hasUsableWaveformPresentation: Bool {
+        guard let document, let episode = document.store.model.episode(episodeID),
+              loadedWaveformGeneration == document.store.modelGeneration,
+              !projectingCutView, reprojectingWaveformGeneration == nil,
+              !waveformTracks.isEmpty, !waveformNeedsRefreshAfterSave else { return false }
+        let currentOverview = loadedOverviewEpisode.map { EpisodeMediaInputs($0) == EpisodeMediaInputs(episode) } == true
+            && waveformOverviewMap == loadedWaveformMap
+        return waveformTracks.allSatisfy { track in
+            hasVisibleWaveformStrokes(for: track)
+                || currentOverview && waveformOverviewIndices[track.id]?.isEmpty == false
+        }
     }
 
     func cancelTrackProcessing() {
@@ -269,6 +282,9 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private var waveformCache = AlignmentWaveformCache()
     @ObservationIgnored private var loadedWaveformGeneration: UInt64?
     @ObservationIgnored private var reprojectingWaveformGeneration: UInt64?
+    #if DEBUG
+    @ObservationIgnored var waveformPublicationDelayForTesting: Duration?
+    #endif
     @ObservationIgnored private var overviewTask: Task<Void, Never>?
     @ObservationIgnored private var overviewGeneration: UInt64 = 0
     @ObservationIgnored private var requestedOverviewEpisode: Episode?
@@ -1006,7 +1022,7 @@ final class EpisodeAlignmentModel {
     }
 
     var canCompareAligned: Bool {
-        guard !isWorking, !isLoadingWaveforms, pendingWaveformMove == nil,
+        guard trackProcessingOperation == nil, pendingWaveformMove == nil,
               let document, timingIsVerified(document.store.model),
               let track = selectedWaveform,
               let map = loadedWaveformMap, track.group != map.reference.group,
@@ -1478,7 +1494,7 @@ final class EpisodeAlignmentModel {
     }
 
     func ensureWaveformOverview() {
-        guard let document, let episode = document.store.model.episode(episodeID),
+        guard !projectingCutView, let document, let episode = document.store.model.episode(episodeID),
               timingIsVerified(document.store.model) else { return }
         if canRetainWaveformSamples, loadedWaveformGeneration != document.store.modelGeneration { return }
         if isLoadingOverview, requestedOverviewEpisode == episode { return }
@@ -1565,6 +1581,7 @@ final class EpisodeAlignmentModel {
 
     #if DEBUG
     private func delayWaveformPublicationForUITest() async throws {
+        if let delay = waveformPublicationDelayForTesting { try await Task.sleep(for: delay) }
         if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestVisualAlignmentFixture"),
            UserDefaults.standard.bool(forKey: "WWUITestDelayWaveformPublication") {
@@ -2411,6 +2428,7 @@ final class EpisodeAlignmentModel {
                         isLoadingWaveforms = false
                         projectingCutView = false
                         waveformTask = nil
+                        ensureWaveformOverview()
                     }
                 }
                 do {
@@ -2430,6 +2448,9 @@ final class EpisodeAlignmentModel {
                     waveformOverviewIndices = projectedOverview.indices
                     waveformOverviewDisplayGains = projectedOverview.gains
                     waveformOverviewSnapshotID = UUID()
+                    loadedWaveformEpisode = episode
+                    loadedWaveformGeneration = modelGeneration
+                    if !overview.tracks.isEmpty { loadedOverviewEpisode = episode }
                     waveformMessage = "Manual cuts ripple every aligned track. Original recordings and alignment are unchanged."
                     if waveformDurationSeconds <= 30 { scheduleScrubTile() }
                 } catch is CancellationError {
