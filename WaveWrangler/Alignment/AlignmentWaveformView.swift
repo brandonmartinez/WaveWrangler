@@ -201,7 +201,59 @@ struct AlignmentWaveformView: View {
     var body: some View {
         VStack(spacing: 0) {
             timelineChrome
-            ScrollViewReader { proxy in
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(1)
+            if let workspaceState, workspaceState.bottomPanePresented {
+                VSplitView {
+                    trackViewport.frame(minHeight: 64)
+                    AlignmentWorkspace.AlignmentBottomPane(state: workspaceState, model: model)
+                }
+                .frame(minHeight: 0)
+                .clipped()
+            } else {
+                trackViewport
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .focusable(interactions: .edit)
+        .focused($waveformFocused)
+        .focusEffectDisabled()
+        .task(id: AudioTimelineFitRequest(enabled: fillsSpace, measurement: fitMeasurement, viewport: trackViewportHeight)) {
+            await Task.yield()
+            guard !Task.isCancelled else { return }
+            refitTracks()
+        }
+        .modifier(floatingToolbar)
+        .onChange(of: layout, initial: true) { _, value in
+            clearHandCursor()
+            if value == .speakersOnly { model.muteNonPrimaryTracks() }
+        }
+        .onChange(of: fillsSpace) { _, enabled in
+            if enabled {
+                fittedLaneHeight = AudioTimelineTrackFit.minimumHeight
+                model.listening.workspace.trackScrollOffset = 0
+                trackScrollPosition.scrollTo(y: 0)
+            }
+        }
+        .onChange(of: model.listening.effectiveTool) { _, _ in
+            if dragSession != nil { cancelGroupDrag() }
+            clearHandCursor()
+        }
+        .onDisappear { clearHandCursor() }
+        .sheet(item: $newGroupSource) { source in
+            SetupNameForm(
+                context: NameSheetContext(kind: .newGroup, initial: "", assigning: [source.id]),
+                cancel: { newGroupSource = nil },
+                apply: { name in
+                    model.groupUngroupedSource(source.id, newName: name)
+                    newGroupSource = nil
+                }
+            )
+        }
+    }
+
+    private var trackViewport: some View {
+        ScrollViewReader { proxy in
                 ScrollView { trackContent }
                 .onGeometryChange(for: Double.self) { $0.size.height } action: {
                     trackViewportHeight = $0
@@ -239,21 +291,10 @@ struct AlignmentWaveformView: View {
                     }
                     model.requestedWaveformFocus = nil
                 }
-            }
-            .modifier(TrackProcessingPresentation(operation: processingOperation, cancel: {
-                TrackProcessingOperation.cancel(alignment: model, cleanup: cleanup)
-            }))
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .focusable(interactions: .edit)
-        .focused($waveformFocused)
-        .focusEffectDisabled()
-        .task(id: AudioTimelineFitRequest(enabled: fillsSpace, measurement: fitMeasurement, viewport: trackViewportHeight)) {
-            await Task.yield()
-            guard !Task.isCancelled else { return }
-            refitTracks()
-        }
-        .modifier(floatingToolbar)
+        .modifier(TrackProcessingPresentation(operation: processingOperation, cancel: {
+            TrackProcessingOperation.cancel(alignment: model, cleanup: cleanup)
+        }))
         .background(alignment: .leading) {
             AudioTimelineScrollSurface(headerWidth: headerWidth + 48) { action, width in
                 guard processingOperation == nil, dragSession == nil, model.pendingWaveformMove == nil else { return false }
@@ -273,32 +314,6 @@ struct AlignmentWaveformView: View {
                 }
             }
             .frame(width: trackContentWidth > 0 ? trackContentWidth : nil)
-        }
-        .onChange(of: layout, initial: true) { _, value in
-            clearHandCursor()
-            if value == .speakersOnly { model.muteNonPrimaryTracks() }
-        }
-        .onChange(of: fillsSpace) { _, enabled in
-            if enabled {
-                fittedLaneHeight = AudioTimelineTrackFit.minimumHeight
-                model.listening.workspace.trackScrollOffset = 0
-                trackScrollPosition.scrollTo(y: 0)
-            }
-        }
-        .onChange(of: model.listening.effectiveTool) { _, _ in
-            if dragSession != nil { cancelGroupDrag() }
-            clearHandCursor()
-        }
-        .onDisappear { clearHandCursor() }
-        .sheet(item: $newGroupSource) { source in
-            SetupNameForm(
-                context: NameSheetContext(kind: .newGroup, initial: "", assigning: [source.id]),
-                cancel: { newGroupSource = nil },
-                apply: { name in
-                    model.groupUngroupedSource(source.id, newName: name)
-                    newGroupSource = nil
-                }
-            )
         }
     }
 

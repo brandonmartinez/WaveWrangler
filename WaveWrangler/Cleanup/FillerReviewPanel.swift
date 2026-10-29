@@ -193,7 +193,7 @@ struct ReviewPanelSplitState: NSViewRepresentable {
                 while let view = ancestor {
                     if let split = view as? NSSplitView, !split.isVertical,
                        split.arrangedSubviews.count == 2,
-                       split.bounds.height - split.dividerThickness >= 320 {
+                       split.bounds.height - split.dividerThickness > 64 {
                         self.splitView = split
                         self.observation = NotificationObservation(NotificationCenter.default.addObserver(
                             forName: NSSplitView.didResizeSubviewsNotification, object: split, queue: .main
@@ -201,7 +201,7 @@ struct ReviewPanelSplitState: NSViewRepresentable {
                             MainActor.assumeIsolated { self?.scheduleSave() }
                         })
                         let available = split.bounds.height - split.dividerThickness
-                        let height = min(max(140, self.height.wrappedValue), available - 180)
+                        let height = min(max(140, self.height.wrappedValue), available - 64)
                         split.setPosition(available - height, ofDividerAt: 0)
                         self.restored = true
                         self.scheduleSave()

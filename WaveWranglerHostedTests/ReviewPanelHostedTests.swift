@@ -84,6 +84,59 @@ struct ReviewPanelHostedTests {
         #expect(cleanup.visibleFillers(for: lane).map(\.id) == [cleanup.fillerReviews[1].id])
     }
 
+    @Test(arguments: [
+        CGSize(width: 460, height: 440),
+        CGSize(width: 760, height: 440),
+        CGSize(width: 1024, height: 572),
+        CGSize(width: 1100, height: 800),
+    ])
+    func timelineControlsStayAboveTheSplitWhenBottomPanesOpenAndResize(_ size: CGSize) async throws {
+        let (f, cleanup, state) = try await fixture()
+        defer { cleanup.cancel(); f.close() }
+        state.bottomPanePresented = false
+        let host = HostedTimelineWindow(width: size.width, height: size.height,
+            content: AlignmentWorkspace(state: state, model: f.model, showInspector: {}))
+        defer { host.close() }
+        try await host.settle()
+        func controls() throws -> (NSSlider, NSPopUpButton) {
+            let zoom = try #require(host.descendants.compactMap { $0 as? NSSlider }.first {
+                $0.accessibilityIdentifier() == "alignment.waveforms.zoom"
+            })
+            let tools = try #require(host.descendants.compactMap { $0 as? NSPopUpButton }.first {
+                $0.accessibilityIdentifier() == "alignment.waveforms.tool"
+            })
+            return (zoom, tools)
+        }
+        let (zoom, tools) = try controls()
+        let initialZoom = host.view.convert(zoom.bounds, from: zoom)
+        let initialTools = host.view.convert(tools.bounds, from: tools)
+        f.model.listening.workspace.reviewPanelHeight = 1200
+        state.reviewPanelPresented = true
+        try await host.settle()
+        let split = try #require(host.descendants.compactMap { $0 as? NSSplitView }.first { !$0.isVertical })
+        for pane in EpisodeBottomPaneContent.allCases {
+            state.bottomPaneContent = pane
+            try await host.settle()
+            split.setPosition(min(80, split.bounds.height / 3), ofDividerAt: 0)
+            try await host.settle()
+            let (zoom, tools) = try controls()
+            #expect(!zoom.isDescendant(of: split) && !tools.isDescendant(of: split),
+                    "Timeline chrome must not share the bottom pane's constrained split child.")
+            let viewport = host.view.convert(host.window.contentLayoutRect, from: nil)
+            let zoomFrame = host.view.convert(zoom.bounds, from: zoom)
+            let toolFrame = host.view.convert(tools.bounds, from: tools)
+            #expect(viewport.contains(zoomFrame) && viewport.contains(toolFrame),
+                    "Opening or resizing \(pane.rawValue) must not clip fixed controls at \(size).")
+            #expect(abs(zoomFrame.minY - initialZoom.minY) < 1)
+            #expect(abs(toolFrame.minY - initialTools.minY) < 1)
+        }
+        state.bottomPanePresented = false
+        try await host.settle()
+        let (restoredZoom, _) = try controls()
+        #expect(abs(host.view.convert(restoredZoom.bounds, from: restoredZoom).minY - initialZoom.minY) < 1)
+        try host.capture("Docked controls \(Int(size.width))x\(Int(size.height))")
+    }
+
     @Test func plusMinusAndRowCutsUseExistingUndoAndPreserveRawTranscriptAndRecordings() async throws {
         let (f, cleanup, _) = try await fixture()
         defer { cleanup.cancel(); f.close() }
@@ -247,7 +300,9 @@ struct ReviewPanelHostedTests {
         host.window.setContentSize(NSSize(width: 460, height: 540))
         try await host.settle()
         #expect(table.enclosingScrollView != nil)
-        #expect(restoredSplit.arrangedSubviews.allSatisfy { $0.frame.height >= 130 })
+        #expect(restoredSplit.arrangedSubviews.first.map { $0.frame.height >= 64 } == true)
+        #expect(restoredSplit.arrangedSubviews.allSatisfy { $0.frame.height >= 0 },
+                "The bottom pane yields space before it can clip the fixed control bar.")
         #expect(f.document.store.model.episodes[0].alignment == before.episodes[0].alignment)
         state.reviewPanelPresented = false
         try await host.settle()

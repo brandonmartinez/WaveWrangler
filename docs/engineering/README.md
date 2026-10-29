@@ -152,6 +152,11 @@ authorization, decoding and per-read revalidation still use the complete current
 No saved origin, accepted alignment revision or source grant is rewritten to recover this continuity.
 The native divider position is restored after layout and persisted from resize notifications;
 an `idealHeight` hint alone does not restore `VSplitView`'s actual position.
+The split contains only the scrollable tracks and bottom Review/Mixer pane. Transport, view controls
+and ruler remain above it in the fixed waveform chrome, so opening a pane or restoring a tall
+divider position cannot clip the controls. At short window heights the bottom pane yields space
+before the 64-point track viewport or fixed controls; undersized temporary pane heights are not
+written over a valid saved divider preference. Pan/zoom event capture stays confined to the tracks.
 
 `reviewRows` caches source/timing issue classification by model generation and is invalidated when
 the verified plan or source identities change. Panning/playhead updates do not revalidate hundreds of

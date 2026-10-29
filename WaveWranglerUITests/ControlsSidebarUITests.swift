@@ -379,6 +379,31 @@ final class ControlsSidebarUITests: XCTestCase {
         app.buttons["ww.listening.restore"].click()
         XCTAssertEqual(preset.value as? String, "Off")
         XCTAssertFalse(app.buttons["ww.listening.restore"].exists)
+        let window = app.windows["ww.show.window"]
+        let play = app.buttons["alignment.waveforms.transport.play"]
+        let zoom = app.sliders["alignment.waveforms.zoom"]
+        func assertDockedControls() {
+            for control in [play, zoom, primary] {
+                XCTAssertTrue(control.exists && control.isHittable,
+                              "Timeline controls stay directly reachable with either bottom pane open.")
+                XCTAssertTrue(window.frame.contains(control.frame),
+                              "Bottom pane layout must not move controls outside the episode window.")
+            }
+        }
+        assertDockedControls()
+        let dockedY = play.frame.minY
+        let review = app.buttons["ww.review.toggle"]
+        review.click()
+        XCTAssertTrue(wait { review.value as? String == "Hidden" })
+        assertDockedControls()
+        XCTAssertEqual(play.frame.minY, dockedY, accuracy: 1)
+        review.click()
+        XCTAssertTrue(wait { review.value as? String == "Shown" })
+        assertDockedControls()
+        XCTAssertEqual(play.frame.minY, dockedY, accuracy: 1)
+        app.buttons["ww.mixer.toggle"].click()
+        assertDockedControls()
+        XCTAssertEqual(play.frame.minY, dockedY, accuracy: 1)
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = minimumSize ? "Minimum window sidebar activities and listening presets" : "Default window sidebar activities"
         screenshot.lifetime = .keepAlways

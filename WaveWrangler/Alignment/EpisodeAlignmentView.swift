@@ -158,55 +158,7 @@ struct AlignmentWorkspace: View {
     let showInspector: () -> Void
 
     var body: some View {
-        Group {
-            if state.bottomPanePresented {
-                VSplitView {
-                    waveforms.frame(minHeight: 180)
-                    VStack(spacing: 0) {
-                        HStack {
-                            Picker("Bottom pane", selection: $state.bottomPaneContent) {
-                                ForEach(EpisodeBottomPaneContent.allCases, id: \.self) { Text($0.rawValue).tag($0) }
-                            }
-                            .pickerStyle(.segmented).frame(width: 180)
-                            .accessibilityIdentifier("ww.bottomPane.content")
-                            Spacer()
-                            Button("Hide bottom pane", systemImage: "xmark") { state.bottomPanePresented = false }
-                                .labelStyle(.iconOnly).accessibilityIdentifier("ww.bottomPane.hide")
-                        }.padding(6)
-                        Divider()
-                        if state.bottomPaneContent == .review, let cleanup = state.cleanupModel {
-                            FillerReviewPanel(model: cleanup)
-                        } else if state.bottomPaneContent == .mixer {
-                            if state.mixerPresentation.isDetached {
-                                VStack(spacing: 8) {
-                                    Text("Mixer is in a separate window.")
-                                    HStack {
-                                        Button("Show Mixer Window") { state.mixerPresentation.detach() }
-                                            .accessibilityIdentifier("ww.mixer.focusDetached")
-                                        Button("Reattach") { state.mixerPresentation.reattach() }
-                                            .accessibilityIdentifier("ww.mixer.reattach")
-                                    }
-                                }.frame(maxWidth: .infinity, maxHeight: .infinity)
-                            } else {
-                                MixerView(presentation: state.mixerPresentation)
-                            }
-                        }
-                    }
-                        .frame(minHeight: 140, maxHeight: 1200)
-                        .background {
-                            ReviewPanelSplitState(height: Binding(
-                                get: { model.listening.workspace.reviewPanelHeight },
-                                set: { model.listening.workspace.reviewPanelHeight = $0 }
-                            ))
-                            .id(model.episodeID)
-                            .allowsHitTesting(false)
-                            .accessibilityHidden(true)
-                        }
-                }
-            } else {
-                waveforms
-            }
-        }
+        waveforms
         .safeAreaInset(edge: .top, spacing: 0) {
             AudioWorkspaceActions(state: state, alignment: model)
                 .padding(10).background(.bar)
@@ -227,6 +179,55 @@ struct AlignmentWorkspace: View {
                 AnchorTimingSheet(model: model)
             case let .anchor(anchorID):
                 EditAnchorSheet(model: model, anchorID: anchorID)
+            }
+        }
+    }
+
+    struct AlignmentBottomPane: View {
+        @Bindable var state: ShowWindowState
+        @Bindable var model: EpisodeAlignmentModel
+
+        var body: some View {
+            VStack(spacing: 0) {
+                HStack {
+                    Picker("Bottom pane", selection: $state.bottomPaneContent) {
+                        ForEach(EpisodeBottomPaneContent.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+                    }
+                    .pickerStyle(.segmented).frame(width: 180)
+                    .accessibilityIdentifier("ww.bottomPane.content")
+                    Spacer()
+                    Button("Hide bottom pane", systemImage: "xmark") { state.bottomPanePresented = false }
+                        .labelStyle(.iconOnly).accessibilityIdentifier("ww.bottomPane.hide")
+                }.padding(6)
+                Divider()
+                if state.bottomPaneContent == .review, let cleanup = state.cleanupModel {
+                    FillerReviewPanel(model: cleanup)
+                } else if state.bottomPaneContent == .mixer {
+                    if state.mixerPresentation.isDetached {
+                        VStack(spacing: 8) {
+                            Text("Mixer is in a separate window.")
+                            HStack {
+                                Button("Show Mixer Window") { state.mixerPresentation.detach() }
+                                    .accessibilityIdentifier("ww.mixer.focusDetached")
+                                Button("Reattach") { state.mixerPresentation.reattach() }
+                                    .accessibilityIdentifier("ww.mixer.reattach")
+                            }
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        MixerView(presentation: state.mixerPresentation)
+                    }
+                }
+            }
+            .frame(minHeight: 0, maxHeight: 1200)
+            .clipped()
+            .background {
+                ReviewPanelSplitState(height: Binding(
+                    get: { model.listening.workspace.reviewPanelHeight },
+                    set: { model.listening.workspace.reviewPanelHeight = $0 }
+                ))
+                .id(model.episodeID)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             }
         }
     }
