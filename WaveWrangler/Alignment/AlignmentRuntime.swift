@@ -1139,14 +1139,30 @@ actor AlignmentRuntime {
                 throw CleanupFailure(reason: "\(lane.name): the Primary's channel or measured format no longer matches its accepted placement.")
             }
             try await reverify(admission)
-            identities[lane.primary.sourceID] = try cleanupIdentity(admission.witness)
+            identities[lane.primary.sourceID] = try cleanupIdentity(admission)
             renderBytes[lane.primary.sourceID] = try AlignmentPipeline.adaptiveAudioReservationBytes(
                 channels: format.channelCount, sourceRate: lane.sourceRate)
         }
         return CleanupPreparation(plan: plan, identities: identities, renderBytes: renderBytes)
     }
 
-    private func cleanupIdentity(_ witness: RawSourceIdentity) throws -> String {
+    private func cleanupIdentity(_ admission: WaveformSourceAdmission) throws -> String {
+        let live = admission.witness
+        let witness: RawSourceIdentity
+        if let identity = admission.record.recordedIdentity, identity.confirmation == .userConfirmed,
+           let recorded = identity.rawWitness,
+           recorded.version == live.version, recorded.volumeUUID == live.volumeUUID,
+           recorded.inode == live.inode, recorded.sizeBytes == live.sizeBytes,
+           recorded.mode == live.mode, recorded.dataless == live.dataless,
+           recorded.birthSeconds == live.birthSeconds, recorded.birthNanoseconds == live.birthNanoseconds,
+           recorded.modificationSeconds == live.modificationSeconds,
+           recorded.modificationNanoseconds == live.modificationNanoseconds {
+            // Device numbers and filesystem IDs belong to a mount. Keep the saved artifact identity
+            // for the same file; admission and reverify still compare complete live witnesses.
+            witness = recorded
+        } else {
+            witness = live
+        }
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
         return SHA256.hash(data: try encoder.encode(witness)).map { String(format: "%02x", $0) }.joined()
@@ -1382,7 +1398,7 @@ actor AlignmentRuntime {
     ) async throws -> SpeakerTranscript {
         var completed = 0.0
         let admission = try await waveformSource(lane.primary.sourceID, sources: sources)
-        let identity = try cleanupIdentity(admission.witness)
+        let identity = try cleanupIdentity(admission)
         guard identity == expectedIdentity else { throw DecodeFailure.sourceIdentityMismatch }
         var words: [TranscriptWord] = []
         var planner = try TranscriptionChunkPlanner(start: lane.start, end: lane.end, policy: chunking)

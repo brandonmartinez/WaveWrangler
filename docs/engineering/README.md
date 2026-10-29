@@ -145,6 +145,11 @@ phrase, status, aligned timestamp, duration and row actions. Header filters wrap
 The trailing inspector shows just the selected review or cut, timing fields, decisions and collapsed
 captured-origin/transcript details. Display timestamps use milliseconds; the underlying source-frame
 anchors and exact captured timing remain unchanged.
+Cleanup artifact identities retain the explicitly confirmed recorded witness when the freshly
+admitted file matches all persistent identity fields. Mount-local device numbers and filesystem IDs
+may change after remounting; those alone must not invalidate saved transcripts or reviews. Live
+authorization, decoding and per-read revalidation still use the complete current kernel witness.
+No saved origin, accepted alignment revision or source grant is rewritten to recover this continuity.
 The native divider position is restored after layout and persisted from resize notifications;
 an `idealHeight` hint alone does not restore `VSplitView`'s actual position.
 
