@@ -87,6 +87,7 @@ final class ShowWindowState {
     }
 
     @ObservationIgnored lazy var mixerPresentation = EpisodeMixerPresentation(state: self)
+    @ObservationIgnored lazy var reviewPresentation = EpisodeReviewPresentation(state: self)
 
     func toggleWorkspaceInspector(_ activity: WorkspaceInspector) {
         if inspectorPresented, workspaceInspector == activity {
@@ -432,6 +433,7 @@ final class ShowWindowState {
     func reviewModelDidChange() {
         invalidateBoundReview()
         cleanupModel?.modelDidChange()
+        reviewPresentation.modelDidChange()
     }
 
     func reviewSpeakerSelectionDidChange() { invalidateBoundReview() }
@@ -442,6 +444,7 @@ final class ShowWindowState {
         cleanupModel = nil
         invalidateBoundReview()
         mixerPresentation.originDidClose()
+        reviewPresentation.originDidClose()
         alignmentModel?.suspend()
         alignmentModel = nil
     }

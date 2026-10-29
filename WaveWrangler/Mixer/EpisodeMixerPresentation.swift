@@ -75,7 +75,7 @@ final class EpisodeMixerPresentation {
         }
         let hosting = NSHostingController(rootView: MixerView(presentation: self, detached: true).wwAppEnvironment())
         hosting.sizingOptions = []
-        let window = MixerAuxiliaryWindow(contentViewController: hosting)
+        let window = EpisodeAuxiliaryWindow(contentViewController: hosting)
         window.originatingState = state
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.contentMinSize = NSSize(width: 520, height: 360)
@@ -235,7 +235,7 @@ final class EpisodeMixerPresentation {
                     self.editorRevision = revision
                     self.editorIsGeneric = native == nil
                     let content = native ?? NSHostingController(rootView: MixerParameterView(presentation: self).wwAppEnvironment())
-                    let window = MixerAuxiliaryWindow(contentViewController: content)
+                    let window = EpisodeAuxiliaryWindow(contentViewController: content)
                     window.originatingState = self.state
                     window.styleMask = [.titled, .closable, .resizable]
                     window.contentMinSize = NSSize(width: 360, height: 220)
@@ -354,7 +354,7 @@ final class EpisodeMixerPresentation {
 }
 
 @MainActor
-final class MixerAuxiliaryWindow: NSWindow {
+final class EpisodeAuxiliaryWindow: NSWindow {
     weak var originatingState: ShowWindowState?
     override var undoManager: UndoManager? { originatingState?.store.document?.undoManager }
 }

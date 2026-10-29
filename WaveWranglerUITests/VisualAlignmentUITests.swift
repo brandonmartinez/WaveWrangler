@@ -353,8 +353,8 @@ final class VisualAlignmentUITests: XCTestCase {
             start.click(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 12, dy: 0)))
             let status = app.scrollViews["ww.alignment.workspace"]
             let processing = app.descendants(matching: .any)["ww.trackProcessing.overlay"]
-            XCTAssertTrue(surface.exists || processing.exists,
-                          "Saving must retain the track viewport or expose its blocking progress overlay")
+            let zoom = app.sliders["alignment.waveforms.zoom"]
+            XCTAssertTrue(zoom.exists, "Fixed track chrome remains present during the save.")
             XCTAssertTrue(waitForMapRevision(expectedRevision, in: app), app.debugDescription)
             XCTAssertTrue(waitUntil { !processing.exists && surface.exists },
                           "Verified timing must restore the interactive waveform surface")

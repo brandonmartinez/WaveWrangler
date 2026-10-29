@@ -88,12 +88,12 @@ extension EpisodeCleanupModel {
         error = nil
         if let cut = cut(for: review) {
             showManualCut(cut.id, expanded: true)
-            zoomToManualCut(cut.id)
+            zoomToManualCut(cut.id, zoomOutSteps: 3)
             seek(to: cutTimeline.editedTime(forAlignedTime: cut.alignedStart))
         } else {
             selectFiller(id)
             listening.selection = displayRange(start: review.bounds.alignedStart, end: review.bounds.alignedEnd)
-            zoomToFiller(id)
+            zoomToFiller(id, zoomOutSteps: 3)
         }
     }
 
@@ -290,15 +290,15 @@ private struct ReviewRowCell: View {
 
 struct FillerReviewPanel: View {
     @Bindable var model: EpisodeCleanupModel
-    @State private var search = ""
-    @State private var speaker: SpeakerID?
-    @State private var filter = FillerReviewFilter.all
+    var detached = false
     @State private var selection: UUID?
 
     private var rows: [FillerReviewRow] {
         model.reviewRows.filter {
-            (speaker == nil || $0.speakerID == speaker) && (filter == .all || $0.category == filter)
-                && (search.isEmpty || $0.phrase.localizedStandardContains(search) || $0.speaker.localizedStandardContains(search))
+            (model.reviewSpeakerFilter == nil || $0.speakerID == model.reviewSpeakerFilter)
+                && (model.reviewStatusFilter == .all || $0.category == model.reviewStatusFilter)
+                && (model.reviewSearch.isEmpty || $0.phrase.localizedStandardContains(model.reviewSearch)
+                    || $0.speaker.localizedStandardContains(model.reviewSearch))
         }
     }
 
@@ -395,17 +395,17 @@ struct FillerReviewPanel: View {
 
     private var filters: some View {
         HStack(spacing: 6) {
-            TextField("Filter phrases or speakers", text: $search)
+            TextField("Filter phrases or speakers", text: $model.reviewSearch)
                 .textFieldStyle(.roundedBorder).frame(minWidth: 100, maxWidth: 240)
                 .accessibilityIdentifier("ww.review.search")
-            Picker("Speaker", selection: $speaker) {
+            Picker("Speaker", selection: $model.reviewSpeakerFilter) {
                 Text("All speakers").tag(Optional<SpeakerID>.none)
                 ForEach(model.state.store.model.speakers) { speaker in
                     Text(speaker.name).tag(Optional(speaker.id))
                 }
             }
             .labelsHidden().accessibilityIdentifier("ww.review.speaker")
-            Picker("Status", selection: $filter) {
+            Picker("Status", selection: $model.reviewStatusFilter) {
                 ForEach(FillerReviewFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .labelsHidden().accessibilityIdentifier("ww.review.status")
@@ -413,7 +413,11 @@ struct FillerReviewPanel: View {
     }
 
     private var closeButton: some View {
-        Button("Hide review panel", systemImage: "xmark") { model.state.reviewPanelPresented = false }
+        Button(detached ? "Close review window" : "Hide review panel", systemImage: "xmark") {
+            if detached { model.state.reviewPresentation.closeDetached() }
+            else { model.state.reviewPanelPresented = false }
+        }
             .labelStyle(.iconOnly).accessibilityIdentifier("ww.review.close")
     }
+
 }

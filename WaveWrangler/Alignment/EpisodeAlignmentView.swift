@@ -196,12 +196,32 @@ struct AlignmentWorkspace: View {
                     .pickerStyle(.segmented).frame(width: 180)
                     .accessibilityIdentifier("ww.bottomPane.content")
                     Spacer()
+                    if state.bottomPaneContent == .review, !state.reviewPresentation.isDetached {
+                        Button("Detach review", systemImage: "arrow.up.forward.square") {
+                            state.reviewPresentation.detach()
+                        }
+                        .labelStyle(.iconOnly)
+                        .help("Open Transcript & Review in a separate window for this episode.")
+                        .accessibilityIdentifier("ww.review.detach")
+                    }
                     Button("Hide bottom pane", systemImage: "xmark") { state.bottomPanePresented = false }
                         .labelStyle(.iconOnly).accessibilityIdentifier("ww.bottomPane.hide")
                 }.padding(6)
                 Divider()
                 if state.bottomPaneContent == .review, let cleanup = state.cleanupModel {
-                    FillerReviewPanel(model: cleanup)
+                    if state.reviewPresentation.isDetached {
+                        VStack(spacing: 8) {
+                            Text("Transcript & Review is in a separate window.")
+                            HStack {
+                                Button("Show Review Window") { state.reviewPresentation.detach() }
+                                    .accessibilityIdentifier("ww.review.focusDetached")
+                                Button("Reattach") { state.reviewPresentation.reattach() }
+                                    .accessibilityIdentifier("ww.review.reattach")
+                            }
+                        }.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    } else {
+                        FillerReviewPanel(model: cleanup)
+                    }
                 } else if state.bottomPaneContent == .mixer {
                     if state.mixerPresentation.isDetached {
                         VStack(spacing: 8) {

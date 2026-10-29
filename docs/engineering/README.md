@@ -145,6 +145,15 @@ phrase, status, aligned timestamp, duration and row actions. Header filters wrap
 The trailing inspector shows just the selected review or cut, timing fields, decisions and collapsed
 captured-origin/transcript details. Display timestamps use milliseconds; the underlying source-frame
 anchors and exact captured timing remain unchanged.
+**Detach review** opens Transcript & Review in an episode-owned auxiliary window. It shares the
+existing cleanup model, selected review, phrase/speaker/status filters, cut actions and document
+Undo/Redo; it does not copy the show or start playback. **Reattach** returns the same review state
+to the bottom pane. Closing only the auxiliary window leaves the episode open; closing the
+originating editor or deleting its episode closes that editor's detached review.
+Clicking a current filler row centers its automatic focus view three ordinary zoom-out steps
+wider than the old close-up (1.25x per step), capped by the available timeline. Repeated row
+selection does not progressively zoom out. Explicit Zoom to word/cut commands keep their closer
+focus behavior, and original review times, source-frame bounds and saved timing remain unchanged.
 Cleanup artifact identities retain the explicitly confirmed recorded witness when the freshly
 admitted file matches all persistent identity fields. Mount-local device numbers and filesystem IDs
 may change after remounting; those alone must not invalidate saved transcripts or reviews. Live

@@ -127,7 +127,7 @@ extension EpisodeCleanupModel {
         }
     }
 
-    func zoomToFiller(_ id: UUID) {
+    func zoomToFiller(_ id: UUID, zoomOutSteps: Int = 0) {
         guard canNavigate, let review = fillerReviews.first(where: { $0.id == id }),
               fillerIssue(review) == nil else {
             error = "Select a current filler interval before zooming to it."
@@ -137,7 +137,7 @@ extension EpisodeCleanupModel {
         let end = cutTimeline.editedTime(forAlignedTime: review.bounds.alignedEnd)
         guard let window = AlignmentWaveformProjection.rulerZoom(
             duration: max(1, (end - start) * 3), playhead: start + (end - start) / 2,
-            magnification: 1, bounds: workspaceAlignment?.waveformViewingBounds ?? bounds,
+            magnification: pow(0.8, Double(zoomOutSteps)), bounds: workspaceAlignment?.waveformViewingBounds ?? bounds,
             maximumDuration: workspaceAlignment?.maximumWaveformDuration ?? maximumDuration
         ) else {
             error = "The selected filler interval cannot be shown within the available timeline."

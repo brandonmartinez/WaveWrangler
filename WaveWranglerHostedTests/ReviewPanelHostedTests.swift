@@ -10,7 +10,7 @@ import WWPersistence
 @MainActor
 @Suite("Bottom review list and focus-safe timeline controls", .serialized)
 struct ReviewPanelHostedTests {
-    private func fixture() async throws -> (AlignmentWaveformRetentionHostedTests.Fixture, EpisodeCleanupModel, ShowWindowState) {
+    func fixture() async throws -> (AlignmentWaveformRetentionHostedTests.Fixture, EpisodeCleanupModel, ShowWindowState) {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 12)
         var ready = false
         defer { if !ready { f.close() } }
@@ -57,6 +57,12 @@ struct ReviewPanelHostedTests {
         #expect(cleanup.selectedReviewRowID == rows[0].id)
         #expect(abs(f.model.waveformStartSeconds + f.model.waveformDurationSeconds / 2 - 1.15) < 0.000001)
         #expect(f.model.waveformDurationSeconds <= 2)
+        #expect(abs(f.model.waveformDurationSeconds - 1.953125) < 0.000001,
+                "Automatic filler focus is exactly three 1.25x zoom-out steps wider.")
+        f.model.waveformDurationSeconds = 15
+        cleanup.focusReviewRow(rows[0].id)
+        #expect(abs(f.model.waveformDurationSeconds - 1.953125) < 0.000001,
+                "Repeated focus uses the automatic context, not the current viewport's zoom.")
         #expect(cleanup.listening.selection == 1...1.3)
         #expect(cleanup.state.workspaceInspector == .transcript && cleanup.state.inspectorPresented)
         #expect(f.document.store.model == before)
@@ -295,7 +301,8 @@ struct ReviewPanelHostedTests {
         #expect(table.rows(in: table.visibleRect).length < 40)
         table.scrollRowToVisible(700)
         try await host.settle()
-        #expect(NSLocationInRange(700, table.rows(in: table.visibleRect)))
+        #expect(NSLocationInRange(700, table.rows(in: table.visibleRect)),
+                "visible=\(table.visibleRect), rows=\(table.rows(in: table.visibleRect)), last=\(table.rect(ofRow: 700)), frame=\(table.frame), clip=\(String(describing: table.enclosingScrollView?.contentView.bounds))")
         try host.capture("Resizable bottom review table")
         host.window.setContentSize(NSSize(width: 460, height: 540))
         try await host.settle()

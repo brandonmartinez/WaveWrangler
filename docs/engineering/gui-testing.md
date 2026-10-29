@@ -8,13 +8,13 @@ desktop and Mac mini are not fallback test hosts.
 
 The PoC gate covers working app features, not broad accessibility qualification.
 The shared `WaveWranglerUITests` scheme defaults to the **PoC** test plan.
-All 143 current UI tests remain represented in at least one plan; overlapping
+All 144 current UI tests remain represented in at least one plan; overlapping
 plans deliberately exercise some workflows both with and without audits.
 
 | Plan | Scope | Runner selection |
 | --- | --- | --- |
 | PoC | 13 import/playback, integrated workspace, docked/detached mixer, transcript review/Undo, cut review, saved episode views, selection toolbar, playhead zoom, scroll, reopen/save, damaged-file refusal, and empty-workspace recovery tests | `scripts/test.sh --ui` |
-| Regression | 120 functional tests, including the mixer/Apple editor, timing-reference selection, alignment reset with Undo/Redo, source-time Solo, paired manual anchors and subsequent drags, timeline fitting/following/cycle creation, keyboard shortcuts, source onboarding/file drops/group drags, source grants, relink, cancellation, persistence, conflicts, and recovery | `scripts/test.sh --ui-profile=regression` |
+| Regression | 121 functional tests, including the mixer/Apple editor, detached transcript review/filter/cut Undo workflow, timing-reference selection, alignment reset with Undo/Redo, source-time Solo, paired manual anchors and subsequent drags, timeline fitting/following/cycle creation, keyboard shortcuts, source onboarding/file drops/group drags, source grants, relink, cancellation, persistence, conflicts, and recovery | `scripts/test.sh --ui-profile=regression` |
 | Accessibility | 73 audit-bearing, appearance/200%-layout, native AX geometry, keyboard-focus, and VoiceOver tests | `scripts/test.sh --ui-profile=accessibility` |
 | Performance | 5 responsiveness measurements, separate from feature correctness | `scripts/test.sh --ui-profile=performance` |
 

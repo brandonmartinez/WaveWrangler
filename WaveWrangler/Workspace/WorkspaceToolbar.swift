@@ -7,18 +7,23 @@ struct WorkspaceInspectorToggles: View {
     var body: some View {
         HStack(spacing: 2) {
             Button {
-                state.reviewPanelPresented.toggle()
+                if state.reviewPresentation.isDetached { state.reviewPresentation.detach() }
+                else { state.reviewPanelPresented.toggle() }
             } label: {
                 Image(systemName: "rectangle.bottomthird.inset.filled")
                     .frame(width: 24, height: 24)
-                    .background(state.reviewPanelPresented ? Color.accentColor.opacity(0.2) : .clear,
+                    .background(state.reviewPanelPresented || state.reviewPresentation.isDetached
+                                ? Color.accentColor.opacity(0.2) : .clear,
                                 in: RoundedRectangle(cornerRadius: 5))
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Review panel")
-            .accessibilityValue(state.reviewPanelPresented ? "Shown" : "Hidden")
+            .accessibilityValue(state.reviewPresentation.isDetached
+                ? "In separate window" : state.reviewPanelPresented ? "Shown" : "Hidden")
             .accessibilityIdentifier("ww.review.toggle")
-            .help("\(state.reviewPanelPresented ? "Hide" : "Show") the resizable bottom review list")
+            .help(state.reviewPresentation.isDetached
+                ? "Show the detached Transcript & Review window"
+                : "\(state.reviewPanelPresented ? "Hide" : "Show") the resizable bottom review list")
             Button {
                 if state.bottomPanePresented, state.bottomPaneContent == .mixer, !state.mixerPresentation.isDetached {
                     state.bottomPanePresented = false

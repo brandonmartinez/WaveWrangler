@@ -74,6 +74,9 @@ final class EpisodeCleanupModel {
     var selectedWord: TranscriptWord?
     var selectedFillerID: UUID?
     var selectedManualCutID: UUID?
+    var reviewSearch = ""
+    var reviewSpeakerFilter: SpeakerID?
+    var reviewStatusFilter = FillerReviewFilter.all
     private var standaloneCutTimeline = ManualCutTimeline.unedited
     var workspaceCutTimeline: ManualCutTimeline { workspaceAlignment?.cutTimeline ?? standaloneCutTimeline }
     var fillerStartText = ""

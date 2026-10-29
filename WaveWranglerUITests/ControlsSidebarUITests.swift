@@ -10,6 +10,48 @@ final class ControlsSidebarUITests: XCTestCase {
         exerciseSidebars(minimumSize: true)
     }
 
+    func testDetachedReviewSharesFiltersCutUndoAndReattachesWithoutAnotherEpisode() {
+        let app = launch()
+        defer { app.terminate() }
+        let main = app.windows["ww.show.window"]
+        XCTAssertTrue(main.waitForExistence(timeout: 20))
+        let review = app.buttons["ww.review.toggle"]
+        if review.value as? String != "Shown" { review.click() }
+        let detach = app.buttons["ww.review.detach"]
+        XCTAssertTrue(detach.waitForExistence(timeout: 10))
+        detach.click()
+        let window = app.windows["ww.review.window"]
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        XCTAssertEqual(app.windows.matching(identifier: "ww.show.window").count, 1)
+        let search = window.textFields["ww.review.search"]
+        search.click()
+        search.typeText("Um")
+        let row = window.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.cleanup.filler.review.'")).firstMatch
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        row.click()
+        let cut = window.buttons.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.review.cut.'")).firstMatch
+        XCTAssertTrue(cut.waitForExistence(timeout: 5))
+        XCTAssertTrue(cut.isEnabled)
+        cut.click()
+        let restore = window.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.review.restore.'")).firstMatch
+        XCTAssertTrue(restore.waitForExistence(timeout: 10))
+        window.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(cut.waitForExistence(timeout: 10), app.debugDescription)
+        window.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(restore.waitForExistence(timeout: 10))
+        window.buttons["ww.review.reattach"].click()
+        XCTAssertTrue(window.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(main.textFields["ww.review.search"].waitForExistence(timeout: 5))
+        XCTAssertEqual(main.textFields["ww.review.search"].value as? String, "Um")
+        main.buttons["ww.review.detach"].click()
+        XCTAssertTrue(window.waitForExistence(timeout: 5))
+        window.typeKey("w", modifierFlags: .command)
+        XCTAssertTrue(window.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(main.exists, "Closing auxiliary review must not close the originating episode.")
+    }
+
     func testCommandReviewToolIsTemporaryAndMarkerUsesOneCenteredToolbar() throws {
         let app = launch()
         defer { app.terminate() }

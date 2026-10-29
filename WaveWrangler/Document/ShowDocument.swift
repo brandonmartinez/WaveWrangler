@@ -942,7 +942,10 @@ final class ShowDocument: NSDocument {
 
     private func closeCaptured() {
         mixerTransactions.finishClosingAfterCapture()
-        for state in ShowWindowRegistry.states(for: store) { state.mixerPresentation.originDidClose() }
+        for state in ShowWindowRegistry.states(for: store) {
+            state.mixerPresentation.originDidClose()
+            state.reviewPresentation.originDidClose()
+        }
         EpisodeWorkspaceViewStore.flushPending()
         // Closing while still edited means the user chose Don't Save: drop this document's edit checkpoints.
         if isDocumentEdited {

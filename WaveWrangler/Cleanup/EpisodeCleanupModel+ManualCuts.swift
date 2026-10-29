@@ -25,7 +25,7 @@ extension EpisodeCleanupModel {
         return start...max(start, cutTimeline.editedTime(forAlignedTime: cut.alignedEnd))
     }
 
-    func zoomToManualCut(_ id: UUID) {
+    func zoomToManualCut(_ id: UUID, zoomOutSteps: Int = 0) {
         guard let cut = activeManualCuts.first(where: { $0.id == id }),
               workspaceAlignment != nil || canNavigate,
               workspaceAlignment?.pendingWaveformMove == nil,
@@ -36,8 +36,8 @@ extension EpisodeCleanupModel {
         let start = cutTimeline.editedTime(forAlignedTime: cut.alignedStart)
         let end = cutTimeline.editedTime(forAlignedTime: cut.alignedEnd)
         guard let window = AlignmentWaveformProjection.rulerZoom(
-            duration: (cut.alignedEnd - cut.alignedStart) * 2,
-            playhead: start + (end - start) / 2, magnification: 1,
+            duration: max(0.5, (cut.alignedEnd - cut.alignedStart) * 2),
+            playhead: start + (end - start) / 2, magnification: pow(0.8, Double(zoomOutSteps)),
             bounds: workspaceAlignment?.waveformViewingBounds ?? bounds,
             maximumDuration: workspaceAlignment?.maximumWaveformDuration ?? maximumDuration
         ) else {
