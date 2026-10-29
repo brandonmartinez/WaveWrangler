@@ -44,7 +44,27 @@ struct TrackProcessingPresentation: ViewModifier {
             .allowsHitTesting(operation == nil)
             .accessibilityHidden(operation != nil)
             .overlay {
-                if let operation { TrackProcessingOverlay(operation: operation, cancel: cancel) }
+                if let operation { DeferredTrackProcessingOverlay(operation: operation, cancel: cancel) }
+            }
+    }
+}
+
+private struct DeferredTrackProcessingOverlay: View {
+    let operation: TrackProcessingOperation
+    let cancel: () -> Void
+    @State private var isVisible = false
+
+    var body: some View {
+        Color.clear
+            .overlay {
+                if isVisible { TrackProcessingOverlay(operation: operation, cancel: cancel) }
+            }
+            .allowsHitTesting(isVisible)
+            .task {
+                do { try await Task.sleep(for: .milliseconds(300)) }
+                catch { return }
+                guard !Task.isCancelled else { return }
+                isVisible = true
             }
     }
 }

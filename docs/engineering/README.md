@@ -792,7 +792,10 @@ confirmed Import creates the group and sources in the same Undo step.
 Track-blocking alignment, waveform preparation, playback preparation and transcription
 use a bounded overlay inside the track viewport instead of duplicated top processing
 rows or a bottom waveform status bar. Progress is determinate only when the worker
-reports a real fraction. Cancel uses the existing worker cancellation; final verified
+reports a real fraction. Track interaction is blocked immediately, but the visual overlay
+waits 300 ms so brief segment preparation does not flash over the recordings. Progress updates
+and adjacent blocking phases do not restart the delay; a completed operation cancels it.
+Cancel uses the existing worker cancellation; final verified
 timing updates explain why they cannot be interrupted. Track editing, pan/zoom and
 navigation shortcuts and conflicting inspector actions are blocked, while transport
 Pause/Stop remains available.

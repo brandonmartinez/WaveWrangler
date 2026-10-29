@@ -35,6 +35,8 @@ struct TrackProcessingOverlayHostedTests {
             $0.accessibilityIdentifier() == "test.trackAction"
         })
         #expect(!track.isEnabled)
+        try await Task.sleep(for: .milliseconds(250))
+        try await host.settle()
         let cancel = try cancelFrame(in: host)
         #expect(host.view.bounds.contains(cancel),
             "Cancel must remain inside even a compact track viewport.")
@@ -54,6 +56,78 @@ struct TrackProcessingOverlayHostedTests {
         let cancel = try cancelFrame(in: host)
         try await host.click(CGPoint(x: cancel.midX, y: cancel.midY))
         #expect(cancellations == 0)
+    }
+
+    private func presentation(_ operation: TrackProcessingOperation?) -> some View {
+        NativeTimelineSlider(value: .constant(0.5), range: 0...1,
+            label: "Synthetic blocked track", identifier: "test.grace.track")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .modifier(TrackProcessingPresentation(operation: operation, cancel: {}))
+    }
+
+    private func hasCancel<Content: View>(_ host: HostedTimelineWindow<Content>) -> Bool {
+        host.controlFrames.contains { $0.width < 100 && $0.height >= 16 }
+    }
+
+    @Test func fastPreparationNeverFlashesAndTrackBlockingStillStartsImmediately() async throws {
+        let operation = TrackProcessingOperation(kind: .audioPreparation, title: "Preparing playback",
+            detail: "Preparing a short synthetic segment.", fraction: nil, canCancel: true)
+        let host = HostedTimelineWindow(width: 520, height: 240, content: presentation(operation))
+        defer { host.close() }
+        try await host.settle()
+        let track = try #require(host.descendants.compactMap { $0 as? NSSlider }.first)
+        #expect(!track.isEnabled && !hasCancel(host))
+        host.view.rootView = presentation(nil)
+        try await host.settle()
+        #expect(track.isEnabled && !hasCancel(host))
+        try await Task.sleep(for: .milliseconds(350))
+        try await host.settle()
+        #expect(!hasCancel(host), "The canceled delay must not present an overlay after work finishes.")
+    }
+
+    @Test func progressUpdatesDoNotRestartTheGracePeriodAndANewBusyIntervalGetsItsOwnDelay() async throws {
+        func operation(_ fraction: Double) -> TrackProcessingOperation {
+            .init(kind: .waveforms, title: "Preparing waveforms",
+                  detail: "Synthetic progress \(fraction).", fraction: fraction, canCancel: true)
+        }
+        let started = ContinuousClock.now
+        let host = HostedTimelineWindow(width: 520, height: 240, content: presentation(operation(0)))
+        defer { host.close() }
+        try await host.settle()
+        #expect(!hasCancel(host))
+        for value in [0.2, 0.4, 0.6, 0.8] {
+            host.view.rootView = presentation(operation(value))
+            try await host.settle()
+        }
+        #expect(ContinuousClock.now - started >= .milliseconds(300))
+        #expect(hasCancel(host), "Live progress updates must not keep postponing a long-running overlay.")
+        host.view.rootView = presentation(nil)
+        try await host.settle()
+        #expect(!hasCancel(host))
+        host.view.rootView = presentation(operation(0))
+        try await host.settle()
+        #expect(!hasCancel(host), "A completed operation must not leave the next operation immediately visible.")
+        host.view.rootView = presentation(nil)
+        try await host.settle()
+    }
+
+    @Test func adjacentBlockingPhasesKeepTheVisibleOverlayUntilTheWorkFinishes() async throws {
+        let analysis = TrackProcessingOperation(kind: .alignmentAnalysis, title: "Aligning tracks",
+            detail: "Analyzing a synthetic recording.", fraction: nil, canCancel: true)
+        let save = TrackProcessingOperation(kind: .timingUpdate, title: "Saving timing",
+            detail: "Independent save verification.", fraction: nil, canCancel: false)
+        let host = HostedTimelineWindow(width: 520, height: 240, content: presentation(analysis))
+        defer { host.close() }
+        try await host.settle()
+        try await Task.sleep(for: .milliseconds(300))
+        try await host.settle()
+        #expect(hasCancel(host))
+        host.view.rootView = presentation(save)
+        try await host.settle()
+        #expect(hasCancel(host), "A protected final phase must not hide an already visible overlay.")
+        host.view.rootView = presentation(nil)
+        try await host.settle()
+        #expect(!hasCancel(host))
     }
 
     @Test func alignmentCancellationLeavesTheDocumentAndOriginalsUnchanged() async throws {
