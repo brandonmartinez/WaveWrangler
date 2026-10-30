@@ -12,7 +12,19 @@ struct AudioInsertionEditingTests {
     @Test func introRetargetsFortySecondBedWithIndependentTenSecondLeadIn() throws {
         let f = try AudioInsertionTestFixture()
         let bed = f.clip(at: .programOrigin(frame: 0), duration: 40 * rate)
-        let episode = f.episode(clips: [bed])
+        let cut = ManualEpisodeCut(alignmentRevision: 1, startFrame: 50 * rate, endFrame: 51 * rate)
+        var episode = f.episode(clips: [bed], cuts: [cut])
+        episode.cleanup?.transcripts = [
+            .init(speaker: SpeakerID(), primary: .init(sourceID: f.recording.id, statedChannel: 0),
+                sourceRate: 48_000, sourceIdentity: String(repeating: "a", count: 64),
+                alignmentRevision: 1, model: "Synthetic only", workingRange: nil,
+                words: [.init(text: "um", sourceStartFrame: rate, sourceEndFrame: rate + 9_600,
+                    alignedStart: 1, alignedEnd: 1.2)]),
+        ]
+        episode.cleanup = episode.cleanup?.proposingFillers()
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        let originalCleanup = try encoder.encode(episode.cleanup)
         let editing = try f.editing(episode)
         let edit = try editing.inserting(at: editing.introPosition, duration: 10 * rate, moving: bed.id)
         #expect(edit.after.clips[0].programFrames == 0..<(40 * rate))
@@ -26,7 +38,10 @@ struct AudioInsertionEditingTests {
         var unchanged = afterEpisode
         unchanged.audioArrangement = episode.audioArrangement
         #expect(unchanged == episode, "No map, source, transcript provenance, or cut mutation.")
-        #expect(edit.after.programFrames == 0..<(110 * rate))
+        #expect(try encoder.encode(afterEpisode.cleanup) == originalCleanup)
+        #expect(afterEpisode.cleanup?.transcripts.first?.words.first?.sourceStartFrame == rate)
+        #expect(afterEpisode.cleanup?.manualCuts == [cut])
+        #expect(edit.after.programFrames == 0..<(109 * rate))
     }
 
     @Test func signedIntroUsesEarliestRetainedUnpinnedContentNotAnUnrelatedEarlierPin() throws {
