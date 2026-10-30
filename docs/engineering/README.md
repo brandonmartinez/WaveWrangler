@@ -56,10 +56,9 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 `WWTimeMap` contains the exact source/group/aligned coordinate maps.
 `WWCommonEdit` contains the provisional common episode edit map and the
 [program-time composition and supplemental production contract](program-timeline.md).
-The Audio Track/Audio Clip editor, Add Audio, and explicit Insert Intro / Insert &
-Ripple controls use that production contract.
-Finder timeline drops, cross-episode reuse, fade-point controls, export, and
-protected-cut acceptance are separate work.
+The Audio Track/Audio Clip editor, Add Audio, timeline file-drop staging, and
+explicit Insert Intro / Insert & Ripple controls use that production contract.
+Fade-point controls, export, and protected-cut acceptance are separate work.
 
 ### Audio Tracks and Add Audio
 
@@ -73,6 +72,41 @@ PCM preparation. Unsupported formats, unqualified MP3 conventions, layouts,
 changed originals, unavailable grants, cloud placeholders, and storage limits
 refuse visibly. No cloud materialization, source-file mutation, or delivery file
 is part of this action.
+
+Finder/local file-location drops enter the same review. Audio lane drops retain
+that lane; empty/recording canvases and unused canvas space explicitly review a
+new generic Audio Track, never a recorder conversion. The canvas excludes row
+headers/padding, captures the whole program frame at the drop's current zoom/pan,
+and refuses Show cut's expanded review-only intervals. Hover feedback uses only
+presentation geometry and never loads providers, headers, previews, or duration.
+Only file-location data is requested, not file promises or file representations.
+Folder/symlink/non-audio/hidden/unreadable inputs are explicitly reported in review;
+timeline folders are never enumerated. Sources-area folder imports and recorder
+row regrouping retain their existing recording Import Review behavior.
+
+Dropped batches default to **Sequential**, with visible order and Earlier/Later
+controls. Review can explicitly choose Overlay. Add Audio still defaults to
+Overlay. Sequential offsets use checked, actually qualified owned output durations
+and a current inverse anchor for every clip; no byte-count guesses or insertion
+are involved. All selected files qualify before one canonical Add Audio/Undo.
+
+An already verified supplemental original in this episode reuses its SourceID,
+qualified asset, and grant, adding only an independent clip. Another episode in
+the show explicitly reviews a new episode-owned logical source/access record for
+the immutable original. The engine considers every active physical match and the
+complete canonical source-purpose/asset roster; a recording/unknown-purpose match
+blocks either exception. Missing/inconsistent assets or missing/provisional/changed
+permissions require repair, not duplicate import or silent regrant. Inactive device
+remnants do not block an active roster. Existing grants are re-admitted through the
+gateway and checked against exact access mutation generations; metadata, matching
+names, canonical geometry, and cached PCM never grant access. Reused-only batches
+do not enter new-record adoption. Mixed batches conditionally adopt only their new
+or copied records and verify exact published source/asset/clip ownership.
+
+The active identity inventory requires recorded volume/file IDs, not every
+recording online. A known nonmatching recording can remain offline, provisional,
+or without a readable bookmark. Missing identity is a named repair-required
+refusal; classification does not open recording content.
 
 Generic Audio Tracks remain separate from all four recorder comparison layouts
 and from Primary/Backup, alignment, transcription, recording input gain, and

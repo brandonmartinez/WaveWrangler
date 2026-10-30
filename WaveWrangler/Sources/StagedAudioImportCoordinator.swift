@@ -1,4 +1,5 @@
 import AppKit
+import CoreTransferable
 import Foundation
 import Observation
 import UniformTypeIdentifiers
@@ -11,10 +12,22 @@ struct AudioImportReview: Identifiable {
     let id = UUID()
     let scan: ImportScan
     let tracks: [AudioTrack]
+    let choices: [UUID: AudioImportChoice]
     var selected: Set<UUID>
-    var track: AudioTrackID?
+    var order: [UUID]
+    var track: AudioImportTrackIntent
     var newTrackName: String
     var programSeconds: String
+    var layout: AudioImportLayout
+
+    var orderedCandidates: [ImportCandidate] {
+        order.compactMap { id in scan.candidates.first { $0.id == id } }
+    }
+
+    mutating func move(_ id: UUID, by step: Int) {
+        guard let index = order.firstIndex(of: id), order.indices.contains(index + step) else { return }
+        order.swapAt(index, index + step)
+    }
 }
 
 /// Shared Add Audio/Finder-drop staging. Selection is metadata-only; explicit Import authorizes
@@ -49,6 +62,33 @@ final class StagedAudioImportCoordinator {
         self.runtime = runtime
     }
 
+    var canBeginImport: Bool { task == nil && review == nil && processing == nil }
+
+    func refuseDrop(_ reason: String) { error = reason }
+
+    @discardableResult
+    func receiveDrop(_ providers: [NSItemProvider], in state: ShowWindowState,
+                     destination: AudioImportDestination) -> Bool {
+        guard canBeginImport, state.canEdit, !providers.isEmpty else {
+            refuseDrop("Finish the current audio action before dropping local files.")
+            return false
+        }
+        do { try AudioTimelineFileDropPayload.validate(providers) } catch {
+            refuseDrop(error.localizedDescription)
+            return false
+        }
+        beginScan(in: state, destination: destination, layout: .sequential) {
+            var urls: [URL] = []
+            for provider in providers {
+                let file = try await AudioFileLocationLoader.load(from: provider)
+                try Task.checkCancellation()
+                urls.append(file.url)
+            }
+            return urls
+        }
+        return true
+    }
+
     func chooseAudio(in state: ShowWindowState, programSeconds: Double) {
         guard task == nil, review == nil, state.canEdit, let window = state.window else { return }
         let capturedPosition = programSeconds
@@ -66,9 +106,25 @@ final class StagedAudioImportCoordinator {
     }
 
     func scan(_ urls: [URL], in state: ShowWindowState, programSeconds: Double) {
-        guard task == nil, review == nil, !urls.isEmpty, let window = state.window else { return }
+        do {
+            scan(urls, in: state, destination: .init(frame: try AudioClipEditorModel.programFrame(programSeconds),
+                track: .defaultTrack), layout: .overlay)
+        } catch { self.error = error.localizedDescription }
+    }
+
+    func scan(_ urls: [URL], in state: ShowWindowState, destination: AudioImportDestination,
+              layout: AudioImportLayout = .sequential) {
+        guard !urls.isEmpty else { refuseDrop("Choose at least one local audio file."); return }
+        beginScan(in: state, destination: destination, layout: layout) { urls }
+    }
+
+    private func beginScan(in state: ShowWindowState, destination: AudioImportDestination,
+                           layout: AudioImportLayout,
+                           locations: @escaping @MainActor () async throws -> [URL]) {
+        guard canBeginImport, state.canEdit, let window = state.window else { return }
         operation = UUID()
         let id = operation
+        let initialModel = store.model, initialGeneration = store.modelGeneration
         self.state = state
         originWindow = window
         error = nil
@@ -79,6 +135,11 @@ final class StagedAudioImportCoordinator {
         task = Task { [weak self] in
             guard let self else { return }
             do {
+                let urls = try await locations()
+                try validateOwner(id)
+                guard store.model == initialModel, store.modelGeneration == initialGeneration else {
+                    throw Refusal("The drop destination changed while receiving file locations. Drop the files again.")
+                }
                 if let document = store.document, document.mixerTransactions.needsBarrier {
                     try await document.mixerTransactions.barrier(replacingInstances: true, episode: episodeID) {}
                 }
@@ -95,20 +156,25 @@ final class StagedAudioImportCoordinator {
                 shared.activeSourceIDs = { [weak store] in
                     store.map { Set($0.model.episodes.flatMap(\.sources).map(\.id)) }
                 }
-                let scan = try await shared.scanForImport(urls, episodeSourceIDs: store.model.episode(episodeID)?.sources.map(\.id) ?? [])
+                let audioScan = try await shared.scanForAudioImport(urls, in: episodeID) { [weak self] in
+                    guard let self else { throw CancellationError() }
+                    try self.validateDestination(id)
+                    return self.store.model
+                }
+                let scan = audioScan.scan
                 do { try validateDestination(id) } catch {
                     await shared.discardScan(scan.token)
                     throw error
                 }
                 scanToken = scan.token
-                let candidates = scan.candidates.filter { $0.isRecording && !$0.alreadyInEpisode }
-                guard !candidates.isEmpty else {
-                    throw Refusal("No new audio files can be imported. Already referenced media can be reused with Duplicate Clip; unsupported or unreadable selections were not opened.")
-                }
+                let candidates = scan.candidates.filter { $0.isRecording && audioScan.choices[$0.id]?.canImport == true }
                 let tracks = store.model.episode(episodeID)?.audioArrangement?.tracks ?? []
-                review = .init(scan: scan, tracks: tracks, selected: Set(candidates.map(\.id)),
-                    track: tracks.first?.id, newTrackName: "Audio \(tracks.count + 1)",
-                    programSeconds: String(format: "%.6f", programSeconds))
+                review = .init(scan: scan, tracks: tracks, choices: audioScan.choices, selected: Set(candidates.map(\.id)),
+                    order: scan.candidates.map(\.id),
+                    track: destination.track == .defaultTrack
+                        ? tracks.first.map { .existing($0.id) } ?? .newTrack : destination.track,
+                    newTrackName: "Audio \(tracks.count + 1)",
+                    programSeconds: String(format: "%.9f", Double(destination.frame) / 48_000), layout: layout)
                 processing = nil
                 task = nil
             } catch {
@@ -126,14 +192,16 @@ final class StagedAudioImportCoordinator {
             fraction: 0, canCancel: true)
         task = Task { [weak self, weak engine] in
             guard let self, let engine else { return }
-            var tokens: [PendingSourceImport] = []
+            var tokens: [PendingAudioImport] = []
             var published = false
             do {
                 try validateDestination(id)
                 let position = try AudioClipEditorModel.programFrame(review.programSeconds)
-                let chosen = review.scan.candidates.filter { review.selected.contains($0.id) }
-                guard !chosen.isEmpty, chosen.allSatisfy({ $0.isRecording && !$0.alreadyInEpisode }) else {
-                    throw Refusal("Choose at least one new audio file.")
+                let chosen = review.orderedCandidates.filter { review.selected.contains($0.id) }
+                guard !chosen.isEmpty, Set(chosen.map(\.id)).count == chosen.count,
+                      Set(chosen.map(\.id)) == review.selected,
+                      chosen.allSatisfy({ $0.isRecording && review.choices[$0.id]?.canImport == true }) else {
+                    throw Refusal("Choose at least one available audio file. Every selected file must participate.")
                 }
                 guard let snapshot = expected, let episode = snapshot.episode(episodeID) else {
                     throw Refusal("The destination episode is no longer available.")
@@ -143,28 +211,31 @@ final class StagedAudioImportCoordinator {
                     timeline = try await runtime.programComposition(model: snapshot, episode: episodeID).timeline
                 } else { timeline = try ProgramTimeline(episode: episode) }
                 try validateDestination(id)
-                let anchor = try timeline.unpinnedAnchor(atProgramFrame: position)
                 var arrangement = episode.audioArrangement ?? AudioArrangement()
                 let track: AudioTrack
-                if let existing = review.track {
+                switch review.track {
+                case let .existing(existing):
                     guard let destination = arrangement.tracks.first(where: { $0.id == existing }) else {
                         throw Refusal("The selected audio track is no longer available.")
                     }
                     track = destination
-                } else {
+                case .newTrack:
                     let name = review.newTrackName.trimmingCharacters(in: .whitespacesAndNewlines)
                     guard !name.isEmpty else { throw Refusal("Give the new audio track a name.") }
                     track = AudioTrack(name: name)
                     arrangement.tracks.append(track)
+                case .defaultTrack:
+                    throw Refusal("Choose an existing or new Audio Track explicitly.")
                 }
                 var sources = episode.sources
                 var clips: [AudioClipID] = []
                 var waveforms: [SourceID: AudioAssetWaveform] = [:]
+                var nextPosition = position
                 for (index, candidate) in chosen.enumerated() {
-                    let token = try await engine.preparePendingImport(candidate: candidate.id, fromScan: review.scan.token)
+                    let token = try await engine.preparePendingAudioImport(candidate: candidate.id, fromScan: review.scan.token)
                     tokens.append(token)
                     try validateDestination(id)
-                    let read = try await engine.validatePendingImport(token)
+                    let read = try await engine.validatePendingAudioImport(token)
                     try validateDestination(id)
                     let admission = SourceReadAdmission(source: token.source, location: read.location,
                         witness: read.witness, authorization: .explicitUserRequest(for: token.source), availability: .on) {
@@ -182,16 +253,39 @@ final class StagedAudioImportCoordinator {
                             (Double(index) + fraction) / Double(chosen.count), name: candidate.displayName, operation: id)
                     }
                     try validateDestination(id)
-                    var source = read.source
-                    source.purpose = .supplementalAudio
-                    source.observations = qualified.observations
-                    sources.append(source)
-                    arrangement.assets.append(qualified.asset)
+                    if let existing = read.existingAsset, qualified.asset != existing {
+                        throw Refusal("The current original's format no longer matches the verified asset. Repair it before reuse.")
+                    }
+                    let source: SourceRecord
+                    if token.addsSource {
+                        var imported = read.source
+                        imported.purpose = .supplementalAudio
+                        imported.observations = qualified.observations
+                        sources.append(imported)
+                        arrangement.assets.append(qualified.asset)
+                        source = imported
+                    } else {
+                        guard sources.contains(read.source), arrangement.assets.contains(qualified.asset) else {
+                            throw Refusal("The reusable audio source or qualified asset changed.")
+                        }
+                        source = read.source
+                    }
                     let clip = AudioClip(track: track.id, source: source.id,
-                        trim: .init(startFrame: 0, endFrame: qualified.asset.frameCount), anchor: anchor)
+                        trim: .init(startFrame: 0, endFrame: qualified.asset.frameCount),
+                        anchor: try timeline.unpinnedAnchor(atProgramFrame: nextPosition))
                     arrangement.clips.append(clip)
                     clips.append(clip.id)
                     waveforms[source.id] = qualified.waveform
+                    if review.layout == .sequential, index < chosen.count - 1 {
+                        guard let duration = clip.durationFrames(asset: qualified.asset) else {
+                            throw Refusal("The qualified audio has no valid owned duration.")
+                        }
+                        let (end, overflow) = nextPosition.addingReportingOverflow(duration)
+                        guard !overflow, (-AudioArrangement.frameLimit...AudioArrangement.frameLimit).contains(end) else {
+                            throw Refusal("The sequential audio batch exceeds the program timeline limits.")
+                        }
+                        nextPosition = end
+                    }
                 }
                 for token in tokens { try await validatePending(token, engine: engine, operation: id) }
                 try validateDestination(id)
@@ -205,13 +299,16 @@ final class StagedAudioImportCoordinator {
                 publicationPending = true
                 expected = store.model
                 expectedGeneration = store.modelGeneration
-                try await engine.adoptPendingImports(tokens) { [weak self] in
+                let publishedSources = sources
+                let publishedArrangement = arrangement
+                try await engine.adoptPendingAudioImports(tokens) { [weak self] in
                     guard let self else { throw CancellationError() }
                     try self.validateDestination(id)
-                    guard self.store.model.episode(self.episodeID)?.sources.suffix(chosen.count).map(\.id)
-                            == tokens.map(\.source) else {
+                    guard let current = self.store.model.episode(self.episodeID),
+                          current.sources == publishedSources, current.audioArrangement == publishedArrangement else {
                         throw Refusal("The published audio references were replaced.")
                     }
+                    return self.store.model
                 }
                 try validateDestination(id)
                 importedWaveforms.merge(waveforms) { _, new in new }
@@ -223,7 +320,7 @@ final class StagedAudioImportCoordinator {
                 await engine.discardScan(review.scan.token)
                 if scanToken == review.scan.token { scanToken = nil }
             } catch {
-                for token in tokens { engine.discardPendingImport(token) }
+                for token in tokens { engine.discardPendingAudioImport(token) }
                 await fail(error, operation: id, published: published)
             }
         }
@@ -281,9 +378,9 @@ final class StagedAudioImportCoordinator {
         }
     }
 
-    private func validatePending(_ token: PendingSourceImport, engine: WWSourcesSetupEngine, operation id: UUID) async throws {
+    private func validatePending(_ token: PendingAudioImport, engine: WWSourcesSetupEngine, operation id: UUID) async throws {
         try validateDestination(id)
-        _ = try await engine.validatePendingImport(token)
+        _ = try await engine.validatePendingAudioImport(token)
         try validateDestination(id)
     }
 

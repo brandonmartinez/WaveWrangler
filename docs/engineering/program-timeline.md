@@ -268,7 +268,7 @@ positions in real insertion regions have no recorder inverse; review-only
 removed dialogue has no production inverse. Anchor/recorder/cut actions refuse
 those unavailable inverses instead of inventing source samples.
 
-`AudioClipTrackView` appends independent Audio Track rows after the existing four
+`AudioClipTrackView` renders independent Audio Track rows alongside the existing four
 comparison-layout branches. Source-domain measurements are indexed and reprojected
 for placement/crop/split; viewport-sized equatable Canvas drawings keep clip/envelope
 overlays separate from playhead ticks and row height. Blocking import/cold preparation
@@ -279,12 +279,80 @@ supplemental lanes. Projection/waveform jobs use unique publication IDs even whe
 inputs repeat after cancellation; imported measurements transfer only once, and an
 explicit refresh revalidates canonical access. A warm waveform hit still passes
 native preparation's current evidence/format/witness policy before reuse.
-F6 should reuse the staging coordinator for new references, not add direct URL
-parsing or another permission path. Cross-episode existing-asset reuse remains F6
-work; pending-new-import tokens are not that reuse capability. F7
-continues to use the current inverse-anchor helpers and the shared presentation
-geometry; F8 continues to use exact clip-local evaluator coordinates. There are
-no drop, Insert & Ripple, or fade-point controls in F5.
+F6 extends the staging coordinator with the audio-specific boundary below. F7
+continues to use the current inverse-anchor helpers and shared presentation geometry;
+F8 continues to use exact clip-local evaluator coordinates. Neither insertion nor
+fade-point UI is part of this slice.
+
+## F6 location drops and verified supplemental reuse
+
+`AudioTimelineFileDropTarget` registers location-only drops on the actual waveform
+canvases, including clip blocks, recording canvases, the empty canvas, and unused
+space below the tracks. Canvas-local geometry excludes headers/padding and follows
+vertical scrolling without changing fitted row height. `AudioTimelineDropGeometry`
+converts current display position through `AudioTimelineProjection` to a checked
+whole 48 kHz program frame. Review-only cut interiors refuse. Header-only/ambiguous
+drops have no target; nothing silently clamps to zero. Hover is a point and label,
+not a provider load, header read, audio preview, or guessed duration.
+
+The captured destination uses distinct `.defaultTrack`, `.existing(id)`, and
+`.newTrack` intents; review resolves the default before confirmation. Audio lanes
+retain their exact track. Recording/empty canvases review a generic new track.
+`SetupFileDrop` remains the only location decoder; recorder-row, foreign/mixed,
+web-URL and file-promise payloads refuse. The audio-only importer policy never
+enumerates folders. Review reports skipped folders/symlinks/non-audio/hidden/
+unreadable selections, including an empty non-importable review.
+
+`AudioImportReview` retains explicit candidate order, selection, destination, whole
+frame position (displayed as seconds), and layout. Drops default to sequential;
+the picker still defaults to overlay. Ordering controls and an explicit Overlay
+choice precede Import. Each selected file qualifies through the existing runtime.
+Only then does its checked `AudioClip.durationFrames(asset:)` advance the sequential
+cursor, with a separate current `unpinnedAnchor` for the next clip. The completed
+sources/assets/tracks/clips publish in one `settingAudioState`/Add Audio operation.
+No cut/insertion is applied twice; the batch never inserts time.
+
+`WWSourcesSetupEngine.scanForAudioImport(_:in:currentModel:)` propagates ledger
+read/schema failures and binds metadata review to a live, complete canonical model
+validator. All physical matches use volume UUID plus persistent file ID, not the
+importer's legacy first-match hint. The complete canonical roster must account for
+the supplemental geometry/access data. Destination-episode supplemental assets
+take preference over other episode matches. Any active recording or unknown-purpose
+match blocks; an inactive device remnant is not an active source.
+
+Every canonical active source needs recorded volume UUID and persistent file ID
+to rule out physical aliases. Missing identity yields a named repair-required
+refusal, never an invented empty match set. This is identity-inventory completeness,
+not recording read permission or a requirement to bring every recorder online:
+known nonmatching recording identities may be offline, provisional, or have no
+readable bookmark/grant. Classification never opens their content and does not
+require supplemental geometry for recordings.
+
+`PendingAudioImport` is an opaque live engine/scan/candidate token with distinct
+new, reuse-here, and copy-from-episode dispositions. New media delegates the existing
+pending-new path. Reuse-here requires the saved confirmed bookmark, usable recorded
+witness, exact store-issued access snapshot, and current qualified geometry. The
+gateway re-admits both the saved original and dropped location. Persistent witness
+continuity permits only mount device/fsid changes; every read still uses the entire
+freshly admitted witness. Changed, provisional, missing, remote, dataless, stale,
+or inconsistent originals require explicit existing repair.
+
+Cross-episode copy uses that same engine-minted complete-cohort evidence but a new
+episode-owned SourceID and read-only access record after explicit Import. It never
+edits the origin's source/record/role/gains, recording timing, or unrelated episode
+native editors. `RelinkEvaluator` and its `alreadyLinkedTo` protection are unchanged;
+the audio-specific typed path accounts for the complete matching cohort instead of
+erasing that hint or passing a filtered duplicate list. There is no allow-duplicates
+switch, persistent media registry, or caller-created reuse permission.
+
+Prepublication validation requires the original exact canonical snapshot/generation.
+Postpublication validation permits only the single owned audio batch, checks exact
+source/asset/clip ownership, and still checks the original physical cohort and access
+generations around awaits. Reused-only batches skip new-record adoption altogether.
+Mixed/new/copied batches share existing atomic `insertNew`/conditional
+`discardImported`; later/regranted grants are preserved. Failure after publication
+leaves blocked repairable references and an explicit relink/Undo explanation, never
+a canonical rollback or a success-shaped fallback.
 
 ## F7 explicit insertion and safe inserted-time editing
 

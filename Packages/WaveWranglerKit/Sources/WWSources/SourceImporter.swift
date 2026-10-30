@@ -53,6 +53,8 @@ public struct ImportedSource: Sendable, Equatable {
     /// An existing access record *in the same show* whose identity evidence names the same file object
     /// (never merged automatically).
     public var possibleDuplicateOf: SourceID?
+    /// Complete physical matches. The first-match hint above is insufficient for reuse decisions.
+    public var possibleDuplicates: [SourceID]
 }
 
 /// The result of an import. Nothing is persisted and no source is touched until the caller commits.
@@ -74,6 +76,10 @@ public struct ImportPlan: Sendable, Equatable {
 /// bookmark. Sources are never copied, opened, read, hashed, previewed, decoded or modified. Duration,
 /// channel count and sample rate stay `unknown`.
 public struct SourceImporter: Sendable {
+    public enum SelectionPolicy: Sendable {
+        case recordingsAndFolders
+        case audioFilesOnly
+    }
     public let context: SourceAccessContext
 
     public init(context: SourceAccessContext) {
@@ -83,22 +89,29 @@ public struct SourceImporter: Sendable {
     public func plan(
         selection: [URL],
         showID: ShowID,
-        existingRecords: [DeviceAccessRecord] = []
+        existingRecords: [DeviceAccessRecord] = [],
+        policy: SelectionPolicy = .recordingsAndFolders
     ) async throws -> ImportPlan {
         var items: [ImportedSource] = []
         var skipped = ImportSkippedCounts()
         var failures: [ImportFailure] = []
         var seenObjects: Set<String> = []
         let existingByObject = Dictionary(
-            existingRecords.filter { $0.showID == showID }.compactMap { record -> (String, SourceID)? in
+            existingRecords.filter { $0.showID == showID }.compactMap { record -> (String, [SourceID])? in
                 guard let key = record.recordedIdentity.flatMap({ Self.objectKey($0.fingerprint) }) else { return nil }
-                return (key, record.sourceID)
+                return (key, [record.sourceID])
             },
-            uniquingKeysWith: { first, _ in first }
+            uniquingKeysWith: +
         )
 
         for root in selection {
             try Task.checkCancellation()
+            guard root.isFileURL,
+                  policy != .audioFilesOnly || root.host == nil || root.host == ""
+                    || root.host?.lowercased() == "localhost" else {
+                skipped.byCategory[.otherFile, default: 0] += 1
+                continue
+            }
             try context.withScopedAccess(to: root) { scopedRoot in
                 let rootMetadata: SourceMetadata
                 switch context.io.metadata(at: scopedRoot) {
@@ -115,6 +128,17 @@ public struct SourceImporter: Sendable {
                 }
 
                 let candidates: [(ListedItem, [String])]
+                if policy == .audioFilesOnly {
+                    let item = ListedItem(url: scopedRoot, isDirectory: rootMetadata.isDirectory,
+                        isPackage: rootMetadata.isPackage, isHidden: rootMetadata.isHidden,
+                        isSymbolicLink: rootMetadata.isSymbolicLink)
+                    let category = Self.category(for: item)
+                    guard category == .audio, rootMetadata.isDirectory.value == false,
+                          rootMetadata.isSymbolicLink.value == false else {
+                        skipped.byCategory[category == .audio ? .otherFile : category, default: 0] += 1
+                        return
+                    }
+                }
                 if rootMetadata.isDirectory.value == true && rootMetadata.isPackage.value != true {
                     let listing = context.io.listItems(under: scopedRoot)
                     skipped.unreadableEntries += listing.unreadableEntryCount
@@ -207,7 +231,8 @@ public struct SourceImporter: Sendable {
                         sourceRecord: SourceRecord(id: sourceID, displayNameHint: url.lastPathComponent),
                         accessRecord: record,
                         relativePathComponents: relative,
-                        possibleDuplicateOf: Self.objectKey(metadata.fingerprint).flatMap { existingByObject[$0] }
+                        possibleDuplicateOf: Self.objectKey(metadata.fingerprint).flatMap { existingByObject[$0]?.first },
+                        possibleDuplicates: Self.objectKey(metadata.fingerprint).flatMap { existingByObject[$0] } ?? []
                     ))
                 }
             }
@@ -223,6 +248,13 @@ public struct SourceImporter: Sendable {
     static func objectKey(_ fingerprint: FileSystemFingerprint) -> String? {
         guard let volume = fingerprint.volumeUUID.value, let file = fingerprint.fileIdentifier.value else { return nil }
         return "\(volume)/\(file)"
+    }
+
+    public static func physicalMatches(
+        for fingerprint: FileSystemFingerprint, in records: [DeviceAccessRecord]
+    ) -> [DeviceAccessRecord] {
+        guard let object = objectKey(fingerprint) else { return [] }
+        return records.filter { $0.recordedIdentity.flatMap { objectKey($0.fingerprint) } == object }
     }
 
     static let projectExtensions: Set<String> = [

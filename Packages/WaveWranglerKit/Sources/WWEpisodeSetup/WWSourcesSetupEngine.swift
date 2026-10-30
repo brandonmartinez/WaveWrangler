@@ -210,7 +210,10 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     public let monitor: SourceAvailabilityMonitor
     private let preference: (any SourceDownloadPreference)?
     /// Import plans keyed by scan token, so concurrent scans in different windows never mix.
-    private var plans: [UUID: ImportPlan] = [:]
+    var plans: [UUID: ImportPlan] = [:]
+    var audioScans: [UUID: AudioImportSession] = [:]
+    var pendingAudio: [UUID: PendingAudioState] = [:]
+    var preparingAudio: Set<UUID> = []
     private let pendingOwner = UUID()
     private struct PendingImport {
         let token: PendingSourceImport
@@ -221,7 +224,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     private var isShutDown = false
     private var proposals: [SourceID: (url: URL, proposal: RelinkProposal, previous: DeviceAccessRecord?)] = [:]
     private var previousRecords: [UUID: DeviceAccessRecord?] = [:]
-    private let captureRawIdentity: (@Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity)?
+    let captureRawIdentity: (@Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity)?
     private var defaultsObserver: NSObjectProtocol?
     /// Engine-owned work that touches the monitor; shutdown cancels and awaits it before stopping.
     private var tasks: [UUID: Task<Void, Never>] = [:]
@@ -280,6 +283,9 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         defaultsObserver = nil
         plans.removeAll()
         pendingImports.removeAll()
+        audioScans.removeAll()
+        pendingAudio.removeAll()
+        preparingAudio.removeAll()
         for observer in observers.values {
             observer.continuation.finish()
             observer.signal?.fire()
@@ -363,7 +369,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
                 id: item.sourceRecord.id.rawValue,
                 details: WWSourcesStatusMapping.details(item.accessRecord.recordedIdentity?.fingerprint, path: item.accessRecord.lastKnownPath),
                 kind: .recording(typeFromNameOnly: true),
-                alreadyInEpisode: item.possibleDuplicateOf.map(inEpisode.contains) ?? false,
+                alreadyInEpisode: item.possibleDuplicates.contains(where: inEpisode.contains),
                 residency: .unknown
             )
         }
@@ -460,6 +466,8 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     public func discardScan(_ token: UUID) async {
         plans[token] = nil
         pendingImports = pendingImports.filter { $0.value.token.scan != token }
+        audioScans[token] = nil
+        pendingAudio = pendingAudio.filter { $0.value.token.scan != token }
     }
 
     /// Called only by an explicit Import action, never by scan/review. Canonical and device-local
@@ -559,9 +567,6 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         _ tokens: [PendingSourceImport],
         validatingPublication: @MainActor () throws -> Void
     ) async throws {
-        guard let importStore = store as? any DeviceAccessImportStore else {
-            throw SourceEngineError.unavailable(reason: "This access store cannot safely adopt staged audio. Relink the blocked references.")
-        }
         guard !tokens.isEmpty, Set(tokens).count == tokens.count else {
             throw SourceEngineError.failed(reason: "The pending audio batch is empty or contains duplicate tokens.")
         }
@@ -579,6 +584,31 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         }
         try validatingPublication()
         for token in tokens { pendingImports[token.id] = nil }
+        try await adoptAudioRecords(records, reads: reads, validatingPublication: validatingPublication)
+    }
+
+    func consumePendingImport(_ token: PendingSourceImport) throws -> DeviceAccessRecord {
+        try requirePending(token)
+        guard let record = pendingImports.removeValue(forKey: token.id)?.record else {
+            throw SourceEngineError.failed(reason: "The pending audio access was already consumed.")
+        }
+        return record
+    }
+
+    func adoptAudioRecords(
+        _ records: [DeviceAccessRecord], reads: [PendingSourceImportRead],
+        validatingPublication: @MainActor () throws -> Void,
+        validatingOrigins: @MainActor () async throws -> Void = {}
+    ) async throws {
+        guard let importStore = store as? any DeviceAccessImportStore else {
+            throw SourceEngineError.unavailable(reason: "This access store cannot safely adopt staged audio. Relink the blocked references.")
+        }
+        guard !records.isEmpty, records.count == reads.count else {
+            throw SourceEngineError.failed(reason: "The pending audio access batch is empty or incomplete.")
+        }
+        try validatingPublication()
+        try await validatingOrigins()
+        try validatingPublication()
         let inserted = try await importStore.insertNew(records)
         do {
             try Task.checkCancellation()
@@ -599,6 +629,16 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
                 guard let current = try await importStore.snapshot(for: snapshot.record.key),
                       current == snapshot, current.storeIdentity == snapshot.storeIdentity else {
                     throw SourceEngineError.failed(reason: "Audio access was changed or regranted during adoption.")
+                }
+                try Task.checkCancellation()
+                try validatingPublication()
+            }
+            try await validatingOrigins()
+            try validatingPublication()
+            for snapshot in inserted {
+                guard let current = try await importStore.snapshot(for: snapshot.record.key),
+                      current == snapshot, current.storeIdentity == snapshot.storeIdentity else {
+                    throw SourceEngineError.failed(reason: "Audio access changed while validating the reused originals.")
                 }
                 try Task.checkCancellation()
                 try validatingPublication()

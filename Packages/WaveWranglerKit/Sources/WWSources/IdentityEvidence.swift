@@ -159,6 +159,16 @@ public struct RawSourceIdentity: Sendable, Codable, Equatable {
         )
     }
 
+    /// Persistent continuity across remounts, never a substitute for a complete live read witness.
+    package func matchesPersistentOriginal(_ other: RawSourceIdentity) -> Bool {
+        isUsable && other.isUsable && version == other.version && volumeUUID == other.volumeUUID
+            && inode == other.inode && sizeBytes == other.sizeBytes && mode == other.mode
+            && dataless == other.dataless && birthSeconds == other.birthSeconds
+            && birthNanoseconds == other.birthNanoseconds
+            && modificationSeconds == other.modificationSeconds
+            && modificationNanoseconds == other.modificationNanoseconds
+    }
+
     /// Mechanical descriptor evidence only. This does not authorize a decode.
     package static func onDescriptor(_ fd: Int32) -> RawSourceIdentity? {
         SystemSourceIO.rawIdentity(onDescriptor: fd)

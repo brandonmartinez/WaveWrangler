@@ -121,6 +121,59 @@ struct AudioProgramProjectionHostedTests {
         #expect(try Data(contentsOf: url) == original)
     }
 
+    @Test func sequentialDropsInverseAnchorEveryClipAfterExistingCutsAndInsertions() async throws {
+        let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 10)
+        defer { f.close() }
+        let owner = helper.owner(f), editor = f.model.audioEditor
+        let initial = try #require(f.document.store.model.episode(f.model.episodeID))
+        let accepted = try #require(initial.alignment?.acceptedMap)
+        let region = try AudioInsertionRegion(anchor: .dialogue(.init(map: accepted, frame: 48_000)),
+                                             durationFrames: 24_000)
+        let cut = ManualEpisodeCut(alignmentRevision: accepted.revision, startFrame: 96_000, endFrame: 192_000)
+        try #require(f.document.store.apply("Synthetic edited program") { model throws(DomainError) in
+            var next = model
+            let index = next.episodes.firstIndex { $0.id == initial.id }!
+            var cleanup = next.episodes[index].cleanup ?? EpisodeCleanup()
+            cleanup.manualCuts = [cut]
+            next.episodes[index].cleanup = cleanup
+            return try next.settingAudioArrangement(.init(insertionRegions: [region]), in: initial.id)
+        })
+        let first = f.folder.appendingPathComponent("first-drop.wav")
+        let second = f.folder.appendingPathComponent("second-drop.wav")
+        try AudioClipEditorHostedTests.wave(rate: 44_100, frames: 44_100).write(to: first)
+        try AudioClipEditorHostedTests.wave(rate: 48_000, frames: 48_000).write(to: second)
+        let context = SourceAccessContext(io: SystemSourceIO())
+        let engine = WWSourcesSetupEngine(showID: f.document.store.model.show.id,
+            store: FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json")), context: context,
+            captureRawIdentity: { url, fingerprint in
+                try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+            })
+        defer { Task { await engine.shutdown() } }
+        editor.importer.sourceEngineForTesting = engine
+        for start in [Int64(60_000), 132_000, 576_000] {
+            let before = try #require(f.document.store.model.episode(initial.id))
+            editor.importer.scan([first, second], in: owner.state,
+                destination: .init(frame: start, track: .newTrack))
+            try await helper.wait { editor.importer.review != nil || editor.importer.error != nil }
+            editor.importer.commit(try #require(editor.importer.review))
+            try await helper.wait { editor.importer.processing == nil }
+            try #require(editor.importer.error == nil, Comment(rawValue: editor.importer.error ?? ""))
+            editor.refresh()
+            let ids = Set(editor.importer.completedClips)
+            let placed = try #require(editor.composition?.clips.filter { ids.contains($0.clip.id) })
+            #expect(placed.map(\.programFrames.lowerBound) == [start, start + 48_000])
+            if start == 60_000 {
+                let expectedSecond = try AudioDialogueAnchor(map: accepted, frame: 84_000)
+                #expect(placed[0].clip.anchor == .insertion(region: region.id, offsetFrames: 12_000))
+                #expect(placed[1].clip.anchor == .dialogue(expectedSecond))
+            }
+            let after = try #require(f.document.store.model.episode(initial.id))
+            #expect(after.alignment == initial.alignment && after.cleanup == before.cleanup)
+            #expect(after.speakerAssignments == initial.speakerAssignments && after.recorderGroups == initial.recorderGroups)
+            #expect(after.sources.filter(\.isRecording) == initial.sources)
+        }
+    }
+
     @Test func dialogueImportProjectsWordsMarkersAndOverlappingCutReviewWithoutChangingPins() async throws {
         let helper = MixerHostedTests(), f = try await helper.ready()
         defer { f.close() }
