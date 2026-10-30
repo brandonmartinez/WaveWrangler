@@ -40,8 +40,8 @@
       "historicalRecord": "docs/m2/fixtures/m3-freeze-decode-6.json",
       "historicalRecordSHA256": "dcf87786e907e949d64e105acca352e6ef6c28bf24cce773eaa3be7ff181b9c3",
       "currentTrees": {
-        "Sources/WWDecode": "9475de351d3e56e524f011d8be6009f690c3c455",
-        "Tests/WWDecodeTests": "8aee1489f3689b76a3b901d8ac6ebacd7e6a84fd"
+        "Sources/WWDecode": "b5f64d1d37a36817a187a16581eaee4270d6af38",
+        "Tests/WWDecodeTests": "11b94f78c79eae7a1c9f45793bee8eb91958732b"
       }
     }
   }

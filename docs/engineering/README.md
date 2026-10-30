@@ -604,6 +604,80 @@ halo while seeking over skipped prefixes. PCM windows can therefore reach late e
 without decoding earlier hours. Other codecs retain the 600-second decoded-prefix budget until
 their priming and exact seek behavior are established.
 
+#### MP3 qualification and native supplemental-source preparation (F3)
+
+`DecodeEnvelope` v2 adds standalone MPEG-1 Layer III at 32,000, 44,100, and 48,000 Hz,
+mono or left/right stereo/joint stereo. Admission is byte-based, never extension-based.
+The qualified subset has an unprotected MPEG header and an Info (CBR) or Xing (VBR) frame
+with all four Xing fields and a CRC-valid LAME extension. LAME delay must be 576 frames,
+padding 576...1727 frames, and the declared frame/byte counts, native packet table,
+data offset, and reader length must agree. ID3v2.3/v2.4 leading metadata and an optional
+complete ID3v1 trailer are allowed; unaccounted trailing bytes refuse. Sequential decode
+checks every MPEG frame, the LAME music CRC, and the exact native codec-stream count.
+The CRC detects damage, not malicious tampering or content authenticity.
+
+Generated LAME CBR 128 kbps / VBR quality-2 evidence covers all three rates and both
+channel counts, asymmetric channel landmarks, one-frame through short packet-boundary
+lengths, and a 90-second-plus stereo source. Source frame 0 remains the first audible
+frame after declared priming; valid decoded counts exactly equal the generated input.
+Existing PCM/AAC/ALAC/FLAC/Opus semantics and the interpretation-v1 serialized field
+set are unchanged. MP3 in M4A, MPEG-2/2.5, free-format/protected/dual-channel streams,
+missing/unknown delay, non-LAME/unverified accounting, invalid checksums, truncation,
+and changing frame parameters refuse explicitly. This is not a claim that arbitrary
+MP3 files or other encoder conventions are qualified.
+
+`WWDerived.NativeSourcePreparation` is the reusable **unaligned** native-rate contract
+for F4, not recorder alignment, diagnostic Solo admission, a mixer, or an export path.
+`SourceReadAdmission` carries frozen evidence only. Its required throwing
+`validateCurrentAccess` closure must recheck the caller's current selection, consent,
+availability, and access record; F4 supplies that app adapter. Both preparation and
+every cache-hit read scope invoke it before and after work, open the original through
+the full-witness-bound gateway, compare the complete expected interpretation, and
+perform final unchanged checks. Saved review/remount equivalence never relaxes this
+live PCM identity.
+
+`prepare(_:expectedFormat:progress:)` decodes once into bounded planar little-endian
+Float32 source tiles. `PreparedSourceAudio` describes nominal rate, actual valid
+source-frame count, preserved channels, and an opaque complete preparation.
+`readWindow(_:from:admission:)` takes an exact half-open source-frame range; it returns
+exactly that count per channel and marks EOF only when the range ends at the actual
+source end. An empty EOF range is allowed. Invalid/oversized ranges, missing/damaged
+tiles, eviction, or unknown layouts fail rather than clamp, select channel 0, or
+fill scheduled media with silence. Only explicit mono `[42]` and stereo `[1,2]`
+channel-label evidence is admitted. No resampling occurs: downstream resampling must
+use a stateful or absolute-source-phase recipe, not independently restart a converter
+for each requested window.
+
+Default tiles are 16,384 frames, windows at most 65,536 frames, with a configurable
+total storage ceiling capped at 1 GiB (including conservative tile/manifest overhead).
+Memory holds bounded decode/tile/window buffers and a storage-budget-bounded key index,
+never a whole-source PCM array. Source identity, the full format/channels/layout,
+decoder/envelope versions, source coverage, and the no-SRC conversion recipe bind keys.
+Tiles use `DerivedAssetStore`'s flushed staging and read-back verification. A fresh
+UUID isolates each preparation; all tiles remain unpublished until complete decode
+and final checks, then the usable manifest publishes last. Cancellation or any
+failure strictly cleans unpublished work and cannot reuse an earlier partial session.
+One preparation runs at a time; a competing call receives `preparationInProgress`.
+Verified entries may be LRU-evicted to stay within the shared storage budget.
+
+Keep exactly one preparation actor for each exclusively owned cache root. It owns
+`native-source-pcm-v1` beneath that root, reuses prepared sources across clips/windows,
+and clears that dedicated child store on construction: reuse across application
+launches is intentionally not implemented. Do not place unrelated derived entries
+in this child store. A generated 2,000,123-frame stereo lossless source verifies
+that a 200-frame late window touches one tile with **zero native decode calls**;
+opening its verification scope reads headers, not a decoded prefix.
+
+Run the installed-encoder evidence explicitly (no encoder installation or external
+media download): `WW_MP3_LAME="$(command -v lame)" SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 2 --filter 'MP3QualificationTests|NativeSourcePreparationTests'`.
+Source the configured shell environment first. Without `WW_MP3_LAME`, generated MP3
+cases are visibly skipped; pure refusal/parser and ordinary preparation tests still run.
+The maintained decoder/test tree pins are refreshed separately in
+`source-tree-baselines.json`. M3-DECODE-006 remains bound to its original envelope-1
+population, with every calibration draw compared to the unchanged archived records.
+Historical freeze bytes, measurements, seeds, gates, and changed-tree holdout refusal
+are untouched; those records confer no inherited MP3 qualification.
+
 File-local adaptive listening uses a separate pitch-preserving multichannel path, not `WWRender`'s
 affine SRC. Witnessed reads feed a memory-only nominal PCM converter inside `WWDecode`, then one
 direct native TimePitch unit with unchanged channel order. Region-anchored twelve-second processing

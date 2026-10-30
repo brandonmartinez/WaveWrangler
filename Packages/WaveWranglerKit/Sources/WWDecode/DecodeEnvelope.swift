@@ -9,12 +9,13 @@ import WWSources
 ///
 /// **Bump `version`** whenever an entry is added, removed or narrowed.
 public enum DecodeEnvelope {
-    public static let version = 1
+    public static let version = 2
 
     public static let standardSampleRates = [8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000, 88200, 96000, 176400, 192000]
     /// Rates the platform AAC encoder produces (it has no encoder above 48 kHz).
     public static let aacSampleRates = [8000, 11025, 16000, 22050, 24000, 32000, 44100, 48000]
     public static let opusSampleRates = [8000, 16000, 24000, 48000]
+    public static let mp3SampleRates = [32000, 44100, 48000]
 
     public struct Entry: Sendable, Hashable {
         public var container: ContainerKind
@@ -38,6 +39,7 @@ public enum DecodeEnvelope {
             Entry(container: .caf, codec: .appleLossless, sampleFormats: [.lossless(16), .lossless(20), .lossless(24), .lossless(32)], sampleRates: standardSampleRates, channelCounts: codedChannels),
             Entry(container: .flac, codec: .flac, sampleFormats: [.lossless(16), .lossless(24)], sampleRates: standardSampleRates, channelCounts: codedChannels),
             Entry(container: .caf, codec: .opus, sampleFormats: [.lossy], sampleRates: opusSampleRates, channelCounts: [1, 2]),
+            Entry(container: .mp3, codec: .mp3, sampleFormats: [.lossy], sampleRates: mp3SampleRates, channelCounts: [1, 2]),
         ]
     }()
 
@@ -63,6 +65,14 @@ public enum DecodeEnvelope {
         guard entry.channelCounts.contains(channels) else { throw .unsupported(.channelCount(channels)) }
         guard facts.framesPerPacket > 0 else { throw .unsupported(.variableFramesPerPacket) }
         if codec.isLossy, facts.packetTable == nil { throw .unsupported(.encoderDelayUnknown) }
+        if codec == .mp3 {
+            guard let mp3 = facts.mp3Accounting else { throw .unsupported(.mp3Accounting("missing qualified frame evidence")) }
+            guard mp3.table == facts.packetTable, mp3.packetCount == facts.packetCount,
+                  mp3.sampleRate == rate, mp3.channelCount == channels,
+                  facts.framesPerPacket == 1152 else {
+                throw .inconsistentStream(.mp3Integrity("platform and LAME accounting disagree"))
+            }
+        }
 
         switch facts.containerLength {
         case let .exceedsFile(declared, available):
@@ -110,7 +120,7 @@ public enum DecodeEnvelope {
                 packetCount: facts.packetCount,
                 maximumPacketSize: facts.maximumPacketSize,
                 averageBitRate: facts.averageBitRate,
-                isVariableBitRate: facts.bytesPerPacket == 0
+                isVariableBitRate: facts.mp3Accounting?.isVariableBitRate ?? (facts.bytesPerPacket == 0)
             ),
             output: DecodedOutputFormat(sampleRate: rate, channelCount: channels, representsSourceSamplesExactly: sampleFormat.isExactInFloat32),
             origin: DecodedFrameOrigin(sourceSampleRate: rate, decodedFrameCount: valid, discardedLeadingStreamFrames: priming, declaredTrailingStreamFrames: remainder),
@@ -148,7 +158,7 @@ public enum DecodeEnvelope {
             case 4: return .lossless(32)
             default: throw .unsupported(.sampleFormat("\(codec.rawValue) source depth flags \(facts.formatFlags)"))
             }
-        case .aac, .opus:
+        case .aac, .opus, .mp3:
             return .lossy
         }
     }

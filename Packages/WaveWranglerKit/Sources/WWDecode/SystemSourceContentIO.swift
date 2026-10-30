@@ -34,6 +34,8 @@ package struct SystemSourceContentIO: SourceContentIO {
     package var rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
     /// Test-only root descriptor for rejecting an invalid mount before any content read.
     package var volumeRootDescriptor: Int32?
+    /// Test-only measurement of actual native decode calls (header/cache probes do not count).
+    package var rawFrameReadObserver: (@Sendable () -> Void)?
     #endif
 
     package func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
@@ -251,8 +253,12 @@ private final class SystemDecodingReader: DecodingContentReader {
     private let expectedRaw: RawSourceIdentity?
     #if DEBUG
     private let rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
+    private let rawFrameReadObserver: (@Sendable () -> Void)?
     #endif
     private var streamFramesRead: Int64 = 0
+    private var mp3ValidatedPackets: Int64 = 0
+    private var mp3BytePosition: Int64 = 0
+    private var mp3MusicCRC: UInt16 = 0
     private var isClosed = false
 
     private init(
@@ -265,6 +271,7 @@ private final class SystemDecodingReader: DecodingContentReader {
         gateway: SystemSourceContentIO
     ) {
         self.facts = facts
+        mp3BytePosition = facts.mp3Accounting?.firstAudioByte ?? 0
         self.file = file
         self.retainedFile = retainedFile
         self.audioFile = audioFile
@@ -272,6 +279,7 @@ private final class SystemDecodingReader: DecodingContentReader {
         self.expectedRaw = expectedRaw
         #if DEBUG
         rawIdentityChallenge = gateway.rawIdentityChallenge
+        rawFrameReadObserver = gateway.rawFrameReadObserver
         #endif
         bufferList = AudioBufferList.allocate(maximumBuffers: Int(facts.channelsPerFrame))
     }
@@ -370,6 +378,25 @@ private final class SystemDecodingReader: DecodingContentReader {
             dataOffset: hasDataOffset ? dataOffset : nil,
             file: file
         )
+        let mp3: MP3AccountingEvidence?
+        do {
+            mp3 = containerType == kAudioFileMP3Type ? try qualifyMP3(file) : nil
+        } catch {
+            discard(nil)
+            throw error
+        }
+        if let mp3 {
+            guard hasTable, hasPacketCount, hasByteCount, hasDataOffset,
+                  table.mNumberValidFrames == mp3.table.validFrames,
+                  Int64(table.mPrimingFrames) == mp3.table.primingFrames,
+                  Int64(table.mRemainderFrames) == mp3.table.remainderFrames,
+                  packetCount == mp3.packetCount,
+                  dataOffset == mp3.firstAudioByte,
+                  byteCount == mp3.audioEndByte - mp3.firstAudioByte else {
+                discard(nil)
+                throw .unsupported(.mp3Accounting("native packet/byte accounting disagrees with LAME"))
+            }
+        }
         if file.lastErrno != 0 {
             discard(nil)
             throw failure(forErrno: file.lastErrno)
@@ -445,9 +472,13 @@ private final class SystemDecodingReader: DecodingContentReader {
                 remainderFrames: Int64(table.mRemainderFrames)
             ) : nil,
             readerLengthFrames: readerLength,
-            channelLayout: layout,
-            containerLength: length,
-            openedFile: openedState(info)
+            channelLayout: mp3.map {
+                // MPEG's channel-mode bits establish mono or left/right, even without an AudioFile layout.
+                ChannelLayoutFacts(isDeclaredBySource: true, channelLabels: $0.channelCount == 1 ? [42] : [1, 2])
+            } ?? layout,
+            containerLength: mp3.map { .consistent(declaredBytes: $0.audioEndByte - $0.firstAudioByte) } ?? length,
+            openedFile: openedState(info),
+            mp3Accounting: mp3
         )
         return SystemDecodingReader(
             facts: facts, file: file, retainedFile: retained, audioFile: audioFile, extFile: extFile,
@@ -457,6 +488,9 @@ private final class SystemDecodingReader: DecodingContentReader {
 
     func readRawFrames(into buffer: RawDecodeBuffer) throws(DecodeFailure) -> Int {
         precondition(!isClosed, "read after close")
+        #if DEBUG
+        rawFrameReadObserver?()
+        #endif
         precondition(buffer.channelCount == Int(facts.channelsPerFrame), "buffer channel count must match the source")
         let capacity = buffer.capacityFrames
         for index in 0..<buffer.channelCount {
@@ -474,6 +508,32 @@ private final class SystemDecodingReader: DecodingContentReader {
         guard status == noErr else { throw .decodeFailed(status: status, atStreamFrame: streamFramesRead) }
         guard Int(frames) <= capacity else { throw .inconsistentStream(.readerOverran(requested: capacity, returned: Int(frames))) }
         streamFramesRead += Int64(frames)
+        if let mp3 = facts.mp3Accounting {
+            let expectedFrames = mp3.packetCount * 1152
+            guard streamFramesRead <= expectedFrames, frames != 0 || streamFramesRead == expectedFrames else {
+                throw .inconsistentStream(.mp3Integrity("native decoded codec-stream frame count"))
+            }
+            let target = frames == 0 ? mp3.packetCount : min(mp3.packetCount, (streamFramesRead + 1151) / 1152)
+            while mp3ValidatedPackets < target {
+                guard let first = file.bytes(at: mp3BytePosition, count: 4) else {
+                    throw .inconsistentStream(.mp3Integrity("short audio frame header"))
+                }
+                let header = try MP3FrameHeader(first[...])
+                guard header.sampleRate == mp3.sampleRate, header.channelCount == mp3.channelCount,
+                      mp3BytePosition + Int64(header.byteCount) <= mp3.audioEndByte,
+                      let bytes = file.bytes(at: mp3BytePosition, count: header.byteCount) else {
+                    throw .inconsistentStream(.mp3Integrity("short or changing audio frame"))
+                }
+                mp3MusicCRC = MP3Qualification.crc(bytes, starting: mp3MusicCRC)
+                mp3BytePosition += Int64(header.byteCount)
+                mp3ValidatedPackets += 1
+            }
+            if mp3ValidatedPackets == mp3.packetCount {
+                guard mp3BytePosition == mp3.audioEndByte, mp3MusicCRC == mp3.musicCRC else {
+                    throw .inconsistentStream(.mp3Integrity("audio frame count/bytes or LAME music CRC"))
+                }
+            }
+        }
         return Int(frames)
     }
 
@@ -528,6 +588,33 @@ private final class SystemDecodingReader: DecodingContentReader {
 }
 
 // MARK: - Property helpers
+
+/// Header-only qualification. Complete audio-frame and music-CRC validation advances with decoding,
+/// so opening a prepared-cache read scope never scans or decodes an entire prefix.
+private func qualifyMP3(_ file: ReadOnlyDescriptor) throws(DecodeFailure) -> MP3AccountingEvidence {
+    var offset: Int64 = 0
+    if let id3 = file.bytes(at: 0, count: 10), Array(id3.prefix(3)) == Array("ID3".utf8) {
+        guard [3, 4].contains(id3[3]), id3[6..<10].allSatisfy({ $0 < 128 }) else {
+            throw .unsupported(.mp3Accounting("unsupported ID3 header"))
+        }
+        let size = id3[6..<10].reduce(Int64(0)) { $0 << 7 | Int64($1) }
+        offset = 10 + size + (id3[3] == 4 && id3[5] & 0x10 != 0 ? 10 : 0)
+    }
+    guard let first = file.bytes(at: offset, count: 4) else { throw .unsupported(.encoderDelayUnknown) }
+    let header = try MP3FrameHeader(first[...])
+    guard let frame = file.bytes(at: offset, count: header.byteCount) else {
+        throw .truncated(declaredBytes: Int64(header.byteCount), availableBytes: max(0, file.sizeBytes - offset))
+    }
+    let evidence = try MP3Qualification.firstFrame(frame, at: offset)
+    guard evidence.audioEndByte <= file.sizeBytes else {
+        throw .truncated(declaredBytes: evidence.audioEndByte, availableBytes: file.sizeBytes)
+    }
+    let trailing = file.sizeBytes - evidence.audioEndByte
+    guard trailing == 0 || (trailing == 128 && file.bytes(at: evidence.audioEndByte, count: 3) == Array("TAG".utf8)) else {
+        throw .unsupported(.mp3Accounting("unaccounted trailing bytes"))
+    }
+    return evidence
+}
 
 private func property<T: BitwiseCopyable>(_ file: AudioFileID, _ id: AudioFilePropertyID, _ value: inout T) -> OSStatus {
     var size = UInt32(MemoryLayout<T>.size)

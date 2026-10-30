@@ -21,6 +21,7 @@ public struct StagedDerivedAsset: Sendable {
     public let key: DerivedAssetKey
     let url: URL
     let digest: String
+    let byteCount: Int
 }
 
 /// The app-owned cache of derived assets (WW-020).
@@ -168,7 +169,7 @@ public struct DerivedAssetStore: Sendable {
             try? files.remove(url)
             throw .verificationFailed("staged bytes differ")
         }
-        return StagedDerivedAsset(key: key, url: url, digest: digest)
+        return StagedDerivedAsset(key: key, url: url, digest: digest, byteCount: bytes.count)
     }
 
     /// Atomically moves a verified staged asset into place. Called by the coordinator only after its currency
@@ -192,6 +193,46 @@ public struct DerivedAssetStore: Sendable {
         try? files.remove(staged.url)
     }
 
+    /// Exact cache key only; used to clean up session-owned PCM publication and bounded eviction.
+    func removePreparedEntry(_ key: DerivedAssetKey) throws {
+        let url = try assetURL(digest: key.digest)
+        if files.exists(url) { try files.remove(url) }
+    }
+
+    /// Bounds correct and corrupt cache entries before a whole-tile read. These URLs are derived
+    /// cache keys, never original-source locations.
+    func preparedPayload(for key: DerivedAssetKey, maximumBytes: Int) throws -> Data? {
+        let url = try assetURL(digest: key.digest)
+        guard files.exists(url) else { return nil }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey, .isSymbolicLinkKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true,
+              let size = values.fileSize, size <= maximumBytes else {
+            throw DerivedAssetStoreError.verificationFailed("oversized or nonregular prepared PCM entry")
+        }
+        return Self.decode(try files.read(url), expecting: key)
+    }
+
+    /// This is used only by the exclusively owned, session-local native PCM child store.
+    func cleanPreparedEntries(keeping live: Set<String>) throws {
+        for orphan in try cacheItems(staging: true) {
+            guard Self.isConfined(orphan, under: stagingDirectory) else {
+                throw DerivedAssetStoreError.verificationFailed("unconfined prepared staging entry")
+            }
+            try files.remove(orphan)
+        }
+        for url in try cacheItems(staging: false) where !live.contains(url.lastPathComponent) {
+            guard Self.isConfined(url, under: assetsDirectory) else {
+                throw DerivedAssetStoreError.verificationFailed("unconfined prepared cache entry")
+            }
+            try files.remove(url)
+        }
+    }
+
+    private func cacheItems(staging: Bool) throws -> [URL] {
+        if staging { return try files.contentsOfDirectory(stagingDirectory) }
+        return try files.contentsOfDirectory(assetsDirectory)
+    }
+
     // MARK: - Reading
 
     /// The published payload for `key`, or `nil` if absent, damaged or recorded for a different key.
@@ -203,7 +244,7 @@ public struct DerivedAssetStore: Sendable {
     /// Removes orphaned staging files left by an interrupted publication. Published assets are untouched.
     @discardableResult
     public func recover() -> Int {
-        let orphans = (try? files.contentsOfDirectory(stagingDirectory)) ?? []
+        let orphans = (try? cacheItems(staging: true)) ?? []
         var removed = 0
         for orphan in orphans where Self.isConfined(orphan, under: stagingDirectory) {
             if (try? files.remove(orphan)) != nil { removed += 1 }
@@ -214,7 +255,7 @@ public struct DerivedAssetStore: Sendable {
     /// Removes published assets whose digest is not in `live`. Never touches anything outside `assets/`.
     @discardableResult
     public func prune(keeping live: Set<String>) -> Int {
-        let published = (try? files.contentsOfDirectory(assetsDirectory)) ?? []
+        let published = (try? cacheItems(staging: false)) ?? []
         var removed = 0
         for url in published where Self.isConfined(url, under: assetsDirectory) && !live.contains(url.lastPathComponent) {
             if (try? files.remove(url)) != nil { removed += 1 }

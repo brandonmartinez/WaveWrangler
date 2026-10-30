@@ -78,6 +78,8 @@ public enum UnsupportedReason: Sendable, Equatable, Hashable, Codable {
     case unverifiableContainerLength
     /// Variable frames per packet, which the envelope does not cover.
     case variableFramesPerPacket
+    /// MP3 outside the qualified MPEG-1/Info-or-Xing/LAME accounting profile.
+    case mp3Accounting(String)
 }
 
 public enum InconsistencyReason: Sendable, Equatable, Hashable, Codable {
@@ -89,4 +91,6 @@ public enum InconsistencyReason: Sendable, Equatable, Hashable, Codable {
     case invalidDeclaredCount(String)
     /// The platform reader returned more frames than requested.
     case readerOverran(requested: Int, returned: Int)
+    /// MP3 frame structure or the encoder's tag/music checksum disagreed with the bytes.
+    case mp3Integrity(String)
 }

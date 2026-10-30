@@ -732,6 +732,7 @@ enum AlignmentPresentation {
         case .encoderDelayUnknown: "the encoder delay is unknown"
         case .unverifiableContainerLength: "can't verify this file's declared length"
         case .variableFramesPerPacket: "variable frames per packet are unsupported"
+        case .mp3Accounting: "this MP3's frame and encoder-delay accounting is unsupported"
         }
     }
 

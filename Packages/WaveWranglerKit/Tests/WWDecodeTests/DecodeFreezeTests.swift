@@ -101,6 +101,13 @@ struct DecodeCalibrationTests {
 
     /// Every split covers every stratum and every planted variant, with lengths and chunks inside the recipe.
     @Test func recipeCoversEveryStratumAndPlantedVariant() {
+        let canonical = DecodeFixture.historicalEnvelopeEntries.map { entry in
+            "\(entry.container.rawValue)/\(entry.codec.rawValue):\(entry.sampleFormats.map(\.description).joined(separator: ","))"
+                + ":\(entry.sampleRates.map(String.init).joined(separator: ","))"
+                + ":\(entry.channelCounts.map(String.init).joined(separator: ","))"
+        }.joined(separator: "\n")
+        #expect(SHA256.hash(data: Data(canonical.utf8)).map { String(format: "%02x", $0) }.joined()
+            == "0ad289ecae57d7a1d3e9a4779f556f63e3b3be6625f8f05995b800acd0ebb7fa")
         for (split, count) in [("calibration", DecodeFixture.calibrationCases), ("holdout", DecodeFixture.holdoutCases)] {
             let cases = (0 ..< count).map { DecodeFreezeCase(split: split, index: $0) }
             #expect(Set(cases.map(\.stratum)) == Set(DecodeStratum.allCases))
@@ -280,7 +287,8 @@ struct DecodeFreezeTests {
 
         let versions = try #require(json["versions"] as? [String: Int])
         #expect(versions == [
-            "DecodeEnvelope.version": DecodeEnvelope.version,
+            // This immutable historical record is not an envelope-v2 MP3 qualification.
+            "DecodeEnvelope.version": DecodeFixture.historicalEnvelopeVersion,
             "FormatInterpretation.currentVersion": FormatInterpretation.currentVersion,
             "OutputSettingsPolicy.version": OutputSettingsPolicy.version,
         ])
@@ -334,7 +342,8 @@ struct DecodeFreezeTests {
         try #require(Set(trees.keys) == ["Sources/WWDecode", "Tests/WWDecodeTests"])
         let package = Self.repository.appendingPathComponent("Packages/WaveWranglerKit")
         for (path, expected) in trees {
-            #expect(try Self.gitTreeID(package.appendingPathComponent(path)) == expected, "\(path)")
+            let actual = try Self.gitTreeID(package.appendingPathComponent(path))
+            #expect(actual == expected, "\(path): maintained tree \(actual)")
         }
     }
 
@@ -390,10 +399,15 @@ struct DecodeFreezeTests {
         #expect(records.allSatisfy { $0.split == "calibration" })
         #expect(records.map(\.caseIndex) == Array(0 ..< DecodeFixture.calibrationCases) + [-1])
         for record in records where record.caseIndex >= 0 {
+            let draw = DecodeFreezeCase(split: "calibration", index: record.caseIndex)
             #expect(record.seed == String(
                 format: "0x%016llX",
                 DecodeFixture.seed(split: "calibration", index: record.caseIndex)
             ))
+            #expect(record.stratum == draw.stratum.name)
+            #expect(record.spec == draw.spec.testDescription)
+            #expect(record.frames == draw.frames && record.chunkFrames == draw.chunkFrames)
+            #expect(record.kind == (draw.plant == nil ? "supported" : "planted"))
         }
         #expect(DecodeGateEvaluation.evaluate(records).allSatisfy { $0.passed })
 

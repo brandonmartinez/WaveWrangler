@@ -313,6 +313,7 @@ public actor DecodingCursor {
     private var closed = false
     private var failure: DecodeFailure?
     private var hasSought = false
+    private var hasVerified = false
 
     fileprivate init(worker: CursorWorker) {
         self.worker = worker
@@ -399,6 +400,7 @@ public actor DecodingCursor {
             try SourceDecoder.checkCancellation()
             try await worker.verifyUnchanged()
             try SourceDecoder.checkCancellation()
+            hasVerified = true
         } catch {
             failure = error
             throw error
@@ -407,7 +409,7 @@ public actor DecodingCursor {
 
     func verifyForReturn() async throws(DecodeFailure) {
         try checkUsable()
-        if currentReadCalls > 0 || hasSought { try await verifyUnchanged() }
+        if currentReadCalls > 0 || hasSought || hasVerified { try await verifyUnchanged() }
     }
 
     func close() async {
