@@ -65,8 +65,9 @@ stereo Master/output. Compatibility is unit-specific. There is no export/file-de
 ## Audio intros and inserted time
 
 Ordinary Audio Clip placement overlays the program; it never creates a gap.
-Choose **Insert Intro...** or **Insert & Ripple...** above the timeline to
-explicitly insert time. The preview shows signed **program** start, duration
+Open the compact **Inserted Time** menu above the timeline and choose
+**Insert Intro...** or **Insert & Ripple...** to explicitly insert time.
+The preview shows signed **program** start, duration
 or end, every affected dialogue interval, clip start, and inserted region.
 Intro defaults to the earliest retained dialogue, inserted region, or unpinned
 clip, not an assumed zero. Unrelated earlier pins stay fixed; an audio-only

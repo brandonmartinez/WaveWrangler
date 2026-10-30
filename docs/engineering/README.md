@@ -167,8 +167,11 @@ preparation. Import/cold clip preparation still uses the shared blocking operati
 The fixed bottom-pane header retains Detach Mixer when a short docked body yields
 space to tracks; divider preferences are not replaced with the temporary minimum.
 
-**Insert Intro...**, **Insert & Ripple...**, and the **Inserted Time** menu stay
-in the fixed workspace action chrome; selected-clip shortcuts are in its inspector.
+The compact, icon-only **Inserted Time** menu holds explicit **Insert Intro...**,
+**Insert & Ripple...**, and region-edit commands in the fixed workspace action
+chrome; selected-clip shortcuts remain in its inspector. Keeping one native menu
+avoids another wrapping action row at the minimum window size with the inspector
+open, preserving the reachable bottom-pane Detach controls.
 The generation-bound sheet previews a whole `AudioInsertionEditing` value and
 publishes one `settingAudioArrangement` through the existing guarded editor/store.
 It does not capture/ignore native Audio Unit changes: the normal document

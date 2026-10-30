@@ -19,21 +19,30 @@ final class AudioInsertionUITests: XCTestCase {
         clip.click()
         let start = app.textFields["ww.audioClip.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 5), app.debugDescription)
+        let origin = app.windows["ww.show.window"]
+        XCTAssertEqual(origin.frame.width, 760, accuracy: 1)
+        XCTAssertEqual(origin.frame.height, 492, accuracy: 1)
+        XCTAssertEqual(app.scrollViews["ww.inspector"].frame.width, 300, accuracy: 1)
         app.buttons["ww.review.toggle"].click()
-        app.buttons["ww.review.detach"].click()
+        let detach = app.buttons["ww.review.detach"]
+        XCTAssertTrue(wait {
+            detach.exists && origin.frame.contains(detach.frame) && detach.isHittable
+        }, "Detach Review must remain inside the minimum window with the inspector open: \(app.debugDescription)")
+        detach.click()
         let review = app.windows["ww.review.window"]
-        XCTAssertTrue(review.waitForExistence(timeout: 5))
-        let intro = app.buttons["ww.audioInsertion.intro"]
-        XCTAssertTrue(intro.isHittable && intro.isEnabled, app.debugDescription)
-        intro.click()
+        XCTAssertTrue(review.waitForExistence(timeout: 5), app.debugDescription)
+        focusWindow(origin, in: app)
+        openInsertion(intro: true, in: app)
         let preview = app.staticTexts["ww.audioInsertion.preview"]
         XCTAssertTrue(preview.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertEqual(app.textFields["ww.audioInsertion.position"].value as? String, "0.000000000")
         XCTAssertEqual(app.textFields["ww.audioInsertion.length"].value as? String, "10.000000000")
-        XCTAssertTrue(preview.label.contains("0.000000000 to 10.000000000"), preview.label)
+        XCTAssertTrue(displayedText(preview).contains("0.000000000 to 10.000000000"), displayedText(preview))
         XCTAssertEqual(String(describing: app.checkBoxes["ww.audioInsertion.retarget"].value ?? ""), "0")
         app.checkBoxes["ww.audioInsertion.retarget"].click()
-        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label CONTAINS '40.000000000 s of audio'")).firstMatch.exists)
+        XCTAssertTrue(app.sheets.firstMatch.staticTexts.matching(NSPredicate(
+            format: "label CONTAINS %@ OR value CONTAINS %@",
+            "40.000000000 s of audio", "40.000000000 s of audio")).firstMatch.exists)
         screenshot(app, name: "F7 explicit intro preview with intact forty-second bed")
         app.buttons["ww.audioInsertion.apply"].click()
         XCTAssertTrue(wait { !app.buttons["ww.audioInsertion.apply"].exists }, app.debugDescription)
@@ -51,10 +60,11 @@ final class AudioInsertionUITests: XCTestCase {
         app.buttons["ww.audioWorkspace.playMix"].click()
         let status = app.descendants(matching: .any)["alignment.waveforms.transport.status"]
         XCTAssertTrue(wait {
-            (status.value as? String ?? status.label).hasPrefix("Playing the production mix")
+            displayedText(status).hasPrefix("Playing the production mix")
         }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.play"].click()
         XCTAssertTrue(app.buttons["ww.audioWorkspace.sourceAudition"].isHittable)
+        focusWindow(review, in: app)
         review.buttons["ww.review.reattach"].click()
         XCTAssertTrue(wait { !review.exists })
         app.typeKey("s", modifierFlags: .command)
@@ -68,27 +78,27 @@ final class AudioInsertionUITests: XCTestCase {
         let playhead = app.textFields["alignment.waveforms.playhead"]
         replace(playhead, with: "1")
         playhead.typeKey(.return, modifierFlags: [])
-        app.buttons["ww.audioInsertion.insert"].click()
+        openInsertion(intro: false, in: app)
         XCTAssertTrue(app.textFields["ww.audioInsertion.position"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.textFields["ww.audioInsertion.position"].value as? String, "1.000000000")
         replace(app.textFields["ww.audioInsertion.length"], with: "3")
         let preview = app.staticTexts["ww.audioInsertion.preview"]
-        XCTAssertTrue(wait { preview.label.contains("1.000000000 to 4.000000000") }, app.debugDescription)
+        XCTAssertTrue(wait { displayedText(preview).contains("1.000000000 to 4.000000000") }, app.debugDescription)
         app.popUpButtons["ww.audioInsertion.lengthMode"].click()
         app.menuItems["End (program seconds)"].click()
         XCTAssertEqual(app.textFields["ww.audioInsertion.length"].value as? String, "4.000000000")
-        XCTAssertTrue(preview.label.contains("1.000000000 to 4.000000000"))
+        XCTAssertTrue(displayedText(preview).contains("1.000000000 to 4.000000000"))
         app.buttons["ww.audioInsertion.apply"].click()
         XCTAssertTrue(wait { regionCount(app) == "1 regions" }, app.debugDescription)
         openFirstRegion(app)
         replace(app.textFields["ww.audioInsertion.length"], with: "1")
-        XCTAssertTrue(wait { preview.label.contains("1.000000000 to 2.000000000") }, app.debugDescription)
+        XCTAssertTrue(wait { displayedText(preview).contains("1.000000000 to 2.000000000") }, app.debugDescription)
         screenshot(app, name: "F7 inserted-time duration and affected dialogue preview")
         app.buttons["ww.audioInsertion.apply"].click()
         XCTAssertTrue(wait { !app.buttons["ww.audioInsertion.apply"].exists })
         openFirstRegion(app)
         app.checkBoxes["ww.audioInsertion.remove"].click()
-        XCTAssertTrue(wait { preview.label.contains("Remove PROGRAM time at 1.000000000") }, app.debugDescription)
+        XCTAssertTrue(wait { displayedText(preview).contains("Remove PROGRAM time at 1.000000000") }, app.debugDescription)
         app.buttons["ww.audioInsertion.apply"].click()
         XCTAssertTrue(wait { regionCount(app) == "0 regions" })
         timelineFocus(app)
@@ -107,7 +117,7 @@ final class AudioInsertionUITests: XCTestCase {
     func testEmptySignedProgramRefusesInvalidDurationAndNestedInsertion() {
         let app = launch(dialogue: false)
         defer { app.terminate() }
-        app.buttons["ww.audioInsertion.intro"].click()
+        openInsertion(intro: true, in: app)
         XCTAssertTrue(app.textFields["ww.audioInsertion.position"].waitForExistence(timeout: 5))
         replace(app.textFields["ww.audioInsertion.position"], with: "-2")
         replace(app.textFields["ww.audioInsertion.length"], with: "0")
@@ -118,15 +128,17 @@ final class AudioInsertionUITests: XCTestCase {
         replace(app.textFields["ww.audioInsertion.length"], with: "86401")
         XCTAssertFalse(app.buttons["ww.audioInsertion.apply"].isEnabled)
         replace(app.textFields["ww.audioInsertion.length"], with: "4")
-        XCTAssertTrue(wait { app.staticTexts["ww.audioInsertion.preview"].label.contains("-2.000000000 to 2.000000000") })
+        XCTAssertTrue(wait {
+            displayedText(app.staticTexts["ww.audioInsertion.preview"]).contains("-2.000000000 to 2.000000000")
+        }, app.debugDescription)
         app.buttons["ww.audioInsertion.apply"].click()
         XCTAssertTrue(wait { regionCount(app) == "1 regions" })
         let playhead = app.textFields["alignment.waveforms.playhead"]
         replace(playhead, with: "0")
         playhead.typeKey(.return, modifierFlags: [])
-        app.buttons["ww.audioInsertion.insert"].click()
+        openInsertion(intro: false, in: app)
         XCTAssertTrue(app.staticTexts["ww.audioInsertion.refusal"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["ww.audioInsertion.refusal"].label.contains("cannot nest"))
+        XCTAssertTrue(displayedText(app.staticTexts["ww.audioInsertion.refusal"]).contains("cannot nest"))
         XCTAssertFalse(app.buttons["ww.audioInsertion.apply"].isEnabled)
         app.buttons["ww.audioInsertion.cancel"].click()
         XCTAssertEqual(regionCount(app), "1 regions")
@@ -147,8 +159,35 @@ final class AudioInsertionUITests: XCTestCase {
         if minimum { app.launchArguments += ["-WWUITestMinimumShowWindow", "YES"] }
         app.launch()
         app.activate()
-        XCTAssertTrue(app.buttons["ww.audioInsertion.intro"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.audioInsertion.regions"].waitForExistence(timeout: 20),
+                      app.debugDescription)
         return app
+    }
+
+    private func openInsertion(intro: Bool, in app: XCUIApplication) {
+        let menu = app.descendants(matching: .any)["ww.audioInsertion.regions"]
+        XCTAssertTrue(wait { menu.exists && menu.isEnabled && menu.isHittable }, app.debugDescription)
+        menu.click()
+        let command = app.menuItems[intro ? "Insert Intro…" : "Insert & Ripple…"]
+        XCTAssertTrue(command.waitForExistence(timeout: 5) && command.isEnabled, app.debugDescription)
+        command.click()
+    }
+
+    private func displayedText(_ element: XCUIElement) -> String {
+        element.value as? String ?? element.label
+    }
+
+    private func focusWindow(_ window: XCUIElement, in app: XCUIApplication) {
+        let title = window.title.components(separatedBy: " \u{2013} ").first ?? window.title
+        app.menuBars.menuBarItems["Window"].click()
+        let matching = app.menuBars.menuItems.matching(NSPredicate(
+            format: "title BEGINSWITH %@ OR label BEGINSWITH %@", title, title))
+        let item = window.identifier == "ww.show.window"
+            ? matching.matching(NSPredicate(format:
+                "NOT (title CONTAINS %@ OR label CONTAINS %@)", "Transcript & Review", "Transcript & Review")).firstMatch
+            : matching.firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
+        item.click()
     }
 
     private func regionCount(_ app: XCUIApplication) -> String? {
@@ -180,7 +219,9 @@ final class AudioInsertionUITests: XCTestCase {
     }
 
     private func screenshot(_ app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.windows["ww.show.window"].screenshot())
+        let sheet = app.sheets.firstMatch
+        XCTAssertTrue(sheet.exists, app.debugDescription)
+        let attachment = XCTAttachment(screenshot: sheet.screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)

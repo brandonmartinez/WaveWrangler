@@ -7,7 +7,7 @@ struct AudioInsertionControls: View {
     let programPlayhead: Double?
 
     var body: some View {
-        Group {
+        Menu("Inserted Time", systemImage: "rectangle.expand.vertical") {
             Button("Insert Intro…") {
                 editor.requestInsertion(intro: true, programSeconds: nil)
             }
@@ -16,22 +16,23 @@ struct AudioInsertionControls: View {
                 editor.requestInsertion(intro: false, programSeconds: programPlayhead)
             }
             .accessibilityIdentifier("ww.audioInsertion.insert")
-            Menu("Inserted Time", systemImage: "rectangle.expand.vertical") {
-                if let regions = editor.composition?.timeline.insertions, !regions.isEmpty {
-                    ForEach(regions, id: \.region.id) { insertion in
-                        Button("\(AudioInsertionSheet.seconds(insertion.programFrames.lowerBound)) s · \(AudioInsertionSheet.seconds(insertion.region.durationFrames)) s") {
-                            editor.requestInsertionEdit(insertion.region.id)
-                        }
-                        .accessibilityIdentifier("ww.audioInsertion.region.\(insertion.region.id)")
+            Divider()
+            if let regions = editor.composition?.timeline.insertions, !regions.isEmpty {
+                ForEach(regions, id: \.region.id) { insertion in
+                    Button("\(AudioInsertionSheet.seconds(insertion.programFrames.lowerBound)) s · \(AudioInsertionSheet.seconds(insertion.region.durationFrames)) s") {
+                        editor.requestInsertionEdit(insertion.region.id)
                     }
-                } else {
-                    Text(editor.composition == nil ? "Program placement unavailable" : "No inserted time")
+                    .accessibilityIdentifier("ww.audioInsertion.region.\(insertion.region.id)")
                 }
+            } else {
+                Text(editor.composition == nil ? "Program placement unavailable" : "No inserted time")
             }
-            .help("Review, move, resize, or remove inserted program time without deleting clip audio.")
-            .accessibilityValue("\(editor.composition?.timeline.insertions.count ?? 0) regions")
-            .accessibilityIdentifier("ww.audioInsertion.regions")
         }
+        .labelStyle(.iconOnly)
+        .help("Insert Intro, Insert & Ripple, or review, move, resize, and remove inserted time without deleting clip audio.")
+        .accessibilityLabel("Inserted Time")
+        .accessibilityValue("\(editor.composition?.timeline.insertions.count ?? 0) regions")
+        .accessibilityIdentifier("ww.audioInsertion.regions")
         .disabled(!editor.store.canEdit)
     }
 }

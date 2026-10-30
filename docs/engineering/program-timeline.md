@@ -362,6 +362,15 @@ revalidates their exact agreement. It changes only `audioArrangement` and
 returns the whole validated arrangement/composition for preview. It does not
 add schema, source access, decoding, DSP, clocks, history, or export machinery.
 
+The fixed workspace chrome uses one compact, icon-only native **Inserted Time**
+menu for explicit **Insert Intro...**, **Insert & Ripple...**, and region-edit
+commands. Selected-clip inspector shortcuts remain separate. This does not add
+a wrapping row that can consume the bottom-pane header at a 760-by-492-point
+window with its 300-point inspector open. The real UI workflow asserts that
+Detach Review remains contained and hittable at that same minimum, without
+enlarging the window or hiding the inspector. Native static-text assertions read
+the AX value first, then the label; preview numbers and semantic checks remain exact.
+
 `inserting(at:duration:moving:id:)` accepts a final signed 48 kHz program point.
 It inverse-anchors through the current `ProgramTimeline`. A region interior
 refuses; an exact start edge reuses that verified region's non-insertion anchor
