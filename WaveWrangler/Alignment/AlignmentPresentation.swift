@@ -450,7 +450,7 @@ enum AlignmentRowsProjection {
         return episode.recorderGroups.flatMap { group in
             group.epochs.map { epoch in
                 let mapped = Set(mappedSources[epoch.id] ?? [])
-                let sources = episode.sources.filter {
+                let sources = episode.alignmentSources.filter {
                     mapped.contains($0.id)
                         || ($0.placement.recorderGroupID == group.id && $0.placement.epochID == epoch.id)
                 }

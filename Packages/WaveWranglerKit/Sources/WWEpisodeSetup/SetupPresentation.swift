@@ -226,7 +226,8 @@ public struct SetupPresentation: Sendable {
             let sentence = "\(group.name) — recorder group · \(Self.count(members.count, "source"))"
             rows.append(SetupSourceRow(id: .group(group.id), name: sentence, epoch: .none, channel: .none, speaker: .none, role: .none, status: nil, children: shown.map(sourceRow), accessibilityLabel: sentence, recordedFacts: nil))
         }
-        let ungrouped = episode.sources(inRecorderGroup: nil)
+        // Keep assets reachable for availability/relink without placing them in a recorder group.
+        let ungrouped = episode.sources(inRecorderGroup: nil) + episode.supplementalAudioSources
         let shownUngrouped = sorted(ungrouped)
         if !(onlyNeedingAttention && shownUngrouped.isEmpty) {
             let sentence = "Ungrouped · \(Self.count(ungrouped.count, "source"))"

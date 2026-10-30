@@ -241,14 +241,15 @@ final class EpisodeSetupViewController: NSObject, SetupCommandActions, NSMenuIte
         case #selector(newRecorderGroup(_:)), #selector(newSpeaker(_:)): return hasEpisode
         case #selector(renameRecorderGroup(_:)): return groupID != nil
         case #selector(renameSpeaker(_:)), #selector(deleteSpeaker(_:)): return singleSpeaker != nil
-        case #selector(assignToRecorderGroup(_:)), #selector(assignSpeaker(_:)), #selector(removeSourceFromEpisode(_:)):
+        case #selector(removeSourceFromEpisode(_:)):
             return !sources.isEmpty
+        case #selector(assignToRecorderGroup(_:)), #selector(assignSpeaker(_:)), #selector(setChannel(_:)):
+            return !sources.isEmpty && sources.allSatisfy { model.episode?.source($0)?.isRecording == true }
         case #selector(setPrimaryForSpeaker(_:)): return singleSpeaker != nil
         case #selector(setEpoch(_:)):
             return !sources.isEmpty && sources.allSatisfy { model.episode?.source($0)?.placement.recorderGroupID != nil }
         case #selector(startNewEpoch(_:)):
             return (!sources.isEmpty && sources.allSatisfy { model.episode?.source($0)?.placement.recorderGroupID != nil }) || groupID != nil
-        case #selector(setChannel(_:)): return !sources.isEmpty
         case #selector(useAsTimingReference(_:)):
             return model.timingReferenceCandidate.map { model.timingReferenceSelection.canSelect($0) } ?? false
         case #selector(useAsPrimary(_:)):

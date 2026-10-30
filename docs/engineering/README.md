@@ -1098,10 +1098,10 @@ UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPre
 `-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
 `-WWForceReduceMotion YES`.
 
-### Mixer model and persistence (schema 9)
+### Mixer model and persistence (schemas 9-10)
 
 `WWCore.Episode.mix` holds optional `EpisodeMixState`; absence is neutral:
-0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-8 shows
+0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-9 shows
 require the existing consented C5 migration with an exact-byte backup. Migration
 changes no timing, transcripts, cuts, assignments, or history. Older-schema
 payloads carrying mix state are refused, even when the state is neutral; newer
@@ -1142,6 +1142,98 @@ refused. Limits are 16 MiB per slot, 64 MiB per episode, 64 inserts per bus,
 64 levels of state nesting, and 1024 UTF-8 bytes per diagnostic string. State
 numbers must be finite. No discovery result, live unit, editor, or observer is
 serialized.
+
+#### Supplemental audio domain and source purpose (schema 10)
+
+`SourceRecord.purpose` is independent of `SourceRole`: omitted means recording;
+`.supplementalAudio` is an immutable referenced asset, never a fake speaker or
+recorder. `SourceID` is the canonical asset identity in the existing episode
+source registry and device-local access ledger. Multiple clips in that episode
+reuse it. Source IDs remain unique across a show; this adds no cross-episode
+physical-file/relink bypass. Physical recorder duplicate and complete recording
+verification safeguards are unchanged.
+
+Use `Episode.alignmentSources` for **all** recording-only work, including
+ungrouped/unavailable recordings. Assets cannot acquire recorder groups/epochs,
+speaker Primary/Backup assignments, recording input gain, timing-reference,
+alignment, diagnostic recorder Solo, or ASR roles. Source management, availability,
+inspection and relinking still use `Episode.sources`. Existing Sources rows keep
+assets reachable, but recording-specific controls are disabled. `sources(inRecorderGroup:)`
+returns recordings only, including its `nil`/Ungrouped case.
+
+`Episode.audioArrangement` is optional `AudioArrangement`:
+
+- `assets: [AudioAsset]` holds qualified native decoded `frameCount`, integer
+  `sampleRate`, and `channelCount`, keyed by the existing `SourceID`. Qualification
+  is geometry, not an access grant. Known `SourceObservations` must agree;
+  contradictory later observations are refused without erasing prior facts.
+- `tracks: [AudioTrack]` is visual order with stable `AudioTrackID` and a name.
+  `clips: [AudioClip]` references `AudioClipID`, `track`, and `source`. Repeated
+  source use and same-track overlaps are valid; no speaker/recorder subtype exists.
+- `trim: AudioSourceTrim` is half-open decoded-source frames. `channels: nil`
+  preserves every native channel in order, including stereo; explicit ordered
+  channel indices must be unique and in range.
+- `anchor: AudioPlacementAnchor` uses synthesized tagged Codable cases:
+  `programOrigin(frame:)` is unpinned placement without an accepted dialogue map;
+  `dialogue(AudioDialogueAnchor)` follows the original-aligned grid before manual
+  cuts; `absolute(frame:)` pins to program time; `insertion(region:offsetFrames:)`
+  follows an `AudioInsertionRegionID`. Program-origin reconciliation must preserve
+  position when dialogue is later admitted. Insertion regions have an anchor and
+  positive `durationFrames`, cannot nest, and do not result from ordinary placement.
+- `AudioDialogueAnchor` persists `alignmentRevision`, `mapIdentity`, and `frame`.
+  `mapIdentity` is lowercase SHA-256 of sorted-key, non-slash-escaped canonical
+  `TimeMapVersion` JSON, including inputs and adaptive corrections. Construct it
+  with `init(map:frame:)` and recheck `isCurrent(in:)`; a same-number replacement
+  is not admission. Retained but noncurrent anchors require later placement review.
+- `envelope: AudioClipEnvelope` holds ordered `AudioEnvelopePoint(frame:amplitude:)`
+  values on the clip-local 48 kHz grid. Empty means unity; amplitudes are finite
+  0...1 with exact zero silence. Interpolation is piecewise linear amplitude;
+  endpoint values hold outside the points. Points may include the exclusive clip
+  endpoint to define a final ramp.
+
+Program/clip-local coordinates use 48,000 frames per second, bounded to the
+existing signed 24-hour frame limits. Native assets are bounded to 24 hours,
+8-192 kHz and 1-64 channels; this is a model bound, **not decoder qualification**.
+Checked arithmetic rejects invalid trims, overflowing/extreme frames and dangling
+source/track/map/insertion references. F2 owns projection, cut ripple, extents and
+envelope evaluation; F1 does not shift clocks, alter accepted maps/transcripts or
+rewrite manual-cut provenance.
+
+`EpisodeMixState.audioTracks` is optional sparse `[AudioTrackMixState]`, keyed by
+`AudioTrackID`, beside existing speaker/Master keys. Each strip has finite
+-96...24 dB `gainDB`, -1...1 stereo `balance`, and ordered inserts. Neutral
+fallback is `mix.state(for: trackID)`. Insert IDs and state-byte budgets remain
+episode-wide across speaker, audio-track and Master buses.
+
+Pure `settingAudioState(_:mix:sources:in:)` validates a whole compound replacement;
+`settingAudioArrangement`, add/replace/remove track/clip, and `settingAudioTrackMix`
+provide focused edits. Apply the result through the normal shared store for one
+Undo/Redo transaction. Its optional source replacement cannot alter the recording
+partition or clock assignments. Track deletion removes its clips and strip, never its media.
+`removingSource` refuses a source still used by clips; explicitly remove the clips,
+qualified asset and source together with `settingAudioState` for a compound removal.
+
+`EpisodeMediaInputs` contains only the complete recording partition. Asset imports,
+clip edits and fades do not stale recording timing, waveforms or original-source
+transcripts. `EpisodeProcessingInputs` additionally freezes used asset observations,
+qualified geometry, clips/envelopes/anchors, insertion regions, track identities and
+normalized audio-track mix. Unused asset metadata and track names/order are not audio
+dependencies. `hasSameProgramInputs(as:)` supports live mix controls while refusing
+prepared program/source changes; `hasSameMixerTopology(as:)` additionally checks
+audio-track inserts beside speaker/Master inserts. The native-state replacement
+barrier uses that predicate, not live fader/balance targets.
+Runtime render recipes must still bind current
+source witnesses and decoder interpretation; canonical equality is not authorization.
+The accepted-map context cache retains its exact map-history snapshot identity and
+live coordinator-ready checks; unrelated asset revision tokens do not invalidate it.
+
+Schema 1-9 migrate directly to 10 through the existing verified publication path,
+with exact-byte backups and read-only recovery/edit-checkpoint upgrades. Migration
+preserves old maps, cleanup, mixer state and history; no purpose, arrangement, track
+mix, assets or clips are synthesized. Older payloads containing any new field are
+refused even if neutral. Newer schemas are refused before payload interpretation.
+Until F2/F4 provide program projection and clip routes, `MixerRecipe` explicitly
+refuses nonempty clip/insertion state instead of emitting a dialogue-only mix.
 
 The pure `ShowDocumentModel` operations `settingMix(_:in:)`,
 `settingInputGain(_:for:in:)`, `settingSpeakerMix(_:in:)`, and

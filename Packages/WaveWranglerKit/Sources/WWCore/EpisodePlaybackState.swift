@@ -17,7 +17,7 @@ public struct EpisodePlaybackState: Sendable, Equatable {
     }
 
     public func isAudible(_ sourceID: SourceID, in episode: Episode) -> Bool {
-        guard let source = episode.source(sourceID) else { return false }
+        guard let source = episode.source(sourceID), source.isRecording else { return false }
         var memberships: Set<EpisodePlaybackScope> = [.source(sourceID)]
         if let group = source.placement.recorderGroupID { memberships.insert(.recorder(group)) }
         for reference in episode.references(to: sourceID) { memberships.insert(.speaker(reference.speakerID)) }
@@ -26,7 +26,7 @@ public struct EpisodePlaybackState: Sendable, Equatable {
     }
 
     public func audibleSources(in episode: Episode) -> [SourceID] {
-        episode.sources.map(\.id).filter { isAudible($0, in: episode) }
+        episode.alignmentSources.map(\.id).filter { isAudible($0, in: episode) }
     }
 
     public mutating func setMuted(_ value: Bool, scope: EpisodePlaybackScope) {
@@ -39,11 +39,11 @@ public struct EpisodePlaybackState: Sendable, Equatable {
 
     public func canApply(_ policy: EditingPlaybackPolicy, in episode: Episode) -> Bool {
         let primaries = Set(episode.speakerAssignments.compactMap { $0.primary?.sourceID })
-            .intersection(episode.sources.map(\.id))
+            .intersection(episode.alignmentSources.map(\.id))
         switch policy {
         case .keepChoices: return true
         case .muteNonPrimaries, .soloPrimaries: return !primaries.isEmpty
-        case .soloBackups: return episode.sources.contains { !primaries.contains($0.id) }
+        case .soloBackups: return episode.alignmentSources.contains { !primaries.contains($0.id) }
         }
     }
 
@@ -53,7 +53,7 @@ public struct EpisodePlaybackState: Sendable, Equatable {
         }
         var result = self
         let primaries = Set(episode.speakerAssignments.compactMap { $0.primary?.sourceID })
-        let nonPrimaries = Set(episode.sources.map(\.id)).subtracting(primaries)
+        let nonPrimaries = Set(episode.alignmentSources.map(\.id)).subtracting(primaries)
         switch policy {
         case .keepChoices: break
         case .muteNonPrimaries:
@@ -67,7 +67,7 @@ public struct EpisodePlaybackState: Sendable, Equatable {
     }
 
     public mutating func retainScopes(in episode: Episode) {
-        let sources = Set(episode.sources.map { EpisodePlaybackScope.source($0.id) })
+        let sources = Set(episode.alignmentSources.map { EpisodePlaybackScope.source($0.id) })
         let speakers = Set(episode.speakerAssignments.map { EpisodePlaybackScope.speaker($0.speakerID) })
         let recorders = Set(episode.recorderGroups.map { EpisodePlaybackScope.recorder($0.id) })
         let valid = sources.union(speakers).union(recorders)

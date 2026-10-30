@@ -101,7 +101,7 @@ actor AlignmentRuntime {
 
     func inspect(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> Prepared {
         sourceByEpoch[episodeID] = nil
-        let records = model.episode(episodeID)?.sources ?? []
+        let records = model.episode(episodeID)?.alignmentSources ?? []
         let sources = try await resolveLocations(records)
         let byID = Dictionary(uniqueKeysWithValues: sources.map { ($0.id, $0) })
         var byEpoch: [RecordingEpochID: AlignmentSource] = Dictionary(
@@ -546,7 +546,7 @@ actor AlignmentRuntime {
         var tracks: [AlignmentWaveformTrack] = []
         var refusals: [AlignmentWaveformRefusal] = []
         var admissions: [SourceID: WaveformSourceAdmission] = [:]
-        let selectedSources = episode.sources.filter { onlySources?.contains($0.id) ?? true }
+        let selectedSources = episode.alignmentSources.filter { onlySources?.contains($0.id) ?? true }
         for (index, record) in selectedSources.enumerated() {
             try Task.checkCancellation()
             guard let groupID = record.placement.recorderGroupID,
@@ -1471,10 +1471,11 @@ actor AlignmentRuntime {
         return reconciler
     }
 
+    /// Recording-only admission. Assets share the access ledger but never receive recording work grants.
     private func resolveSources(_ records: [SourceRecord]) async throws -> [AlignmentSource] {
         var values: [AlignmentSource] = []
         let evaluator = SourceAvailabilityEvaluator(context: access)
-        for source in records {
+        for source in records.filter(\.isRecording) {
             let key = DeviceAccessKey(showID: showID, sourceID: source.id)
             let record = try await sourceAccess.record(for: key)
             let evaluation = evaluator.evaluate(key: key, record: record, setting: .on)
@@ -1516,7 +1517,7 @@ actor AlignmentRuntime {
     /// registers a revision; explicit Analyze/Audition actions perform those content-gateway preparations.
     private func resolveLocations(_ records: [SourceRecord]) async throws -> [AlignmentSource] {
         var values: [AlignmentSource] = []
-        for source in records {
+        for source in records.filter(\.isRecording) {
             let key = DeviceAccessKey(showID: showID, sourceID: source.id)
             let record = try await sourceAccess.record(for: key)
             guard let bookmark = record?.bookmark else {

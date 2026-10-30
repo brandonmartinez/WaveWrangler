@@ -39,13 +39,7 @@ final class MixerDocumentTransactions {
             guard controller.hasObservedState else { return false }
             let id = controller.episodeID
             guard let old = prior.episode(id), let new = next.episode(id) else { return true }
-            let a = old.mix ?? EpisodeMixState(), b = new.mix ?? EpisodeMixState()
-            return !next.hasSameMediaInputs(as: prior, in: id)
-                || old.activeManualCuts != new.activeManualCuts
-                || a.master.inserts != b.master.inserts
-                || old.speakerAssignments.contains {
-                    a.state(for: $0.speakerID).inserts != b.state(for: $0.speakerID).inserts
-                }
+            return !EpisodeProcessingInputs(old).hasSameMixerTopology(as: EpisodeProcessingInputs(new))
         }
     }
 

@@ -125,6 +125,10 @@ public struct MixerRecipe: Sendable, Equatable {
 
     public init(episode: Episode, sources: [MixerSourceSnapshot], programFrames: Range<Int64>,
                 panLaw: MixerPanLaw = .equalPower, policy: MixerRenderPolicy = .init()) throws {
+        guard episode.audioArrangement?.clips.isEmpty != false,
+              episode.audioArrangement?.insertionRegions.isEmpty != false else {
+            throw MixerFailure.invalidRecipe("supplemental audio requires program projection and clip mixer routes")
+        }
         let mix = episode.mix ?? EpisodeMixState()
         guard policy.isValid, mix.validationIssues(in: episode).isEmpty,
               !programFrames.isEmpty, programFrames.lowerBound >= -ManualEpisodeCut.frameLimit,
@@ -144,7 +148,7 @@ public struct MixerRecipe: Sendable, Equatable {
                   source.interpretation.source == primary.sourceID,
                   let channel = primary.resolvedChannel(channelCount: source.interpretation.channelCount),
                   (1...2).contains(source.interpretation.channelCount),
-                  episode.source(primary.sourceID) != nil else {
+                  episode.source(primary.sourceID)?.isRecording == true else {
                 throw MixerFailure.unresolvedChannel(primary.sourceID)
             }
             let reference = ChannelReference(sourceID: primary.sourceID, statedChannel: channel)

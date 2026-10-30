@@ -5,6 +5,9 @@ public enum DomainError: Error, Sendable, Equatable {
     case invalidCleanup
     case invalidWorkspace(String)
     case invalidMix(String)
+    case invalidAudio(String)
+    case sourceIsNotRecording(SourceID)
+    case sourceUsedByAudioClips(SourceID)
     case emptyTitle
     case duplicateEpisode(EpisodeID)
     case duplicateSpeaker(SpeakerID)
@@ -61,6 +64,11 @@ extension ShowDocumentModel {
             }
         }
         copy.episodes.append(newEpisode)
+        if newEpisode.audioArrangement != nil || newEpisode.mix?.audioTracks != nil
+            || newEpisode.sources.contains(where: { $0.purpose != nil }),
+           let issue = copy.validationIssues().first {
+            throw .invalidAudio(issue.description)
+        }
         return copy
     }
 
@@ -112,6 +120,7 @@ extension ShowDocumentModel {
     ) throws(DomainError) -> ShowDocumentModel {
         guard let episode = self.episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let index = episode.sources.firstIndex(where: { $0.id == sourceID }) else { throw .sourceNotFound(sourceID) }
+        guard episode.sources[index].isRecording else { throw .sourceIsNotRecording(sourceID) }
         return try updatingEpisode(episodeID) {
             $0.sources[index].role = role
             $0.sources[index].roleConfirmation = confirmation
@@ -216,11 +225,15 @@ extension ShowDocumentModel {
         guard let index = episodes.firstIndex(where: { $0.id == id }) else { throw .episodeNotFound(id) }
         var copy = self
         transform(&copy.episodes[index])
+        if let issue = copy.validationIssues().first(where: {
+            $0.code == .invalidSourcePurpose || $0.code == .invalidAudio
+        }) { throw .invalidAudio(issue.description) }
         return copy
     }
 
     private static func validatedSource(for channel: ChannelReference, in episode: Episode) throws(DomainError) -> SourceRecord {
         guard let source = episode.source(channel.sourceID) else { throw .sourceNotFound(channel.sourceID) }
+        guard source.isRecording else { throw .sourceIsNotRecording(source.id) }
         guard let index = channel.channel.value else { return source }
         guard index >= 0 else { throw .invalidChannel(channel) }
         if let count = source.observations.channelCount.value, index >= count {

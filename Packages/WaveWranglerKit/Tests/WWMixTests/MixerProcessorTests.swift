@@ -49,6 +49,28 @@ struct MixFixture {
 
 @Suite("Shared mixer processing", .serialized)
 struct MixerProcessorTests {
+    @Test func supplementalProgramStateRefusesRatherThanSilentlyOmittingProductionInputs() throws {
+        let f = MixFixture()
+        var episode = f.episode
+        let source = SourceRecord(displayNameHint: "Generated stereo", purpose: .supplementalAudio)
+        let track = AudioTrack(name: "Music")
+        let asset = AudioAsset(source: source.id, frameCount: 48_000, sampleRate: 48_000, channelCount: 2)
+        episode.sources.append(source)
+        episode.audioArrangement = .init(assets: [asset], tracks: [track])
+        #expect(try f.recipe(episode).routes.count == 1, "Unplaced assets and empty tracks do not replace dialogue.")
+        episode.audioArrangement?.clips = [.init(track: track.id, source: source.id,
+            trim: .init(startFrame: 0, endFrame: 48_000), anchor: .programOrigin(frame: 0))]
+        #expect(throws: MixerFailure.invalidRecipe("supplemental audio requires program projection and clip mixer routes")) {
+            try f.recipe(episode)
+        }
+        episode.audioArrangement?.clips = []
+        episode.audioArrangement?.insertionRegions = [.init(anchor: .programOrigin(frame: 0), durationFrames: 48_000)]
+        #expect(throws: MixerFailure.self) { try f.recipe(episode) }
+        episode = f.episode
+        episode.sources[0].purpose = .supplementalAudio
+        #expect(throws: MixerFailure.unresolvedChannel(f.source.id)) { try f.recipe(episode) }
+    }
+
     @Test func confirmedPrimariesOnlyAndUnknownMultichannelRefuses() throws {
         let f = MixFixture()
         let recipe = try f.recipe()

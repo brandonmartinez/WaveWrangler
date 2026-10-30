@@ -41,6 +41,9 @@ public enum CollectionTag {}
 public enum LibraryTag {}
 public enum EditTag {}
 public enum AudioUnitSlotTag {}
+public enum AudioTrackTag {}
+public enum AudioClipTag {}
+public enum AudioInsertionRegionTag {}
 
 public typealias ShowID = LogicalID<ShowTag>
 public typealias EpisodeID = LogicalID<EpisodeTag>
@@ -53,3 +56,6 @@ public typealias CollectionID = LogicalID<CollectionTag>
 public typealias LibraryID = LogicalID<LibraryTag>
 public typealias EditID = LogicalID<EditTag>
 public typealias AudioUnitSlotID = LogicalID<AudioUnitSlotTag>
+public typealias AudioTrackID = LogicalID<AudioTrackTag>
+public typealias AudioClipID = LogicalID<AudioClipTag>
+public typealias AudioInsertionRegionID = LogicalID<AudioInsertionRegionTag>

@@ -374,8 +374,7 @@ final class EpisodeMixerController {
               let episode = document.store.model.episode(episodeID) else {
             return "the originating document, episode, or prepared instance is unavailable"
         }
-        guard EpisodeProcessingInputs(episode).media == recipe.dependencies.media,
-              episode.activeManualCuts == recipe.dependencies.manualCuts else {
+        guard EpisodeProcessingInputs(episode).hasSameProgramInputs(as: recipe.dependencies) else {
             return "the source/timing/cut dependencies changed"
         }
         guard document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: episodeID) == true else {

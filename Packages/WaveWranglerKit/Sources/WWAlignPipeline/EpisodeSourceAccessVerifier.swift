@@ -228,7 +228,7 @@ public struct EpisodeSourceInventorySurveyor: Sendable {
         guard records.count == Set(records.map(\.key)).count else {
             throw EpisodeSourceAccessRefusal.duplicateOccurrence
         }
-        let sources = episode.sources
+        let sources = episode.alignmentSources
         let sourceIDs = Set(sources.map(\.id))
         guard sources.count == sourceIDs.count else { throw EpisodeSourceAccessRefusal.duplicateOccurrence }
         let placements = map.groups.flatMap { group in group.placements.map { (group, $0) } }

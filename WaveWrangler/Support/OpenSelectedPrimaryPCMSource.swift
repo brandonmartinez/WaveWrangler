@@ -217,6 +217,7 @@ enum OpenSelectedPrimaryPCMSource {
               episode.speakerAssignments.filter({ $0.primary == selection.primary }).count == 1,
               episode.sources.filter({ $0.id == selection.primary.sourceID }).count == 1,
               let source = episode.source(selection.primary.sourceID),
+              source.isRecording,
               source.role == .primary, source.roleConfirmation == .userConfirmed,
               let channel = selection.primary.channel.value, channel >= 0,
               let channelCount = source.observations.channelCount.value, channel < channelCount,

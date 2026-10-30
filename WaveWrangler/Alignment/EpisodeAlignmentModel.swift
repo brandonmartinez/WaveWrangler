@@ -520,7 +520,7 @@ final class EpisodeAlignmentModel {
 
     var availableSpeakers: [Speaker] { document?.store.model.speakers ?? [] }
     var ungroupedSources: [SourceRecord] {
-        (document?.store.model.episode(episodeID)?.sources ?? []).filter {
+        (document?.store.model.episode(episodeID)?.alignmentSources ?? []).filter {
             $0.placement.recorderGroupID == nil
         }
     }
@@ -808,7 +808,7 @@ final class EpisodeAlignmentModel {
         guard let episode = document?.store.model.episode(episodeID) else { return }
         let primaries = primaryWaveformSources
         var playback = listening.playback
-        for source in episode.sources where !primaries.contains(source.id) {
+        for source in episode.alignmentSources where !primaries.contains(source.id) {
             playback.setMuted(true, scope: .source(source.id))
         }
         guard playback != listening.playback else { return }
@@ -2516,7 +2516,7 @@ final class EpisodeAlignmentModel {
         if let loaded = loadedOverviewEpisode,
            !AlignmentWaveformProjection.canReuseSamples(from: loaded, to: episode) {
             let retainsPendingPreview = pendingWaveformMove?.expectedGeneration == document.store.modelGeneration
-                && loaded.sources == episode?.sources && loaded.recorderGroups == episode?.recorderGroups
+                && loaded.alignmentSources == episode?.alignmentSources && loaded.recorderGroups == episode?.recorderGroups
             if !retainsPendingPreview {
                 cancelWaveformOverview()
                 waveformOverviewMessage = "Episode timing or sources changed. Build the current overview again."

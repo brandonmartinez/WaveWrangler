@@ -28,6 +28,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
     public var workspace: EpisodeWorkspacePreferences?
     /// Absent means unity input/output gain, centered speakers, and no effects.
     public var mix: EpisodeMixState?
+    public var audioArrangement: AudioArrangement?
 
     public init(
         id: EpisodeID = EpisodeID(),
@@ -44,7 +45,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         cleanup: EpisodeCleanup? = nil,
         speakerAppearanceOverrides: [SpeakerAppearanceOverride]? = nil,
         workspace: EpisodeWorkspacePreferences? = nil,
-        mix: EpisodeMixState? = nil
+        mix: EpisodeMixState? = nil,
+        audioArrangement: AudioArrangement? = nil
     ) {
         self.id = id
         self.title = title
@@ -61,7 +63,13 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         self.speakerAppearanceOverrides = speakerAppearanceOverrides
         self.workspace = workspace
         self.mix = mix
+        self.audioArrangement = audioArrangement
     }
+
+    /// The complete recording partition, including ungrouped/unavailable recordings.
+    public var alignmentSources: [SourceRecord] { sources.filter(\.isRecording) }
+
+    public var supplementalAudioSources: [SourceRecord] { sources.filter { !$0.isRecording } }
 
     public func source(_ id: SourceID) -> SourceRecord? {
         sources.first { $0.id == id }

@@ -144,7 +144,7 @@ extension Episode {
             }
             for placement in group.placements {
                 let sourceID = placement.occurrence.source
-                guard let record = source(sourceID) else {
+                guard let record = source(sourceID), record.isRecording else {
                     note(.sourceMissing(sourceID))
                     continue
                 }
@@ -154,7 +154,7 @@ extension Episode {
             }
         }
         for correction in version.sourceCorrections ?? [] {
-            guard let record = source(correction.source) else { note(.sourceMissing(correction.source)); continue }
+            guard let record = source(correction.source), record.isRecording else { note(.sourceMissing(correction.source)); continue }
             if record.placement.recorderGroupID != correction.group {
                 note(.sourceRegrouped(correction.source, mapGroup: correction.group,
                                      currentGroup: record.placement.recorderGroupID))

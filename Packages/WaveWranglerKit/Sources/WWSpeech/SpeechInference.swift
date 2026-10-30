@@ -46,6 +46,7 @@ public struct SpeechInference: Sendable {
               let index = channel.channel.value, index >= 0,
               episode.sources.filter({ $0.id == channel.sourceID }).count == 1,
               let source = episode.source(channel.sourceID),
+              source.isRecording,
               source.role == .primary, source.roleConfirmation == .userConfirmed,
               let count = source.observations.channelCount.value, index < count
         else { throw .unselectedPrimary }

@@ -40,7 +40,7 @@ public struct AlignmentInspectionSnapshot: Sendable {
         in episode: Episode, channelCounts: [SourceID: Int]
     ) -> [RecordingEpochID: [SpeakerMatchOption]] {
         guard episode.id == plan.episode else { return [:] }
-        var counts = Dictionary(uniqueKeysWithValues: episode.sources.compactMap { source in
+        var counts = Dictionary(uniqueKeysWithValues: episode.alignmentSources.compactMap { source in
             source.observations.channelCount.value.map { (source.id, $0) }
         })
         counts.merge(channelCounts) { _, measured in measured }

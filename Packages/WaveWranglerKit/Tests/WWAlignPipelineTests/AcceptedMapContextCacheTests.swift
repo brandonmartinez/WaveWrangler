@@ -6,6 +6,52 @@ import WWDerived
 
 @Suite("Pure accepted-map context reuse")
 struct AcceptedMapContextCacheTests {
+    @Test func assetRevisionAndArrangementEditsPreserveExactRecordingContextAndTranscripts() async throws {
+        let f = try await PipelineFixture(ConcurrencyTests.short(), label: "asset-map-context")
+        let report = try await f.analyze(preferredReference: "ref")
+        let accepted = try await f.acceptAndActivate(report, [f.epochs[1]: ConcurrencyTests.truth])
+        f.model.episodes[0].cleanup = .init(transcripts: [.init(
+            speaker: SpeakerID(), primary: .init(sourceID: f.id("ref"), statedChannel: 0),
+            sourceRate: 48_000, sourceIdentity: String(repeating: "a", count: 64),
+            alignmentRevision: accepted.revision.revision, model: "synthetic", workingRange: nil,
+            words: [.init(text: "Retained words", sourceStartFrame: 0, sourceEndFrame: 4800,
+                          alignedStart: 0, alignedEnd: 0.1)])])
+        _ = try await f.pipeline.verifiedAcceptedMap(model: f.model, episode: f.episodeID)
+        let before = f.model
+        let source = SourceRecord(displayNameHint: "Generated asset", purpose: .supplementalAudio)
+        let track = AudioTrack(name: "Music")
+        let mapVersion = try #require(before.episodes[0].alignment?.acceptedMap)
+        let clip = AudioClip(track: track.id, source: source.id, trim: .init(startFrame: 0, endFrame: 8000),
+            anchor: .dialogue(try .init(map: mapVersion, frame: 48_000)))
+        let arrangement = AudioArrangement(
+            assets: [.init(source: source.id, frameCount: 8000, sampleRate: 8000, channelCount: 2)],
+            tracks: [track], clips: [clip])
+        f.model = try before.settingAudioState(arrangement, mix: before.episodes[0].mix,
+            sources: before.episodes[0].sources + [source], in: f.episodeID)
+        await f.coordinator.updateSource(.init(source: source.id, token: "asset-original"))
+        for token in ["asset-original", "asset-relinked"] {
+            await f.coordinator.updateSource(.init(source: source.id, token: token))
+            try await f.pipeline.activate(model: f.model, episode: f.episodeID)
+            #expect(try await f.pipeline.verifiedAcceptedMap(model: f.model, episode: f.episodeID) == accepted.map)
+            #expect(await f.coordinator.state(of: accepted.identity.slot) == .ready(accepted.identity.key))
+        }
+        var edited = clip
+        edited.anchor = .absolute(frame: 96_000)
+        edited.envelope.points = [.init(frame: 0, amplitude: 1), .init(frame: 48_000, amplitude: 0)]
+        f.model = try f.model.replacingAudioClip(edited, in: f.episodeID)
+        #expect(f.model.hasSameMediaInputs(as: before, in: f.episodeID))
+        #expect(f.model.episodes[0].alignment == before.episodes[0].alignment)
+        #expect(f.model.episodes[0].cleanup == before.episodes[0].cleanup)
+        #expect(!f.model.hasSameProcessingInputs(as: before, in: f.episodeID))
+        #expect(try await f.pipeline.verifiedAcceptedMap(model: f.model, episode: f.episodeID) == accepted.map)
+        #expect(await f.pipeline.mapContexts.preparationCount == 1)
+        await f.coordinator.invalidate(accepted.identity.slot)
+        await #expect(throws: AlignedAssetRefusal.acceptedMapContentNotActive) {
+            try await f.pipeline.verifiedAcceptedMap(model: f.model, episode: f.episodeID)
+        }
+        await f.pipeline.shutdown()
+    }
+
     @Test func unchangedReadsAndPersistedActivationsReuseOneCalculationAcrossMixEdits() async throws {
         let fixture = try await PipelineFixture(ConcurrencyTests.short(), label: "map-context-reuse")
         let report = try await fixture.analyze(preferredReference: "ref")

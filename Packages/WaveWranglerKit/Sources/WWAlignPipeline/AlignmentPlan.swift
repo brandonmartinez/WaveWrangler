@@ -150,7 +150,7 @@ struct ContentEligibility: Sendable {
 extension Episode {
     /// The (group, epoch) a source is placed in, or why it has none. `nil` for an ungrouped source.
     func alignmentPlacement(of record: SourceRecord) -> Result<(RecorderGroupID, RecordingEpochID), UnplacedReason>? {
-        guard let groupID = record.placement.recorderGroupID else { return nil }
+        guard record.isRecording, let groupID = record.placement.recorderGroupID else { return nil }
         guard let group = recorderGroup(groupID) else { return .failure(.groupMissing) }
         if let epochID = record.placement.epochID {
             return group.epochs.contains(where: { $0.id == epochID }) ? .success((groupID, epochID)) : .failure(.epochMissing)
@@ -271,7 +271,7 @@ enum AlignmentPlanner {
         var ineligible: [SourceID: SourceIneligibility] = [:]
         var unplaced: [SourceID: UnplacedReason] = [:]
         var placementOf: [SourceID: (RecorderGroupID, RecordingEpochID)] = [:]
-        for record in episode.sources {
+        for record in episode.alignmentSources {
             guard let placement = episode.alignmentPlacement(of: record) else { continue }
             switch placement {
             case .failure(let reason):
@@ -291,7 +291,7 @@ enum AlignmentPlanner {
         if let preferredRecorderGroup {
             let prior = referenceCandidate(priorReference)
             reference = [reference, prior].compactMap { $0 }.first { $0.group == preferredRecorderGroup }
-                ?? episode.sources.lazy
+                ?? episode.alignmentSources.lazy
                     .filter { $0.placement.recorderGroupID == preferredRecorderGroup }
                     .compactMap { referenceCandidate($0.id) }.first
         } else if reference == nil {
@@ -299,7 +299,7 @@ enum AlignmentPlanner {
         }
         if reference == nil, preferredRecorderGroup == nil {
             for group in episode.recorderGroups where group.preferredAlignmentReference == true {
-                if let source = episode.sources.first(where: {
+                if let source = episode.alignmentSources.first(where: {
                     $0.placement.recorderGroupID == group.id && referenceCandidate($0.id) != nil
                 }) {
                     reference = referenceCandidate(source.id)

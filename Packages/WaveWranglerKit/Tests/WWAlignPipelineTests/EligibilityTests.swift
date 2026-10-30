@@ -11,6 +11,33 @@ import WWTimeMap
 /// path is metadata only and is proven by the recording gateway (zero opens, zero decoder metadata calls).
 @Suite("Consent-gated decode: OFF and other ineligible paths never touch content")
 struct EligibilityTests {
+    @Test func supplementalAssetsNeverEnterRecordingWorkEvenWithExplicitGrants() async throws {
+        var groups = ConcurrencyTests.short()
+        groups.append(.init(name: "Asset fixture", sources: [
+            .init(name: "asset", seconds: 1, signal: .sine(hz: 440), sampleRate: 8000)
+        ]))
+        let fixture = try await PipelineFixture(groups, label: "supplemental-partition")
+        let asset = fixture.id("asset")
+        let index = try #require(fixture.model.episodes[0].sources.firstIndex { $0.id == asset })
+        fixture.model.episodes[0].sources[index].purpose = .supplementalAudio
+        // Even a malformed caller-supplied placement cannot turn an asset into an alignment candidate.
+        let inspection = await fixture.pipeline.inspect(model: fixture.model, episode: fixture.episodeID,
+            sources: fixture.sources, preferredReference: asset)
+        #expect(inspection?.plan.eligiblePlacedSources.contains(asset) == false)
+        fixture.model.episodes[0].sources[index].placement = .init()
+        fixture.model.episodes[0].recorderGroups.removeLast()
+        #expect(fixture.model.validationIssues().isEmpty)
+        let report = try await fixture.pipeline.prepareManual(model: fixture.model, episode: fixture.episodeID,
+            sources: fixture.sources, authorizations: fixture.authorizations)
+        #expect(report.plan.reference?.source != asset)
+        #expect(!report.plan.eligiblePlacedSources.contains(asset))
+        #expect(report.probes[asset] == nil && report.facts[asset] == nil)
+        #expect(report.plan.ineligible[asset] == nil && report.plan.unplaced[asset] == nil)
+        #expect(fixture.content.record(fixture.url("asset")).opens == 0)
+        #expect(fixture.metadataIO.metadataCalls(fixture.url("asset")) == 0)
+        await fixture.pipeline.shutdown()
+    }
+
     static func ineligibleEpisode() -> [GroupSpec] {
         let seed = TwoRecorder.seed
         let target = Signal.scene(seed: seed, rate: TwoRecorder.rate, offset: TwoRecorder.offset)

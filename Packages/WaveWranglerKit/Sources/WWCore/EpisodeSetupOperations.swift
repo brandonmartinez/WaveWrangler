@@ -68,7 +68,7 @@ extension Episode {
     }
 
     public func sources(inRecorderGroup groupID: RecorderGroupID?) -> [SourceRecord] {
-        sources.filter { $0.placement.recorderGroupID == groupID }
+        alignmentSources.filter { $0.placement.recorderGroupID == groupID }
     }
 }
 
@@ -135,6 +135,7 @@ extension ShowDocumentModel {
             if let groupID, episode.recorderGroup(groupID) == nil { throw .recorderGroupNotFound(groupID) }
             for sourceID in sourceIDs {
                 guard let index = episode.sources.firstIndex(where: { $0.id == sourceID }) else { throw .sourceNotFound(sourceID) }
+                guard episode.sources[index].isRecording else { throw .sourceIsNotRecording(sourceID) }
                 let number = episode.epochNumber(of: sourceID) ?? 1
                 episode.sources[index].placement.recorderGroupID = groupID
                 episode.sources[index].placement.epochID = nil
@@ -175,6 +176,7 @@ extension ShowDocumentModel {
         if let channel, channel < 0 { throw .invalidChannel(ChannelReference(sourceID: sourceID, channel: .known(channel))) }
         return try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.sources.firstIndex(where: { $0.id == sourceID }) else { throw .sourceNotFound(sourceID) }
+            guard episode.sources[index].isRecording else { throw .sourceIsNotRecording(sourceID) }
             if let count = episode.sources[index].observations.channelCount.value, let channel, channel >= count {
                 throw .channelOutOfRange(ChannelReference(sourceID: sourceID, channel: .known(channel)), channelCount: count)
             }
@@ -250,7 +252,8 @@ extension ShowDocumentModel {
     public func assigningSpeaker(_ speakerID: SpeakerID?, toSource sourceID: SourceID, in episodeID: EpisodeID) throws(DomainError) -> ShowDocumentModel {
         if let speakerID, speaker(speakerID) == nil { throw .speakerNotFound(speakerID) }
         return try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
-            guard episode.source(sourceID) != nil else { throw .sourceNotFound(sourceID) }
+            guard let source = episode.source(sourceID) else { throw .sourceNotFound(sourceID) }
+            guard source.isRecording else { throw .sourceIsNotRecording(sourceID) }
             let alreadyAssigned = speakerID.map { id in episode.references(to: sourceID).contains { $0.speakerID == id } } ?? false
             Self.removeReferences(to: sourceID, in: &episode, except: speakerID)
             guard let speakerID else {
@@ -330,8 +333,12 @@ extension ShowDocumentModel {
     public func removingSource(_ sourceID: SourceID, from episodeID: EpisodeID) throws(DomainError) -> ShowDocumentModel {
         try updatingSetup(episodeID) { (episode: inout Episode) throws(DomainError) in
             guard let index = episode.sources.firstIndex(where: { $0.id == sourceID }) else { throw .sourceNotFound(sourceID) }
+            guard episode.audioArrangement?.clips.contains(where: { $0.source == sourceID }) != true else {
+                throw .sourceUsedByAudioClips(sourceID)
+            }
             Self.removeReferences(to: sourceID, in: &episode)
             episode.sources.remove(at: index)
+            episode.audioArrangement?.assets.removeAll { $0.source == sourceID }
             episode.mix?.inputGains.removeAll { $0.source == sourceID }
         }
     }
@@ -344,7 +351,10 @@ extension ShowDocumentModel {
             let candidates = direction == .up
                 ? Array(episode.sources.indices.prefix(upTo: index).reversed())
                 : Array(episode.sources.indices.suffix(from: index + 1))
-            guard let neighbor = candidates.first(where: { episode.sources[$0].placement.recorderGroupID == groupID }) else { return }
+            guard let neighbor = candidates.first(where: {
+                episode.sources[$0].isRecording == episode.sources[index].isRecording
+                    && episode.sources[$0].placement.recorderGroupID == groupID
+            }) else { return }
             episode.sources.swapAt(index, neighbor)
         }
     }
@@ -397,6 +407,9 @@ extension ShowDocumentModel {
         guard let index = episodes.firstIndex(where: { $0.id == id }) else { throw .episodeNotFound(id) }
         var copy = self
         try transform(&copy.episodes[index])
+        if let issue = copy.validationIssues().first(where: {
+            $0.code == .invalidSourcePurpose || $0.code == .invalidAudio
+        }) { throw .invalidAudio(issue.description) }
         return copy
     }
 

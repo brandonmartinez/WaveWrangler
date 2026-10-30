@@ -138,7 +138,7 @@ enum MapDependencies {
         var changes: [AlignmentDependencyChange] = []
         var current: [RecordingEpochID: Set<SourceID>] = [:]
         var placementOf: [SourceID: (RecorderGroupID, RecordingEpochID)] = [:]
-        for record in episode.sources {
+        for record in episode.alignmentSources {
             guard case let .success((group, epoch))? = episode.alignmentPlacement(of: record) else { continue }
             current[epoch, default: []].insert(record.id)
             placementOf[record.id] = (group, epoch)
