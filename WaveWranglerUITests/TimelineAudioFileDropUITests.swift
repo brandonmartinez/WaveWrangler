@@ -79,6 +79,10 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true })
         XCTAssertEqual(try Data(contentsOf: first), bytes)
         XCTAssertEqual(try Data(contentsOf: fresh), bytes)
+        let placementEvidence = XCTAttachment(screenshot: app.windows["ww.show.window"].screenshot())
+        placementEvidence.name = "F6 Finder placements after control, Undo, save, and source-byte assertions"
+        placementEvidence.lifetime = .keepAlways
+        add(placementEvidence)
         for _ in 0..<7 {
             app.descendants(matching: .any)["ww.audioWorkspace.audioTracks"].click()
             app.menuItems["New Audio Track"].click()
@@ -159,7 +163,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
             .click(forDuration: 0.3, thenDragTo: app.staticTexts["ww.audioDrop.empty"]
                 .coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)))
         app.activate()
-        XCTAssertTrue(app.buttons["ww.addAudio.import"].waitForExistence(timeout: 10), app.debugDescription)
+        waitForReview(app)
         let candidates = app.checkBoxes.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.addAudio.candidate.'"))
         XCTAssertEqual(candidates.count, 2)
         let shortRow = candidates.matching(NSPredicate(format: "label CONTAINS 'short.wav'")).firstMatch
@@ -221,7 +225,22 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         item.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
             .click(forDuration: 0.3, thenDragTo: destination)
         app.activate()
-        XCTAssertTrue(app.buttons["ww.addAudio.import"].waitForExistence(timeout: 15), app.debugDescription)
+        waitForReview(app)
+    }
+
+    private func waitForReview(_ app: XCUIApplication) {
+        let review = app.buttons["ww.addAudio.import"]
+        let refusal = app.descendants(matching: .any)["ww.addAudio.error"]
+        let settled = wait { review.exists || refusal.exists }
+        let reason = refusal.exists ? String(describing: refusal.value ?? refusal.label) : "Import review was not presented."
+        let presented = settled && review.exists && !refusal.exists
+        if !presented, app.windows["ww.show.window"].exists {
+            let evidence = XCTAttachment(screenshot: app.windows["ww.show.window"].screenshot())
+            evidence.name = "F6 file-drop review refusal"
+            evidence.lifetime = .keepAlways
+            add(evidence)
+        }
+        XCTAssertTrue(presented, "\(reason)\n\(app.debugDescription)")
     }
 
     private func clips(_ app: XCUIApplication) -> XCUIElementQuery {

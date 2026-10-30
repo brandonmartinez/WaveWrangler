@@ -21,6 +21,14 @@ struct AudioImportDestination: Equatable {
 }
 
 enum AudioTimelineFileDropPayload {
+    static func validate(_ locations: [NSItemProvider], itemCount: Int) throws {
+        guard itemCount > 0, locations.count == itemCount else {
+            throw StagedAudioImportCoordinator.Refusal(
+                "Every dragged item must provide a local file location (\(locations.count) locations for \(itemCount) items). Drop files separately from web links, recording rows, or file promises.")
+        }
+        try validate(locations)
+    }
+
     static func validate(_ providers: [NSItemProvider]) throws {
         guard !providers.isEmpty, providers.allSatisfy({
             $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier)
@@ -29,6 +37,61 @@ enum AudioTimelineFileDropPayload {
             throw StagedAudioImportCoordinator.Refusal(
                 "Drop local file locations only. Recording rows, web URLs, file promises, and mixed payloads cannot become Audio Clips.")
         }
+    }
+}
+
+/// One target's live, whole-session inventory. Exiting or consuming clears every usable count.
+struct AudioTimelineDropSessionMetadata<SessionID: Hashable> {
+    enum Phase: String, Equatable { case entering, active, exiting, ended }
+    private var isTargeted = false
+    private var sessionID: SessionID?
+    private var phase: Phase?
+    private var itemCount: Int?
+    private var lastEndedID: SessionID?
+    private var lastObservedPhase: Phase?
+
+    mutating func entered() {
+        isTargeted = true
+        sessionID = nil
+        phase = nil
+        itemCount = nil
+    }
+
+    mutating func updated(id: SessionID, phase nextPhase: Phase, itemCount count: Int) {
+        lastObservedPhase = nextPhase
+        switch nextPhase {
+        case .entering, .active:
+            guard isTargeted, id != lastEndedID else { return }
+            guard sessionID == nil || sessionID == id else { exited(); return }
+            sessionID = id
+            phase = nextPhase
+            itemCount = nextPhase == .active ? count : nil
+        case .exiting:
+            if sessionID == id { exited() }
+        case .ended:
+            if sessionID == nil || sessionID == id {
+                lastEndedID = id
+                if sessionID == id { exited() }
+            }
+        }
+    }
+
+    mutating func exited() {
+        isTargeted = false
+        sessionID = nil
+        phase = nil
+        itemCount = nil
+    }
+
+    mutating func consumeCount() throws -> Int {
+        guard isTargeted, let sessionID, sessionID != lastEndedID,
+              phase == .active, let itemCount, itemCount > 0 else {
+            throw StagedAudioImportCoordinator.Refusal(
+                "The current drag session metadata is unavailable or stale (last phase: \(lastObservedPhase?.rawValue ?? "none")). Move the files onto the canvas and drop again.")
+        }
+        lastEndedID = sessionID
+        exited()
+        return itemCount
     }
 }
 
@@ -67,6 +130,7 @@ struct AudioTimelineFileDropTarget: ViewModifier {
     @State private var point: CGPoint?
     @State private var feedback: String?
     @State private var canvasSize: CGSize = .zero
+    @State private var inventory = AudioTimelineDropSessionMetadata<DropSession.ID>()
 
     func body(content: Content) -> some View {
         let dropGeometry = AudioTimelineDropGeometry(size: canvasSize, start: start,
@@ -79,7 +143,21 @@ struct AudioTimelineFileDropTarget: ViewModifier {
             }
             .onDrop(of: [UTType.fileURL.identifier, SetupSourceDrag.contentType.identifier],
                 delegate: AudioTimelineFileDropDelegate(importer: importer, state: state,
-                    geometry: dropGeometry, point: $point, feedback: $feedback))
+                    geometry: dropGeometry, inventory: $inventory, point: $point, feedback: $feedback))
+            .onDropSessionUpdated { session in
+                let phase: AudioTimelineDropSessionMetadata<DropSession.ID>.Phase
+                switch session.phase {
+                case .entering: phase = .entering
+                case .active: phase = .active
+                case .exiting: phase = .exiting
+                case .ended, .dataTransferCompleted: phase = .ended
+                @unknown default:
+                    inventory.exited()
+                    return
+                }
+                inventory.updated(id: session.id, phase: phase, itemCount: session.itemsCount)
+            }
+            .onDisappear { inventory.exited() }
             .overlay(alignment: .topLeading) {
                 ZStack(alignment: .topLeading) {
                     if let point, let feedback {
@@ -100,6 +178,7 @@ private struct AudioTimelineFileDropDelegate: DropDelegate {
     let importer: StagedAudioImportCoordinator
     let state: ShowWindowState?
     let geometry: AudioTimelineDropGeometry
+    @Binding var inventory: AudioTimelineDropSessionMetadata<DropSession.ID>
     @Binding var point: CGPoint?
     @Binding var feedback: String?
 
@@ -109,7 +188,10 @@ private struct AudioTimelineFileDropDelegate: DropDelegate {
             && info.hasItemsConforming(to: [UTType.fileURL.identifier, SetupSourceDrag.contentType.identifier])
     }
 
-    func dropEntered(info: DropInfo) { update(info) }
+    func dropEntered(info: DropInfo) {
+        inventory.entered()
+        update(info)
+    }
 
     func dropUpdated(info: DropInfo) -> DropProposal? {
         update(info)
@@ -120,12 +202,13 @@ private struct AudioTimelineFileDropDelegate: DropDelegate {
     }
 
     func dropExited(info: DropInfo) {
+        inventory.exited()
         point = nil
         feedback = nil
     }
 
     func performDrop(info: DropInfo) -> Bool {
-        defer { point = nil; feedback = nil }
+        defer { inventory.exited(); point = nil; feedback = nil }
         guard let state else { return false }
         guard state.alignmentModel?.audioEditor.canPlaceDroppedAudio == true,
               state.alignmentModel?.presentationTimeline == geometry.projection else {
@@ -138,8 +221,10 @@ private struct AudioTimelineFileDropDelegate: DropDelegate {
         }
         do {
             let destination = try geometry.destination(at: info.location)
-            return importer.receiveDrop(info.itemProviders(for: [UTType.item.identifier]),
-                                        in: state, destination: destination)
+            let itemCount = try inventory.consumeCount()
+            let locations = info.itemProviders(for: [UTType.fileURL.identifier])
+            try AudioTimelineFileDropPayload.validate(locations, itemCount: itemCount)
+            return importer.receiveDrop(locations, in: state, destination: destination)
         } catch {
             importer.refuseDrop(error.localizedDescription)
             return false

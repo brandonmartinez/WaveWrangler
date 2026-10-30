@@ -61,6 +61,15 @@ struct AudioTimelineDropGeometryTests {
             try AudioTimelineFileDropPayload.validate([file])
         }
         #expect(counter.value == 0)
+        try AudioTimelineFileDropPayload.validate([file], itemCount: 1)
+        try AudioTimelineFileDropPayload.validate([file, file], itemCount: 2)
+        #expect(throws: (any Error).self) {
+            try AudioTimelineFileDropPayload.validate([file], itemCount: 2)
+        }
+        #expect(throws: (any Error).self) {
+            try AudioTimelineFileDropPayload.validate([], itemCount: 0)
+        }
+        #expect(counter.value == 0)
         let row = NSItemProvider()
         row.register(SetupSourceDrag(showID: ShowID(), episodeID: EpisodeID(), sourceID: SourceID()))
         #expect(throws: (any Error).self) { try AudioTimelineFileDropPayload.validate([row]) }
@@ -75,6 +84,40 @@ struct AudioTimelineDropGeometryTests {
             }
         #expect(throws: (any Error).self) { try AudioTimelineFileDropPayload.validate([promise]) }
         #expect(counter.value == 0)
+    }
+
+    @Test func sessionInventoryRequiresFreshActiveMatchingMetadata() throws {
+        var metadata = AudioTimelineDropSessionMetadata<UUID>()
+        let first = UUID(), second = UUID(), third = UUID()
+        metadata.updated(id: first, phase: .active, itemCount: 2)
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.entered()
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.updated(id: first, phase: .entering, itemCount: 2)
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.updated(id: first, phase: .active, itemCount: 2)
+        #expect(try metadata.consumeCount() == 2)
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.entered()
+        metadata.updated(id: first, phase: .ended, itemCount: 2)
+        metadata.updated(id: first, phase: .active, itemCount: 2)
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.updated(id: second, phase: .active, itemCount: 3)
+        #expect(try metadata.consumeCount() == 3)
+        metadata.entered()
+        metadata.updated(id: third, phase: .active, itemCount: 1)
+        metadata.exited()
+        metadata.entered()
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.updated(id: third, phase: .active, itemCount: 1)
+        #expect(try metadata.consumeCount() == 1)
+        metadata.entered()
+        metadata.updated(id: UUID(), phase: .active, itemCount: 1)
+        metadata.updated(id: UUID(), phase: .active, itemCount: 1)
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.entered()
+        metadata.updated(id: UUID(), phase: .active, itemCount: 0)
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
     }
 }
 
