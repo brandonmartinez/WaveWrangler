@@ -15,14 +15,23 @@ final class AudioClipEditorModel {
             let prior = oldValue.map { AudioTimelineProjection(cuts: $0.timeline.cuts, program: $0.timeline) }
             let next = composition.map { AudioTimelineProjection(cuts: $0.timeline.cuts, program: $0.timeline) }
             if prior != next { geometryVersion = UUID() }
+            envelopeGeometryCache.retain(Set(composition?.clips.map(\.clip.id) ?? []))
         }
     }
     private(set) var geometryVersion = UUID()
     private var compositionEpisode: Episode?
     private var compositionGeneration: UInt64?
-    var selectedClip: AudioClipID?
+    var selectedClip: AudioClipID? {
+        didSet { if selectedClip != oldValue { selectionVersion = UUID() } }
+    }
     var selectedTrack: AudioTrackID?
     private(set) var insertionSession: AudioInsertionSession?
+    private(set) var fadeSession: AudioFadeSession?
+    private(set) var isPreparingFade = false
+    private var selectionVersion = UUID()
+    private var fadeLifetime = UUID()
+    private var fadeRequestID = UUID()
+    @ObservationIgnored let envelopeGeometryCache = AudioEnvelopeGeometryCache()
     private(set) var error: String?
     private(set) var waveforms: [SourceID: AudioAssetWaveform] = [:]
     private(set) var isPreparingWaveforms = false
@@ -338,6 +347,10 @@ final class AudioClipEditorModel {
     }
 
     func suspend() {
+        fadeLifetime = UUID()
+        fadeRequestID = UUID()
+        fadeSession = nil
+        isPreparingFade = false
         importer.cancel()
         projectionGeneration = UUID()
         waveformGeneration = UUID()
@@ -445,6 +458,142 @@ final class AudioClipEditorModel {
               episode == session.editing.episode else {
             throw AudioInsertionEditing.Refusal("The program changed or is processing. Cancel and reopen this preview; nothing was applied.")
         }
+    }
+
+    func requestFade(_ direction: AudioFadeDirection, programSeconds: Double?) async {
+        await openFade { selected in
+            guard let programSeconds else {
+                throw AudioFadeInput.Refusal("Show cut's removed audio is review-only. Choose an audible production position before fading.")
+            }
+            let frame = try Self.programFrame(programSeconds)
+            guard selected.programFrames.contains(frame) else {
+                throw AudioFadeInput.Refusal("Place the playhead inside the selected clip's audible trimmed interval.")
+            }
+            return .fade(direction, start: frame - selected.programFrames.lowerBound)
+        }
+    }
+
+    func requestFadePoint(_ index: Int) async {
+        await openFade { selected in
+            let editing = try AudioEnvelopeEditing(envelope: selected.clip.envelope,
+                                                   durationFrames: Int64(selected.programFrames.count))
+            _ = try editing.removingPoint(at: index)
+            return .point(index)
+        }
+    }
+
+    private func openFade(purpose: (ProgramAudioClip) throws -> AudioFadeSession.Purpose) async {
+        let request = UUID(), selection = selectionVersion, lifetime = fadeLifetime
+        fadeRequestID = request
+        fadeSession = nil
+        isPreparingFade = true
+        defer { if fadeRequestID == request { isPreparingFade = false } }
+        do {
+            guard !insertionProcessing, store.canEdit, compositionGeneration == store.modelGeneration,
+                  let selected, let episode else {
+                throw AudioFadeInput.Refusal("Select an Audio Clip and wait for the current editable projection before fading.")
+            }
+            let requestedPurpose = try purpose(selected)
+            let owner = ShowWindowRegistry.states(for: store).first {
+                $0.alignmentModel?.audioEditor === self && $0.selectedEpisodeID == episodeID && $0.destination == .alignment
+            }
+            guard store.document == nil || owner != nil,
+                  store.document?.mixerTransactions.isClosed != true else {
+                throw AudioFadeInput.Refusal("The originating audio editor was closed or replaced.")
+            }
+            if let document = store.document, document.mixerTransactions.needsBarrier {
+                try await document.mixerTransactions.barrier(replacingInstances: true, episode: episodeID) {}
+            }
+            try Task.checkCancellation()
+            var before = episode, after = self.episode
+            before.mix = nil
+            after?.mix = nil
+            guard request == fadeRequestID, selection == selectionVersion, lifetime == fadeLifetime,
+                  before == after, !insertionProcessing, store.canEdit else {
+                throw AudioFadeInput.Refusal("The selection or program changed during native-state capture. Reopen fade editing.")
+            }
+            refresh()
+            guard compositionGeneration == store.modelGeneration, let current = self.selected,
+                  current.clip == selected.clip, let currentEpisode = self.episode else {
+                throw AudioFadeInput.Refusal("Wait for the current clip projection, then reopen fade editing.")
+            }
+            fadeSession = try .init(purpose: requestedPurpose, generation: store.modelGeneration,
+                selectionVersion: selection, lifetime: lifetime, episode: currentEpisode, projected: current, owner: owner)
+            error = nil
+        } catch {
+            if request == fadeRequestID { self.error = AudioFadeInput.describe(error) }
+        }
+    }
+
+    func dismissFade() {
+        fadeRequestID = UUID()
+        isPreparingFade = false
+        fadeSession = nil
+    }
+
+    struct FadePointSummary {
+        let index: Int
+        let local: AudioEnvelopeCoordinate
+        let amplitude: Double
+        let editable: Bool
+    }
+
+    func fadePoints() -> Result<[FadePointSummary], Error> {
+        Result {
+            guard let selected else { return [] }
+            let duration = Int64(selected.programFrames.count)
+            let editing = try AudioEnvelopeEditing(envelope: selected.clip.envelope, durationFrames: duration)
+            let end = try AudioEnvelopeCoordinate(numerator: duration)
+            return try selected.clip.envelope.points.enumerated().map { index, point in
+                let local = try editing.localCoordinate(of: point)
+                return .init(index: index, local: local, amplitude: point.amplitude, editable: local >= .zero && local <= end)
+            }
+        }
+    }
+
+    func fadePreview(_ session: AudioFadeSession, draft: AudioFadeDraft) throws -> AudioEnvelopeEditPreview {
+        guard fadeSession?.id == session.id, session.generation == store.modelGeneration,
+              compositionGeneration == store.modelGeneration, session.selectionVersion == selectionVersion,
+              session.lifetime == fadeLifetime, selected == session.projected, episode == session.episode,
+              store.canEdit, !insertionProcessing, store.document?.mixerTransactions.isClosed != true,
+              store.document?.mixerTransactions.isBusy != true,
+              !session.requiresOwner || session.owner.map({
+                  $0.alignmentModel?.audioEditor === self && $0.selectedEpisodeID == episodeID
+                      && $0.destination == .alignment && $0.canEdit && $0.window != nil
+                      && $0.window === session.originWindow
+              }) == true else {
+            throw AudioFadeInput.Refusal("The selection, document, or program changed or is processing. Cancel and reopen this preview; nothing was applied.")
+        }
+        switch session.purpose {
+        case .fade(let direction, let start):
+            let value = try Self.programFrame(draft.length)
+            let absoluteStart = session.projected.programFrames.lowerBound + start
+            let (duration, overflow) = draft.usingEnd ? value.subtractingReportingOverflow(absoluteStart) : (value, false)
+            let (end, endOverflow) = start.addingReportingOverflow(duration)
+            guard !overflow, !endOverflow, duration > 0 else { throw AudioEnvelopeEditError.invalidInterval }
+            return try session.editing.fade(from: start, to: end, direction: direction,
+                target: AudioFadeInput.amplitude(draft.level, silence: draft.silence),
+                initializingSilence: draft.initializingSilence)
+        case .point(let index):
+            if draft.removing { return try session.editing.removingPoint(at: index) }
+            return try session.editing.editingPoint(at: index, to: AudioFadeInput.coordinate(draft.localFrame),
+                amplitude: AudioFadeInput.amplitude(draft.level, silence: draft.silence))
+        }
+    }
+
+    @discardableResult
+    func commitFade(_ session: AudioFadeSession, draft: AudioFadeDraft) -> Bool {
+        do {
+            let preview = try fadePreview(session, draft: draft)
+            var clip = session.projected.clip
+            clip.envelope = try preview.confirmed(replacing: draft.replacing)
+            let action = draft.removing ? "Remove Fade Point" : session.title
+            guard apply(action, edit: { model throws(DomainError) in
+                try model.replacingAudioClip(clip, in: self.episodeID)
+            }) else { return false }
+            fadeSession = nil
+            return true
+        } catch { self.error = AudioFadeInput.describe(error); return false }
     }
 
     private var insertionProcessing: Bool {

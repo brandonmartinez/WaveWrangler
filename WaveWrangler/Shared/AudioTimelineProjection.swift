@@ -49,6 +49,12 @@ struct AudioTimelineProjection: Sendable, Equatable {
 
     var hasInsertions: Bool { !insertions.isEmpty }
     var hasExpandedCut: Bool { !openings.isEmpty }
+    var reviewOnlyDisplayRanges: [Range<Double>] {
+        openings.map {
+            let start = Double($0.displayStart) / 48_000
+            return start..<(start + Double($0.original.count) / 48_000)
+        }
+    }
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.cuts == rhs.cuts && lhs.canonicalCuts == rhs.canonicalCuts && lhs.dialogue == rhs.dialogue

@@ -100,6 +100,8 @@ struct AudioClipTrackView: View {
         let right = min(size.width, (displayEnd - start) / duration * size.width)
         if right >= left, displayEnd > start, first < start + duration {
             let selected = editor.selectedClip == projected.clip.id
+            let renderedClip = preview?.previewClip ?? projected.clip
+            let blockWidth = max(6, right - left), blockHeight = max(40, size.height - 4)
             Button {
                 editor.select(projected.clip.id)
                 showInspector()
@@ -108,12 +110,22 @@ struct AudioClipTrackView: View {
                     .fill(Color.teal.opacity(selected ? 0.28 : 0.13))
                     .overlay {
                         AudioClipWaveformDrawing(clip: projected,
-                            renderedClip: preview?.previewClip ?? projected.clip,
+                            renderedClip: renderedClip,
                             waveform: editor.waveforms[projected.clip.source], start: start,
                             duration: duration, programStart: programFirst, viewportWidth: size.width,
                             left: left, normalized: normalized, projection: projection)
                             .equatable()
                             .allowsHitTesting(false)
+                    }
+                    .overlay {
+                        if let frames = renderedClip.durationFrames(asset: projected.asset) {
+                            AudioEnvelopeDrawing(cache: editor.envelopeGeometryCache, clip: projected.clip.id,
+                                key: .init(envelope: renderedClip.envelope, durationFrames: frames,
+                                    programStart: programFirst, viewportStart: start, viewportDuration: duration,
+                                    viewportWidth: size.width, left: left, width: blockWidth, height: blockHeight,
+                                    projection: projection))
+                                .equatable()
+                        }
                     }
                     .overlay(alignment: .topLeading) {
                         HStack(spacing: 4) {
@@ -133,7 +145,7 @@ struct AudioClipTrackView: View {
                     }
             }
             .buttonStyle(.plain)
-            .frame(width: max(6, right - left), height: max(40, size.height - 4))
+            .frame(width: blockWidth, height: blockHeight)
             .contentShape(Rectangle())
             .simultaneousGesture(moveGesture(projected, width: size.width))
             .overlay(alignment: .leading) {
@@ -147,7 +159,7 @@ struct AudioClipTrackView: View {
             .opacity(preview != nil && projected.clip.track == track.id && preview?.track != track.id ? 0.35 : 1)
             .allowsHitTesting(projected.clip.track == track.id)
             .accessibilityLabel("Audio Clip: \(name(projected))")
-            .accessibilityValue("Program start \(programFirst.formatted(.number.precision(.fractionLength(3)))) seconds; duration \(count.formatted(.number.precision(.fractionLength(3)))) seconds")
+            .accessibilityValue("Program start \(programFirst.formatted(.number.precision(.fractionLength(3)))) seconds; duration \(count.formatted(.number.precision(.fractionLength(3)))) seconds; \(renderedClip.envelope.points.count) fade points")
             .accessibilityAddTraits(selected ? [.isSelected] : [])
             .accessibilityIdentifier("ww.audioClip.\(projected.clip.id)")
         }
@@ -229,7 +241,9 @@ private struct AudioClipWaveformDrawing: View, Equatable {
     let projection: AudioTimelineProjection
 
     nonisolated static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.clip == rhs.clip && lhs.renderedClip == rhs.renderedClip
+        lhs.clip.asset == rhs.clip.asset && lhs.renderedClip.trim == rhs.renderedClip.trim
+            && lhs.renderedClip.outputWindow == rhs.renderedClip.outputWindow
+            && lhs.renderedClip.channels == rhs.renderedClip.channels
             && lhs.waveform?.id == rhs.waveform?.id && lhs.start == rhs.start
             && lhs.duration == rhs.duration && lhs.programStart == rhs.programStart
             && lhs.viewportWidth == rhs.viewportWidth && lhs.left == rhs.left && lhs.normalized == rhs.normalized
@@ -268,20 +282,6 @@ private struct AudioClipWaveformDrawing: View, Equatable {
                 path.addLine(to: .init(x: x, y: size.height / 2 - Double(lows[column]) * gain * size.height * 0.35))
             }
             context.stroke(path, with: .color(.teal), lineWidth: 1)
-            if let envelope = try? AudioEnvelopeEvaluator(
-                envelope: renderedClip.envelope, durationFrames: durationFrames),
-               !renderedClip.envelope.points.isEmpty {
-                var curve = Path()
-                for x in stride(from: 0.0, through: size.width, by: 2) {
-                    guard let program = projection.programTime(forDisplayTime: start + (left + x) / viewportWidth * duration) else { continue }
-                    let seconds = program - programStart
-                    let frame = min(durationFrames, max(0, Int64((seconds * 48_000).rounded())))
-                    guard let amplitude = try? envelope.amplitude(atLocalFrame: frame) else { continue }
-                    let point = CGPoint(x: x, y: (1 - amplitude) * (size.height - 12) + 6)
-                    if x == 0 { curve.move(to: point) } else { curve.addLine(to: point) }
-                }
-                context.stroke(curve, with: .color(.orange), lineWidth: 1)
-            }
         }
         .clipped()
         .accessibilityHidden(true)

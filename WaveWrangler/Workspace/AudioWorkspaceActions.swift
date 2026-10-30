@@ -72,6 +72,10 @@ struct AudioWorkspaceActions: View {
                             set: { _ in alignment.audioEditor.dismissInsertion() })) { session in
             AudioInsertionSheet(editor: alignment.audioEditor, session: session)
         }
+        .sheet(item: Binding(get: { alignment.audioEditor.fadeSession },
+                            set: { _ in alignment.audioEditor.dismissFade() })) { session in
+            AudioFadeSheet(editor: alignment.audioEditor, session: session)
+        }
         .sheet(isPresented: $alignment.tracksReviewPresented, onDismiss: {
             alignment.discardTracksReview()
         }) {

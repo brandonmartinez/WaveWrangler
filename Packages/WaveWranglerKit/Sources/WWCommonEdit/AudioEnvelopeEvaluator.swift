@@ -101,10 +101,21 @@ public struct AudioEnvelopeEvaluator: Sendable, Equatable {
         -> AudioClipEnvelope
     {
         guard frame >= 0, frame <= durationFrames else { throw .outsideClip(frame) }
+        let local: AudioEnvelopeCoordinate
+        do { local = try .init(numerator: frame) } catch { throw .coordinate(error) }
+        return try settingPoint(atLocalCoordinate: local, amplitude: amplitude)
+    }
+
+    public func settingPoint(atLocalCoordinate local: AudioEnvelopeCoordinate, amplitude: Double)
+        throws(AudioEnvelopeError) -> AudioClipEnvelope
+    {
+        let end: AudioEnvelopeCoordinate
+        do { end = try .init(numerator: durationFrames) } catch { throw .coordinate(error) }
+        guard local >= .zero, local <= end else { throw .outsideClipCoordinate(local) }
         guard amplitude.isFinite, (0...1).contains(amplitude) else { throw .invalidAmplitude }
         let coordinate: AudioEnvelopeCoordinate
         do {
-            coordinate = try (envelope.window?.offset ?? .zero).adding(AudioEnvelopeCoordinate(numerator: frame))
+            coordinate = try (envelope.window?.offset ?? .zero).adding(local)
         } catch { throw .coordinate(error) }
         let point = AudioEnvelopePoint(
             frame: coordinate.floorFrame, amplitude: amplitude, fraction: coordinate.fractionalPart)

@@ -62,6 +62,9 @@ struct AudioClipInspector: View {
                     .accessibilityIdentifier("ww.audioClip.trim")
                 Text("Retained original source support: \(selected.clip.trim.startFrame)..<\(selected.clip.trim.endFrame) native frames at \(selected.asset.sampleRate) Hz. Crops preserve SRC phase and fades. Extending a discarded fade curve is refused.")
                     .font(.caption).foregroundStyle(.secondary)
+                Divider()
+                AudioClipFadeControls(editor: editor, playhead: playhead)
+                Divider()
                 Button("Split at Playhead") {
                     if let playhead { editor.splitSelected(atProgramSeconds: playhead) }
                     else { editor.refuse("Show cut's removed audio is review-only. Choose a production position before splitting an Audio Clip.") }

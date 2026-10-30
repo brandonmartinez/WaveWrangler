@@ -434,7 +434,69 @@ native-state/generation refusals), and `AudioInsertionUITests` (real creation,
 preview, retarget, edit/remove, Undo, fixed chrome, production, and negative/
 invalid/nesting workflows). Hosted/UI execution requires the approved clean
 snapshot/Products identities and a fresh leased ready VM; inherited F5 evidence
-does not qualify these new controls. F8 envelope-point UI and export are unchanged.
+does not qualify these new controls. Export is unchanged.
+
+## F8 clip-local linear fade controls
+
+`AudioEnvelopeEditing` prepares reviewable whole-value edits over the existing
+`AudioEnvelopeEvaluator`. A Fade In/Out starts at the selected clip's current
+composition-aware production playhead, captures its evaluated **current** local
+gain, and adds a strictly later ramp endpoint. Duration or absolute program end
+time is converted to checked whole output frames within the audible trimmed
+interval. Nonfinite times/levels, wrong direction, zero/negative duration,
+outside-clip positions, and invalid rational coordinates refuse explicitly.
+Target amplitude is finite 0...1; Silence is literal zero, never negative
+infinity. Fade In can explicitly initialize zero only at the audible beginning.
+Full-to-low-to-zero and zero-to-low-to-full-to-zero sequences use repeated fades.
+
+The endpoint holds to the next existing ramp's start, not merely the next knot.
+The overwritten ramp's remaining tail and any subsequent hold knots through
+that next start are listed for explicit level replacement when necessary;
+every following ramp endpoint remains unchanged. Knots inside
+the new interval and crossed existing ramps also require explicit approval.
+Outside-window bracketing knots are never removed or edited; when necessary an
+audible-end hold knot prevents their slope from leaking into the new held tail.
+`AudioEnvelopeEditPreview.confirmed(replacing:)` enforces approval, not just a
+disabled button. The sheet revokes approval whenever its draft changes.
+
+Numeric point editing uses current-local whole frames or exact
+`numerator/denominator`, including fractional coordinates after native trims.
+The selected point, any collision, and reconnected segments are reviewed before
+apply/removal. Outside-trim support is read-only. Removing the last point
+explicitly restores the empty unity envelope. `settingPoint(atLocalCoordinate:)`
+is the rational counterpart of the existing integer API; both translate through
+the evaluator's retained origin. Trims, output windows, placement, channel order,
+and source support do not change during a fade edit.
+
+`AudioFadeSession` captures clip selection identity, editor lifetime, exact store
+generation (including Undo/restore ABA), episode, projection, and originating
+window. A native-state document barrier runs before this snapshot; native edits
+made afterward still trigger the normal store refusal. Preview never publishes
+or restarts playback. Apply uses one guarded `replacingAudioClip`/Undo action.
+Cold preparation blocks; verified warm waveform refinement remains interactive.
+No new source grants, DSP, nonlinear curves, ducking, track automation, or export
+path is introduced. Existing production/offline scheduling evaluates the curve.
+
+`AudioEnvelopeGeometryCache` has a fixed eight-entry LRU budget, following the
+existing waveform cache's small retained-entry pattern. Deleted clips are pruned;
+panning through distinct clips cannot retain an unbounded history of geometry.
+Its key contains envelope/duration, program placement, viewport size/range, and
+immutable presentation projection, **not** playhead, selection, names, source
+decode jobs, or live faders. The equatable overlay compares this input key before
+requesting cached geometry, so playhead ticks do not rebuild even when the visible
+clip count exceeds the shared cache budget. Live view geometry leaves with its
+viewport; the overlay has no layout or hit-testing role.
+Pixel/point reduction is bounded by the viewport with a fixed 8,192-column cap;
+exact visible knots are drawn on the curve, and review-only cuts break it.
+Waveform drawing equality excludes the envelope, retaining existing raw bins.
+
+Focused coverage: `AudioEnvelopeEditingTests`, the edited-sequence production
+case in `SupplementalClipTests`, `AudioFadeGeometryTests`, `AudioFadeHostedTests`,
+and `AudioFadeUITests`. The hosted tick test measures actual cache build identity
+across playhead publications and unchanged lane/source geometry, not a timing
+claim from screenshots. Local package checks and build-for-testing do not qualify
+hosted/UI runtime behavior. F6/F7/F8 runtime gates require the combined frozen
+tree and approved exact Products/probe/selectors on a freshly ready leased VM.
 
 ### Standard legacy WAVE order, separate from raw layout facts
 

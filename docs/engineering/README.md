@@ -56,9 +56,9 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 `WWTimeMap` contains the exact source/group/aligned coordinate maps.
 `WWCommonEdit` contains the provisional common episode edit map and the
 [program-time composition and supplemental production contract](program-timeline.md).
-The Audio Track/Audio Clip editor, Add Audio, timeline file-drop staging, and
-explicit Insert Intro / Insert & Ripple controls use that production contract.
-Fade-point controls, export, and protected-cut acceptance are separate work.
+The Audio Track/Audio Clip editor, Add Audio, timeline file-drop staging,
+Insert Intro / Insert & Ripple, and clip-local linear fade controls use that
+production contract. Export and protected-cut acceptance are separate work.
 
 ### Audio Tracks and Add Audio
 
@@ -121,7 +121,23 @@ resolved placement; unpinned placements follow dialogue edits. Track names/order
 and every completed edit use the existing document Undo/Redo. Drag previews and
 selection stay editor-local; canceled gestures do not edit the show. Extension
 of a crop with discarded envelope automation refuses rather than inventing a
-replacement curve. Fade-point editing is not exposed here.
+replacement curve.
+
+Select an Audio Clip and place the playhead inside its audible trimmed interval,
+then choose **Fade In...** or **Fade Out...** in the inspector. A fade **starts**
+at that production playhead, captures the evaluated current gain, and ends after
+the entered duration or at the entered program end time. The target is linear
+amplitude (1 full level, 0.25 low, 0 exact Silence); Fade In at the clip beginning
+can explicitly initialize Silence. Endpoints hold until the next ramp. Review
+lists overwritten knots, crossed ramps, and any changed next-ramp start level;
+applying a conflict requires explicit replacement approval. Later endpoints and
+outside-trim support are retained. **Edit Fade Point...** supports exact local
+frame/fraction and level editing or deliberate removal; removing the last point
+restores unity. Each apply is one Undo action. Selection/restore/generation and
+originating-window checks reject stale previews. Native Audio Unit state is
+captured before opening a preview; the normal document replacement barrier still
+rejects later uncaptured changes. Orange curves and points are viewport-bounded
+and cached separately from raw waveforms and the live playhead.
 
 The shared staged import coordinator qualifies all selected candidates before
 one canonical **Add Audio** transaction inserts sources, assets, track, and clips.

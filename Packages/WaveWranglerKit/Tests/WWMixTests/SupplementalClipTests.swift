@@ -101,6 +101,49 @@ private struct SupplementalFixture {
 
 @Suite("Supplemental clip production", .serialized)
 struct SupplementalClipTests {
+    @Test func editedFadeSequenceUsesProductionEnvelopeAcrossSeekChunksSplitsAndReopen() async throws {
+        let f = try await SupplementalFixture()
+        defer { try? f.remove() }
+        let bytes = try Data(contentsOf: f.url)
+        var clip = f.clip()
+        clip.envelope = try AudioEnvelopeEditing(envelope: clip.envelope, durationFrames: 480)
+            .fade(from: 0, to: 100, direction: .fadeIn, target: 0.25, initializingSilence: true)
+            .confirmed(replacing: false)
+        clip.envelope = try AudioEnvelopeEditing(envelope: clip.envelope, durationFrames: 480)
+            .fade(from: 150, to: 250, direction: .fadeIn, target: 1).confirmed(replacing: false)
+        clip.envelope = try AudioEnvelopeEditing(envelope: clip.envelope, durationFrames: 480)
+            .fade(from: 300, to: 400, direction: .fadeOut, target: 0).confirmed(replacing: false)
+        let evaluator = try AudioEnvelopeEvaluator(envelope: clip.envelope, durationFrames: 480)
+        let unity = try await f.scheduler(f.episode())
+        let raw = try #require(try await unity.read(0..<480)[f.track.id])
+        let episode = f.episode(clips: [clip])
+        let scheduler = try await f.scheduler(episode)
+        let expected = try #require(try await scheduler.read(0..<480)[f.track.id])
+        for frame in 0..<480 {
+            let gain = Float(try evaluator.amplitude(atLocalFrame: Int64(frame)))
+            for channel in 0..<2 { #expect(expected[channel][frame] == raw[channel][frame] * gain) }
+        }
+        #expect(expected.allSatisfy { $0[0] == 0 && $0[400...].allSatisfy { $0 == 0 } })
+        let timeline = try ProgramTimeline(episode: episode)
+        let projected = try timeline.composition().clips[0]
+        let split = try projected.split(atProgramFrame: 2, timeline: timeline)
+        var reopened = f.episode(clips: [split.leading, split.trailing])
+        for _ in 0..<12 { reopened = try JSONDecoder().decode(Episode.self, from: JSONEncoder().encode(reopened)) }
+        let pieces = try await f.scheduler(reopened)
+        #expect(try await pieces.read(0..<480)[f.track.id] == expected)
+        var chunked = [[Float](), [Float]()]
+        for range: Range<Int64> in [0..<2, 2..<17, 17..<137, 137..<301, 301..<480] {
+            let window = try #require(try await pieces.read(range)[f.track.id])
+            for channel in 0..<2 { chunked[channel] += window[channel] }
+        }
+        #expect(chunked == expected)
+        #expect(try await pieces.read(99..<157)[f.track.id] == expected.map { Array($0[99..<157]) })
+        let processor = try await MixerProcessor.load(recipe: scheduler.recipe)
+        let output = try await processor.process(.init(frames: 0..<480, channels: [:], audioTracks: [f.track.id: expected]))
+        #expect(output.channels == expected, "The offline processor consumes the same enveloped production PCM.")
+        #expect(try Data(contentsOf: f.url) == bytes)
+    }
+
     @Test func audioOnlyStereoPlacementOverlapOrderedChannelsGapsAndImmutableSource() async throws {
         let f = try await SupplementalFixture(rate: 48_000, frames: 16)
         defer { try? f.remove() }
