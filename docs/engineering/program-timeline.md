@@ -286,6 +286,18 @@ fade-point UI is part of this slice.
 
 ## F6 location drops and verified supplemental reuse
 
+The macOS 26 drop adapter binds the target's whole `DropSession.itemsCount`, `id`,
+and phase through a live `activeDropSession` binding. Pending and target-bound
+snapshots support metadata-first and legacy-entry-first callback order without a
+filtered-count or maximum-count fallback. A drop consumes a positive current
+active inventory once. Exit/disappearance clear usable snapshots; ended or
+consumed IDs cannot replay, and a session-ID mismatch requires a fresh entry.
+Only exact file-URL providers are requested. Their count must equal the unfiltered
+whole-session count, so mixed/recording payloads cannot become an admitted partial
+file batch. These are metadata checks, not source grants or content reads. The
+metadata helper tests cover both callback orders; real Finder callbacks still
+require the corrected combined runtime gate.
+
 `AudioTimelineFileDropTarget` registers location-only drops on the actual waveform
 canvases, including clip blocks, recording canvases, the empty canvas, and unused
 space below the tracks. Canvas-local geometry excludes headers/padding and follows

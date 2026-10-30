@@ -97,6 +97,23 @@ words, and markers; a cursor inside shortened/removed time clamps to its seam.
 Alignment clocks, accepted timing, transcript provenance, manual cuts, and
 original recordings are never rewritten to make an intro.
 
+## Audio Clip fades
+
+Select an Audio Clip, position the playhead inside its audible trimmed interval,
+and choose **Fade In...** or **Fade Out...** in the inspector. The fade starts at
+that production position, captures the evaluated current level, and ends after
+the entered duration or at the entered program end time. Amplitude is linear:
+1 is full level, 0.25 is low, and 0 is exact **Silence**. Fade In at the clip
+beginning can explicitly initialize Silence. Repeat actions to build
+full-to-low-to-zero or zero-to-low-to-full-to-zero sequences.
+
+Conflicting points, crossed ramps, and changed later hold/start levels are
+reviewed before explicit replacement. **Edit Fade Point...** supports exact
+local frame/fraction and level editing or deliberate removal. Each apply is one
+Undo action. The visible curve is cached separately from the playhead and raw
+waveform; moves, trims, splits, saves, and Undo/Redo retain source ownership and
+the exact curve. Original recordings, alignment, and transcripts are unchanged.
+
 ## Visual alignment
 
 Import recordings in **Setup** to review device groups, recording segments, and speaker/channel

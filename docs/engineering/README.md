@@ -84,6 +84,13 @@ Folder/symlink/non-audio/hidden/unreadable inputs are explicitly reported in rev
 timeline folders are never enumerated. Sources-area folder imports and recorder
 row regrouping retain their existing recording Import Review behavior.
 
+Timeline drops require fresh whole-session `DropSession.itemsCount`, identity,
+and active phase from the live macOS binding. Metadata and target entry may arrive
+in either order. Only exact file-URL providers are requested, and their count must
+match that full inventory; a filtered provider count never supplies a fallback.
+Exit, consumption, and disappearance clear usable counts. Ended/consumed IDs,
+missing metadata, and mixed or mismatched sessions refuse without reading content.
+
 Dropped batches default to **Sequential**, with visible order and Earlier/Later
 controls. Review can explicitly choose Overlay. Add Audio still defaults to
 Overlay. Sequential offsets use checked, actually qualified owned output durations
