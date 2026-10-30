@@ -22,6 +22,7 @@ final class AudioClipEditorModel {
     private var compositionGeneration: UInt64?
     var selectedClip: AudioClipID?
     var selectedTrack: AudioTrackID?
+    private(set) var insertionSession: AudioInsertionSession?
     private(set) var error: String?
     private(set) var waveforms: [SourceID: AudioAssetWaveform] = [:]
     private(set) var isPreparingWaveforms = false
@@ -352,13 +353,102 @@ final class AudioClipEditorModel {
         apply(action) { model throws(DomainError) in try model.replacingAudioClip(clip, in: self.episodeID) }
     }
 
-    private func apply(_ action: String, edit: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel) {
+    @discardableResult
+    private func apply(_ action: String, edit: (ShowDocumentModel) throws(DomainError) -> ShowDocumentModel) -> Bool {
         guard processing == nil, compositionGeneration == store.modelGeneration else {
             error = "The audio projection changed. Wait for the current placement before editing."
-            return
+            return false
         }
-        if store.apply(action, edit) { error = nil; refresh() }
-        else { error = store.lastError.map(EpisodeSetupModel.describe) }
+        if store.apply(action, edit) { error = nil; refresh(); return true }
+        error = store.lastError.map(EpisodeSetupModel.describe)
+        return false
+    }
+
+    func requestInsertion(intro: Bool, programSeconds: Double?) {
+        do {
+            let editing = try insertionEditing()
+            let frame: Int64
+            if intro { frame = editing.introPosition }
+            else if let programSeconds { frame = try Self.programFrame(programSeconds) }
+            else {
+                throw AudioInsertionEditing.Refusal("Show cut's removed audio is review-only. Choose a production position before inserting time.")
+            }
+            insertionSession = .init(purpose: intro ? .intro : .insert, generation: store.modelGeneration,
+                editing: editing, position: frame, duration: 480_000, clip: selectedClip)
+            error = nil
+        } catch { report(error) }
+    }
+
+    func requestInsertionEdit(_ id: AudioInsertionRegionID) {
+        do {
+            let editing = try insertionEditing()
+            guard let region = editing.composition.timeline.insertions.first(where: { $0.region.id == id }) else {
+                throw AudioInsertionEditing.Refusal("The inserted-time region is no longer available.")
+            }
+            insertionSession = .init(purpose: .edit(id), generation: store.modelGeneration,
+                editing: editing, position: region.programFrames.lowerBound,
+                duration: region.region.durationFrames, clip: nil)
+            error = nil
+        } catch { report(error) }
+    }
+
+    func dismissInsertion() { insertionSession = nil }
+
+    func insertionPreview(_ session: AudioInsertionSession, position: String, length: String,
+                          usingEnd: Bool, retarget: Bool, removing: Bool) throws -> AudioInsertionEditing.Edit {
+        try validateInsertionSession(session)
+        if case .edit(let id) = session.purpose, removing { return try session.editing.removing(id) }
+        let start = try Self.programFrame(position), value = try Self.programFrame(length)
+        let duration = usingEnd ? value - start : value
+        switch session.purpose {
+        case .edit(let id): return try session.editing.replacing(id, at: start, duration: duration)
+        case .intro, .insert:
+            return try session.editing.inserting(at: start, duration: duration,
+                moving: retarget ? session.clip : nil, id: session.regionID)
+        }
+    }
+
+    @discardableResult
+    func commitInsertion(_ session: AudioInsertionSession, position: String, length: String,
+                         usingEnd: Bool, retarget: Bool, removing: Bool) -> Bool {
+        do {
+            let edit = try insertionPreview(session, position: position, length: length,
+                usingEnd: usingEnd, retarget: retarget, removing: removing)
+            let action: String
+            switch session.purpose {
+            case .intro: action = "Insert Intro"
+            case .insert: action = "Insert & Ripple"
+            case .edit: action = removing ? "Remove Inserted Time" : "Edit Inserted Time"
+            }
+            guard apply(action, edit: { model throws(DomainError) in
+                try model.settingAudioArrangement(edit.arrangement, in: self.episodeID)
+            }) else { return false }
+            insertionSession = nil
+            return true
+        } catch { report(error); return false }
+    }
+
+    private func insertionEditing() throws -> AudioInsertionEditing {
+        guard store.canEdit, !insertionProcessing, compositionGeneration == store.modelGeneration,
+              let episode, let composition else {
+            throw AudioInsertionEditing.Refusal("Wait for the current editable program projection before inserting time.")
+        }
+        return try AudioInsertionEditing(episode: episode, composition: composition)
+    }
+
+    private func validateInsertionSession(_ session: AudioInsertionSession) throws {
+        guard insertionSession?.id == session.id, session.generation == store.modelGeneration,
+              compositionGeneration == store.modelGeneration, store.canEdit, !insertionProcessing,
+              episode == session.editing.episode else {
+            throw AudioInsertionEditing.Refusal("The program changed or is processing. Cancel and reopen this preview; nothing was applied.")
+        }
+    }
+
+    private var insertionProcessing: Bool {
+        processing != nil || ShowWindowRegistry.states(for: store).contains { state in
+            guard let alignment = state.alignmentModel, alignment.episodeID == episodeID else { return false }
+            return TrackProcessingOperation.current(alignment: alignment, cleanup: state.cleanupModel) != nil
+        }
     }
 
     private func report(_ failure: Error) {
@@ -379,5 +469,25 @@ final class AudioClipEditorModel {
             throw StagedAudioImportCoordinator.Refusal("Program time must be within minus 24 to plus 24 hours.")
         }
         return Int64((seconds * 48_000).rounded(.toNearestOrEven))
+    }
+}
+
+struct AudioInsertionSession: Identifiable {
+    enum Purpose { case intro, insert, edit(AudioInsertionRegionID) }
+    let id = UUID()
+    let regionID = AudioInsertionRegionID()
+    let purpose: Purpose
+    let generation: UInt64
+    let editing: AudioInsertionEditing
+    let position: Int64
+    let duration: Int64
+    let clip: AudioClipID?
+
+    var title: String {
+        switch purpose {
+        case .intro: "Insert Intro"
+        case .insert: "Insert & Ripple"
+        case .edit: "Edit Inserted Time"
+        }
     }
 }

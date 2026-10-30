@@ -286,6 +286,88 @@ continues to use the current inverse-anchor helpers and the shared presentation
 geometry; F8 continues to use exact clip-local evaluator coordinates. There are
 no drop, Insert & Ripple, or fade-point controls in F5.
 
+## F7 explicit insertion and safe inserted-time editing
+
+`AudioInsertionEditing` is a focused app-side immutable operation over the
+existing `Episode` and complete current `ProgramComposition`. Construction
+revalidates their exact agreement. It changes only `audioArrangement` and
+returns the whole validated arrangement/composition for preview. It does not
+add schema, source access, decoding, DSP, clocks, history, or export machinery.
+
+`inserting(at:duration:moving:id:)` accepts a final signed 48 kHz program point.
+It inverse-anchors through the current `ProgramTimeline`. A region interior
+refuses; an exact start edge reuses that verified region's non-insertion anchor
+and inserts before its saved array entry. A final edge inverse-anchors after
+the preceding regions. This preserves saved sibling order even when different
+original dialogue points collapse to one cut seam. New region IDs remain stable
+through preview and publication.
+
+Intro defaults to the minimum retained dialogue-span, inserted-region, and
+unpinned-clip start. Earlier unrelated pins are deliberately excluded when such
+content exists; with only pinned/audio-only content it uses the complete first
+program extent, or zero when empty. The sheet shows this signed default and
+current original-aligned IN/OUT context. It never uses zero to silently leave
+negative-time dialogue before an alleged intro.
+
+Selected-clip retarget is explicit and initially unchecked. When chosen, an
+unpinned clip becomes `.insertion(region: newID, offsetFrames: 0)`. An explicitly
+chosen pin becomes `.absolute(frame: shownStart)` and remains pinned; every
+other pin stays fixed. All clip fields except the chosen placement anchor
+remain identical, including ID, track/source, native support, channel order,
+`outputWindow`, and exact envelope. A 40-second bed at program zero and a
+10-second region produce bed `[0,40)`, dialogue `[10,... )`, not a 40-second
+gap or a cropped/split/stretched bed.
+
+For a middle insertion at 20 seconds, a spanning `[5,45)` clip stays `[5,45)`;
+an ordinary unpinned start at 30 becomes 40 for a 10-second insertion, and a
+30-second pin remains 30. All recording lanes share this projection regardless
+of visibility, mute, backup role, or localized dynamic-clock locks.
+
+`replacing(_:at:duration:)` edits one region while retaining its ID. An unchanged
+start preserves its existing base anchor and saved order. A moved destination
+is explicitly measured in the program **with that region removed**. Valid
+region-relative offsets follow the move without deletion clamping. Only
+offsets at/beyond a shortened duration leave the region: they clamp to its new
+tail seam and inverse-anchor in the resulting projection.
+
+`removing(_:)` drops only the region. All starts attached to it clamp to its old
+program start, after preceding same-boundary siblings and before later siblings.
+The operation builds the resulting timeline without dangling clips, derives
+valid current anchors at that seam, and restores every clip in saved order with
+all audio retained. A surviving sibling beginning at the seam can legitimately
+own an offset-zero anchor. Later ordinary starts/regions ripple through the
+existing kernel, pins do not, and overhangs stay intact. The original source
+samples and native duration are unrelated to the removed inserted duration.
+
+`AudioClipEditorModel` binds a sheet session to exact store generation,
+episode/composition, current editability, and shared processing readiness.
+An edit followed by Undo or an equal-byte reload still invalidates it. Invalid,
+nonfinite, empty, zero, overflowing, day-out-of-bounds, stale-map, or nested
+inputs show a refusal and leave the document unchanged. The Apply action reads
+live fields, recomputes the complete validated value, then uses the existing
+`apply`/`settingAudioArrangement` path once. It does not bypass uncaptured native
+state or keep an Undo group open across an await. Undo names are `Insert Intro`,
+`Insert & Ripple`, `Edit Inserted Time`, and `Remove Inserted Time`.
+
+Opening/canceling a sheet does not publish, seek, play, or choose routing.
+Applying uses the existing presentation synchronization: playback stops,
+temporary selection/cycle clears, retained source bins reproject, and words,
+markers, IN/OUT display, navigation, and docked/detached review share the same
+projection. `reprojectInsertedDisplayTime` preserves a cursor's retained region
+offset or clamps a removed offset to the new seam, including preceding sibling
+ordering and separate Show cut display offsets. It adds no clip/name/playhead
+state to the cached geometry identity. Expanded cut interiors have no production
+coordinate and are refused as insertion destinations.
+
+Focused synthetic coverage is in `AudioInsertionEditingTests` (exact value
+operations), `AudioInsertionHostedTests` (document/Undo/save/reopen, real
+production preparation/audition and source-byte invariance, shared review and
+native-state/generation refusals), and `AudioInsertionUITests` (real creation,
+preview, retarget, edit/remove, Undo, fixed chrome, production, and negative/
+invalid/nesting workflows). Hosted/UI execution requires the approved clean
+snapshot/Products identities and a fresh leased ready VM; inherited F5 evidence
+does not qualify these new controls. F8 envelope-point UI and export are unchanged.
+
 ### Standard legacy WAVE order, separate from raw layout facts
 
 Ordinary bare mono/stereo PCM WAV is a positive Add Audio workflow, not an

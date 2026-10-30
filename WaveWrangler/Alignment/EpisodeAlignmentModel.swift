@@ -2487,15 +2487,17 @@ final class EpisodeAlignmentModel {
             let alignedStart = appliedPresentation.originalTime(forDisplayTime: waveformStartSeconds)
             let priorProgramPlayhead = appliedPresentation.programTime(forDisplayTime: waveformPlayheadSeconds)
             let priorProgramStart = appliedPresentation.programTime(forDisplayTime: waveformStartSeconds)
+            let insertedPlayhead = appliedPresentation.reprojectInsertedDisplayTime(waveformPlayheadSeconds, to: presentation)
+            let insertedStart = appliedPresentation.reprojectInsertedDisplayTime(waveformStartSeconds, to: presentation)
             let adoptingSavedProgramView = needsInitialProgramAdoption && audioEditor.composition != nil
             if adoptingSavedProgramView { needsInitialProgramAdoption = false }
             cutTimeline = timeline
             appliedPresentation = presentation
             if !adoptingSavedProgramView {
                 waveformPlayheadSeconds = alignedPlayhead.map(presentation.editedTime(forAlignedTime:))
-                    ?? priorProgramPlayhead.map(presentation.displayTime(forProgramTime:)) ?? waveformPlayheadSeconds
+                    ?? insertedPlayhead ?? priorProgramPlayhead.map(presentation.displayTime(forProgramTime:)) ?? waveformPlayheadSeconds
                 waveformStartSeconds = alignedStart.map(presentation.editedTime(forAlignedTime:))
-                    ?? priorProgramStart.map(presentation.displayTime(forProgramTime:)) ?? waveformStartSeconds
+                    ?? insertedStart ?? priorProgramStart.map(presentation.displayTime(forProgramTime:)) ?? waveformStartSeconds
             }
             auditionPlayheadSeconds = waveformPlayheadSeconds
             listening.selection = nil

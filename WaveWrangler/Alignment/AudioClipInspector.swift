@@ -25,6 +25,12 @@ struct AudioClipInspector: View {
             if let selected = editor.selected {
                 Text(editor.episode?.source(selected.clip.source)?.displayNameHint ?? "Audio Clip")
                     .font(.callout).textSelection(.enabled)
+                Button("Insert Intro with Selected Clip…") {
+                    editor.requestInsertion(intro: true, programSeconds: nil)
+                }.accessibilityIdentifier("ww.audioClip.insertIntro")
+                Button("Insert & Ripple with Selected Clip…") {
+                    editor.requestInsertion(intro: false, programSeconds: playhead)
+                }.accessibilityIdentifier("ww.audioClip.insertRipple")
                 LabeledContent("Program start (seconds)") {
                     TextField("Program start", text: $position).frame(width: 110)
                         .accessibilityIdentifier("ww.audioClip.start")

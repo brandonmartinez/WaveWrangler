@@ -37,6 +37,10 @@ struct AudioWorkspaceActions: View {
                 Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
                     .accessibilityIdentifier("ww.addAudio.error")
             }
+            if let error = alignment.audioEditor.error {
+                Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+                    .accessibilityIdentifier("ww.audioEditor.error")
+            }
             if let listeningPresetError {
                 Label(listeningPresetError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
             }
@@ -64,6 +68,10 @@ struct AudioWorkspaceActions: View {
         .controlSize(.small)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.audioWorkspace.actions")
+        .sheet(item: Binding(get: { alignment.audioEditor.insertionSession },
+                            set: { _ in alignment.audioEditor.dismissInsertion() })) { session in
+            AudioInsertionSheet(editor: alignment.audioEditor, session: session)
+        }
         .sheet(isPresented: $alignment.tracksReviewPresented, onDismiss: {
             alignment.discardTracksReview()
         }) {
@@ -110,6 +118,8 @@ struct AudioWorkspaceActions: View {
             .labelStyle(.iconOnly)
             .disabled(!state.canEdit)
             .accessibilityIdentifier("ww.audioWorkspace.audioTracks")
+            AudioInsertionControls(editor: alignment.audioEditor,
+                programPlayhead: alignment.presentationTimeline.programTime(forDisplayTime: alignment.waveformPlayheadSeconds))
             Button("Play Mix", systemImage: "play.fill") { alignment.playProductionMix() }
                 .tint(alignment.listening.usesProductionMix ? .accentColor : .secondary)
                 .disabled(state.selectedEpisode?.speakerAssignments.isEmpty != false

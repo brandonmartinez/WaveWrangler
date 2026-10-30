@@ -56,8 +56,9 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 `WWTimeMap` contains the exact source/group/aligned coordinate maps.
 `WWCommonEdit` contains the provisional common episode edit map and the
 [program-time composition and supplemental production contract](program-timeline.md).
-The Audio Track/Audio Clip editor and Add Audio workflow use that production contract.
-Finder timeline drops, cross-episode reuse, insertion/fade-point controls, export, and
+The Audio Track/Audio Clip editor, Add Audio, and explicit Insert Intro / Insert &
+Ripple controls use that production contract.
+Finder timeline drops, cross-episode reuse, fade-point controls, export, and
 protected-cut acceptance are separate work.
 
 ### Audio Tracks and Add Audio
@@ -115,6 +116,16 @@ recording sources; it never hides usable supplemental lanes behind an empty-reco
 preparation. Import/cold clip preparation still uses the shared blocking operation.
 The fixed bottom-pane header retains Detach Mixer when a short docked body yields
 space to tracks; divider preferences are not replaced with the temporary minimum.
+
+**Insert Intro...**, **Insert & Ripple...**, and the **Inserted Time** menu stay
+in the fixed workspace action chrome; selected-clip shortcuts are in its inspector.
+The generation-bound sheet previews a whole `AudioInsertionEditing` value and
+publishes one `settingAudioArrangement` through the existing guarded editor/store.
+It does not capture/ignore native Audio Unit changes: the normal document
+replacement refusal remains authoritative. See
+[F7 insertion semantics](program-timeline.md#f7-explicit-insertion-and-safe-inserted-time-editing)
+for signed defaults, region-removed move coordinates, same-boundary order, and
+anchor repair on shortening/removal.
 
 ### Manual cuts and editing layouts
 

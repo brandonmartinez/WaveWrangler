@@ -92,6 +92,36 @@ struct AudioTimelineProjection: Sendable, Equatable {
         return time - removed
     }
 
+    /// Keep a cursor inside a retained region, or clamp a removed offset to its new seam.
+    /// This is presentation state only, including Show cut's separate display offsets.
+    func reprojectInsertedDisplayTime(_ time: Double, to next: Self) -> Double? {
+        guard let program = programTime(forDisplayTime: time),
+              let index = insertions.firstIndex(where: {
+                  program >= Double($0.programFrames.lowerBound) / 48_000
+                      && program < Double($0.programFrames.upperBound) / 48_000
+              }) else { return nil }
+        let prior = insertions[index]
+        let offset = program - Double(prior.programFrames.lowerBound) / 48_000
+        let destination: Double
+        if let retained = next.insertions.first(where: { $0.region.id == prior.region.id }) {
+            destination = Double(retained.programFrames.lowerBound) / 48_000
+                + min(offset, Double(retained.region.durationFrames) / 48_000)
+        } else {
+            let base: Int64
+            switch prior.region.anchor {
+            case .dialogue(let anchor): base = next.canonicalCuts.editedFrame(forAlignedFrame: anchor.frame)
+            case .programOrigin(let frame): base = frame
+            case .absolute, .insertion: return nil
+            }
+            let preceding = Set(insertions.prefix(index).map(\.region.id))
+            let inserted = next.insertions.filter {
+                $0.baseFrame < base || $0.baseFrame == base && preceding.contains($0.region.id)
+            }.reduce(0.0) { $0 + Double($1.region.durationFrames) / 48_000 }
+            destination = Double(base) / 48_000 + inserted
+        }
+        return next.displayTime(forProgramTime: destination)
+    }
+
     func originalTime(forDisplayTime time: Double) -> Double? {
         guard time.isFinite, abs(time) <= 172_800 else { return nil }
         guard usesProgram else { return cuts.alignedTime(forEditedTime: time) }
