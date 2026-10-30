@@ -281,30 +281,42 @@ struct AudioInsertionHostedTests {
 
     @Test func uncapturedNativeStateRefusesInsertionInsteadOfBypassingTheDocumentBarrier() async throws {
         let f = try await helper.ready()
-        defer { f.close() }
+        var canCloseFixture = true
+        defer { if canCloseFixture { f.close() } }
         let owner = helper.owner(f)
         _ = owner
         let slot = try helper.appleSlot()
         try helper.insert(slot, into: f)
         f.model.audioEditor.refresh()
         _ = try await f.model.mixer.prepare(programFrames: 0..<2048)
-        try await f.model.mixer.beginEditorObservation(coalescing: "f7.native")
-        await f.model.mixer.suspendEditorObservation()
-        let processor = try #require(f.model.mixer.processor)
-        let parameter = try #require(try await processor.parameters(slot: slot.id).first {
-            $0.writable && $0.minimum < $0.maximum
-        })
-        try await processor.setParameter(slot: slot.id, address: parameter.address,
-            value: parameter.value == parameter.minimum ? parameter.maximum : parameter.minimum)
-        let editor = f.model.audioEditor
-        editor.refresh()
-        editor.requestInsertion(intro: true, programSeconds: nil)
-        let session = try #require(editor.insertionSession)
-        let before = f.document.store.model
-        #expect(!editor.commitInsertion(session, position: "0", length: "1",
-            usingEnd: false, retarget: false, removing: false))
-        #expect(f.document.store.model == before && f.model.mixer.processor != nil)
-        #expect(editor.error?.contains("Audio Unit") == true)
-        try await f.model.mixer.endEditorObservation()
+        var bodyFailure: (any Error)?
+        do {
+            try await f.model.mixer.beginEditorObservation(coalescing: "f7.native")
+            await f.model.mixer.suspendEditorObservation()
+            let processor = try #require(f.model.mixer.processor)
+            let parameter = try #require(try await processor.parameters(slot: slot.id).first {
+                $0.writable && $0.minimum < $0.maximum
+            })
+            try await processor.setParameter(slot: slot.id, address: parameter.address,
+                value: parameter.value == parameter.minimum ? parameter.maximum : parameter.minimum)
+            let editor = f.model.audioEditor
+            editor.refresh()
+            editor.requestInsertion(intro: true, programSeconds: nil)
+            let session = try #require(editor.insertionSession)
+            let before = f.document.store.model
+            #expect(!editor.commitInsertion(session, position: "0", length: "1",
+                usingEnd: false, retarget: false, removing: false))
+            #expect(f.document.store.model == before && f.model.mixer.processor != nil)
+            #expect(editor.error?.contains("Audio Unit") == true)
+        } catch { bodyFailure = error }
+        do {
+            try await f.model.mixer.endEditorObservation()
+        } catch {
+            canCloseFixture = false
+            Issue.record("Native-observation teardown failed; fixture preserved at \(f.folder.path): \(error)")
+            if let bodyFailure { Issue.record("Native-refusal body also failed: \(bodyFailure)") }
+            throw error
+        }
+        if let bodyFailure { throw bodyFailure }
     }
 }
