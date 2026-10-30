@@ -55,6 +55,11 @@ struct AudioInsertionHostedTests {
         let bed = try await importBed(f)
         defer { Task { await bed.engine.shutdown() } }
         let editor = f.model.audioEditor
+        let cleanup = EpisodeCleanupModel(state: bed.owner.state, episodeID: f.model.episodeID, runtime: f.runtime)
+        cleanup.connectWorkspace(to: f.model)
+        bed.owner.state.cleanupModel = cleanup
+        defer { cleanup.cancel() }
+        await cleanup.refresh()
         let originals = try (f.files + [bed.file]).map { try Data(contentsOf: $0) }
         let before = f.document.store.model
         let episode = try #require(editor.episode)
@@ -68,6 +73,7 @@ struct AudioInsertionHostedTests {
         bed.owner.state.reviewPresentation.detach()
         let reviewWindow = try #require(bed.owner.state.reviewPresentation.detachedWindow?.window)
         #expect(reviewWindow.undoManager === undo)
+        #expect(bed.owner.state.cleanupModel === cleanup && bed.owner.state.alignmentModel === f.model)
         editor.requestInsertion(intro: true, programSeconds: nil)
         let session = try #require(editor.insertionSession)
         #expect(session.position == 0 && f.document.store.model == before)
