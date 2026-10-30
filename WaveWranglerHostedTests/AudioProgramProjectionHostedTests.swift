@@ -79,7 +79,9 @@ struct AudioProgramProjectionHostedTests {
         try #require(f.document.store.apply("Synthetic additional earlier cut") { model throws(DomainError) in
             var next = model
             let index = next.episodes.firstIndex { $0.id == initial.id }!
-            next.episodes[index].cleanup?.manualCuts.append(earlier)
+            var cleanup = next.episodes[index].cleanup ?? EpisodeCleanup()
+            cleanup.manualCuts = (cleanup.manualCuts ?? []) + [earlier]
+            next.episodes[index].cleanup = cleanup
             return next
         })
         editor.refresh()

@@ -110,7 +110,7 @@ diagnostic path. Selection, panes, and layouts never start playback or choose
 production implicitly. Audio-only programs and supplemental intros/outros use
 the existing audio-track strips and Master, not a second mixer.
 
-Recording-only loading, refusal, and empty-waveform presentation requires actual
+Recording-only loading, refusal, and empty-waveform presentation require actual
 recording sources; it never hides usable supplemental lanes behind an empty-recorder
 preparation. Import/cold clip preparation still uses the shared blocking operation.
 The fixed bottom-pane header retains Detach Mixer when a short docked body yields
