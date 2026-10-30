@@ -13,7 +13,7 @@ struct AudioWorkspaceActions: View {
     var body: some View {
         let operation = TrackProcessingOperation.current(alignment: alignment, cleanup: state.cleanupModel)
         VStack(alignment: .leading, spacing: 5) {
-            AudioTimelineAdaptiveRow {
+            AudioTimelineAdaptiveRow(horizontalSpacing: 8, verticalSpacing: 6, wraps: true) {
                 recordingActions
                     .disabled(operation != nil)
                 if let cleanup = state.cleanupModel {
@@ -27,10 +27,15 @@ struct AudioWorkspaceActions: View {
                 }
             }
             if operation == nil {
-                Text(alignment.message).font(.caption).foregroundStyle(.secondary)
+                Text(alignment.message).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    .help(alignment.message)
             }
             if let error = alignment.lastError {
                 Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+            }
+            if let error = alignment.audioEditor.importer.error {
+                Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+                    .accessibilityIdentifier("ww.addAudio.error")
             }
             if let listeningPresetError {
                 Label(listeningPresetError, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
@@ -40,7 +45,8 @@ struct AudioWorkspaceActions: View {
                     Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
                 } else if operation == nil, !cleanup.canTranscribe {
                     Text("Transcription: \(cleanup.transcriptionReadinessMessage)")
-                        .font(.caption).foregroundStyle(.secondary)
+                        .font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                        .help(cleanup.transcriptionReadinessMessage)
                 }
                 if cleanup.hasStaleWorkingRange {
                     Button("Review episode IN/OUT…") {
@@ -92,18 +98,45 @@ struct AudioWorkspaceActions: View {
     }
 
     private var recordingActions: some View {
-        HStack {
-            Text("Listen now").font(.caption).foregroundStyle(.secondary)
-            listeningPreset(.muteNonPrimaries, title: "Mute backups", symbol: "speaker.slash")
-            listeningPreset(.soloPrimaries, title: "Primaries", symbol: "person.fill")
-            listeningPreset(.soloBackups, title: "Backups", symbol: "person.2")
-            if alignment.listening.previousPlayback != nil {
-                Button("Restore listening choices", systemImage: "arrow.uturn.backward") {
-                    alignment.restoreListeningChoices()
+        Group {
+            Button("Add Audio…", systemImage: "plus") {
+                alignment.addAudio(in: state)
+            }
+            .disabled(!state.canEdit)
+            .accessibilityIdentifier("ww.audioWorkspace.addAudio")
+            Menu("Audio Tracks", systemImage: "waveform") {
+                Button("New Audio Track") { alignment.audioEditor.addTrack() }
+            }
+            .labelStyle(.iconOnly)
+            .disabled(!state.canEdit)
+            .accessibilityIdentifier("ww.audioWorkspace.audioTracks")
+            Button("Play Mix", systemImage: "play.fill") { alignment.playProductionMix() }
+                .tint(alignment.listening.usesProductionMix ? .accentColor : .secondary)
+                .disabled(state.selectedEpisode?.speakerAssignments.isEmpty != false
+                    && state.selectedEpisode?.audioArrangement?.clips.isEmpty != false)
+                .accessibilityValue(alignment.listening.usesProductionMix ? "Selected" : "Not selected")
+                .accessibilityIdentifier("ww.audioWorkspace.playMix")
+            Button("Source Audition", systemImage: "ear") {
+                alignment.selectSourceAudition()
+            }
+            .labelStyle(.iconOnly)
+            .disabled(state.selectedEpisode?.alignmentSources.isEmpty != false)
+            .help("Choose diagnostic source audition instead of the production mix. This choice does not start playback.")
+            .accessibilityIdentifier("ww.audioWorkspace.sourceAudition")
+            Divider().frame(height: 20)
+            if state.selectedEpisode?.alignmentSources.isEmpty == false {
+                Text("Listen now").font(.caption).foregroundStyle(.secondary)
+                listeningPreset(.muteNonPrimaries, title: "Mute backups", symbol: "speaker.slash")
+                listeningPreset(.soloPrimaries, title: "Primaries", symbol: "person.fill")
+                listeningPreset(.soloBackups, title: "Backups", symbol: "person.2")
+                if alignment.listening.previousPlayback != nil {
+                    Button("Restore listening choices", systemImage: "arrow.uturn.backward") {
+                        alignment.restoreListeningChoices()
+                    }
+                    .labelStyle(.iconOnly)
+                    .help("Restore listening choices captured before the last preset or newly accepted alignment.")
+                    .accessibilityIdentifier("ww.listening.restore")
                 }
-                .labelStyle(.iconOnly)
-                .help("Restore listening choices captured before the last preset or newly accepted alignment.")
-                .accessibilityIdentifier("ww.listening.restore")
             }
             Divider().frame(height: 20)
             Button("Add recordings or speakers", systemImage: "plus") { state.recordingsPresented = true }
@@ -114,12 +147,14 @@ struct AudioWorkspaceActions: View {
                     isEnabled: !cleanup.isBusy && !alignment.isWorking && state.canEdit,
                     actions: [
                         .init(title: "IN at playhead") {
-                            cleanup.saveRange(inValue: alignment.waveformPlayheadSeconds,
+                            guard let aligned = alignment.dialogueTime(atDisplayTime: alignment.waveformPlayheadSeconds) else { return }
+                            cleanup.saveRange(inValue: aligned,
                                 outValue: cleanup.episode?.cleanup?.workingRange?.tracksOut)
                         },
                         .init(title: "OUT at playhead") {
+                            guard let aligned = alignment.dialogueTime(atDisplayTime: alignment.waveformPlayheadSeconds) else { return }
                             cleanup.saveRange(inValue: cleanup.episode?.cleanup?.workingRange?.tracksIn,
-                                outValue: alignment.waveformPlayheadSeconds)
+                                outValue: aligned)
                         },
                         .init(title: "Reset IN/OUT") { cleanup.saveRange(inValue: nil, outValue: nil) },
                     ])
@@ -165,7 +200,7 @@ struct AudioWorkspaceWorkflowActions: View {
         let operation = TrackProcessingOperation.current(alignment: alignment, cleanup: state.cleanupModel)
         HStack {
             Button("Align Tracks", systemImage: "waveform.path") { alignment.requestAlignTracks() }
-                .disabled(operation != nil || !state.canEdit)
+                .disabled(operation != nil || !state.canEdit || state.selectedEpisode?.alignmentSources.isEmpty != false)
                 .accessibilityIdentifier("ww.workflow.alignTracks")
                 .help("Analyze all eligible recorder groups using shared speaker channels, then review proposals before acceptance. Resolve grouping, channels and source access in Recordings & Speakers.")
             Button("Reset Alignment…", systemImage: "arrow.counterclockwise") { alignment.requestResetAlignment() }

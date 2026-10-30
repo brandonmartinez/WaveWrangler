@@ -20,6 +20,7 @@ struct AudioTimelineTransport: View {
     var followPlayhead: Bool? = nil
     var toggleFollowPlayhead: () -> Void = {}
     var jumpSeconds = 5
+    var coordinateLabel: String? = nil
 
     @State private var timeDraft = ""
     @FocusState private var editingTime: Bool
@@ -68,8 +69,8 @@ struct AudioTimelineTransport: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             VStack(spacing: 1) {
-                Text(isEdited ? "EDITED TIME" : "ALIGNED TIME").font(.caption2).foregroundStyle(.secondary)
-                TextField(isEdited ? "Edited seconds" : "Aligned seconds", text: $timeDraft)
+                Text(coordinateLabel ?? (isEdited ? "EDITED TIME" : "ALIGNED TIME")).font(.caption2).foregroundStyle(.secondary)
+                TextField(coordinateLabel != nil ? "Program seconds" : isEdited ? "Edited seconds" : "Aligned seconds", text: $timeDraft)
                     .textFieldStyle(.roundedBorder).monospacedDigit()
                     .frame(width: 104)
                     .focused($editingTime)
@@ -79,7 +80,8 @@ struct AudioTimelineTransport: View {
                         if !focused { commitTime() }
                     }
                     .accessibilityIdentifier("\(prefix).playhead")
-                    .accessibilityLabel(isEdited ? "Edited playhead time in seconds" : "Aligned playhead time in seconds")
+                    .accessibilityLabel(coordinateLabel.map { "\($0.capitalized) in seconds" }
+                        ?? (isEdited ? "Edited playhead time in seconds" : "Aligned playhead time in seconds"))
             }
             Text(status)
                 .font(.caption).foregroundStyle(.secondary)
@@ -357,6 +359,7 @@ struct AudioTimelineRuler: View {
     let setWindow: (Double, Double) -> Void
     let commitWindow: () -> Void
     var isEdited = false
+    var coordinateLabel: String? = nil
 
     private struct Pan {
         let start: Double
@@ -454,12 +457,13 @@ struct AudioTimelineRuler: View {
 
     private var timeRuler: some View {
         HStack(spacing: 8) {
-            Text(isEdited ? "EDITED SECONDS" : "ALIGNED SECONDS")
+            Text(coordinateLabel ?? (isEdited ? "EDITED SECONDS" : "ALIGNED SECONDS"))
                 .font(.caption2).foregroundStyle(.secondary)
                 .frame(width: headerWidth, alignment: .leading)
                 .accessibilityLabel(
                     String(
-                        format: "Visible %@ time ruler: %.3f to %.3f seconds", isEdited ? "edited" : "aligned", start,
+                        format: "Visible %@ time ruler: %.3f to %.3f seconds",
+                        coordinateLabel != nil ? "program" : isEdited ? "edited" : "aligned", start,
                         start + duration)
                 )
                 .accessibilityIdentifier("\(prefix).ruler")
@@ -512,7 +516,7 @@ struct AudioTimelineRuler: View {
                         .frame(width: 20, height: 44)
                         .accessibilityRepresentation {
                             Stepper(
-                                "Aligned playhead",
+                                coordinateLabel != nil ? "Program playhead" : "Aligned playhead",
                                 onIncrement: { adjustPlayhead(.increment) },
                                 onDecrement: { adjustPlayhead(.decrement) }
                             )

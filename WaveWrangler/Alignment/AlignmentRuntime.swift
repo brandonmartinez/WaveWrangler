@@ -61,6 +61,7 @@ actor AlignmentRuntime {
     private var publicationReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
     private let auditionPCM: AlignedAuditionPCMCache
     private let nativeSources: NativeSourcePreparation
+    private var audioAssetWaveforms: [SourceID: AudioAssetWaveform] = [:]
     private let nativeCacheRoot: URL
     private var supplementalSchedulers: [EpisodeID: SupplementalClipScheduler] = [:]
     #if DEBUG
@@ -551,6 +552,7 @@ actor AlignmentRuntime {
         startSeconds: Double, durationSeconds: Double, overview: Bool = false,
         onlySources: Set<SourceID>? = nil, decodedChannels: [SourceID: Int] = [:],
         revealingCut: UUID? = nil,
+        presentation: AudioTimelineProjection? = nil,
         overviewActivity: @escaping @Sendable (OverviewActivity) async throws -> Void = { _ in },
         progress: @escaping @Sendable (Double) async throws -> Void = { _ in }
     ) async throws -> AlignmentWaveformLoad {
@@ -604,8 +606,9 @@ actor AlignmentRuntime {
                     let first = Int64(floor(startSeconds * rate))
                     let cuts = map == nil || (sourceMap == nil && correction == nil)
                         ? .unedited : try episode.manualCutTimeline(revealing: revealingCut)
-                    let ranges = cuts.alignedRanges(
-                        forEditedFrames: first..<(first + Int64(ceil(durationSeconds * rate))))
+                    let requestedFrames = first..<(first + Int64(ceil(durationSeconds * rate)))
+                    let ranges = presentation?.alignedSegments(forDisplayFrames: requestedFrames).map(\.aligned)
+                        ?? cuts.alignedRanges(forEditedFrames: requestedFrames)
                     var pieces: [WaveformEnvelope] = []
                     for range in ranges {
                         pieces.append(try await WaveformWindowReader.readWindow(
@@ -617,10 +620,15 @@ actor AlignmentRuntime {
                             decodedChannel: decodedChannels[record.id]
                         ))
                     }
-                    guard let first = pieces.first else { throw WaveformWindowError.invalidWindow }
-                    envelope = WaveformEnvelope(source: first.source, sampleRate: first.sampleRate,
-                        channelCount: first.channelCount, totalFrames: first.totalFrames,
-                        bins: pieces.flatMap(\.bins))
+                    if let first = pieces.first {
+                        envelope = WaveformEnvelope(source: first.source, sampleRate: first.sampleRate,
+                            channelCount: first.channelCount, totalFrames: first.totalFrames, bins: pieces.flatMap(\.bins))
+                    } else {
+                        let format = try await AlignedAuditionWindowReader.inspectFormat(
+                            sourceURL: admission.url, source: record.id, matching: admission.witness, decoder: pipeline.decoder)
+                        envelope = .init(source: record.id, sampleRate: format.sourceSampleRate,
+                            channelCount: format.channelCount, totalFrames: format.frames.validFrames, bins: [])
+                    }
                 }
                 try await reverify(admission)
                 admissions[record.id] = admission
@@ -750,9 +758,10 @@ actor AlignmentRuntime {
     }
 
     func prepareWaveformOverview(load: AlignmentWaveformLoad, episode: Episode?,
-                                cuts: ManualCutTimeline, mappedOnly: Bool = false) async throws -> AlignmentWaveformProjection.Prepared {
+                                cuts: ManualCutTimeline, mappedOnly: Bool = false,
+                                projection: AudioTimelineProjection? = nil) async throws -> AlignmentWaveformProjection.Prepared {
         try await AlignmentWaveformProjection.prepare(load: load, episode: episode, cuts: cuts, mappedOnly: mappedOnly,
-            cache: AlignmentWaveformPreparationCache(coordinator: coordinator))
+            cache: AlignmentWaveformPreparationCache(coordinator: coordinator), projection: projection)
     }
 
     private struct WaveformSourceAdmission: Sendable {
@@ -872,7 +881,8 @@ actor AlignmentRuntime {
         sources requested: [SourceID], outputFrames: Range<Int64>, applyingCuts: Bool = true,
         revealingCut: UUID? = nil, decodedChannels: [SourceID: Int] = [:],
         applyingInputGain: Bool = true, frozenSources: [MixerSourceSnapshot] = [],
-        timebase: AuditionTimebase = .acceptedTimeline
+        timebase: AuditionTimebase = .acceptedTimeline,
+        presentation: AudioTimelineProjection? = nil
     ) async throws -> [SourceID: AuditionClip] {
         guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
         guard !requested.isEmpty, Set(requested).count == requested.count else {
@@ -889,6 +899,12 @@ actor AlignmentRuntime {
         let alignedRanges = applyingCuts
             ? try episode.manualCutTimeline(revealing: revealingCut).alignedRanges(forEditedFrames: outputFrames)
             : [outputFrames]
+        var cursor = outputFrames.lowerBound
+        let segments = presentation?.alignedSegments(forDisplayFrames: outputFrames) ?? alignedRanges.map { range in
+            let displayed = cursor..<(cursor + Int64(range.count))
+            cursor = displayed.upperBound
+            return AudioTimelineProjection.Segment(aligned: range, displayed: displayed)
+        }
         let sources = try await resolveSources(episode.sources)
         let map: AlignedTimelineMap?
         if timebase == .acceptedTimeline {
@@ -918,11 +934,13 @@ actor AlignmentRuntime {
                 guard let channel = reference.resolvedChannel(channelCount: interpretation.channelCount) else {
                     throw MixerFailure.unresolvedChannel(source)
                 }
-                var samples: [Float] = []
-                for alignedFrames in alignedRanges {
+                var samples = [Float](repeating: 0, count: outputFrames.count)
+                for segment in segments {
+                    let alignedFrames = segment.aligned
+                    let decoded: [Float]
                     if timebase == .sourceTime {
                         guard let record = episode.source(source) else { throw DecodeFailure.notFound }
-                        samples += try await AlignedAuditionWindowReader.readWindow(
+                        decoded = try await AlignedAuditionWindowReader.readWindow(
                             sourceURL: admission.url, source: source, matching: admission.witness,
                             decoder: pipeline.decoder,
                             groupMap: Self.sourceTimeMap(record: record, interpretation: interpretation),
@@ -933,19 +951,22 @@ actor AlignmentRuntime {
                             sourceURL: admission.url, matching: admission.witness, outputFrames: alignedFrames
                         )
                         guard channels.indices.contains(channel) else { throw WaveformWindowError.invalidSamples }
-                        samples += channels[channel]
+                        decoded = channels[channel]
                     } else {
                         guard let record = episode.source(source),
                               let groupID = record.placement.recorderGroupID,
                               let group = map?.groups.first(where: { $0.group == groupID }),
                               group.placements.contains(where: { $0.occurrence.source == source })
                         else { throw WaveformWindowError.mapDoesNotMatchSource }
-                        samples += try await AlignedAuditionWindowReader.readWindow(
+                        decoded = try await AlignedAuditionWindowReader.readWindow(
                             sourceURL: admission.url, source: source, matching: admission.witness,
                             decoder: pipeline.decoder, groupMap: group, decodedChannel: channel,
                             outputFrames: alignedFrames, cache: auditionPCM, revision: revision
                         )
                     }
+                    guard decoded.count == alignedFrames.count else { throw WaveformWindowError.invalidSamples }
+                    let offset = Int(segment.displayed.lowerBound - outputFrames.lowerBound)
+                    samples.replaceSubrange(offset..<(offset + decoded.count), with: decoded)
                 }
                 guard samples.count == outputFrames.count else { throw WaveformWindowError.invalidSamples }
                 if applyingInputGain {
@@ -1096,6 +1117,86 @@ actor AlignmentRuntime {
     private struct SupplementalAdmission: Sendable {
         let read: SourceReadAdmission
         let generation: DeviceAccessGeneration?
+    }
+
+    /// Both pending imports and canonical supplemental references enter the same witnessed decoder
+    /// and runtime-owned native preparation cache. The supplied validator remains the authority.
+    func qualifyAudioImport(
+        _ admission: SourceReadAdmission,
+        progress: @escaping @Sendable (Double) async throws -> Void
+    ) async throws -> QualifiedAudioImport {
+        try await admission.validateCurrentAccess()
+        try Task.checkCancellation()
+        let format = try await AlignedAuditionWindowReader.inspectFormat(sourceURL: admission.location,
+            source: admission.source, matching: admission.witness, decoder: pipeline.decoder)
+        try await admission.validateCurrentAccess()
+        let asset = AudioAsset(source: admission.source, frameCount: format.frames.validFrames,
+                               sampleRate: format.sourceSampleRate, channelCount: format.channelCount)
+        guard asset.isValid else { throw NativeSourcePreparationFailure.invalidRange }
+        let prepared = try await nativeSources.prepare(admission, expectedFormat: format) { done, total in
+            try await progress(0.8 * Double(done) / Double(max(1, total)))
+        }
+        if let waveform = audioAssetWaveforms[asset.source], waveform.witness == admission.witness {
+            try await progress(1)
+            return .init(asset: asset, waveform: waveform)
+        }
+        let binFrames = max(Int64(1), (asset.frameCount + 65_535) / 65_536)
+        var bins: [WaveformBin] = []
+        var channelBins = [[WaveformBin]](repeating: [], count: asset.channelCount)
+        var channelLows = [Float](repeating: .infinity, count: asset.channelCount)
+        var channelHighs = [Float](repeating: -.infinity, count: asset.channelCount)
+        var channelPeaks = [Float](repeating: 0, count: asset.channelCount)
+        var first: Int64 = 0, binStart: Int64 = 0
+        var low = Float.infinity, high = -Float.infinity
+        var peak: Float = 0
+        while first < asset.frameCount {
+            try Task.checkCancellation()
+            let end = min(asset.frameCount, first + 65_536)
+            let window = try await nativeSources.readWindow(first..<end, from: prepared, admission: admission)
+            let count = Int(end - first)
+            for frame in 0..<count {
+                for channel in 0..<asset.channelCount {
+                    let value = window.samples[channel * count + frame]
+                    guard value.isFinite else { throw WaveformWindowError.invalidSamples }
+                    low = min(low, value); high = max(high, value); peak = max(peak, abs(value))
+                    channelLows[channel] = min(channelLows[channel], value)
+                    channelHighs[channel] = max(channelHighs[channel], value)
+                    channelPeaks[channel] = max(channelPeaks[channel], abs(value))
+                }
+                let position = first + Int64(frame) + 1
+                if position - binStart == binFrames || position == asset.frameCount {
+                    bins.append(.init(firstFrame: binStart, endFrame: position, minimum: low, maximum: high))
+                    for channel in 0..<asset.channelCount {
+                        channelBins[channel].append(.init(firstFrame: binStart, endFrame: position,
+                            minimum: channelLows[channel], maximum: channelHighs[channel]))
+                        channelLows[channel] = .infinity; channelHighs[channel] = -.infinity
+                    }
+                    binStart = position; low = .infinity; high = -.infinity
+                }
+            }
+            first = end
+            try await progress(0.8 + 0.2 * Double(first) / Double(asset.frameCount))
+        }
+        try await admission.validateCurrentAccess()
+        try Task.checkCancellation()
+        let waveform = AudioAssetWaveform(envelope: .init(source: asset.source, sampleRate: asset.sampleRate,
+            channelCount: asset.channelCount, totalFrames: asset.frameCount, bins: bins),
+            witness: admission.witness, displayGain: peak > 0 ? 1 / Double(peak) : 1,
+            channelBins: channelBins, channelPeaks: channelPeaks)
+        audioAssetWaveforms[asset.source] = waveform
+        return .init(asset: asset, waveform: waveform)
+    }
+
+    func audioAssetWaveform(
+        _ asset: AudioAsset, model: ShowDocumentModel, episode episodeID: EpisodeID,
+        progress: @escaping @Sendable (Double) async throws -> Void
+    ) async throws -> AudioAssetWaveform {
+        guard let episode = model.episode(episodeID),
+              episode.audioArrangement?.assets.contains(asset) == true else { throw MixerFailure.staleDependencies }
+        let admission = try await supplementalAdmission(asset.source, episode: episode)
+        let qualified = try await qualifyAudioImport(admission.read, progress: progress)
+        guard qualified.asset == asset else { throw NativeSourcePreparationFailure.formatMismatch }
+        return qualified.waveform
     }
 
     private func supplementalAdmission(_ id: SourceID, episode: Episode) async throws -> SupplementalAdmission {

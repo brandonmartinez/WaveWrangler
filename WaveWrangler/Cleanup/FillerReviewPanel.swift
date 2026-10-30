@@ -327,8 +327,11 @@ struct FillerReviewPanel: View {
                         .foregroundStyle(row.issue == nil ? Color.primary : .orange)
                         .help(row.issue ?? row.status)
                 }.width(min: 80, ideal: 90, max: 160)
-                TableColumn("Aligned time") { row in
-                    ReviewRowCell(model: model, reviewID: row.id, text: row.time).monospacedDigit()
+                TableColumn(model.workspaceAlignment?.audioEditor.hasArrangement == true ? "Program time" : "Aligned time") { row in
+                    let time = model.workspaceAlignment?.audioEditor.hasArrangement == true
+                        ? AlignmentPresentation.formatTime(model.cutTimeline.editedTime(forAlignedTime: row.start)) : row.time
+                    ReviewRowCell(model: model, reviewID: row.id,
+                        text: time).monospacedDigit()
                 }.width(min: 95, ideal: 105, max: 135)
                 TableColumn("Length") { row in
                     ReviewRowCell(model: model, reviewID: row.id, text: row.duration).monospacedDigit()

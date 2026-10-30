@@ -56,8 +56,65 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 `WWTimeMap` contains the exact source/group/aligned coordinate maps.
 `WWCommonEdit` contains the provisional common episode edit map and the
 [program-time composition and supplemental production contract](program-timeline.md).
-Supplemental scheduling/mixer integration does not complete the later audio editor,
-drop/insertion/fade controls, export, or protected-cut acceptance.
+The Audio Track/Audio Clip editor and Add Audio workflow use that production contract.
+Finder timeline drops, cross-episode reuse, insertion/fade-point controls, export, and
+protected-cut acceptance are separate work.
+
+### Audio Tracks and Add Audio
+
+**Add Audio...** is available in an empty episode as well as an aligned dialogue
+workspace. The native picker leads to a metadata-only review with an explicit
+audio-track destination and program start (captured from the playhead when the
+action begins). Multiple selected files overlay at that position; they are not
+silently sequenced or inserted. **Import** explicitly authorizes local-only
+qualification through the existing source gateway and runtime-owned bounded native
+PCM preparation. Unsupported formats, unqualified MP3 conventions, layouts,
+changed originals, unavailable grants, cloud placeholders, and storage limits
+refuse visibly. No cloud materialization, source-file mutation, or delivery file
+is part of this action.
+
+Generic Audio Tracks remain separate from all four recorder comparison layouts
+and from Primary/Backup, alignment, transcription, recording input gain, and
+diagnostic recorder Solo. A track can contain overlapping clips and repeated
+uses of the same source. Select a block for the Audio Clip inspector; move it
+horizontally or to another Audio Track, or enter its program start/destination.
+Edge handles and exact 48 kHz output-frame bounds crop nondestructively inside
+retained source support. Split at Playhead uses the current program projection
+and retains SRC/envelope phase even at 44.1 kHz. Duplicate reuses the same SourceID
+with a new clip ID. Delete removes only the placement. Pin/unpin preserves current
+resolved placement; unpinned placements follow dialogue edits. Track names/order
+and every completed edit use the existing document Undo/Redo. Drag previews and
+selection stay editor-local; canceled gestures do not edit the show. Extension
+of a crop with discarded envelope automation refuses rather than inventing a
+replacement curve. Fade-point editing is not exposed here.
+
+The shared staged import coordinator qualifies all selected candidates before
+one canonical **Add Audio** transaction inserts sources, assets, track, and clips.
+The existing source engine owns opaque, live pending tokens; evidence outside a
+live token is not permission. Conditional device-record adoption follows the
+canonical action and never overwrites an occupied record. A post-publication
+adoption failure keeps clearly blocked references for relinking or Undo, not a
+success message or a canonical rollback. Exact window/controller/show/episode
+and store-generation checks include restore and Undo/Redo ABA; native effect
+capture occurs before binding the import snapshot.
+
+With an arrangement, shared timeline presentation uses final program geometry,
+including persisted insertion regions. Original source/aligned inspector values
+remain explicitly labeled. Words, markers, waveform hit testing, review navigation,
+and locators share the presentation projection; insertion-only positions cannot
+become recorder anchors or dialogue cuts. Show cut derives an expanded, immutable
+review projection without changing clips, pins, or collapsed production inputs.
+**Play Mix** deliberately selects production listening. Subsequent Play/Space,
+pause, and seek keep that choice; **Source Audition** explicitly returns to the
+diagnostic path. Selection, panes, and layouts never start playback or choose
+production implicitly. Audio-only programs and supplemental intros/outros use
+the existing audio-track strips and Master, not a second mixer.
+
+Recording-only loading, refusal, and empty-waveform presentation requires actual
+recording sources; it never hides usable supplemental lanes behind an empty-recorder
+preparation. Import/cold clip preparation still uses the shared blocking operation.
+The fixed bottom-pane header retains Detach Mixer when a short docked body yields
+space to tracks; divider preferences are not replaced with the temporary minimum.
 
 ### Manual cuts and editing layouts
 
@@ -644,8 +701,19 @@ source-frame count, preserved channels, and an opaque complete preparation.
 exactly that count per channel and marks EOF only when the range ends at the actual
 source end. An empty EOF range is allowed. Invalid/oversized ranges, missing/damaged
 tiles, eviction, or unknown layouts fail rather than clamp, select channel 0, or
-fill scheduled media with silence. Only explicit mono `[42]` and stereo `[1,2]`
-channel-label evidence is admitted. No resampling occurs: downstream resampling must
+fill scheduled media with silence. Explicit mono `[42]` and stereo `[1,2]`
+channel-label evidence is admitted. F5 additionally admits exactly undeclared
+standard legacy RIFF/WAVE PCM through separate, opaque gateway-minted header
+provenance: mono/stereo PCM tag 1 with full-container 16/24/32-bit integers, or
+IEEE-float tag 3/32, with exact format/native/data accounting. Raw layout facts
+remain undeclared; labels are never invented or marked declared. The bounded
+header traversal skips audio data and refuses duplicate, ambiguous, custom-layout,
+extensible, overflowing, or malformed structures as legacy evidence. Known explicit
+extensible layouts continue to use their existing declared-label path. Unknown
+CAF, multichannel, and contradictory/reversed layouts still refuse.
+The disposable native-preparation recipe is revision 2 for this policy; serialized
+format/envelope versions, frame origin/counts, and accepted timing are unchanged.
+No resampling occurs: downstream resampling must
 use a stateful or absolute-source-phase recipe, not independently restart a converter
 for each requested window.
 

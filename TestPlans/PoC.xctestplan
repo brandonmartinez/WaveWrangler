@@ -16,6 +16,7 @@
     {
       "parallelizable": false,
       "selectedTests": [
+        "AudioClipEditorUITests/testEmptyEpisodeAddAudioEditsUndoAndAllLayouts()",
         "VisualAlignmentUITests/testNormalImportThroughSavedManualPlayback()",
         "UnifiedWorkspaceUITests/testIntegratedWorkspaceManagementSelectionCycleAndReadableTranscript()",
         "MixerUITests/testReviewMixerResizeDetachReattachAndOriginClose()",

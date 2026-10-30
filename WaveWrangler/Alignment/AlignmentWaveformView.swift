@@ -53,6 +53,7 @@ struct AlignmentWaveformView: View {
     private var processingOperation: TrackProcessingOperation? {
         .current(alignment: model, cleanup: cleanup)
     }
+    private var hasRecordings: Bool { model.audioEditor.episode?.alignmentSources.isEmpty == false }
 
     private typealias WaveformTrackDrawing = AudioTimelineWaveformDrawing
     private enum ScrollTarget: Hashable {
@@ -82,6 +83,10 @@ struct AlignmentWaveformView: View {
     }
 
     private var fittedRowCount: Int {
+        recordingFittedRowCount + model.audioEditor.tracks.count
+    }
+
+    private var recordingFittedRowCount: Int {
         switch layout {
         case .overlay:
             AlignmentWaveformProjection.speakerGroups(
@@ -101,6 +106,21 @@ struct AlignmentWaveformView: View {
 
     private var trackContent: some View {
         AudioTimelineTrackStack(fits: fillsSpace, spacing: 8) {
+                if model.audioEditor.episode?.sources.isEmpty == true,
+                   model.audioEditor.tracks.isEmpty, let workspaceState {
+                    VStack(spacing: 12) {
+                        Text("Add audio or recordings to begin").font(.title2).accessibilityAddTraits(.isHeader)
+                        Text("Add Audio creates independent timeline clips. Import recordings to organize recorder groups and speakers.")
+                            .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                        HStack {
+                            Button("Add Audio…") { model.addAudio(in: workspaceState) }
+                                .accessibilityIdentifier("ww.show.empty.addAudio")
+                            Button("Add recordings…") { workspaceState.recordingsPresented = true }
+                                .accessibilityIdentifier("ww.show.empty.addRecordings")
+                        }.disabled(!sourceEditingEnabled)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 160)
+                }
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
                     if model.hasAcceptedRevision {
@@ -115,14 +135,22 @@ struct AlignmentWaveformView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                if model.waveformTracks.isEmpty, model.waveformNavigationEndSeconds > 0 {
+                ForEach(model.audioEditor.tracks) { track in
+                    AudioClipTrackView(editor: model.audioEditor, track: track,
+                        start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
+                        playhead: model.waveformPlayheadSeconds, height: laneHeight, headerWidth: headerWidth,
+                        normalized: normalizeView, projection: model.presentationTimeline, showInspector: showInspector)
+                }
+                if hasRecordings, model.waveformTracks.isEmpty, model.audioEditor.tracks.isEmpty,
+                   model.waveformNavigationEndSeconds > 0 {
                     ContentUnavailableView(
                         "No audio in this window",
                         systemImage: "waveform",
                         description: Text("Zoom out, pan the ruler, or enter an aligned time. Recordings that failed to load are listed below.")
                     )
                     .frame(minHeight: 200)
-                } else if visibleTracks.isEmpty && (layout == .overlay || layout == .speakersOnly) {
+                } else if hasRecordings && visibleTracks.isEmpty && model.audioEditor.tracks.isEmpty
+                            && (layout == .overlay || layout == .speakersOnly) {
                     ContentUnavailableView(
                         "No waveforms showing",
                         systemImage: "waveform",
@@ -159,18 +187,26 @@ struct AlignmentWaveformView: View {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
                 }
-                ForEach(model.waveformRefusals) { refusal in
-                    Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
-                        .accessibilityLabel("\(refusal.name), \(refusal.reason)")
-                        .accessibilityIdentifier("alignment.waveforms.refusal.\(refusal.id)")
+                if hasRecordings {
+                    ForEach(model.waveformRefusals) { refusal in
+                        Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
+                            .accessibilityLabel("\(refusal.name), \(refusal.reason)")
+                            .accessibilityIdentifier("alignment.waveforms.refusal.\(refusal.id)")
+                    }
                 }
-                if model.waveformTracks.isEmpty {
+                if hasRecordings, model.waveformTracks.isEmpty, model.audioEditor.tracks.isEmpty {
                     Text("Refresh audio reads a bounded portion of authorized, grouped recordings. Review older recordings' access in Recordings & Speakers.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                ForEach(model.waveformOverviewRefusals) { refusal in
-                    Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
-                        .font(.caption)
+                if let error = model.audioEditor.error {
+                        Label(error, systemImage: "exclamationmark.triangle").font(.caption).foregroundStyle(.red)
+                            .accessibilityIdentifier("ww.audioClip.error")
+                }
+                if hasRecordings {
+                    ForEach(model.waveformOverviewRefusals) { refusal in
+                        Label("\(refusal.name): \(refusal.reason)", systemImage: "exclamationmark.triangle")
+                            .font(.caption)
+                    }
                 }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -400,7 +436,7 @@ struct AlignmentWaveformView: View {
                     .accessibilityLabel("Anchor points")
                     .accessibilityIdentifier("alignment.waveforms.anchorPoints")
                     AudioTimelineRefresh(
-                        prefix: "alignment.waveforms", isLoading: model.isLoadingWaveforms || model.isLoadingOverview,
+                        prefix: "alignment.waveforms", isLoading: hasRecordings && (model.isLoadingWaveforms || model.isLoadingOverview),
                         canNavigate: model.pendingWaveformMove == nil && !model.isWorking
                             && cleanup?.isBusy != true && cleanup?.isRefreshing != true,
                         refresh: refreshWaveforms)
@@ -507,7 +543,7 @@ struct AlignmentWaveformView: View {
             canNavigate: processingOperation == nil,
             playhead: model.waveformPlayheadSeconds, status: model.auditionLabel,
             back: { model.jumpEnabledTracks(by: -AppSettings.shared.timelineJumpInterval.seconds) },
-            playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() },
+            playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playTransport() },
             stop: { model.stopEnabledTracks() },
             forward: { model.jumpEnabledTracks(by: AppSettings.shared.timelineJumpInterval.seconds) },
             seek: { model.seekEnabledTracks(to: $0) },
@@ -522,7 +558,8 @@ struct AlignmentWaveformView: View {
             },
             followPlayhead: model.listening.workspace.followPlayhead,
             toggleFollowPlayhead: { model.setFollowPlayhead(!model.listening.workspace.followPlayhead) },
-            jumpSeconds: AppSettings.shared.timelineJumpInterval.rawValue
+            jumpSeconds: AppSettings.shared.timelineJumpInterval.rawValue,
+            coordinateLabel: model.audioEditor.hasArrangement ? "PROGRAM TIME" : nil
         )
         .padding(.vertical, 2)
     }
@@ -534,11 +571,11 @@ struct AlignmentWaveformView: View {
                 _ = model.zoomWaveformViewport(
                     magnification: model.waveformDurationSeconds / duration)
             }), laneHeight: Binding(get: { laneHeight }, set: { laneHeight = $0 }), showsLaneHeight: layout != .overlay,
-            isLoading: model.isLoadingWaveforms,
+            isLoading: hasRecordings && model.isLoadingWaveforms,
             canNavigate: model.pendingWaveformMove == nil,
             zoomEditing: { editing in
                 if !editing {
-                    if model.waveformDurationSeconds <= 30 {
+                    if hasRecordings, model.waveformDurationSeconds <= 30 {
                         model.loadWaveforms(keepingSnapshot: true, preload: true)
                     }
                 }
@@ -551,11 +588,12 @@ struct AlignmentWaveformView: View {
     }
 
     private func refreshWaveforms() {
-        if model.isLoadingWaveforms || model.isLoadingOverview {
+        if hasRecordings && (model.isLoadingWaveforms || model.isLoadingOverview) {
             model.cancelWaveforms(keepingSnapshot: true)
             model.cancelWaveformOverview(keepingSnapshot: true)
         } else {
-            model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil)
+            model.audioEditor.reloadWaveforms()
+            if hasRecordings { model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil) }
             if let cleanup, !cleanup.isBusy, !cleanup.isRefreshing, !model.isWorking {
                 Task { await cleanup.refresh() }
             }
@@ -572,10 +610,10 @@ struct AlignmentWaveformView: View {
             canNavigate: model.pendingWaveformMove == nil,
             markers: [
                 cleanup?.episode?.cleanup?.workingRange?.tracksIn.map {
-                    AudioTimelineMarker(id: "in", time: model.cutTimeline.editedTime(forAlignedTime: $0), title: "IN", color: .yellow)
+                    AudioTimelineMarker(id: "in", time: model.presentationTimeline.editedTime(forAlignedTime: $0), title: "IN", color: .yellow)
                 },
                 cleanup?.episode?.cleanup?.workingRange?.tracksOut.map {
-                    AudioTimelineMarker(id: "out", time: model.cutTimeline.editedTime(forAlignedTime: $0), title: "OUT", color: .yellow)
+                    AudioTimelineMarker(id: "out", time: model.presentationTimeline.editedTime(forAlignedTime: $0), title: "OUT", color: .yellow)
                 },
             ].compactMap { $0 },
             cycleRange: model.listening.cycleRange, cycleEnabled: model.listening.cycleEnabled,
@@ -587,14 +625,15 @@ struct AlignmentWaveformView: View {
                 model.listening.cycleEnabled = true
             },
             previewSeek: { model.previewWaveformPlayhead(to: $0) },
-            resumePlayback: { model.playEnabledTracks() },
+            resumePlayback: { model.playTransport() },
             previewPan: { _ = model.previewWaveformWindow(start: $0) },
             setWindow: { model.waveformStartSeconds = $0; model.waveformDurationSeconds = $1 },
             commitWindow: {
                 if model.waveformDurationSeconds <= 30 {
                     model.loadWaveforms(keepingSnapshot: true, preload: true)
                 }
-            }, isEdited: !model.cutTimeline.removals.isEmpty
+            }, isEdited: !model.cutTimeline.removals.isEmpty,
+            coordinateLabel: model.audioEditor.hasArrangement ? "PROGRAM SECONDS" : nil
         )
         .padding(.horizontal, 8)
         .frame(height: 68)
@@ -1016,6 +1055,7 @@ struct AlignmentWaveformView: View {
                             },
                             zoom: { model.seekEnabledTracks(to: $0) },
                             uncertainWordIDs: cleanup.uncertainWordIDs(for: lane), cuts: model.cutTimeline,
+                            projection: model.presentationTimeline,
                             selectUnit: { words in
                                 model.selectWaveform(track)
                                 cleanup.select(words, speaker: lane.speaker)
@@ -1116,13 +1156,13 @@ struct AlignmentWaveformView: View {
     private func anchorMarkers(for track: AlignmentWaveformTrack, size: CGSize) -> some View {
         if let correction = model.adaptiveCorrection(for: track.id) {
             AcceptedAdaptiveTimingMarkers(segments: correction.segments, start: model.waveformStartSeconds,
-                duration: model.waveformDurationSeconds, size: size)
+                duration: model.waveformDurationSeconds, size: size, projection: model.presentationTimeline)
                 .equatable()
         }
         if showProposedAlignment, let record = model.currentAdaptiveAnalysis {
             ForEach(AlignmentWaveformProjection.adaptiveMarkers(
                 track: track, record: record, includeEstimated: true)) { marker in
-                let position = x(model.cutTimeline.editedTime(forAlignedTime: marker.alignedSeconds), width: size.width)
+                let position = x(model.presentationTimeline.editedTime(forAlignedTime: marker.alignedSeconds), width: size.width)
                 if (0...size.width).contains(position) {
                     let style = Self.adaptiveMarkerStyle(marker.kind, accepted: false)
                     Image(systemName: style.symbol)
@@ -1134,7 +1174,7 @@ struct AlignmentWaveformView: View {
             }
         }
         ForEach(model.waveformReferenceMarkers.filter { $0.source == track.id }) { marker in
-            let position = x(model.cutTimeline.editedTime(forAlignedTime: marker.alignedSeconds), width: size.width)
+            let position = x(model.presentationTimeline.editedTime(forAlignedTime: marker.alignedSeconds), width: size.width)
             if (0...size.width).contains(position) {
                 Rectangle().fill(Color.orange).frame(width: 2, height: size.height)
                     .position(x: position, y: size.height / 2)
@@ -1142,7 +1182,7 @@ struct AlignmentWaveformView: View {
             }
         }
         ForEach(model.acceptedAnchorRows(for: track)) { anchor in
-            let position = x(model.cutTimeline.editedTime(forAlignedTime: anchor.alignedSeconds), width: size.width)
+            let position = x(model.presentationTimeline.editedTime(forAlignedTime: anchor.alignedSeconds), width: size.width)
             if (0...size.width).contains(position) {
                 Rectangle().fill(Color.orange).frame(width: 2, height: size.height)
                     .position(x: position, y: size.height / 2)
@@ -1153,7 +1193,7 @@ struct AlignmentWaveformView: View {
             ForEach(model.waveformDraftAnchors, id: \.sourceSeconds) { anchor in
                 let time = model.sourceHasAcceptedTiming(track.id)
                     ? anchor.alignedSeconds : anchor.sourceSeconds
-                let position = x(model.cutTimeline.editedTime(forAlignedTime: time), width: size.width)
+                let position = x(model.presentationTimeline.editedTime(forAlignedTime: time), width: size.width)
                 if (0...size.width).contains(position) {
                     Rectangle().fill(Color.green).frame(width: 2, height: size.height)
                         .position(x: position, y: size.height / 2)
@@ -1399,9 +1439,10 @@ struct AlignmentWaveformView: View {
             let width = geometry.size.width
             guard width > 0, model.trackProcessingOperation == nil,
                   model.waveformMap?.reference.group != track.group else { return }
-            guard pick(track, strokes: strokes, time: model.waveformStartSeconds
-                + Double((drag.startLocation.x - geometry.frame(in: .global).minX) / width)
-                    * model.waveformDurationSeconds, seek: false),
+            let displayTime = model.waveformStartSeconds
+                + Double((drag.startLocation.x - geometry.frame(in: .global).minX) / width) * model.waveformDurationSeconds
+            guard let originalTime = model.dialogueTime(atDisplayTime: displayTime),
+                pick(track, strokes: strokes, time: displayTime, seek: false),
                 model.canMoveGroup, model.selectedRow?.groupID == track.group
             else { return }
             model.stopAudition()
@@ -1409,14 +1450,15 @@ struct AlignmentWaveformView: View {
                 startX: drag.startLocation.x, width: width,
                 durationSeconds: model.waveformDurationSeconds,
                 initialMilliseconds: model.groupDraftMilliseconds,
-                group: track.group, snapshot: model.waveformSnapshotID
+                group: track.group, snapshot: model.waveformSnapshotID,
+                originalTime: originalTime, displayTime: displayTime
             )
             refreshHandCursor()
         }
         guard let session = dragSession else { return }
         guard session.group == track.group, session.snapshot == model.waveformSnapshotID,
               model.canMoveGroup, model.selectedRow?.groupID == session.group,
-              let preview = session.previewMilliseconds(at: drag.location.x)
+              let preview = session.previewMilliseconds(at: drag.location.x, projection: model.presentationTimeline)
         else {
             cancelGroupDrag()
             return
@@ -1428,7 +1470,7 @@ struct AlignmentWaveformView: View {
         guard let session = dragSession else { return }
         guard session.snapshot == model.waveformSnapshotID, model.canMoveGroup,
               model.selectedRow?.groupID == session.group,
-              let preview = session.previewMilliseconds(at: drag.location.x)
+              let preview = session.previewMilliseconds(at: drag.location.x, projection: model.presentationTimeline)
         else {
             cancelGroupDrag()
             return
@@ -1605,7 +1647,8 @@ struct AlignmentWaveformView: View {
             model.selectWaveformAnchorPoint(track, position: selected, sourceSeconds: sourceSeconds)
         }
         if model.waveformMap?.reference.group == track.group {
-            model.waveformReferencePoint = model.cutTimeline.alignedTime(forEditedTime: time)
+            guard let aligned = model.dialogueTime(atDisplayTime: time) else { return false }
+            model.waveformReferencePoint = aligned
         } else {
             model.selectWaveform(track, epoch: selected.epoch)
             if let point = model.waveformPickedPoint, point.source == track.id {

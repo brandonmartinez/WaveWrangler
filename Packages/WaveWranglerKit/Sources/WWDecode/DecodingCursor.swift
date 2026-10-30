@@ -116,6 +116,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
     }
 
     let interpretation: FormatInterpretation
+    let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
     let supportsRandomAccess: Bool
     private let queue: DispatchQueue
     private let url: URL
@@ -137,6 +138,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         self.io = io
         self.before = before
         self.interpretation = interpretation
+        legacyWavePCMChannelOrder = pump.reader.facts.legacyWavePCMChannelOrder
         supportsRandomAccess = pump.reader.supportsRandomAccess
         self.pump = pump
     }
@@ -305,6 +307,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
 /// enclosing call verifies every result derived from reads or seeks, even after an explicit check.
 public actor DecodingCursor {
     public nonisolated let interpretation: FormatInterpretation
+    package nonisolated let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
     public nonisolated let supportsRandomAccess: Bool
     private let worker: CursorWorker
     private var currentPosition: Int64 = 0
@@ -318,6 +321,7 @@ public actor DecodingCursor {
     fileprivate init(worker: CursorWorker) {
         self.worker = worker
         interpretation = worker.interpretation
+        legacyWavePCMChannelOrder = worker.legacyWavePCMChannelOrder
         supportsRandomAccess = worker.supportsRandomAccess
     }
 

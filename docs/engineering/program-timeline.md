@@ -195,6 +195,104 @@ F8 evaluates/adds fade points on the **current clip-local output grid** through
 `AudioEnvelopeEvaluator`, including after splits/windows. No F5/F7/F8 editor,
 Add Audio/drop controls, fade UI or delivery-file/export path is included in F4.
 
+## F5 editor and staged-import integration
+
+`AudioClipEditorModel` is the editor-local selection/gesture owner, using the
+existing `ShowDocumentStore` and `EpisodeAlignmentModel` runtime. It does not own
+another document history, decoder, mixer, or permission registry. Completed edits
+use `AudioClipEditing.moving`, `pinning`, `resizing`, `duplicating`, and the existing
+`ProgramAudioClip.split`. A preview never publishes canonical state. The model
+checks the exact store generation before applying a completed gesture, so an
+edit/Undo/restore to equal bytes cannot make a stale gesture current again.
+Resize bounds are on retained nominal output support, not rounded native frames.
+Unity curves may extend within that support; extending a cropped nonempty curve
+refuses because discarded automation cannot be reconstructed. F8 can supply an
+explicit valid curve through `selectingOutputFrames` instead.
+
+Reusable staging surfaces for F6:
+
+| Surface | Ownership and contract |
+| --- | --- |
+| `StagedAudioImportCoordinator.scan(_:in:programSeconds:)` | Metadata-only selection review bound to the exact originating editor, window, show, episode, and store generation. The caller captures the default program time at action start. |
+| `commit(_ review: AudioImportReview)` | Explicit content authorization; sequentially prepares **every** selected candidate and publishes the resulting source/asset/track/clip batch in one `settingAudioState`/`store.apply("Add Audio")`. No Undo group spans an await. |
+| `WWSourcesSetupEngine.preparePendingImport(candidate:fromScan:)` | An opaque engine/scan/candidate-bound pending token. Uses existing importer bookmarks, duplicate checks, `RelinkEvaluator.applyConfirmed`, and the witnessed gateway. No device record is published yet. |
+| `validatePendingImport(_:)` | Rechecks the live token, engine lifetime, scan, local original, bookmark, complete witness, and duplicate/occupied identity. Returned read evidence has no independent authority. |
+| `discardPendingImport(_:)`, `discardScan(_:)`, `shutdown()` | Revoke only owned unpublished pending authority. Decoder/preparation cancellation cleans its own unpublished work. |
+| `AlignmentRuntime.qualifyAudioImport(_:progress:)` | Normal WWDecode qualification and the runtime's existing F3 `nativeSources` actor/root. Produces verified geometry plus bounded source-domain waveform bins. Original media remains immutable. |
+| `adoptPendingImports(_:validatingPublication:)` | Consumes the full token batch once, checks the exact canonical publication/source ownership around awaits, and conditionally adopts device-local access. Failure never rolls back the canonical edit. |
+
+`DeviceAccessImportStore` is an additive capability of the existing in-memory and
+file access-store actors, not a second persistent ledger. `insertNew` validates
+the whole batch and refuses every occupied key (even equal bytes) and duplicate
+key before publication. It returns snapshots containing the store instance
+identity and opaque exact mutation generation. `discardImported` removes only
+still-owned snapshots under the same serialized boundary, returns ownership
+refusals, and preserves subsequently changed/regranted records, including ABA.
+The file implementation uses its existing synchronous load/persist boundary;
+this is not a new cross-process compare-and-swap claim. Arbitrary access stores
+without this capability refuse staged adoption rather than looping over `save`.
+After canonical publication, failure/cancellation leaves blocked, repairable
+references and an explicit relink/Undo explanation.
+
+`AudioTimelineProjection` is a distinct immutable **presentation** value. It
+retains only dialogue/cut/insertion geometry, not clip arrays, names, selection,
+or playhead state. `EpisodeAlignmentModel.presentationTimeline` is shared with
+docked/detached cleanup review, transcript indexes, marker geometry, source
+waveforms, locator presentation, and diagnostic listening partitions. A temporary
+Show cut projection restores only the portions not removed by other cuts;
+production continues to use the original collapsed `ProgramTimeline`. Program
+positions in real insertion regions have no recorder inverse; review-only
+removed dialogue has no production inverse. Anchor/recorder/cut actions refuse
+those unavailable inverses instead of inventing source samples.
+
+`AudioClipTrackView` appends independent Audio Track rows after the existing four
+comparison-layout branches. Source-domain measurements are indexed and reprojected
+for placement/crop/split; viewport-sized equatable Canvas drawings keep clip/envelope
+overlays separate from playhead ticks and row height. Blocking import/cold preparation
+uses shared `TrackProcessingOperation`/`TrackProcessingPresentation`; warm waveform
+detail retains the verified overview and stays interactive. Recording-only loading,
+refusal, and no-audio placeholders require real recording sources and do not hide
+supplemental lanes. Projection/waveform jobs use unique publication IDs even when
+inputs repeat after cancellation; imported measurements transfer only once, and an
+explicit refresh revalidates canonical access. A warm waveform hit still passes
+native preparation's current evidence/format/witness policy before reuse.
+F6 should reuse the staging coordinator for new references, not add direct URL
+parsing or another permission path. Cross-episode existing-asset reuse remains F6
+work; pending-new-import tokens are not that reuse capability. F7
+continues to use the current inverse-anchor helpers and the shared presentation
+geometry; F8 continues to use exact clip-local evaluator coordinates. There are
+no drop, Insert & Ripple, or fade-point controls in F5.
+
+### Standard legacy WAVE order, separate from raw layout facts
+
+Ordinary bare mono/stereo PCM WAV is a positive Add Audio workflow, not an
+unknown-layout negative. The [WAVEFORMATEX contract](https://learn.microsoft.com/en-us/windows/win32/api/mmreg/ns-mmreg-waveformatex#remarks)
+unambiguously describes mono/stereo PCM with valid bits equal to the container
+size. The existing gateway therefore checks a narrow native-evidenced subset:
+legacy tag 1 full-container 16/24/32-bit integer or tag 3/32 IEEE float, 1–2
+channels, exact RIFF length, one fmt/data pair, matching native ASBD,
+block-align/byte-rate/data/frame accounting, and no unknown/custom channel metadata.
+Traversal reads at most 4,096 chunk headers, the 16/18-byte fmt body, and an
+optional four-byte fact frame count; it skips data by offset rather than scanning
+samples. Known padding/broadcast/ordinary annotation chunks may be skipped.
+LIST additionally reads only its four-byte type and accepts INFO/adtl, not unknown
+or custom list kinds. Ambiguous, duplicate, malformed, overflowing,
+extensible, and multichannel structures receive no legacy evidence.
+
+`LegacyWavePCMChannelOrderEvidence` is intentionally nonserialized, has no public initializer, and is minted only
+in `SystemSourceContentIO` from its already-open witnessed read-only descriptor.
+`EncodedStreamFacts` and the package cursor carry it outside serialized
+`FormatInterpretation`. Raw `ChannelLayoutFacts` stay byte-for-byte unchanged,
+including empty/undeclared labels. Only the exactly undeclared layout can use
+this evidence; explicitly unknown/custom/reversed/contradictory layouts do not
+inherit a default. Explicit supported extensible layouts keep the existing
+declared-label path. Cold/warm preparation and every cached read revalidate
+the complete raw format/witness/current access and compare this evidence.
+The disposable native preparation recipe is v2; format interpretation stays
+v1, envelope stays v2, native source-frame origin/count and accepted-map/analysis
+semantics are unchanged. This is separate positive native evidence, not a new
+historical calibration or holdout qualification.
+
 ## F4 verification record (synthetic only, October 30, 2026)
 
 The exact F2/F1/main base was verified before changes. Both independent F3 commits

@@ -21,12 +21,12 @@ struct NativeSourcePreparationTests {
         static func make(
             frames: Int = 23_457, channels: Int = 2,
             rate: Int = 44_100, codec: UInt32 = kAudioFormatAppleLossless,
-            mp3: Bool = false
+            mp3: Bool = false, declareLayout: Bool = true
         ) async throws -> Self {
             let directory = try TemporaryDirectory("native-pcm")
             let originals = try directory.folder("originals")
             var url = originals.appendingPathComponent("generated.caf")
-            try writeCAF(url, frames: frames, channels: channels, rate: rate, codec: codec)
+            try writeCAF(url, frames: frames, channels: channels, rate: rate, codec: codec, declareLayout: declareLayout)
             if mp3 {
                 let wave = originals.appendingPathComponent("encoder-input.wav")
                 try run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16", url.path, wave.path])
@@ -41,6 +41,84 @@ struct NativeSourcePreparationTests {
             let witness = try await decoder.captureRawIdentity(url, matching: format.sourceFingerprint)
             return Fixture(
                 directory: directory, source: source, url: url, format: format, witness: witness, access: access)
+        }
+
+        static func legacyWave(rate: Int, channels: Int, bits: Int, floating: Bool = false,
+                               mutation: String? = nil) async throws -> Self {
+            let directory = try TemporaryDirectory("legacy-wave-order")
+            let url = try directory.folder("originals").appendingPathComponent("audio.misnamed")
+            try waveBytes(rate: rate, channels: channels, bits: bits, floating: floating, mutation: mutation).write(to: url)
+            let access = SourceAccessContext(io: SystemSourceIO(), ledger: SecurityScopeLedger())
+            let decoder = SourceDecoder(access: access), source = SourceID()
+            let format = try await decoder.withDecodingCursor(url, source: source) { $0.interpretation }
+            let witness = try await decoder.captureRawIdentity(url, matching: format.sourceFingerprint)
+            return Fixture(directory: directory, source: source, url: url, format: format, witness: witness, access: access)
+        }
+
+        static func waveBytes(rate: Int, channels: Int, bits: Int, floating: Bool = false,
+                              mutation: String? = nil) -> Data {
+            let frames = 441
+            var fmt = Data()
+            func append<T: FixedWidthInteger>(_ value: T, to data: inout Data) {
+                var little = value.littleEndian
+                withUnsafeBytes(of: &little) { data.append(contentsOf: $0) }
+            }
+            let alignment = channels * (bits / 8)
+            let extensible = mutation == "explicit-mask" || mutation == "extensible-unknown"
+            append(UInt16(extensible ? 0xfffe : floating ? 3 : 1), to: &fmt); append(UInt16(channels), to: &fmt)
+            append(UInt32(rate), to: &fmt)
+            append(UInt32(rate * alignment + (mutation == "byte-rate" ? 1 : 0)), to: &fmt)
+            append(UInt16(alignment), to: &fmt); append(UInt16(bits), to: &fmt)
+            if extensible {
+                append(UInt16(22), to: &fmt); append(UInt16(bits), to: &fmt)
+                append(UInt32(mutation == "explicit-mask" ? 3 : 0), to: &fmt)
+                fmt.append(contentsOf: [1, 0, 0, 0, 0, 0, 16, 0, 128, 0, 0, 170, 0, 56, 155, 113])
+            }
+            if mutation == "extra-format" { append(UInt16(2), to: &fmt) }
+            var payload = Data()
+            for frame in 0..<frames {
+                for channel in 0..<channels {
+                    if floating { append(sample(frame, channel).bitPattern, to: &payload) }
+                    else {
+                        let value = Int32(sample(frame, channel) * Float(Int64(1) << (bits - 1)))
+                        let raw = UInt32(bitPattern: value)
+                        for byte in 0..<(bits / 8) { payload.append(UInt8(truncatingIfNeeded: raw >> (byte * 8))) }
+                    }
+                }
+            }
+            func chunk(_ tag: String, _ bytes: Data) -> Data {
+                var data = Data(tag.utf8)
+                append(UInt32(bytes.count), to: &data); data.append(bytes)
+                if bytes.count % 2 == 1 { data.append(0) }
+                return data
+            }
+            var body = Data("WAVE".utf8)
+            body.append(chunk("fmt ", fmt))
+            if mutation == "chunk-budget" {
+                for _ in 0..<4095 { body.append(chunk("JUNK", Data())) }
+            }
+            if mutation == "duplicate-format" { body.append(chunk("fmt ", fmt)) }
+            if mutation == "custom-layout" { body.append(chunk("chna", Data(repeating: 0, count: 8))) }
+            if let mutation, mutation.hasPrefix("list-") {
+                var list = Data((mutation == "list-info" ? "INFO" : mutation == "list-adtl" ? "adtl"
+                    : mutation == "list-short" ? "IN" : mutation == "list-custom" ? "cust" : "ZZZZ").utf8)
+                if mutation == "list-info" { list.append(chunk("INAM", Data("Synthetic\0".utf8))) }
+                if mutation == "list-custom" { list.append(chunk("chna", Data(repeating: 0, count: 8))) }
+                body.append(chunk("LIST", list))
+            }
+            if mutation == "wrong-fact" || mutation == "duplicate-fact" {
+                var fact = Data()
+                append(UInt32(frames + (mutation == "wrong-fact" ? 1 : 0)), to: &fact)
+                body.append(chunk("fact", fact))
+                if mutation == "duplicate-fact" { body.append(chunk("fact", fact)) }
+            }
+            body.append(chunk("data", payload))
+            if mutation == "duplicate-data" { body.append(chunk("data", payload)) }
+            var result = Data("RIFF".utf8)
+            append(mutation == "overflow-length" ? UInt32.max : UInt32(body.count), to: &result)
+            result.append(body)
+            if mutation == "truncated" { result.removeLast() }
+            return result
         }
 
         private init(
@@ -75,22 +153,32 @@ struct NativeSourcePreparationTests {
             Float((frame &* (channel == 0 ? 13 : 31) + channel * 997) % 20_000 - 10_000) / 32768
         }
 
-        static func writeCAF(_ url: URL, frames: Int, channels: Int, rate: Int, codec: UInt32) throws {
+        static func writeCAF(_ url: URL, frames: Int, channels: Int, rate: Int, codec: UInt32,
+                             declareLayout: Bool = true) throws {
             var format = AudioStreamBasicDescription()
             format.mFormatID = codec
             format.mSampleRate = Double(rate)
             format.mChannelsPerFrame = UInt32(channels)
             if codec == kAudioFormatAppleLossless { format.mFormatFlags = 1 }
+            if codec == kAudioFormatLinearPCM {
+                format.mFormatFlags = kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked
+                format.mBitsPerChannel = 16
+                format.mFramesPerPacket = 1
+                format.mBytesPerFrame = UInt32(channels * 2)
+                format.mBytesPerPacket = format.mBytesPerFrame
+            }
             var created: ExtAudioFileRef?
             try requireStatus(ExtAudioFileCreateWithURL(url as CFURL, kAudioFileCAFType, &format, nil, 0, &created))
             let file = try #require(created)
             defer { ExtAudioFileDispose(file) }
             var layout = AudioChannelLayout()
             layout.mChannelLayoutTag = channels == 1 ? kAudioChannelLayoutTag_Mono : kAudioChannelLayoutTag_Stereo
-            try requireStatus(
-                ExtAudioFileSetProperty(
-                    file, kExtAudioFileProperty_FileChannelLayout,
-                    UInt32(MemoryLayout.size(ofValue: layout)), &layout))
+            if declareLayout {
+                try requireStatus(
+                    ExtAudioFileSetProperty(
+                        file, kExtAudioFileProperty_FileChannelLayout,
+                        UInt32(MemoryLayout.size(ofValue: layout)), &layout))
+            }
             var client = AudioStreamBasicDescription(
                 mSampleRate: Double(rate), mFormatID: kAudioFormatLinearPCM,
                 mFormatFlags: kAudioFormatFlagIsFloat | kAudioFormatFlagIsPacked | kAudioFormatFlagIsNonInterleaved,
@@ -127,6 +215,99 @@ struct NativeSourcePreparationTests {
             try process.run()
             process.waitUntilExit()
             try #require(process.terminationStatus == 0)
+        }
+    }
+
+    @Test(arguments: [32_000, 44_100, 48_000], [1, 2])
+    func legacyPCMOrderUsesHeaderEvidenceWithoutInventingDeclaredLabels(rate: Int, channels: Int) async throws {
+        for (bits, floating) in [(16, false), (24, false), (32, false), (32, true)] {
+            let f = try await Fixture.legacyWave(rate: rate, channels: channels, bits: bits, floating: floating)
+            #expect(f.format.container.kind == .wave && !f.format.container.extensionMatchesContainer)
+            #expect(f.format.channelLayout == .undeclared)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.sortedKeys]
+            let before = try encoder.encode(f.format)
+            let preparation = try f.preparation()
+            let audio = try await preparation.prepare(f.admission(), expectedFormat: f.format)
+            #expect(audio.sourceFrameCount == 441 && audio.sampleRate == rate && audio.channelCount == channels)
+            #expect(try encoder.encode(audio.interpretation) == before)
+            let window = try await preparation.readWindow(400..<441, from: audio, admission: f.admission())
+            for channel in 0..<channels {
+                #expect(Array(window.samples[(channel * 41)..<((channel + 1) * 41)])
+                    == (400..<441).map { Fixture.sample($0, channel) })
+            }
+            let warm = try await preparation.prepare(f.admission(), expectedFormat: f.format)
+            #expect(warm.sourceFrameCount == audio.sourceFrameCount && warm.interpretation == f.format)
+        }
+    }
+
+    @Test(arguments: ["byte-rate", "extra-format", "duplicate-format", "duplicate-data",
+                      "custom-layout", "overflow-length", "truncated", "extensible-unknown",
+                      "wrong-fact", "duplicate-fact", "chunk-budget", "list-custom", "list-unknown", "list-short"])
+    func ambiguousLegacyWaveNeverReceivesImplicitChannelOrder(_ mutation: String) async throws {
+        do {
+            let f = try await Fixture.legacyWave(rate: 44_100, channels: 2, bits: 16, mutation: mutation)
+            let evidence = try await SourceDecoder(access: f.access).withDecodingCursor(f.url, source: f.source) {
+                $0.legacyWavePCMChannelOrder
+            }
+
+            @Test(arguments: ["list-info", "list-adtl"])
+            func ordinaryWaveAnnotationsKeepUndeclaredRawLayoutAndQualifiedChannelOrder(_ annotation: String) async throws {
+                let f = try await Fixture.legacyWave(rate: 44_100, channels: 2, bits: 16, mutation: annotation)
+                #expect(f.format.channelLayout == .undeclared)
+                let evidence = try await SourceDecoder(access: f.access).withDecodingCursor(f.url, source: f.source) {
+                    $0.legacyWavePCMChannelOrder
+                }
+                #expect(evidence != nil)
+                let preparation = try f.preparation()
+                let audio = try await preparation.prepare(f.admission(), expectedFormat: f.format)
+                #expect(audio.interpretation == f.format && audio.sourceFrameCount == 441)
+                let window = try await preparation.readWindow(400..<441, from: audio, admission: f.admission())
+                #expect(Array(window.samples.prefix(41)) == (400..<441).map { Fixture.sample($0, 0) })
+                #expect(Array(window.samples.suffix(41)) == (400..<441).map { Fixture.sample($0, 1) })
+            }
+
+            #expect(evidence == nil)
+            let preparation = try f.preparation()
+            await #expect(throws: (any Error).self) {
+                try await preparation.prepare(f.admission(), expectedFormat: f.format)
+            }
+        } catch let failure as DecodeFailure {
+            if !failure.isContentDamage {
+                guard case .unsupported = failure else { throw failure }
+            }
+        }
+    }
+
+    @Test func explicitWaveMaskKeepsItsRawDeclaredFactsWithoutLegacyEvidence() async throws {
+        let f = try await Fixture.legacyWave(rate: 44_100, channels: 2, bits: 16, mutation: "explicit-mask")
+        #expect(f.format.channelLayout.isDeclaredBySource && f.format.channelLayout.channelLabels == [1, 2])
+        let evidence = try await SourceDecoder(access: f.access).withDecodingCursor(f.url, source: f.source) {
+            $0.legacyWavePCMChannelOrder
+        }
+        #expect(evidence == nil)
+        let preparation = try f.preparation()
+        let audio = try await preparation.prepare(f.admission(), expectedFormat: f.format)
+        #expect(audio.interpretation == f.format)
+        let window = try await preparation.readWindow(400..<441, from: audio, admission: f.admission())
+        #expect(Array(window.samples.prefix(41)) == (400..<441).map { Fixture.sample($0, 0) })
+        #expect(Array(window.samples.suffix(41)) == (400..<441).map { Fixture.sample($0, 1) })
+    }
+
+    @Test func legacyWaveWarmReadStillRefusesChangedOriginalAndUndeclaredMultichannel() async throws {
+        let f = try await Fixture.legacyWave(rate: 48_000, channels: 2, bits: 16)
+        let preparation = try f.preparation()
+        let audio = try await preparation.prepare(f.admission(), expectedFormat: f.format)
+        var changed = try Data(contentsOf: f.url)
+        changed[changed.count - 2] ^= 1
+        try changed.write(to: f.url)
+        await #expect(throws: (any Error).self) {
+            try await preparation.readWindow(0..<10, from: audio, admission: f.admission())
+        }
+        let multi = try await Fixture.legacyWave(rate: 48_000, channels: 3, bits: 16)
+        let other = try multi.preparation()
+        await #expect(throws: NativeSourcePreparationFailure.unsupportedChannelLayout) {
+            try await other.prepare(multi.admission(), expectedFormat: multi.format)
         }
     }
 
@@ -262,20 +443,12 @@ struct NativeSourcePreparationTests {
         await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
             try await preparation.prepare(fixture.admission(), expectedFormat: fixture.format)
         }
-        _ = try fixture.directory.folder("loose-originals")
-        let plain = try fixture.directory.writeWAV("loose-originals/undeclared.wav", frames: 5000, seed: 1)
-        let source = SourceID()
-        let decoder = SourceDecoder(access: fixture.access)
-        let format = try await decoder.withDecodingCursor(plain, source: source) { $0.interpretation }
-        let witness = try await decoder.captureRawIdentity(plain, matching: format.sourceFingerprint)
-        let admission = SourceReadAdmission(
-            source: source, location: plain, witness: witness,
-            authorization: .explicitUserRequest(for: source), availability: .on, validateCurrentAccess: {})
-        let other = try NativeSourcePreparation(
-            root: fixture.directory.file("other-cache"),
-            sourceLocations: [fixture.url, plain], access: fixture.access)
+        // CAF has no standard legacy-WAVE channel-order contract. Its absent layout remains unknown.
+        let unknown = try await Fixture.make(codec: kAudioFormatLinearPCM, declareLayout: false)
+        #expect(unknown.format.channelLayout == .undeclared)
+        let other = try unknown.preparation()
         await #expect(throws: NativeSourcePreparationFailure.unsupportedChannelLayout) {
-            try await other.prepare(admission, expectedFormat: format)
+            try await other.prepare(unknown.admission(), expectedFormat: unknown.format)
         }
     }
 

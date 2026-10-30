@@ -86,7 +86,7 @@ private struct SourceInspector: View {
         .accessibilityIdentifier("ww.inspector.source.name")
         .setupFont(.body)
 
-        Group {
+        if source.isRecording {
             Picker("Recorder group", selection: groupBinding) {
                 ForEach(episode?.recorderGroups ?? []) { group in
                     Text(group.name).tag(group.id.description)
@@ -183,8 +183,11 @@ private struct SourceInspector: View {
                 }
                 .help("Applies provisional channel and speaker defaults to this recording. Does not copy audio or replace an existing Primary.")
             }
+        } else {
+            Label("Audio asset", systemImage: "waveform")
+            Text("This source is not a recorder or speaker. Edit its placements in Audio Tracks; source access and relinking remain shared here.")
+                .font(.caption).foregroundStyle(.secondary)
         }
-        .disabled(!source.isRecording)
 
         Divider()
         RecordedFactsView(source: source)

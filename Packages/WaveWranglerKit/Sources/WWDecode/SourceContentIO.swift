@@ -150,6 +150,9 @@ public struct EncodedStreamFacts: Sendable, Equatable {
     public var containerLength: ContainerLengthEvidence
     public var openedFile: OpenedFileState
     public var mp3Accounting: MP3AccountingEvidence?
+    /// Opaque standard-order provenance from this gateway's bounded legacy RIFF/WAVE header check.
+    /// It never changes the raw layout facts or serialized FormatInterpretation.
+    public var legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
 
     public init(
         containerTypeCode: UInt32,
@@ -171,7 +174,8 @@ public struct EncodedStreamFacts: Sendable, Equatable {
         channelLayout: ChannelLayoutFacts = .undeclared,
         containerLength: ContainerLengthEvidence = .notChecked,
         openedFile: OpenedFileState,
-        mp3Accounting: MP3AccountingEvidence? = nil
+        mp3Accounting: MP3AccountingEvidence? = nil,
+        legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence? = nil
     ) {
         self.containerTypeCode = containerTypeCode
         self.formatID = formatID
@@ -193,6 +197,7 @@ public struct EncodedStreamFacts: Sendable, Equatable {
         self.containerLength = containerLength
         self.openedFile = openedFile
         self.mp3Accounting = mp3Accounting
+        self.legacyWavePCMChannelOrder = legacyWavePCMChannelOrder
     }
 }
 

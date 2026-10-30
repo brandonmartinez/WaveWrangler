@@ -160,7 +160,7 @@ struct AlignmentWaveformCache: Sendable {
 
     mutating func reproject(
         map: AlignedTimelineMap?, episode: Episode?, modelGeneration: UInt64,
-        revealingCut: UUID? = nil
+        revealingCut: UUID? = nil, projection: AudioTimelineProjection? = nil
     ) throws {
         let cuts = try episode?.manualCutTimeline(revealing: revealingCut) ?? .unedited
         tiles = try tiles.map { tile in
@@ -169,7 +169,7 @@ struct AlignmentWaveformCache: Sendable {
                 (track.id, try AlignmentWaveformProjection.strokes(
                     track: track, map: map,
                     correction: episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id },
-                    cuts: cuts
+                    cuts: cuts, projection: projection
                 ))
             })
             return Tile(
@@ -185,10 +185,10 @@ struct AlignmentWaveformCache: Sendable {
 
     @concurrent
     func reprojected(map: AlignedTimelineMap?, episode: Episode?, modelGeneration: UInt64,
-                     revealingCut: UUID?) async throws -> Self {
+                     revealingCut: UUID?, projection: AudioTimelineProjection? = nil) async throws -> Self {
         var copy = self
         try copy.reproject(map: map, episode: episode, modelGeneration: modelGeneration,
-                           revealingCut: revealingCut)
+                           revealingCut: revealingCut, projection: projection)
         try Task.checkCancellation()
         return copy
     }
