@@ -42,6 +42,7 @@ public enum AudioPlacementProjection: Sendable, Equatable {
     case placed(frame: Int64)
     case clampedToCutSeam(frame: Int64, removed: Range<Int64>)
     case reviewRequired(AudioDialogueAnchor)
+    /// Retained for caller compatibility; finite sample coverage does not reject bound placement points.
     case outsideDialogueCoverage
 }
 
@@ -114,7 +115,7 @@ public struct ProgramTimeline: Sendable, Equatable {
             default: break
             }
             let frame: Int64
-            switch try Self.basePosition(region.anchor, binding: binding, coverage: dialogueFrames, cuts: cuts) {
+            switch try Self.basePosition(region.anchor, binding: binding, cuts: cuts) {
             case .placed(let value), .clampedToCutSeam(let value, _): frame = value
             case .reviewRequired(let anchor): throw .regionRequiresReview(region.id, anchor)
             case .outsideDialogueCoverage: throw .regionOutsideDialogueCoverage(region.id)
@@ -161,8 +162,8 @@ public struct ProgramTimeline: Sendable, Equatable {
         return .outsideCoverage
     }
 
-    /// Placements are POSITIONS: the dialogue terminal endpoint is valid; a removed start clamps to
-    /// its seam, downstream of all insertions there. Clip content is never split or shortened.
+    /// Placements are POSITIONS on the bound grid, including before/after finite dialogue coverage.
+    /// A removed start clamps to its seam, downstream of all insertions there. No samples are invented.
     public func project(_ anchor: AudioPlacementAnchor) throws(ProgramTimelineError) -> AudioPlacementProjection {
         switch anchor {
         case .absolute(let frame):
@@ -173,7 +174,7 @@ public struct ProgramTimeline: Sendable, Equatable {
             guard offset >= 0, offset < region.region.durationFrames else { throw .invalidInsertionOffset(id, offset) }
             return .placed(frame: try Self.add(region.programFrames.lowerBound, offset))
         case .dialogue, .programOrigin:
-            switch try Self.basePosition(anchor, binding: binding, coverage: dialogueFrames, cuts: cuts) {
+            switch try Self.basePosition(anchor, binding: binding, cuts: cuts) {
             case .placed(let frame):
                 return .placed(frame: try Self.insertedPosition(frame, insertions: insertions))
             case .clampedToCutSeam(let frame, let removal):
@@ -186,7 +187,8 @@ public struct ProgramTimeline: Sendable, Equatable {
     }
 
     /// Inverse-anchor against THIS projection, not the unedited map. This avoids applying prior edits
-    /// twice. Insertion interiors retain region identity; uncovered space never fabricates provenance.
+    /// twice. Insertion interiors retain region identity. With accepted timing, outside-coverage points
+    /// use that bound original-aligned GRID, not extrapolated samples; audio-only uses program origin.
     public func unpinnedAnchor(atProgramFrame frame: Int64) throws(ProgramTimelineError) -> AudioPlacementAnchor {
         switch try inverse(atProgramFrame: frame) {
         case .insertion(let id, let offset): return .insertion(region: id, offsetFrames: offset)
@@ -196,11 +198,11 @@ public struct ProgramTimeline: Sendable, Equatable {
             return .dialogue(anchor)
         case .outsideCoverage:
             let base = try baseFrame(atProgramPosition: frame)
-            if let coverage = dialogueFrames, let binding,
-                base == cuts.editedFrame(forAlignedFrame: coverage.upperBound)
-            {
+            if let binding {
+                let original = cuts.alignedFrame(forEditedFrame: base)
+                try Self.checkFrame(original)
                 var anchor = binding
-                anchor.frame = coverage.upperBound
+                anchor.frame = original
                 return .dialogue(anchor)
             }
             return .programOrigin(frame: base)
@@ -287,7 +289,7 @@ public struct ProgramTimeline: Sendable, Equatable {
 
     private static func basePosition(
         _ anchor: AudioPlacementAnchor, binding: AudioDialogueAnchor?,
-        coverage: Range<Int64>?, cuts: ManualCutTimeline
+        cuts: ManualCutTimeline
     )
         throws(ProgramTimelineError) -> AudioPlacementProjection
     {
@@ -300,9 +302,6 @@ public struct ProgramTimeline: Sendable, Equatable {
             guard let binding, anchor.alignmentRevision == binding.alignmentRevision,
                 anchor.mapIdentity == binding.mapIdentity
             else { return .reviewRequired(anchor) }
-            guard let coverage, anchor.frame >= coverage.lowerBound, anchor.frame <= coverage.upperBound else {
-                return .outsideDialogueCoverage
-            }
             let frame = cuts.editedFrame(forAlignedFrame: anchor.frame)
             try checkFrame(frame)
             if let removal = cuts.removals.first(where: { $0.contains(anchor.frame) }) {

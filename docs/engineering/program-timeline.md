@@ -26,9 +26,17 @@ no fictitious accepted map is created.
 | --- | --- |
 | `dialoguePosition(atAlignedFrame:)` | Sample mapping: `.mapped`, `.removed(interval:seam:)`, or `.outsideCoverage`. A seam returned for removed audio is not a speaker sample. |
 | `inverse(atProgramFrame:)` | `.dialogue(frame:)`, `.insertion(region:offsetFrames:)`, or `.outsideCoverage`. Insertion interiors never invent dialogue. |
-| `project(_:)` | Placement positions: `.placed`, `.clampedToCutSeam`, `.reviewRequired`, or `.outsideDialogueCoverage`. The terminal dialogue endpoint is a valid placement but not a sample. |
+| `project(_:)` | Placement points on the current accepted grid, including before/after finite coverage: `.placed`, `.clampedToCutSeam`, or `.reviewRequired`. The grid binding is not sample coverage. |
 | `segments(in:)` | Exact contiguous request partition into kept dialogue spans, insertion-only intervals, and explicit outside-dialogue intervals. |
-| `composition()` | Atomic complete clip projection and bounds; stale/outside-dialogue clips refuse the result, never disappear from a successful extent. |
+| `composition()` | Atomic complete clip projection and bounds; stale/invalid clips refuse the result, never disappear from a successful extent. Valid bound points outside dialogue coverage are included. |
+
+Placement and sample domains are deliberately separate. With a current accepted
+binding, valid placement points may lie anywhere on its original-aligned grid
+within the signed day limits, even beyond the finite map/audio coverage.
+`dialoguePosition`, `inverse`, and `segments` retain their finite **sample**
+coverage and never extrapolate an accepted clock map or authorize a source read.
+The older placement `.outsideDialogueCoverage` outcome and related errors remain
+for caller compatibility, but finite audio coverage alone no longer emits them.
 
 Cuts merge overlap and adjacency once. Every reconstruction uses the original
 saved anchors: moving, resizing, or restoring cuts never accumulates per-clip
@@ -43,7 +51,8 @@ showing/hiding must not reproject saved anchors, change pins, or ripple twice.
 
 ## Insertions and placement edits
 
-- Dialogue region anchors use the merged cut map. Program-origin regions use a
+- Dialogue region anchors use the merged cut map, including placement boundaries
+  before/after finite dialogue coverage. Program-origin regions use a
   cut-independent **pre-insertion** origin grid, including audio-only programs.
 - Resolve regions by base boundary, then saved `insertionRegions` array order.
   Distinct original anchors collapsed onto the same cut seam also use array order.
@@ -60,12 +69,26 @@ showing/hiding must not reproject saved anchors, change pins, or ripple twice.
   `reconciledAnchor(for:)` preserves the currently resolved position.
 
 F5 should use `unpinnedAnchor(atProgramFrame:)` against the **current** projection
-for placement after existing edits. It returns a current map-bound original
-dialogue anchor, a region-relative anchor, or a pre-insertion program origin for
-uncovered space. This prevents applying earlier cuts/insertions twice.
+for placement after existing edits. Insertion interiors return a region-relative
+anchor. With accepted timing, all other positions return a current map-bound
+original-aligned **placement point**, including before/after finite coverage:
+first remove the current insertion offsets, then invert the current merged cuts.
+Only without an accepted binding does it return a pre-insertion program origin.
+This prevents applying earlier cuts/insertions twice and lets later dialogue
+cuts ripple unpinned outros. The mapped original point is bounds-checked; an
+inverse outside the signed day grid refuses instead of falling back to an origin.
 `pinnedAnchor(for:)` and `unpinnedAnchor(for:)` preserve resolved position;
 review-required anchors refuse these helpers. Submit the returned anchor through
 F1's `replacingAudioClip`/compound operation and normal shared-store Undo.
+
+For dialogue `[0s,10s)`, a new unpinned clip at 12s binds to original grid point
+12s. Cutting `[2s,4s)` moves it to 10s; an absolute 12s pin remains 12s. Both the
+original 12s point and final 10s position still have no dialogue sample. If a
+clip is instead placed/unpinned at final 12s **after** that cut, its inverse
+anchor is original 14s, so it remains at 12s until another edit; restoring the
+cut moves it to 14s. Existing program-origin clips are never silently rebound:
+explicit `reconciledAnchor(for:)` inverse-anchors their current resolved position,
+including outside finite coverage, without moving them at reconciliation.
 
 Bindings use F1's SHA-256 over the **entire canonical `TimeMapVersion`**, not a
 revision number or pipeline/cache object identity. A same-revision byte change

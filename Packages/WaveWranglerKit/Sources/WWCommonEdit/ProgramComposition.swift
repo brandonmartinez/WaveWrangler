@@ -35,7 +35,7 @@ public struct ProgramComposition: Sendable, Equatable {
 }
 
 extension ProgramTimeline {
-    /// Atomic production projection. Review-required/out-of-coverage clips refuse the whole result;
+    /// Atomic production projection. Review-required clips refuse the whole result;
     /// callers can still use `project` to present the exact individual review state.
     public func composition() throws(ProgramTimelineError) -> ProgramComposition {
         var clips: [ProgramAudioClip] = []

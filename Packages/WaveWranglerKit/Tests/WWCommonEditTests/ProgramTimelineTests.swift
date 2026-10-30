@@ -150,6 +150,200 @@ struct ProgramTimelineTests {
         #expect(try timeline.inverse(atProgramFrame: end) == .outsideCoverage)
     }
 
+    @Test func unpinnedOutroBeyondDialogueCoverageRipplesButPinnedOutroAndSampleCoverageDoNot() throws {
+        let f = try ProgramFixture()
+        let coverage = Int64(0)..<(10 * rate)
+        let original = try ProgramTimeline(episode: f.episode(), dialogueFrames: coverage)
+        let anchor = try original.unpinnedAnchor(atProgramFrame: 12 * rate)
+        #expect(anchor == .dialogue(try f.anchor(12 * rate)))
+        let outro = f.clip(anchor, duration: rate)
+        let pinned = f.clip(.absolute(frame: 12 * rate), duration: rate)
+        for (cuts, expected): ([ManualEpisodeCut], Int64) in [
+            ([f.cut(2 * rate, 4 * rate)], 10 * rate),
+            ([f.cut(2 * rate, 5 * rate)], 9 * rate),
+            ([], 12 * rate),
+            ([f.cut(2 * rate, 4 * rate)], 10 * rate),
+        ] {
+            let episode = f.episode(cuts: cuts, clips: [outro, pinned])
+            let snapshot = episode
+            let timeline = try ProgramTimeline(episode: episode, dialogueFrames: coverage)
+            let composition = try timeline.composition()
+            #expect(composition.clips.map(\.programFrames.lowerBound) == [expected, 12 * rate])
+            #expect(composition.clips.map(\.clip) == [outro, pinned])
+            #expect(composition.programFrames == 0..<(13 * rate))
+            #expect(try timeline.dialoguePosition(atAlignedFrame: 12 * rate) == .outsideCoverage)
+            #expect(try timeline.inverse(atProgramFrame: expected) == .outsideCoverage)
+            #expect(
+                try timeline.segments(in: expected..<(expected + rate))
+                    == [.outsideDialogueCoverage(expected..<(expected + rate))])
+            #expect(episode == snapshot)
+            #expect(episode.alignment?.acceptedMap == f.version)
+        }
+    }
+
+    @Test func outroPlacedAfterExistingCutsInverseAnchorsOnceAcrossUnpinReconcileAndRestore() throws {
+        let f = try ProgramFixture()
+        let coverage = Int64(0)..<(10 * rate)
+        let cut = f.cut(2 * rate, 4 * rate)
+        let origin = AudioPlacementAnchor.programOrigin(frame: 12 * rate)
+        let pinned = AudioPlacementAnchor.absolute(frame: 12 * rate)
+        let current = try ProgramTimeline(episode: f.episode(cuts: [cut]), dialogueFrames: coverage)
+        let placed = try current.unpinnedAnchor(atProgramFrame: 12 * rate)
+        #expect(placed == .dialogue(try f.anchor(14 * rate)))
+        #expect(try current.unpinnedAnchor(for: pinned) == placed)
+        #expect(try current.reconciledAnchor(for: origin) == placed)
+        #expect(try current.pinnedAnchor(for: placed) == pinned)
+        #expect(try current.reconciledAnchor(for: pinned) == pinned)
+        for (cuts, expected): ([ManualEpisodeCut], Int64) in [
+            ([cut], 12 * rate),
+            ([cut, f.cut(6 * rate, 7 * rate)], 11 * rate),
+            ([], 14 * rate),
+            ([cut], 12 * rate),
+        ] {
+            let timeline = try ProgramTimeline(episode: f.episode(cuts: cuts), dialogueFrames: coverage)
+            #expect(try timeline.project(placed) == .placed(frame: expected))
+            #expect(try timeline.project(origin) == .placed(frame: 12 * rate))
+            #expect(try timeline.project(pinned) == .placed(frame: 12 * rate))
+            #expect(try timeline.unpinnedAnchor(atProgramFrame: expected) == placed)
+            #expect(try timeline.inverse(atProgramFrame: expected) == .outsideCoverage)
+        }
+        #expect(try JSONDecoder().decode(AudioPlacementAnchor.self, from: JSONEncoder().encode(placed)) == placed)
+    }
+
+    @Test func signedPlacementBeforeDialogueStartFollowsInsertionsButNotLaterCuts() throws {
+        let f = try ProgramFixture()
+        let coverage = Int64(-2 * rate)..<(10 * rate)
+        let base = try ProgramTimeline(episode: f.episode(), dialogueFrames: coverage)
+        let before = try base.unpinnedAnchor(atProgramFrame: -3 * rate)
+        #expect(before == .dialogue(try f.anchor(-3 * rate)))
+        let region = try AudioInsertionRegion(anchor: .dialogue(f.anchor(-4 * rate)), durationFrames: rate)
+        let clip = f.clip(before, duration: rate / 2)
+        let pin = f.clip(.absolute(frame: -3 * rate), duration: rate / 2)
+        for cuts in [[], [f.cut(2 * rate, 4 * rate)]] {
+            let episode = f.episode(cuts: cuts, clips: [clip, pin], regions: [region])
+            #expect(episode.audioArrangement?.validationIssues(in: episode).isEmpty == true)
+            let timeline = try ProgramTimeline(episode: episode, dialogueFrames: coverage)
+            #expect(try timeline.composition().clips.map(\.programFrames.lowerBound) == [-2 * rate, -3 * rate])
+            #expect(try timeline.unpinnedAnchor(atProgramFrame: -2 * rate) == before)
+            #expect(try timeline.unpinnedAnchor(for: .absolute(frame: -2 * rate)) == before)
+            #expect(try timeline.pinnedAnchor(for: before) == .absolute(frame: -2 * rate))
+            #expect(try timeline.dialoguePosition(atAlignedFrame: -3 * rate) == .outsideCoverage)
+            #expect(try timeline.inverse(atProgramFrame: -2 * rate) == .outsideCoverage)
+            #expect(
+                try timeline.segments(in: (-2 * rate)..<(-rate)) == [.outsideDialogueCoverage((-2 * rate)..<(-rate))])
+        }
+        #expect(try base.project(before) == .placed(frame: -3 * rate))
+    }
+
+    @Test func insertionBeyondDialogueEndAndLaterPlacementsFollowCutsWithoutCreatingDialogue() throws {
+        let f = try ProgramFixture()
+        let coverage = Int64(0)..<(10 * rate)
+        let region = try AudioInsertionRegion(anchor: .dialogue(f.anchor(12 * rate)), durationFrames: rate)
+        let original = try ProgramTimeline(episode: f.episode(regions: [region]), dialogueFrames: coverage)
+        let later = try original.unpinnedAnchor(atProgramFrame: 14 * rate)
+        #expect(later == .dialogue(try f.anchor(13 * rate)))
+        #expect(try original.unpinnedAnchor(atProgramFrame: 13 * rate) == region.anchor)
+        let relative = try original.unpinnedAnchor(atProgramFrame: 12 * rate + rate / 2)
+        #expect(relative == .insertion(region: region.id, offsetFrames: rate / 2))
+        let cut = f.cut(2 * rate, 4 * rate)
+        for (cuts, start): ([ManualEpisodeCut], Int64) in [
+            ([cut], 10 * rate), ([], 12 * rate), ([cut], 10 * rate),
+        ] {
+            let episode = f.episode(
+                cuts: cuts,
+                clips: [f.clip(later), f.clip(relative), f.clip(.absolute(frame: 14 * rate))], regions: [region])
+            #expect(episode.audioArrangement?.validationIssues(in: episode).isEmpty == true)
+            let timeline = try ProgramTimeline(episode: episode, dialogueFrames: coverage)
+            #expect(timeline.insertions[0].programFrames == start..<(start + rate))
+            #expect(
+                try timeline.composition().clips.map(\.programFrames.lowerBound)
+                    == [start + 2 * rate, start + rate / 2, 14 * rate])
+            #expect(try timeline.unpinnedAnchor(atProgramFrame: start + 2 * rate) == later)
+            #expect(try timeline.unpinnedAnchor(atProgramFrame: start + rate) == region.anchor)
+            #expect(try timeline.unpinnedAnchor(atProgramFrame: start + rate / 2) == relative)
+            #expect(try timeline.inverse(atProgramFrame: start) == .insertion(region: region.id, offsetFrames: 0))
+            #expect(try timeline.inverse(atProgramFrame: start + rate) == .outsideCoverage)
+            #expect(try timeline.dialoguePosition(atAlignedFrame: 12 * rate) == .outsideCoverage)
+            #expect(
+                try timeline.segments(in: start..<(start + 2 * rate)) == [
+                    .insertion(region: region.id, offsetFrames: 0, programFrames: start..<(start + rate)),
+                    .outsideDialogueCoverage((start + rate)..<(start + 2 * rate)),
+                ])
+        }
+    }
+
+    @Test func audioOnlyOutlyingOriginsRemainUnboundUntilExplicitPositionPreservingReconciliation() throws {
+        let f = try ProgramFixture()
+        let intro = AudioInsertionRegion(anchor: .programOrigin(frame: 0), durationFrames: rate)
+        var episode = f.episode(regions: [intro])
+        episode.alignment = nil
+        let audioOnly = try ProgramTimeline(episode: episode)
+        let origin = try audioOnly.unpinnedAnchor(atProgramFrame: 13 * rate)
+        #expect(origin == .programOrigin(frame: 12 * rate))
+        #expect(try audioOnly.unpinnedAnchor(atProgramFrame: -rate) == .programOrigin(frame: -rate))
+        #expect(try audioOnly.unpinnedAnchor(for: .absolute(frame: 13 * rate)) == origin)
+        #expect(try audioOnly.reconciledAnchor(for: origin) == origin)
+        episode.alignment = .init(maps: [f.version], acceptedRevision: 1)
+        episode.cleanup?.manualCuts = [f.cut(2 * rate, 4 * rate)]
+        let coverage = Int64(0)..<(10 * rate)
+        let admitted = try ProgramTimeline(episode: episode, dialogueFrames: coverage)
+        #expect(try admitted.project(origin) == .placed(frame: 13 * rate))
+        let reconciled = try admitted.reconciledAnchor(for: origin)
+        #expect(reconciled == .dialogue(try f.anchor(14 * rate)))
+        #expect(try admitted.project(reconciled) == .placed(frame: 13 * rate))
+        #expect(try admitted.unpinnedAnchor(for: .absolute(frame: 13 * rate)) == reconciled)
+        episode.cleanup?.manualCuts?.append(f.cut(6 * rate, 7 * rate))
+        let changed = try ProgramTimeline(episode: episode, dialogueFrames: coverage)
+        #expect(try changed.project(reconciled) == .placed(frame: 12 * rate))
+        #expect(try changed.project(origin) == .placed(frame: 13 * rate))
+        #expect(try changed.inverse(atProgramFrame: 12 * rate) == .outsideCoverage)
+    }
+
+    @Test func outsideCoverageBindingStillRefusesStaleBytesAndOutOfBoundsGridPositions() throws {
+        let f = try ProgramFixture()
+        let coverage = Int64(0)..<(10 * rate)
+        let timeline = try ProgramTimeline(
+            episode: f.episode(cuts: [f.cut(2 * rate, 4 * rate)]), dialogueFrames: coverage)
+        let limit = AudioArrangement.frameLimit
+        #expect(try timeline.unpinnedAnchor(atProgramFrame: limit - 2 * rate) == .dialogue(f.anchor(limit)))
+        #expect(try timeline.project(.dialogue(f.anchor(limit))) == .placed(frame: limit - 2 * rate))
+        #expect(try timeline.unpinnedAnchor(atProgramFrame: -limit) == .dialogue(f.anchor(-limit)))
+        #expect(try timeline.unpinnedAnchor(atProgramFrame: 120 * rate) == .dialogue(f.anchor(122 * rate)))
+        #expect(try timeline.dialoguePosition(atAlignedFrame: 122 * rate) == .outsideCoverage)
+        #expect(try timeline.inverse(atProgramFrame: 120 * rate) == .outsideCoverage)
+        let accepted = try JSONDecoder().decode(AlignedTimelineMap.self, from: JSONEncoder().encode(f.version.map))
+        #expect(try accepted.sourceFrame(at: ExactRational(122), in: accepted.reference.occurrence) == .outsideCoverage)
+        #expect(throws: ProgramTimelineError.outsideFrameEnvelope(limit + 2 * rate)) {
+            try timeline.unpinnedAnchor(atProgramFrame: limit)
+        }
+        #expect(throws: ProgramTimelineError.outsideFrameEnvelope(limit + 2 * rate)) {
+            try timeline.unpinnedAnchor(for: .absolute(frame: limit))
+        }
+        #expect(throws: ProgramTimelineError.outsideFrameEnvelope(limit + 2 * rate)) {
+            try timeline.reconciledAnchor(for: .programOrigin(frame: limit))
+        }
+        for frame: Int64 in [.min, .max, -limit - 1, limit + 1] {
+            #expect(throws: ProgramTimelineError.outsideFrameEnvelope(frame)) {
+                try timeline.project(.dialogue(f.anchor(frame)))
+            }
+        }
+        let anchor = try timeline.unpinnedAnchor(atProgramFrame: 12 * rate)
+        guard case .dialogue(let bound) = anchor else {
+            Issue.record("An outside-coverage placement must retain its accepted-map binding")
+            return
+        }
+        let clip = f.clip(anchor)
+        var replaced = f.episode(clips: [clip])
+        replaced.alignment?.maps[0].inputs.recipe = .init(name: "Same revision, changed map bytes", revision: 1)
+        let stale = try ProgramTimeline(episode: replaced, dialogueFrames: coverage)
+        #expect(try stale.project(anchor) == .reviewRequired(bound))
+        #expect(throws: ProgramTimelineError.clipRequiresReview(clip.id, bound)) {
+            try stale.composition()
+        }
+        #expect(throws: ProgramTimelineError.placementRequiresReview(bound)) { try stale.unpinnedAnchor(for: anchor) }
+        #expect(throws: ProgramTimelineError.placementRequiresReview(bound)) { try stale.pinnedAnchor(for: anchor) }
+    }
+
     @Test func staleSameRevisionDifferentMapNeverReinterpretsAnAnchorOrOmitsItFromBounds() throws {
         let f = try ProgramFixture()
         let anchor = try f.anchor(35)
@@ -172,6 +366,9 @@ struct ProgramTimelineTests {
         episode.audioArrangement?.insertionRegions = []
         let unaccepted = try ProgramTimeline(episode: episode)
         #expect(try unaccepted.project(clip.anchor) == .reviewRequired(anchor))
+        #expect(try unaccepted.unpinnedAnchor(atProgramFrame: 12 * rate) == .programOrigin(frame: 12 * rate))
+        #expect(
+            try unaccepted.reconciledAnchor(for: .programOrigin(frame: 12 * rate)) == .programOrigin(frame: 12 * rate))
         #expect(try anchor.isCurrent(in: episode) == false)
     }
 
@@ -316,7 +513,7 @@ struct ProgramTimelineTests {
         #expect(try timeline.inverse(atProgramFrame: 100) == .outsideCoverage)
         #expect(try timeline.project(early.anchor) == .placed(frame: -50))
         #expect(try timeline.project(late.anchor) == .placed(frame: 100))
-        #expect(try timeline.unpinnedAnchor(atProgramFrame: 100) == .programOrigin(frame: 95))
+        #expect(try timeline.unpinnedAnchor(atProgramFrame: 100) == .dialogue(f.anchor(95)))
     }
 
     @Test func mergedCutInteriorRegionBoundariesUseSavedOrderAndExclusiveCutEndIsRetained() throws {
@@ -357,9 +554,11 @@ struct ProgramTimelineTests {
             try ProgramTimeline(episode: episode, dialogueFrames: f.coverage)
         }
         let region = try AudioInsertionRegion(anchor: .dialogue(f.anchor(21)), durationFrames: 3)
-        #expect(throws: ProgramTimelineError.regionOutsideDialogueCoverage(region.id)) {
-            try ProgramTimeline(episode: f.episode(regions: [region]), dialogueFrames: 0..<20)
-        }
+        let outlying = try ProgramTimeline(episode: f.episode(regions: [region]), dialogueFrames: 0..<20)
+        #expect(outlying.insertions[0].programFrames == 21..<24)
+        #expect(try outlying.dialoguePosition(atAlignedFrame: 21) == .outsideCoverage)
+        #expect(try outlying.inverse(atProgramFrame: 21) == .insertion(region: region.id, offsetFrames: 0))
+        #expect(try outlying.inverse(atProgramFrame: 24) == .outsideCoverage)
     }
 
     @Test func boundariesOverflowInvalidInputsAndUnresolvedPlacementsRefuseVisibly() throws {
@@ -408,12 +607,11 @@ struct ProgramTimelineTests {
             try timeline.project(.insertion(region: missing, offsetFrames: 0))
         }
         let outside = try f.clip(.dialogue(f.anchor(21)))
-        let unresolved = try ProgramTimeline(episode: f.episode(clips: [outside]), dialogueFrames: 0..<20)
-        #expect(try unresolved.project(outside.anchor) == .outsideDialogueCoverage)
-        #expect(throws: ProgramTimelineError.clipOutsideDialogueCoverage(outside.id)) { try unresolved.composition() }
-        #expect(throws: ProgramTimelineError.placementOutsideDialogueCoverage) {
-            try unresolved.pinnedAnchor(for: outside.anchor)
-        }
+        let outlying = try ProgramTimeline(episode: f.episode(clips: [outside]), dialogueFrames: 0..<20)
+        #expect(try outlying.project(outside.anchor) == .placed(frame: 21))
+        #expect(try outlying.composition().clips[0].programFrames == 21..<121)
+        #expect(try outlying.pinnedAnchor(for: outside.anchor) == .absolute(frame: 21))
+        #expect(try outlying.inverse(atProgramFrame: 21) == .outsideCoverage)
         #expect(try ProgramTimeline(episode: f.episode(), dialogueFrames: -limit..<limit).dialogueSpans.count == 1)
     }
 
@@ -484,6 +682,17 @@ struct ProgramTimelineTests {
                             == .insertion(
                                 region: region.region.id,
                                 offsetFrames: frame - region.programFrames.lowerBound))
+                }
+            }
+            for frame: Int64 in [-40, -21, 0, 40, 80, 120, 160] {
+                let anchor = try timeline.unpinnedAnchor(atProgramFrame: frame)
+                #expect(try timeline.project(anchor) == .placed(frame: frame))
+                #expect(try timeline.unpinnedAnchor(for: .absolute(frame: frame)) == anchor)
+                if try timeline.inverse(atProgramFrame: frame) == .outsideCoverage {
+                    guard case .dialogue = anchor else {
+                        Issue.record("Outside sample coverage must still bind placements to the accepted grid")
+                        continue
+                    }
                 }
             }
         }
