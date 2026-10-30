@@ -14,6 +14,10 @@ struct AudioProgramProjectionHostedTests {
     @Test func exteriorAddAudioMoveAndUnpinFollowCutsWithoutInventingDialogue() async throws {
         let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 10)
         defer { f.close() }
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
         let owner = helper.owner(f), editor = f.model.audioEditor
         let initial = try #require(f.document.store.model.episode(f.model.episodeID))
         let accepted = try #require(initial.alignment?.acceptedMap)
@@ -76,6 +80,7 @@ struct AudioProgramProjectionHostedTests {
         editor.refresh()
         #expect(editor.composition?.clips.first { $0.clip.id == reconciled.id }?.programFrames.lowerBound == 576_000)
         let earlier = ManualEpisodeCut(alignmentRevision: accepted.revision, startFrame: 0, endFrame: 48_000)
+        let beforeAdditionalCut = f.document.store.model
         try #require(f.document.store.apply("Synthetic additional earlier cut") { model throws(DomainError) in
             var next = model
             let index = next.episodes.firstIndex { $0.id == initial.id }!
@@ -89,11 +94,15 @@ struct AudioProgramProjectionHostedTests {
         #expect(editor.composition?.clips.first { $0.clip.id == pinned.clip.id }?.programFrames.lowerBound == 576_000)
         #expect(editor.composition?.clips.first { $0.clip.id == origin.id }?.programFrames.lowerBound == 576_000)
         #expect(editor.composition?.clips.first { $0.clip.id == reconciled.id }?.programFrames.lowerBound == 528_000)
-        f.document.undoManager?.undo()
+        let afterAdditionalCut = f.document.store.model
+        #expect(undo.undoActionName == "Synthetic additional earlier cut")
+        undo.undo()
         editor.refresh()
+        #expect(f.document.store.model == beforeAdditionalCut)
         #expect(editor.selected?.programFrames.lowerBound == 528_000)
-        f.document.undoManager?.redo()
+        undo.redo()
         editor.refresh()
+        #expect(f.document.store.model == afterAdditionalCut)
         let composition = try #require(editor.composition)
         #expect(editor.selected?.programFrames.lowerBound == 480_000)
         #expect(try composition.timeline.inverse(atProgramFrame: 480_000) == .outsideCoverage)
