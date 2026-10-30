@@ -251,22 +251,6 @@ struct NativeSourcePreparationTests {
                 $0.legacyWavePCMChannelOrder
             }
 
-            @Test(arguments: ["list-info", "list-adtl"])
-            func ordinaryWaveAnnotationsKeepUndeclaredRawLayoutAndQualifiedChannelOrder(_ annotation: String) async throws {
-                let f = try await Fixture.legacyWave(rate: 44_100, channels: 2, bits: 16, mutation: annotation)
-                #expect(f.format.channelLayout == .undeclared)
-                let evidence = try await SourceDecoder(access: f.access).withDecodingCursor(f.url, source: f.source) {
-                    $0.legacyWavePCMChannelOrder
-                }
-                #expect(evidence != nil)
-                let preparation = try f.preparation()
-                let audio = try await preparation.prepare(f.admission(), expectedFormat: f.format)
-                #expect(audio.interpretation == f.format && audio.sourceFrameCount == 441)
-                let window = try await preparation.readWindow(400..<441, from: audio, admission: f.admission())
-                #expect(Array(window.samples.prefix(41)) == (400..<441).map { Fixture.sample($0, 0) })
-                #expect(Array(window.samples.suffix(41)) == (400..<441).map { Fixture.sample($0, 1) })
-            }
-
             #expect(evidence == nil)
             let preparation = try f.preparation()
             await #expect(throws: (any Error).self) {
@@ -277,6 +261,22 @@ struct NativeSourcePreparationTests {
                 guard case .unsupported = failure else { throw failure }
             }
         }
+    }
+
+    @Test(arguments: ["list-info", "list-adtl"])
+    func ordinaryWaveAnnotationsKeepUndeclaredRawLayoutAndQualifiedChannelOrder(_ annotation: String) async throws {
+        let f = try await Fixture.legacyWave(rate: 44_100, channels: 2, bits: 16, mutation: annotation)
+        #expect(f.format.channelLayout == .undeclared)
+        let evidence = try await SourceDecoder(access: f.access).withDecodingCursor(f.url, source: f.source) {
+            $0.legacyWavePCMChannelOrder
+        }
+        #expect(evidence != nil)
+        let preparation = try f.preparation()
+        let audio = try await preparation.prepare(f.admission(), expectedFormat: f.format)
+        #expect(audio.interpretation == f.format && audio.sourceFrameCount == 441)
+        let window = try await preparation.readWindow(400..<441, from: audio, admission: f.admission())
+        #expect(Array(window.samples.prefix(41)) == (400..<441).map { Fixture.sample($0, 0) })
+        #expect(Array(window.samples.suffix(41)) == (400..<441).map { Fixture.sample($0, 1) })
     }
 
     @Test func explicitWaveMaskKeepsItsRawDeclaredFactsWithoutLegacyEvidence() async throws {
