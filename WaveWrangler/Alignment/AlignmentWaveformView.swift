@@ -48,6 +48,9 @@ struct AlignmentWaveformView: View {
     @State private var confirmingAdaptiveAcceptance = false
     @State private var confirmingAdaptiveRestoration = false
     @State private var newGroupSource: SourceRecord?
+    @State private var dropCanvasFrame: CGRect = .zero
+    @State private var trackContentFrame: CGRect = .zero
+    @State private var trackViewportFrame: CGRect = .zero
 
     private let headerWidth: CGFloat = 190
     private var processingOperation: TrackProcessingOperation? {
@@ -108,18 +111,26 @@ struct AlignmentWaveformView: View {
         AudioTimelineTrackStack(fits: fillsSpace, spacing: 8) {
                 if model.audioEditor.episode?.sources.isEmpty == true,
                    model.audioEditor.tracks.isEmpty, let workspaceState {
-                    VStack(spacing: 12) {
-                        Text("Add audio or recordings to begin").font(.title2).accessibilityAddTraits(.isHeader)
-                        Text("Add Audio creates independent timeline clips. Import recordings to organize recorder groups and speakers.")
-                            .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
-                        HStack {
-                            Button("Add Audio…") { model.addAudio(in: workspaceState) }
-                                .accessibilityIdentifier("ww.show.empty.addAudio")
-                            Button("Add recordings…") { workspaceState.recordingsPresented = true }
-                                .accessibilityIdentifier("ww.show.empty.addRecordings")
-                        }.disabled(!sourceEditingEnabled)
-                    }
-                    .frame(maxWidth: .infinity, minHeight: 160)
+                    HStack(spacing: 12) {
+                        Text("Audio Track").font(.caption).foregroundStyle(.secondary)
+                            .frame(width: headerWidth, alignment: .leading)
+                        VStack(spacing: 12) {
+                            Text("Add audio or recordings to begin").font(.title2).accessibilityAddTraits(.isHeader)
+                            Text("Add Audio creates independent timeline clips. Import recordings to organize recorder groups and speakers.")
+                                .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
+                            HStack {
+                                Button("Add Audio…") { model.addAudio(in: workspaceState) }
+                                    .accessibilityIdentifier("ww.show.empty.addAudio")
+                                Button("Add recordings…") { workspaceState.recordingsPresented = true }
+                                    .accessibilityIdentifier("ww.show.empty.addRecordings")
+                            }.disabled(!sourceEditingEnabled)
+                            Text("Drop local audio files here to review sequential clips at the drop position.")
+                                .font(.caption).foregroundStyle(.secondary)
+                                .accessibilityIdentifier("ww.audioDrop.empty")
+                        }
+                        .frame(maxWidth: .infinity, minHeight: 160)
+                        .modifier(fileDropTarget())
+                    }.padding(8)
                 }
                 if model.waveformMap == nil, model.pendingWaveformMove == nil,
                    !model.waveformTracks.isEmpty {
@@ -139,7 +150,8 @@ struct AlignmentWaveformView: View {
                     AudioClipTrackView(editor: model.audioEditor, track: track,
                         start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
                         playhead: model.waveformPlayheadSeconds, height: laneHeight, headerWidth: headerWidth,
-                        normalized: normalizeView, projection: model.presentationTimeline, showInspector: showInspector)
+                        normalized: normalizeView, projection: model.presentationTimeline,
+                        workspaceState: workspaceState, showInspector: showInspector)
                 }
                 if hasRecordings, model.waveformTracks.isEmpty, model.audioEditor.tracks.isEmpty,
                    model.waveformNavigationEndSeconds > 0 {
@@ -183,6 +195,7 @@ struct AlignmentWaveformView: View {
                               systemImage: "exclamationmark.triangle")
                             .font(.caption).foregroundStyle(.orange)
                     }
+
                     if let error = cleanup.error {
                         Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.red)
                     }
@@ -213,12 +226,20 @@ struct AlignmentWaveformView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .onGeometryChange(for: CGFloat.self) { $0.size.width } action: { trackContentWidth = $0 }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { trackContentFrame = $0 }
         .onGeometryChange(for: AudioTimelineFitMeasurement.self) {
             AudioTimelineFitMeasurement(laneHeight: laneHeight, contentHeight: $0.size.height, rows: fittedRowCount)
         } action: {
             fitMeasurement = $0
             trackMeasuredHeight = $0.contentHeight
         }
+    }
+
+    private func fileDropTarget() -> AudioTimelineFileDropTarget {
+        .init(importer: model.audioEditor.importer, state: workspaceState,
+              start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
+              projection: model.presentationTimeline, track: .newTrack,
+              measureCanvas: { dropCanvasFrame = $0 })
     }
 
     private func refitTracks() {
@@ -294,6 +315,7 @@ struct AlignmentWaveformView: View {
                 .onGeometryChange(for: Double.self) { $0.size.height } action: {
                     trackViewportHeight = $0
                 }
+                .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { trackViewportFrame = $0 }
                 .scrollIndicators(fillsSpace && trackMeasuredHeight <= trackViewportHeight + 0.5 ? .hidden : .automatic)
                 .scrollPosition($trackScrollPosition)
                 .onScrollGeometryChange(for: Double.self) { geometry in
@@ -327,6 +349,23 @@ struct AlignmentWaveformView: View {
                     }
                     model.requestedWaveformFocus = nil
                 }
+        }
+        .overlay(alignment: .topLeading) {
+            let canvas = model.audioEditor.trackFrames.values.first ?? dropCanvasFrame
+            let top = max(0, trackContentFrame.maxY - trackViewportFrame.minY)
+            let height = max(0, trackViewportFrame.height - top)
+            if workspaceState?.canEdit == true, processingOperation == nil,
+               canvas.width > 0, height > 24 {
+                Text("Drop local audio files to review placement on a new Audio Track.")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("ww.audioDrop.newTrack")
+                    .frame(width: canvas.width, height: height)
+                    .background(Color.primary.opacity(0.025))
+                    .modifier(AudioTimelineFileDropTarget(importer: model.audioEditor.importer, state: workspaceState,
+                        start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
+                        projection: model.presentationTimeline, track: .newTrack))
+                    .offset(x: canvas.minX - trackViewportFrame.minX, y: top)
+            }
         }
         .modifier(TrackProcessingPresentation(operation: processingOperation, cancel: {
             TrackProcessingOperation.cancel(alignment: model, cleanup: cleanup)
@@ -798,6 +837,7 @@ struct AlignmentWaveformView: View {
             }
             .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.secondary.opacity(0.3))
                 .allowsHitTesting(false).accessibilityHidden(true))
+            .modifier(fileDropTarget())
             .accessibilityElement(children: .contain)
             .accessibilityLabel("\(speakerName), \(tracks.count) \(tracks.count == 1 ? "track" : "tracks") overlaid")
             .accessibilityHint("Select a recording and unlock its position before using the Move recorder tool. Solo and Mute do not hide waveforms.")
@@ -986,6 +1026,7 @@ struct AlignmentWaveformView: View {
                 .overlay(RoundedRectangle(cornerRadius: 4)
                     .stroke(model.selectedWaveformSource == track.id ? Color.accentColor : Color.secondary.opacity(0.3))
                     .allowsHitTesting(false).accessibilityHidden(true))
+                .modifier(fileDropTarget())
                 .accessibilityElement(children: .contain)
                 .accessibilityLabel("\(track.groupName), \(track.name), audio waveform. \(model.waveformMeasuredBinCount(for: track.id)) measured amplitude bins."
                     + (model.selectedWaveformSource == track.id

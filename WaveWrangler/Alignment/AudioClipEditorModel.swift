@@ -59,6 +59,9 @@ final class AudioClipEditorModel {
     var tracks: [AudioTrack] { episode?.audioArrangement?.tracks ?? [] }
     var selected: ProgramAudioClip? { composition?.clips.first { $0.clip.id == selectedClip } }
     var hasArrangement: Bool { episode?.audioArrangement != nil }
+    var canPlaceDroppedAudio: Bool {
+        compositionGeneration == store.modelGeneration && composition != nil && processing == nil
+    }
     var processing: TrackProcessingOperation? {
         if let importing = importer.processing { return importing }
         if isPreparingWaveforms, waveforms.isEmpty, !waveformAssets.isEmpty {
@@ -367,14 +370,14 @@ final class AudioClipEditorModel {
         } else { error = "Audio edit refused: \(failure)" }
     }
 
-    static func programFrame(_ text: String) throws -> Int64 {
+    nonisolated static func programFrame(_ text: String) throws -> Int64 {
         guard let seconds = Double(text.trimmingCharacters(in: .whitespacesAndNewlines)) else {
             throw StagedAudioImportCoordinator.Refusal("Enter a finite program time in seconds.")
         }
         return try programFrame(seconds)
     }
 
-    static func programFrame(_ seconds: Double) throws -> Int64 {
+    nonisolated static func programFrame(_ seconds: Double) throws -> Int64 {
         guard seconds.isFinite, (-86_400...86_400).contains(seconds) else {
             throw StagedAudioImportCoordinator.Refusal("Program time must be within minus 24 to plus 24 hours.")
         }

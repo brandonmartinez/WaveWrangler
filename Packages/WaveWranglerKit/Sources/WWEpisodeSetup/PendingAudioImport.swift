@@ -89,8 +89,8 @@ extension WWSourcesSetupEngine {
                 snapshots.append(value)
             }
             matches[id] = snapshots
-            if !hasCompleteAudioRoster(snapshot, records: records) {
-                choices[id] = .blocked(reason: "An existing supplemental reference has missing or inconsistent asset/access data. Repair it in Recordings & Speakers before importing or reusing audio.")
+            if let issue = audioInventoryIssue(snapshot, records: records) {
+                choices[id] = .blocked(reason: issue)
             } else {
                 let context = context
                 let local = await Task.detached {
@@ -307,8 +307,8 @@ extension WWSourcesSetupEngine {
         _ = try audioSession(scan, publication: publication)
         let activeIDs = Set(session.snapshot.episodes.flatMap(\.sources).map(\.id))
         let matches = physicalMatches(item, records: all.filter { activeIDs.contains($0.sourceID) })
-        guard hasCompleteAudioRoster(session.snapshot, records: all),
-              Set(matches.map(\.key)) == Set(expected.map(\.record.key)),
+        if let issue = audioInventoryIssue(session.snapshot, records: all) { throw audioRefusal(issue) }
+        guard Set(matches.map(\.key)) == Set(expected.map(\.record.key)),
               matches.allSatisfy({ record in
                   expected.contains { $0.record == record }
                       && canonicalSource(record.sourceID, in: session.snapshot)?.source.purpose == .supplementalAudio
@@ -374,8 +374,8 @@ extension WWSourcesSetupEngine {
         _ = try audioSession(scan, publication: publication)
         let activeIDs = Set(session.snapshot.episodes.flatMap(\.sources).map(\.id))
         let matches = physicalMatches(item, records: records.filter { activeIDs.contains($0.sourceID) })
-        guard hasCompleteAudioRoster(session.snapshot, records: records),
-              matches.count == expected.count,
+        if let issue = audioInventoryIssue(session.snapshot, records: records) { throw audioRefusal(issue) }
+        guard matches.count == expected.count,
               matches.allSatisfy({ record in expected.contains { $0.record == record } }) else {
             throw audioRefusal("The complete active physical-source cohort changed during audio admission.")
         }
@@ -393,8 +393,8 @@ extension WWSourcesSetupEngine {
         _ = try audioSession(scan, publication: publication)
         let active = Set(session.snapshot.episodes.flatMap(\.sources).map(\.id))
         let current = records.filter { active.contains($0.sourceID) }
-        guard hasCompleteAudioRoster(session.snapshot, records: current),
-              physicalMatches(item, records: current).isEmpty else {
+        if let issue = audioInventoryIssue(session.snapshot, records: current) { throw audioRefusal(issue) }
+        guard physicalMatches(item, records: current).isEmpty else {
             throw audioRefusal("The complete active source roster now references this original or needs repair. Review the files again.")
         }
     }
@@ -434,15 +434,21 @@ extension WWSourcesSetupEngine {
         return .copy(source: first.source.id, episode: first.episode.id, title: first.episode.title)
     }
 
-    private func hasCompleteAudioRoster(_ model: ShowDocumentModel, records: [DeviceAccessRecord]) -> Bool {
-        model.episodes.allSatisfy { episode in
-            episode.supplementalAudioSources.allSatisfy { source in
-                qualifiedAsset(for: source, in: episode) != nil && records.contains {
-                    $0.sourceID == source.id && $0.recordedIdentity?.fingerprint.fileIdentifier.value != nil
-                        && $0.recordedIdentity?.fingerprint.volumeUUID.value != nil
+    private func audioInventoryIssue(_ model: ShowDocumentModel, records: [DeviceAccessRecord]) -> String? {
+        for episode in model.episodes {
+            for source in episode.sources {
+                guard let record = records.first(where: { $0.showID == showID && $0.sourceID == source.id }),
+                      let fingerprint = record.recordedIdentity?.fingerprint,
+                      fingerprint.fileIdentifier.value != nil,
+                      let volume = fingerprint.volumeUUID.value, !volume.isEmpty else {
+                    return "Repair required for \"\(source.displayNameHint)\" in \"\(episode.title)\": recorded volume/file identity is missing. Review that source in Recordings & Speakers before importing audio. Recording content was not opened."
+                }
+                if source.purpose == .supplementalAudio, qualifiedAsset(for: source, in: episode) == nil {
+                    return "Repair required for \"\(source.displayNameHint)\" in \"\(episode.title)\": qualified audio geometry is missing or inconsistent. Review the existing reference in Recordings & Speakers."
                 }
             }
         }
+        return nil
     }
 
     private func qualifiedAsset(for source: SourceRecord, in episode: Episode) -> AudioAsset? {

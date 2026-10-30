@@ -13,6 +13,7 @@ struct PendingAudioImportTests {
         let store: InMemoryDeviceAccessStore
         let ledger: InterceptingAudioLedger
         let engine: WWSourcesSetupEngine
+        let captures: AudioImportCaptureLog
         var model: ShowDocumentModel
         var generation = 0
         var expectedGeneration = 0
@@ -27,9 +28,12 @@ struct PendingAudioImportTests {
             store = InMemoryDeviceAccessStore()
             ledger = InterceptingAudioLedger(base: store)
             let context = SourceAccessContext(io: SystemSourceIO())
+            let captures = AudioImportCaptureLog()
+            self.captures = captures
             engine = WWSourcesSetupEngine(showID: model.show.id, store: ledger, context: context,
                 preference: FixedPreference(false), captureRawIdentity: { url, fingerprint in
-                    try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
+                    captures.record(url)
+                    return try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
                 })
             engine.activeSourceIDs = { [weak self] in self.map { Set($0.model.episodes.flatMap(\.sources).map(\.id)) } }
         }
@@ -402,6 +406,59 @@ struct PendingAudioImportTests {
         await f.close()
     }
 
+    @Test func missingActiveRecordingIdentityIsNamedRepairWithoutAnyContentOpen() async throws {
+        for missing in 0..<3 {
+            let f = try Fixture()
+            let recording = SourceRecord(displayNameHint: "Unidentified recording.wav")
+            f.model.episodes[1].sources.append(recording)
+            if missing != 0 {
+                let fingerprint = FileSystemFingerprint(
+                    fileIdentifier: missing == 1 ? .known(777) : .unknown,
+                    volumeUUID: missing == 2 ? .known("offline-volume") : .unknown)
+                await f.store.save(.init(showID: f.model.show.id, sourceID: recording.id,
+                    recordedIdentity: .init(fingerprint: fingerprint, confirmation: .provisional, recordedAt: Date()),
+                    createdAt: Date()))
+            }
+            let scan = try await f.scan()
+            let candidate = try #require(scan.scan.candidates.first)
+            guard case let .blocked(reason) = scan.choices[candidate.id] else {
+                Issue.record("An incomplete active identity inventory must not become a new-audio decision.")
+                await f.close()
+                continue
+            }
+            #expect(reason.contains(recording.displayNameHint) && reason.contains("Repair required"))
+            await #expect(throws: (any Error).self) {
+                try await f.engine.preparePendingAudioImport(candidate: candidate.id, fromScan: scan.scan.token)
+            }
+            #expect(f.captures.urls.isEmpty)
+            await f.close()
+        }
+    }
+
+    @Test func knownOfflineProvisionalNonmatchingRecordingNeedsNoGrantOrContentRead() async throws {
+        let f = try Fixture()
+        let recording = SourceRecord(displayNameHint: "Offline recording.wav")
+        f.model.episodes[1].sources.append(recording)
+        let record = DeviceAccessRecord(showID: f.model.show.id, sourceID: recording.id,
+            recordedIdentity: .init(fingerprint: .init(fileIdentifier: .known(777),
+                volumeUUID: .known("offline-volume")), confirmation: .provisional, recordedAt: Date()),
+            createdAt: Date())
+        await f.store.save(record)
+        let scan = try await f.scan()
+        let candidate = try #require(scan.scan.candidates.first)
+        #expect(scan.choices[candidate.id] == .newSource && f.captures.urls.isEmpty)
+        let token = try await f.engine.preparePendingAudioImport(candidate: candidate.id, fromScan: scan.scan.token)
+        try await f.publish([token])
+        try await f.engine.adoptPendingAudioImports([token]) { f.model }
+        let selected = f.file.resolvingSymlinksInPath().standardizedFileURL
+        #expect(!f.captures.urls.isEmpty && f.captures.urls.allSatisfy {
+            $0.resolvingSymlinksInPath().standardizedFileURL == selected
+        })
+        #expect(await f.store.record(for: record.key) == record)
+        #expect(f.model.episodes[1].sources == [recording])
+        await f.close()
+    }
+
     private func prepare(_ scan: AudioImportScan, engine: WWSourcesSetupEngine) async throws -> [PendingAudioImport] {
         var result: [PendingAudioImport] = []
         for candidate in scan.scan.candidates {
@@ -490,4 +547,11 @@ private final class AudioLocalityIO: SourceIO, @unchecked Sendable {
     func stopAccessingSecurityScope(_ url: URL) { base.stopAccessingSecurityScope(url) }
     func requestDownload(of url: URL) throws { lock.withLock { counts.downloads += 1 } }
     func downloadFraction(of url: URL) async -> Knowledge<Double> { .unknown }
+}
+
+private final class AudioImportCaptureLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var values: [URL] = []
+    func record(_ url: URL) { lock.withLock { values.append(url) } }
+    var urls: [URL] { lock.withLock { values } }
 }

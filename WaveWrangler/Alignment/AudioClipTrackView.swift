@@ -12,6 +12,7 @@ struct AudioClipTrackView: View {
     let headerWidth: Double
     let normalized: Bool
     let projection: AudioTimelineProjection
+    var workspaceState: ShowWindowState? = nil
     let showInspector: () -> Void
     @GestureState private var dragging = false
 
@@ -68,6 +69,8 @@ struct AudioClipTrackView: View {
                     editor.trackFrames[track.id] = $0
                 }
             }
+            .modifier(AudioTimelineFileDropTarget(importer: editor.importer, state: workspaceState,
+                start: start, duration: duration, projection: projection, track: .existing(track.id)))
             .frame(height: height)
         }
         .frame(minHeight: height)
@@ -84,6 +87,7 @@ struct AudioClipTrackView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Audio Track: \(track.name)")
+        .onDisappear { editor.trackFrames[track.id] = nil }
     }
 
     @ViewBuilder private func block(_ projected: ProgramAudioClip, size: CGSize) -> some View {

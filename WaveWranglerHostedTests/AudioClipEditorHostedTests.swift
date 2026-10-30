@@ -1,6 +1,8 @@
 import AppKit
+import CoreTransferable
 import Foundation
 import Testing
+import UniformTypeIdentifiers
 import WWCommonEdit
 import WWCore
 import WWDecode
@@ -19,6 +21,7 @@ struct AudioClipEditorHostedTests {
         let owner: EpisodeWindowController
         let access: FileDeviceAccessStore
         let engine: WWSourcesSetupEngine
+        let runtime: AlignmentRuntime
         var editor: AudioClipEditorModel { model.audioEditor }
         func close() {
             model.suspend()
@@ -59,7 +62,7 @@ struct AudioClipEditorHostedTests {
         model.audioEditor.importer.sourceEngineForTesting = engine
         model.load()
         return .init(folder: folder, file: file, document: document, model: model,
-                     owner: owner, access: access, engine: engine)
+                     owner: owner, access: access, engine: engine, runtime: runtime)
     }
 
     private func review(_ f: Fixture, files: [URL]? = nil) async throws -> AudioImportReview {
@@ -323,6 +326,218 @@ struct AudioClipEditorHostedTests {
         #expect(!f.model.listening.usesProductionMix)
     }
 
+    @Test func droppedSequentialBatchUsesReviewOrderAndExactDurationsWithOneUndo() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let second = f.folder.appendingPathComponent("short.wav")
+        try Self.wave(rate: 44_100, frames: 441).write(to: second)
+        let before = f.document.store.model
+        f.editor.importer.scan([f.file, second], in: f.owner.state,
+            destination: .init(frame: 123_457, track: .newTrack))
+        try await wait { f.editor.importer.review != nil || f.editor.importer.error != nil }
+        var review = try #require(f.editor.importer.review)
+        #expect(review.layout == .sequential && review.track == .newTrack)
+        #expect(try AudioClipEditorModel.programFrame(review.programSeconds) == 123_457)
+        #expect(try await f.access.allRecords().isEmpty && f.document.store.model == before)
+        let last = try #require(review.order.last)
+        review.move(last, by: -1)
+        f.editor.importer.commit(review)
+        try await wait { f.editor.importer.processing == nil }
+        try #require(f.editor.importer.error == nil, Comment(rawValue: f.editor.importer.error ?? ""))
+        f.editor.refresh()
+        let clips = try #require(f.editor.composition?.clips)
+        #expect(clips.map(\.programFrames) == [123_457..<123_937, 123_937..<171_937])
+        #expect(f.editor.episode?.source(clips[0].clip.source)?.displayNameHint == second.lastPathComponent)
+        #expect(f.document.undoManager?.undoActionName == "Add Audio")
+        let after = f.document.store.model
+        f.document.undoManager?.undo()
+        #expect(f.document.store.model == before)
+        f.document.undoManager?.redo()
+        #expect(f.document.store.model == after)
+        try await MixerHostedTests().save(f.document)
+        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+            Data(contentsOf: #require(f.document.fileURL))).payload
+        #expect(saved == after)
+        let recipe = try await f.runtime.mixerRecipe(model: after, episode: f.model.episodeID,
+            programFrames: 123_457..<171_937)
+        #expect(recipe.composition?.programFrames == 123_457..<171_937)
+    }
+
+    @Test func droppedSameEpisodeAssetAndNewFileShareOneBatchWithoutDuplicateAccess() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let first = try await imported(f)
+        let original = try Data(contentsOf: f.file)
+        let record = try #require(try await f.access.record(for: .init(showID: f.document.store.model.show.id,
+                                                                     sourceID: first.clip.source)))
+        let fresh = f.folder.appendingPathComponent("fresh.wav")
+        try Self.wave(rate: 48_000, frames: 480).write(to: fresh)
+        let before = f.document.store.model
+        f.editor.importer.scan([f.file, fresh], in: f.owner.state,
+            destination: .init(frame: 96_000, track: .existing(first.clip.track)))
+        try await wait { f.editor.importer.review != nil || f.editor.importer.error != nil }
+        let review = try #require(f.editor.importer.review)
+        #expect(review.track == .existing(first.clip.track))
+        #expect(review.choices[try #require(review.order.first)] == .reuse(source: first.clip.source))
+        f.editor.importer.commit(review)
+        try await wait { f.editor.importer.processing == nil }
+        try #require(f.editor.importer.error == nil, Comment(rawValue: f.editor.importer.error ?? ""))
+        f.editor.refresh()
+        #expect(f.editor.episode?.sources.count == 2 && f.editor.episode?.audioArrangement?.assets.count == 2)
+        #expect(try await f.access.allRecords().count == 2)
+        #expect(try await f.access.record(for: record.key) == record)
+        #expect(f.editor.composition?.clips.map(\.programFrames.lowerBound) == [0, 96_000, 144_000])
+        #expect(f.editor.composition?.clips.prefix(2).map(\.clip.source) == [first.clip.source, first.clip.source])
+        f.document.undoManager?.undo()
+        #expect(f.document.store.model == before)
+        f.document.undoManager?.redo()
+        #expect(try Data(contentsOf: f.file) == original)
+    }
+
+    @Test func droppedAssetCrossEpisodeCopyKeepsOriginAndIndependentProductionRoutes() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let first = try await imported(f)
+        let firstEpisodeID = f.model.episodeID
+        let originRecord = try #require(try await f.access.record(for: .init(showID: f.document.store.model.show.id,
+                                                                           sourceID: first.clip.source)))
+        let second = Episode(title: "Second synthetic episode")
+        try #require(f.document.store.apply("Synthetic episode") { model throws(DomainError) in
+            var next = model
+            next.episodes.append(second)
+            return next
+        })
+        let slot = try MixerHostedTests().appleSlot()
+        try #require(f.document.store.apply("Synthetic origin insert") { model throws(DomainError) in
+            try model.settingAudioTrackMix(.init(track: first.clip.track, inserts: [slot]), in: firstEpisodeID)
+        })
+        _ = try await f.model.mixer.prepare(programFrames: 0..<2048)
+        try await f.model.mixer.beginEditorObservation(coalescing: "f6.origin")
+        let originProcessor = try #require(f.model.mixer.processor)
+        let firstEpisode = try #require(f.editor.episode)
+        let model = EpisodeAlignmentModel(document: f.document, episodeID: second.id, runtime: f.runtime)
+        let state = ShowWindowState(store: f.document.store, episodeID: second.id)
+        state.alignmentModel = model
+        state.select(.alignment)
+        let owner = EpisodeWindowController(state: state)
+        f.document.addWindowController(owner)
+        if let window = owner.window { state.attach(to: window) }
+        defer { model.suspend(); owner.close() }
+        model.audioEditor.importer.sourceEngineForTesting = f.engine
+        model.load()
+        model.audioEditor.importer.scan([f.file], in: state, destination: .init(frame: 24_000, track: .newTrack))
+        try await wait { model.audioEditor.importer.review != nil || model.audioEditor.importer.error != nil }
+        let review = try #require(model.audioEditor.importer.review)
+        guard case .copy = review.choices[try #require(review.order.first)] else {
+            Issue.record("Cross-episode reuse must be explicitly reviewed as a new episode-owned reference.")
+            return
+        }
+        model.audioEditor.importer.commit(review)
+        try await wait { model.audioEditor.importer.processing == nil }
+        try #require(model.audioEditor.importer.error == nil, Comment(rawValue: model.audioEditor.importer.error ?? ""))
+        model.audioEditor.refresh()
+        let copied = try #require(model.audioEditor.composition?.clips.first)
+        #expect(copied.clip.source != first.clip.source && copied.clip.id != first.clip.id)
+        #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
+        #expect(f.model.mixer.processor === originProcessor && f.model.mixer.editorObservationKey == "f6.origin")
+        #expect(try await f.access.record(for: originRecord.key) == originRecord)
+        #expect(try await f.access.allRecords().count == 2)
+        let singleModel = f.document.store.model
+        let singleRecipe = try await f.runtime.mixerRecipe(model: singleModel, episode: second.id,
+            programFrames: 24_000..<24_480)
+        let singlePCM = try await f.runtime.productionPCM(recipe: singleRecipe, model: singleModel,
+            frames: 24_000..<24_480)
+        model.audioEditor.select(copied.clip.id)
+        model.audioEditor.duplicateSelected()
+        let composition = try #require(model.audioEditor.composition)
+        let recipe = try await f.runtime.mixerRecipe(model: f.document.store.model, episode: second.id,
+            programFrames: 24_000..<24_480)
+        let pcm = try await f.runtime.productionPCM(recipe: recipe, model: f.document.store.model, frames: 24_000..<24_480)
+        let trackPCM = try #require(pcm.audioTracks[copied.clip.track])
+        #expect(composition.clips.count == 2 && trackPCM.flatMap { $0 }.contains { $0 != 0 })
+        let singleTrack = try #require(singlePCM.audioTracks[copied.clip.track])
+        for channel in trackPCM.indices {
+            #expect(zip(trackPCM[channel], singleTrack[channel]).allSatisfy { abs($0 - 2 * $1) < 0.000_001 })
+        }
+        #expect(Set(composition.clips.map(\.clip.source)) == [copied.clip.source])
+        #expect(composition.programFrames == 24_000..<72_000)
+        model.audioEditor.moveSelected(start: "2", track: copied.clip.track)
+        #expect(model.audioEditor.composition?.clips.map(\.programFrames.lowerBound) == [24_000, 96_000])
+        #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
+        try await MixerHostedTests().save(f.document)
+    }
+
+    @Test func droppedLocationsCancelPromptlyAndRefuseClosedOrABADestinations() async throws {
+        for scenario in 0..<3 {
+            let f = try await fixture()
+            let transfer = DeferredAudioDropLocation()
+            let provider = NSItemProvider()
+            provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) {
+                transfer.begin($0)
+            }
+            let before = f.document.store.model
+            #expect(f.editor.importer.receiveDrop([provider], in: f.owner.state,
+                destination: .init(frame: 12_345, track: .newTrack)))
+            try await wait { transfer.started }
+            if scenario == 0 {
+                f.document.store.replaceLoadedModel(before)
+            } else if scenario == 1 {
+                f.owner.close()
+            } else {
+                f.editor.importer.cancel()
+                f.editor.importer.scan([f.file], in: f.owner.state,
+                    destination: .init(frame: 96_000, track: .newTrack))
+                try await wait { f.editor.importer.review != nil || f.editor.importer.error != nil }
+            }
+            let replacement = f.editor.importer.review?.id
+            transfer.finish(f.file)
+            try await wait { f.editor.importer.processing == nil }
+            if scenario == 2 {
+                #expect(f.editor.importer.review?.id == replacement && replacement != nil)
+                #expect(try AudioClipEditorModel.programFrame(
+                    #require(f.editor.importer.review?.programSeconds)) == 96_000)
+            } else {
+                #expect(f.editor.importer.review == nil)
+            }
+            #expect(f.document.store.model == before && f.editor.importer.completedClips.isEmpty)
+            #expect(try await f.access.allRecords().isEmpty)
+            f.close()
+        }
+    }
+
+    @Test func locationLoaderCancellationDoesNotWaitForAnUnresponsiveProvider() async throws {
+        let transfer = DeferredAudioDropLocation(), provider = NSItemProvider()
+        provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) {
+            transfer.begin($0)
+        }
+        let loading = Task { try await AudioFileLocationLoader.load(from: provider) }
+        try await wait { transfer.started }
+        loading.cancel()
+        await #expect(throws: CancellationError.self) { try await loading.value }
+        transfer.finish(URL(filePath: "/synthetic/late-location.wav"))
+    }
+
+    @Test func mixedReusedNewAndUnsupportedBatchLeavesTheExistingEpisodeUntouched() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        _ = try await imported(f)
+        let fresh = f.folder.appendingPathComponent("new-before-failure.wav")
+        try Self.wave(rate: 48_000, frames: 480).write(to: fresh)
+        let unsupported = f.folder.appendingPathComponent("unsupported-mixed.mp3")
+        try Data("Synthetic unsupported MPEG stream".utf8).write(to: unsupported)
+        let before = f.document.store.model, records = try await f.access.allRecords()
+        f.editor.importer.scan([fresh, f.file, unsupported], in: f.owner.state,
+            destination: .init(frame: 48_000, track: .newTrack))
+        try await wait { f.editor.importer.review != nil || f.editor.importer.error != nil }
+        let review = try #require(f.editor.importer.review)
+        #expect(review.selected.count == 3)
+        f.editor.importer.commit(review)
+        try await wait { f.editor.importer.processing == nil }
+        #expect(f.editor.importer.error != nil && f.editor.importer.completedClips.isEmpty)
+        #expect(f.document.store.model == before)
+        #expect(try await f.access.allRecords() == records)
+    }
+
     static func wave(rate: Int, frames: Int, explicitLayout: Bool = false) -> Data {
         var data = Data()
         func append<T: FixedWidthInteger>(_ value: T) {
@@ -354,4 +569,21 @@ struct AudioClipEditorHostedTests {
         await withCheckedContinuation { continuation = $0 }
     }
     func release() { continuation?.resume(); continuation = nil }
+}
+
+private final class DeferredAudioDropLocation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completion: ((Data?, (any Error)?) -> Void)?
+    var started: Bool { lock.withLock { completion != nil } }
+    func begin(_ completion: @escaping (Data?, (any Error)?) -> Void) -> Progress {
+        lock.withLock { self.completion = completion }
+        return Progress(totalUnitCount: 1)
+    }
+    func finish(_ url: URL) {
+        let callback = lock.withLock {
+            defer { completion = nil }
+            return completion
+        }
+        callback?(url.dataRepresentation, nil)
+    }
 }
