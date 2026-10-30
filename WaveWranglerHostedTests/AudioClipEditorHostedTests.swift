@@ -479,6 +479,7 @@ struct AudioClipEditorHostedTests {
         } catch {
             mayClose = false
             Issue.record("Native editor teardown failed; synthetic fixture preserved at \(f.folder.path): \(error)")
+            try outcome.get()
             throw error
         }
         try outcome.get()
