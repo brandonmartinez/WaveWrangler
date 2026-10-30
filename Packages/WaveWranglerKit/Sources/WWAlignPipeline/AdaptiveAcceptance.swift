@@ -177,7 +177,7 @@ extension AlignmentPipeline {
         }
         let recorded = try model.recordingMap(
             map, in: episodeID, inputs: inputs,
-            recipe: MapDependencies.recipe(digest: digest,
+            recipe: MapDependencies.recipe(digest: digest, format: registered.format,
                 acceptedProposals: episode.alignment?.acceptedMap.map(MapDependencies.acceptedProposals) ?? [:]),
             derivedFrom: episode.alignment?.acceptedRevision,
             sourceCorrections: corrections.isEmpty ? nil : corrections

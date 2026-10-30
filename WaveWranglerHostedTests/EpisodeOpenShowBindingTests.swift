@@ -70,22 +70,15 @@ struct EpisodeOpenShowBindingTests {
         let map = try AlignedTimelineMap(reference: reference, groups: [mappedGroup])
         let revision = SourceRevision.metadata(source.id, fingerprint: metadata.fingerprint)
         let format = DerivedInputs().format
-        let dependency = SourceRevision(
-            source: source.id,
-            token: "\(revision.token)|fiv=\(format.interpretationVersion)|env=\(format.envelopeVersion)|group=\(group.id)|epochs=\(epoch.id)"
-        )
-        let digest = DerivedAssetKey(
-            asset: AssetSpec(kind: "ww.alignment-dependencies", revision: 1), sources: [dependency]
-        ).digest
+        let recipe = try #require(AlignmentPipeline.fixtureDependencyRecipe(
+            map: map, revisions: [revision], format: format
+        ))
         let episode = Episode(title: "Synthetic", recorderGroups: [group], sources: [source])
         let initial = ShowDocumentModel(show: Show(title: "Synthetic"), episodes: [episode])
         let recorded = try initial.recordingMap(
             map, in: episode.id,
             inputs: [TimeMapSourceInput(sourceID: source.id, formatInterpretationVersion: format.interpretationVersion)],
-            recipe: RecipeReference(
-                name: AlignmentAssetKinds.acceptanceRecipePrefix + digest,
-                revision: AlignmentAssetKinds.acceptanceRecipeRevision
-            )
+            recipe: recipe
         )
         let accepted = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episode.id)
         let opened = try open(model: accepted)

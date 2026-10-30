@@ -31,7 +31,7 @@ public enum AlignmentAssetKinds {
     /// Prefix of the recipe recorded on every map revision this module creates; the rest of the name is the
     /// digest of the revisions and placements the map was accepted against (`MapDependencies`).
     public static let acceptanceRecipePrefix = "ww.alignment-acceptance;deps="
-    public static let acceptanceRecipeRevision = 2
+    public static let acceptanceRecipeRevision = 3
 
     static let all = [sourceFacts, analysis, fingerprint, alignedAudio, adaptiveAlignedAudio, acceptedMapIdentity]
 }

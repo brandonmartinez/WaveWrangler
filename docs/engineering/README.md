@@ -678,6 +678,34 @@ population, with every calibration draw compared to the unchanged archived recor
 Historical freeze bytes, measurements, seeds, gates, and changed-tree holdout refusal
 are untouched; those records confer no inherited MP3 qualification.
 
+Adding MP3 does not invalidate previously accepted recorder timing. Historical
+acceptance recipe revision 2 has one fixed dependency encoding: interpretation 1 /
+envelope 1. That **timing** contract remains valid only under its original runtime
+or the explicitly evidenced interpretation-1/envelope-2 additive expansion, after
+the entire original source-token/placement/correction-dependency digest matches.
+There is no current-digest/old-digest fallback. Experimental revision-2 recipes
+computed with envelope 2, unknown recipe/interpretation/envelope versions, changed
+source tokens, or changed placements still refuse.
+
+New acceptances and manual/adaptive revisions use recipe revision 3:
+`ww.alignment-acceptance;deps=<digest>;frames=ww.decode-audible-source/1;fiv=1;env=2`
+with the existing optional `;accepted=<proposal provenance>` suffix. The explicit
+creating format participates in the full digest; MP3 is not represented as an
+envelope-1 input. No persisted accepted version, correction, canonical map identity,
+or proposal provenance is rewritten to restore compatibility. Exact live accepted-map
+publication and source-admission checks remain mandatory. Unknown future envelope 3
+is not implicitly compatible. `FormatRevision.current`, source probes, analysis
+currency, and disposable PCM/cache keys remain exactly envelope 2, so old PCM must
+be prepared again even while accepted human timing remains usable.
+
+`EnvelopeCompatibilityTests` writes genuine envelope-1 accepted versions using a
+frozen independent legacy recipe encoder, activates them under runtime 1, opens the
+checksummed show through `DocumentOpener`, and then reopens under runtime 2. Plain
+timing and retained adaptive corrections keep identical bytes, canonical identities,
+and source/cleanup survey results; forward recipe-3 edits also persist and reopen.
+The cleanup survey retains its preexisting certification refusals rather than
+turning timing compatibility into permission to cut.
+
 File-local adaptive listening uses a separate pitch-preserving multichannel path, not `WWRender`'s
 affine SRC. Witnessed reads feed a memory-only nominal PCM converter inside `WWDecode`, then one
 direct native TimePitch unit with unchanged channel order. Region-anchored twelve-second processing
