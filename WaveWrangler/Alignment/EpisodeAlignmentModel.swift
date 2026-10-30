@@ -9,6 +9,7 @@ import WWEpisodeSetup
 import WWOrganizer
 import WWTimeMap
 import WWMix
+import WWCommonEdit
 
 @MainActor
 @Observable
@@ -436,7 +437,8 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private var transportProgressTask: Task<Void, Never>?
     @ObservationIgnored private var auditionStopTask: Task<Void, Never>?
     @ObservationIgnored private var auditionUsesOriginalTime = false
-    @ObservationIgnored private var productionTimeline: ManualCutTimeline?
+    @ObservationIgnored private var productionTimeline: ProgramTimeline?
+    private(set) var productionPlayheadSeconds: Double?
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime,
          listening: EpisodeListeningState = EpisodeListeningState()) {
@@ -1756,26 +1758,37 @@ final class EpisodeAlignmentModel {
     func playProductionMix(interval: ClosedRange<Double>? = nil) {
         adoptCachedPresentation()
         stopAudition()
-        guard let document, let episode = document.store.model.episode(episodeID),
-              timingIsVerified(document.store.model), !waveformTimingIsDraft,
-              loadedWaveformMap != nil, !waveformNeedsRefreshAfterSave,
-              groupDraftMilliseconds == 0, pendingWaveformMove == nil else {
+        guard let document, let episode = document.store.model.episode(episodeID) else { return }
+        let hasDialogue = !episode.speakerAssignments.isEmpty || episode.alignment?.acceptedMap != nil
+        guard !hasDialogue || (timingIsVerified(document.store.model) && !waveformTimingIsDraft
+              && loadedWaveformMap != nil && !waveformNeedsRefreshAfterSave
+              && groupDraftMilliseconds == 0 && pendingWaveformMove == nil) else {
             auditionLabel = "Save and verify accepted timing before playing the production mix."
             return
         }
         let generation = auditionGeneration
         listeningMode = .productionMix
         isPreparingAudition = true
-        auditionLabel = "Preparing the confirmed Primary-speaker production mix."
+        auditionLabel = "Preparing the production mix."
         transportTask = Task { [weak self] in
             guard let self else { return }
             do {
-                let timeline = try episode.manualCutTimeline()
-                let sources = Set(episode.speakerAssignments.compactMap(\.primary?.sourceID))
-                let end = min(86_400, timeline.editedTime(forAlignedTime: timelineEnd(for: sources, applyingCuts: false)))
-                let position = timeline.editedTime(
-                    forAlignedTime: cutTimeline.alignedTime(forEditedTime: waveformPlayheadSeconds))
-                let start = interval?.lowerBound ?? position
+                let composition = try await runtime.programComposition(model: document.store.model, episode: episodeID)
+                guard let extent = composition.programFrames else { throw MixerFailure.invalidRecipe("the program is empty") }
+                let timeline = composition.timeline
+                let rate = Double(AudioArrangement.frameRate)
+                var position = Double(extent.lowerBound) / rate
+                if let dialogue = timeline.dialogueFrames {
+                    let original = Int64(floor(cutTimeline.alignedTime(forEditedTime: waveformPlayheadSeconds) * rate))
+                    if original > dialogue.lowerBound {
+                        switch try timeline.dialoguePosition(atAlignedFrame: original) {
+                        case .mapped(let frame), .removed(_, let frame): position = Double(frame) / rate
+                        case .outsideCoverage: position = Double(extent.lowerBound) / rate
+                        }
+                    }
+                }
+                let end = Double(extent.upperBound) / rate
+                let start = max(Double(extent.lowerBound) / rate, interval?.lowerBound ?? position)
                 let last = min(end, interval?.upperBound ?? end)
                 let schedule = try AlignedAuditionSchedule(startSeconds: start, endSeconds: last)
                 let frames = schedule.firstFrame..<schedule.endFrame
@@ -1789,9 +1802,15 @@ final class EpisodeAlignmentModel {
                             isAuditioning = true
                             isPreparingAudition = false
                             mixer.publishPlaybackMeters()
-                            auditionLabel = "Playing the Primary-speaker production mix; source audition choices are unchanged."
-                            waveformPlayheadSeconds = cutTimeline.editedTime(
-                                forAlignedTime: timeline.alignedTime(forEditedTime: clock.playhead()))
+                            auditionLabel = "Playing the production mix; source audition choices are unchanged."
+                            productionPlayheadSeconds = clock.playhead()
+                            do {
+                                waveformPlayheadSeconds = try waveformTime(atProgramTime: clock.playhead(), timeline: timeline)
+                            } catch {
+                                mixer.fail(error)
+                                stopAudition()
+                                return
+                            }
                             followPlayheadIfNeeded()
                         }
                         do { try await Task.sleep(for: .milliseconds(50)) }
@@ -1808,7 +1827,8 @@ final class EpisodeAlignmentModel {
                 }
                 guard generation == auditionGeneration else { return }
                 stopPlayback(updatePlayhead: false)
-                waveformPlayheadSeconds = cutTimeline.editedTime(forAlignedTime: timeline.alignedTime(forEditedTime: last))
+                productionPlayheadSeconds = last
+                waveformPlayheadSeconds = try waveformTime(atProgramTime: last, timeline: timeline)
                 auditionPlayheadSeconds = waveformPlayheadSeconds
                 auditionLabel = "Production mix reached the end of the selected program."
                 transportTask = nil
@@ -3082,8 +3102,12 @@ final class EpisodeAlignmentModel {
         if updatePlayhead, let clock = audioPlayback.clock {
             let time = clock.playhead()
             if listeningMode == .productionMix, let productionTimeline {
-                auditionPlayheadSeconds = cutTimeline.editedTime(
-                    forAlignedTime: productionTimeline.alignedTime(forEditedTime: time))
+                productionPlayheadSeconds = time
+                do {
+                    auditionPlayheadSeconds = try waveformTime(atProgramTime: time, timeline: productionTimeline)
+                } catch {
+                    lastError = error.localizedDescription
+                }
             } else {
                 auditionPlayheadSeconds = auditionUsesOriginalTime ? cutTimeline.editedTime(forAlignedTime: time) : time
             }
@@ -3100,6 +3124,21 @@ final class EpisodeAlignmentModel {
         isAuditioning = false
         auditionUsesOriginalTime = false
         auditionLabel = "Audition stopped at \(AlignmentPresentation.formatTime(auditionPlayheadSeconds))."
+    }
+
+    /// Existing recording waveforms remain on their review grid. Insertion-only time holds the
+    /// following dialogue seam; the separate production clock always retains actual program time.
+    private func waveformTime(atProgramTime time: Double, timeline: ProgramTimeline) throws -> Double {
+        let frame = Int64(floor(time * 48_000))
+        switch try timeline.inverse(atProgramFrame: frame) {
+        case .dialogue(let original):
+            return cutTimeline.editedTime(forAlignedTime: Double(original) / 48_000)
+        case .insertion, .outsideCoverage:
+            guard let span = timeline.dialogueSpans.first(where: { $0.programFrames.upperBound > frame })
+                ?? timeline.dialogueSpans.last else { return time }
+            let original = frame < span.programFrames.lowerBound ? span.originalFrames.lowerBound : span.originalFrames.upperBound
+            return cutTimeline.editedTime(forAlignedTime: Double(original) / 48_000)
+        }
     }
 
     private func alignedTime(atSourceSeconds sourceSeconds: Double) -> Double? {

@@ -4,13 +4,13 @@ import SwiftUI
 import WWCore
 import WWMix
 
-enum MixerBus: Hashable {
-    case speaker(SpeakerID)
-    case master
+typealias MixerBus = MixerBusAddress
 
+extension MixerBusAddress {
     var identifier: String {
         switch self {
         case .speaker(let id): id.description
+        case .audioTrack(let id): "audio.\(id)"
         case .master: "master"
         }
     }
@@ -122,13 +122,10 @@ final class EpisodeMixerPresentation {
            prior.episode(id)?.mix?.inputGains != episode.mix?.inputGains {
             model.stopAudition()
         }
-        let old = prior.episode(id)?.mix ?? EpisodeMixState()
-        let changedChain = old.master.inserts != mix.master.inserts
-            || episode.speakerAssignments.contains {
-                old.state(for: $0.speakerID).inserts != mix.state(for: $0.speakerID).inserts
-            }
-        if !state.store.model.hasSameMediaInputs(as: prior, in: id)
-            || prior.episode(id)?.activeManualCuts != episode.activeManualCuts || changedChain {
+        let changedTopology = prior.episode(id).map {
+            !EpisodeProcessingInputs($0).hasSameMixerTopology(as: EpisodeProcessingInputs(episode))
+        } ?? true
+        if changedTopology {
             model.stopAudition()
             if controller?.hasObservedState != true {
                 dismissEditorsAfterCapture()
@@ -151,6 +148,10 @@ final class EpisodeMixerPresentation {
                 var strip = mix.state(for: speaker)
                 strip.gainDB = gain
                 return try model.settingSpeakerMix(strip, in: id)
+            case .audioTrack(let track):
+                var strip = mix.state(for: track)
+                strip.gainDB = gain
+                return try model.settingAudioTrackMix(strip, in: id)
             case .master:
                 mix.master.gainDB = gain
                 return try model.settingMasterMix(mix.master, in: id)
@@ -167,9 +168,20 @@ final class EpisodeMixerPresentation {
         }
     }
 
+    func setBalance(_ balance: Double, track: AudioTrackID) {
+        guard canEdit, let state, let id = state.selectedEpisodeID else { return }
+        state.store.apply("Adjust Audio Track Balance", coalescing: "mixer.\(id).audio.\(track).balance") {
+            model throws(DomainError) in
+            var strip = (model.episode(id)?.mix ?? EpisodeMixState()).state(for: track)
+            strip.balance = balance
+            return try model.settingAudioTrackMix(strip, in: id)
+        }
+    }
+
     func inserts(_ bus: MixerBus) -> [AudioUnitSlot] {
         switch bus {
         case .speaker(let speaker): mix.state(for: speaker).inserts
+        case .audioTrack(let track): mix.state(for: track).inserts
         case .master: mix.master.inserts
         }
     }
@@ -187,6 +199,10 @@ final class EpisodeMixerPresentation {
                             var strip = mix.state(for: speaker)
                             strip.inserts = edit(strip.inserts)
                             return try model.settingSpeakerMix(strip, in: id)
+                        case .audioTrack(let track):
+                            var strip = mix.state(for: track)
+                            strip.inserts = edit(strip.inserts)
+                            return try model.settingAudioTrackMix(strip, in: id)
                         case .master:
                             var master = mix.master
                             master.inserts = edit(master.inserts)

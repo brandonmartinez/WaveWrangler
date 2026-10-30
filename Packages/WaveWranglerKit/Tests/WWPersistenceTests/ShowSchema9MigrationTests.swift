@@ -209,5 +209,32 @@ struct ShowSchema9MigrationTests {
         #expect(throws: PersistenceError.unknownNewerSchema(found: 11, supported: 10)) {
             try ShowSchemaMigration.decodeUpgradingOlder(future)
         }
+
+    }
+
+    @Test func retainedOutputWindowPublishesRecoversAndRejectsInvalidOwnership() throws {
+        var model = try audioShow()
+        model.episodes[0].audioArrangement?.clips[0].outputWindow = .init(offsetFrames: 2, countFrames: 95_998)
+        model.episodes[0].audioArrangement?.clips[0].envelope.window = .init(offset: try .init(numerator: 2))
+        #expect(model.validationIssues().isEmpty)
+        let rig = Rig(), url = rig.url(), key = DocumentKey.show(model.show.id)
+        _ = try rig.publisher.publish(model, revision: 1, key: key, to: url, target: .newLocation)
+        let bytes = try Data(contentsOf: url)
+        #expect(try coder.decode(bytes).payload == model)
+        try rig.recovery.retainCheckpoint(bytes, for: key)
+        try Data("damaged synthetic canonical".utf8).write(to: url)
+        #expect(ShowSchemaMigrationTests.opener(rig).candidates(url: url, key: key).map(\.document.payload) == [model])
+        for window in [
+            AudioClipOutputWindow(offsetFrames: -1, countFrames: 1),
+            .init(offsetFrames: 0, countFrames: 0), .init(offsetFrames: 95_999, countFrames: 2),
+            .init(offsetFrames: .max, countFrames: .max),
+        ] {
+            var invalid = model
+            invalid.episodes[0].audioArrangement?.clips[0].outputWindow = window
+            #expect(throws: PersistenceError.self) { try coder.encode(invalid, revision: 1) }
+            #expect(throws: PersistenceError.self) {
+                try coder.decode(ShowSchema8MigrationTests().unchecked(invalid, schema: 10))
+            }
+        }
     }
 }

@@ -390,6 +390,86 @@ struct MixerProcessorTests {
         await #expect(throws: CancellationError.self) { try await task.value }
     }
 
+    @Test func audioTrackStereoInsertsFollowClipSumAndPrecedeBalanceAndCommonMaster() async throws {
+        let f = MixFixture(), track = AudioTrack(name: "Stereo music")
+        var episode = f.episode
+        episode.audioArrangement = .init(tracks: [track])
+        episode.mix = .init(inputGains: [.init(source: f.source.id, channel: 0, gainDB: 6)],
+            speakers: [.init(speaker: f.speaker, pan: -1)],
+            audioTracks: [.init(track: track.id, gainDB: -6, balance: 0.5)])
+        let recipe = try f.recipe(episode, frames: 0..<7)
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]],
+            masterUnits: [generated(.square, channels: 2)],
+            audioTrackUnits: [[generated(.square, channels: 2)]])
+        // Two same-track clips have already summed to L=.2+.3 and R=.1+.2.
+        let output = try await processor.process(.init(frames: 0..<7,
+            channels: [recipe.routes[0].reference: [Float](repeating: 0.1, count: 7)],
+            audioTracks: [track.id: [.init(repeating: 0.5, count: 7), .init(repeating: 0.3, count: 7)]]))
+        let gain = Float(pow(10, -6.0 / 20))
+        let left = Float(0.1 * pow(10, 6.0 / 20)) + 0.25 * gain * 0.5
+        let right = Float(0.09) * gain
+        #expect(abs(output.channels[0][0] - left * left) < 1e-7)
+        #expect(abs(output.channels[1][0] - right * right) < 1e-7)
+    }
+
+    @Test func unequalSpeakerTrackMasterLatencyAndReportedTailsKeepExactOwnership() async throws {
+        let f = MixFixture(), track = AudioTrack(name: "Stereo music")
+        var episode = f.episode
+        episode.audioArrangement = .init(tracks: [track])
+        episode.mix = .init(speakers: [.init(speaker: f.speaker, pan: -1)])
+        let recipe = try f.recipe(episode, frames: 20..<1021,
+                                 policy: .init(prerollFrames: 20, tail: .includeReported))
+        let processor = try MixerProcessor(recipe: recipe,
+            speakerUnits: [[generated(.identity, channels: 1, latency: 7, tail: 11)]],
+            masterUnits: [generated(.identity, channels: 2, latency: 13, tail: 19)],
+            audioTrackUnits: [[generated(.identity, channels: 2, latency: 23, tail: 17)]])
+        #expect(processor.latencyFrames == 36 && processor.tailFrames == 36)
+        var speaker = [Float](repeating: 0, count: 1021), left = speaker, right = speaker
+        speaker[20] = 0.25; left[20] = 0.5; right[20] = -0.75
+        var output = try await processor.process(.init(frames: 0..<1021,
+            channels: [recipe.routes[0].reference: speaker], audioTracks: [track.id: [left, right]])).channels
+        while let tail = try await processor.finishNext(maximumFrames: 17) {
+            output[0] += tail.channels[0]; output[1] += tail.channels[1]
+        }
+        #expect(output[0].count == 1037 && output[1].count == 1037)
+        #expect(output[0][0] == 0.75 && output[1][0] == -0.75)
+        #expect(output[0].dropFirst().allSatisfy { $0 == 0 })
+        #expect(output[1].dropFirst().allSatisfy { $0 == 0 })
+    }
+
+    @Test func soloIsSharedAcrossTypedSpeakerAndAudioTrackRoutesAndPCMShapesRefuse() async throws {
+        let f = MixFixture(), track = AudioTrack(name: "Stereo music")
+        var episode = f.episode
+        episode.audioArrangement = .init(tracks: [track])
+        let recipe = try f.recipe(episode, frames: 0..<1536)
+        let processor = try await MixerProcessor.load(recipe: recipe)
+        let reference = recipe.routes[0].reference
+        var controls = MixerLiveControls(recipe: recipe)
+        controls.soloedAudioTracks = [track.id]
+        try await processor.setLiveControls(controls)
+        let output = try await processor.process(.init(frames: 0..<512,
+            channels: [reference: .init(repeating: 0.9, count: 512)],
+            audioTracks: [track.id: [.init(repeating: 0.2, count: 512), .init(repeating: -0.4, count: 512)]]))
+        #expect(output.channels[0][511] == 0.2 && output.channels[1][511] == -0.4)
+        controls.soloedAudioTracks = []
+        controls.soloedSpeakers = [f.speaker]
+        try await processor.setLiveControls(controls)
+        let speaker = try await processor.process(.init(frames: 512..<1024,
+            channels: [reference: .init(repeating: 0.5, count: 512)],
+            audioTracks: [track.id: [.init(repeating: 0.9, count: 512), .init(repeating: -0.9, count: 512)]]))
+        #expect(abs(speaker.channels[0][511] - Float(0.5 / sqrt(2))) < 1e-7)
+        #expect(speaker.channels[0][511] == speaker.channels[1][511])
+        await #expect(throws: MixerFailure.incompletePCM) {
+            try await processor.process(.init(frames: 1024..<1536,
+                channels: [reference: .init(repeating: 0, count: 512)]))
+        }
+        await #expect(throws: MixerFailure.incompletePCM) {
+            try await processor.process(.init(frames: 1024..<1536,
+                channels: [reference: .init(repeating: 0, count: 512)],
+                audioTracks: [track.id: [.init(repeating: 0, count: 512)]]))
+        }
+    }
+
     private func generated(_ operation: GeneratedUnit.Operation, channels: Int,
                            latency: Int = 0, tail: Int = 0) throws -> NativeAudioUnit {
         let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,

@@ -24,8 +24,8 @@
       "historicalRecord": "docs/m2/fixtures/m2-freeze-render.json",
       "historicalRecordSHA256": "7b9cb3fb28177b2d5cf085395b48fc331f21b7297916d17c7d964cf9e684762c",
       "currentTrees": {
-        "Sources/WWRender": "9de7878720f99808a11f16d55d0928cf3061cc0c",
-        "Tests/WWRenderTests": "f45827e1228900de7f64f96fed430d42481df88d"
+        "Sources/WWRender": "0faec6501b7df12bc80cf3a603e87a5bb98a9ca0",
+        "Tests/WWRenderTests": "b238df441a71220bf7bdbc4eb197924c3dd6f145"
       }
     },
     "m2-freeze-timemap": {

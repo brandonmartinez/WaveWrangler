@@ -121,6 +121,7 @@ public struct AudioEnvelopeEvaluator: Sendable, Equatable {
         to trim: AudioSourceTrim
     ) throws(AudioEnvelopeError) -> AudioClipEnvelope {
         guard let originalDuration = clip.durationFrames(asset: asset),
+            clip.outputWindow == nil,
             trim.startFrame >= clip.trim.startFrame, trim.endFrame <= clip.trim.endFrame,
             trim.endFrame > trim.startFrame
         else { throw .invalidNativeTrim }

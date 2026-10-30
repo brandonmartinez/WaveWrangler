@@ -55,8 +55,9 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 
 `WWTimeMap` contains the exact source/group/aligned coordinate maps.
 `WWCommonEdit` contains the provisional common episode edit map and the
-[pure program-time composition kernel](program-timeline.md). Its presence does
-not mean playback integration, export, or protected-cut acceptance is complete.
+[program-time composition and supplemental production contract](program-timeline.md).
+Supplemental scheduling/mixer integration does not complete the later audio editor,
+drop/insertion/fade controls, export, or protected-cut acceptance.
 
 ### Manual cuts and editing layouts
 
@@ -1343,8 +1344,9 @@ with exact-byte backups and read-only recovery/edit-checkpoint upgrades. Migrati
 preserves old maps, cleanup, mixer state and history; no purpose, arrangement, track
 mix, assets or clips are synthesized. Older payloads containing any new field are
 refused even if neutral. Newer schemas are refused before payload interpretation.
-Until F2/F4 provide program projection and clip routes, `MixerRecipe` explicitly
-refuses nonempty clip/insertion state instead of emitting a dialogue-only mix.
+`MixerRecipe` now accepts nonempty clip/insertion state only with its complete,
+validated `ProgramComposition` and witnessed clip source routes; callers omitting
+that composition still refuse instead of emitting a dialogue-only mix.
 
 The pure `ShowDocumentModel` operations `settingMix(_:in:)`,
 `settingInputGain(_:for:in:)`, `settingSpeakerMix(_:in:)`, and
@@ -1369,20 +1371,21 @@ separate layers; this foundation does not launch UI or read original media.
 
 ### Native mixer processing and PCM rendering
 
-`WWMix` is downstream of `WWRender`, which remains pure and unchanged.
+`WWMix` is downstream of pure `WWCommonEdit`/`WWRender` and F3 native preparation.
 `AlignmentRuntime.mixerRecipe` freezes `EpisodeProcessingInputs`, the confirmed
-Primary routes, actual gateway-witnessed `RawSourceIdentity` and
+Primary and typed audio-track routes, complete program composition, actual gateway-witnessed `RawSourceIdentity` and
 `FormatInterpretation`, explicit resolved channels, signed edited program frames,
 format, pan law, and seek/latency/tail policy. Neither a recipe nor a witness is
 an access grant. `productionPCM` reuses the accepted-map, witnessed
-`sourceAuditions` readers and the shared manual-cut timeline, always with cuts
+`sourceAuditions` readers and the shared program timeline, always with cuts
 collapsed, with input gain disabled at that boundary. It checks frozen identities,
 current access records, actual formats, accepted timing, and complete windows
-before returning. Effects never receive a source URL. Offline jobs also recheck
+before returning. Insertion/exterior intervals are explicit dialogue silence,
+not extrapolated accepted timing. Effects never receive a source URL. Offline jobs also recheck
 admission during their latency/tail drain, not just during source reads.
 
 The initial qualification is native arm64, 48 kHz planar Float32, mono speaker
-inserts and stereo Master inserts/output. Only `aufx` and `aumf` effects with a
+inserts, stereo audio-track inserts and stereo Master inserts/output. Only `aufx` and `aumf` effects with a
 main input and a single output bus supporting the exact requested format are
 admitted. Unused auxiliary/sidechain inputs are disabled after document-state
 recall and verified disabled before rendering; external sidechain routing is
@@ -1421,16 +1424,41 @@ One serial processor retains each unit across all producer windows:
 ```text
 authorized timed/cut mono PCM -> recording/channel input gain
   -> ordered speaker inserts -> explicit parallel-path delay alignment
-  -> speaker fader/equal-power pan -> stereo sum
+  -> speaker fader/equal-power pan ------------------------+
+                                                        |
+authorized native clip PCM -> absolute nominal SRC        |
+  -> local clip envelope -> mono upmix / ordered stereo    |
+  -> same-track clip sum -> stereo track inserts -> PDC    |
+  -> track fader/stereo balance -------------------------->+ -> common stereo sum
   -> ordered Master inserts -> Master gain/meters -> prepared stereo PCM
 ```
 
-The sum is not divided by the number of audible speakers. Center pan contributes
+The sum is not divided by route count. Center speaker pan/mono clip upmix contributes
 1/sqrt(2) to each output; hard left/right contributes unity to that side.
 Finite output above unity is retained, not clipped or normalized;
 `MixerMeter` exposes peak/RMS, clipping, and headroom. Live gain/pan targets use
 sample-clocked 480-frame (10 ms) linear-amplitude ramps, continuous across chunks.
+Stereo clips retain both unity channels at center; balance attenuates only the
+opposite side and never folds stereo into mono. Temporary production Solo spans
+both typed speaker and audio-track routes, independent of diagnostic source Solo.
+Track meters are separate L/R prepared-PCM meters. Recording input gain occurs
+once on dialogue only; supplemental assets cannot acquire such a gain entry.
 Mix edits never enter estimators, ASR, raw waveform cache keys, or original files.
+
+`SupplementalClipScheduler` is the separate asynchronous non-realtime adapter,
+not part of `MixerProcessor`'s effect graph. One `NativeSourcePreparation` actor
+owns an exclusively allocated runtime cache root. Repeated/overlapping clip IDs
+share only native preparation, never occurrence positions, envelopes or channels.
+Admission callbacks weakly reference their runtime; disposing it releases those
+callbacks and removes its exclusive native store on a utility worker, without
+blocking document/UI teardown. Cleanup failures are logged, not hidden.
+Native tiles contain no faders/effects. Each read is at most 4096 nominal output
+frames, using bounded native windows and the original trim's absolute phase.
+Every cache hit retains F3's witnessed gateway and final verification. The app
+callback checks current device-record snapshots, including their opaque mutation
+generation; revoke/regrant cannot reuse an old callback even with identical bytes.
+An access store without the snapshot contract cannot authorize supplemental PCM.
+The generation is frozen evidence, not a new permission ledger.
 Diagnostic source/comparison audition retains its routing/attenuation and applies
 the saved recording/channel gain without speaker/Master effects. A recording-gain
 change invalidates already-prepared diagnostic windows; restart that audition.
@@ -1522,8 +1550,9 @@ invalidates every previously delivered window. The app adapter is
 closure as well as the built-in source-access/identity rechecks.
 
 Reported, nonnegative integral-frame unit latencies are summed along serial
-chains. Shorter speaker paths receive the difference from the longest path;
-the common speaker latency plus Master latency is then removed exactly once.
+chains. Shorter speaker/audio-track paths receive the difference from the longest
+parallel path (both stereo sides have matching compensation); that parallel latency
+plus Master latency is then removed exactly once.
 No engine PDC is assumed or also applied. Generated unequal-latency paths and a
 Master delay verify impulse coincidence and exact program length. Fractional,
 changing, nonfinite or over-budget latency refuses. Vendor misreported latency
@@ -1534,7 +1563,7 @@ Seeking/restarting creates independent reset instances. `MixerRenderPolicy`
 defaults to zero preroll and exact-program tail truncation, a deliberate
 cold-start policy rather than transparent seek equivalence. Optional bounded
 preroll requires real authorized preceding PCM, never fabricated program data.
-`includeReported` drains the maximum serial speaker tail plus Master tails;
+`includeReported` drains the maximum serial speaker/audio-track tail plus Master tails;
 nonfinite, changing or over-budget declared tails refuse. Program output is
 exactly `programFrames.count`, plus the explicit reported tail when selected.
 Missing program frames do not become EOF. Native transient

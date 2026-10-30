@@ -128,7 +128,8 @@ final class ProductionMixPlayback: Sendable {
     func play(output: AlignmentAudioPlayback,
               onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
         let recipe = processor.recipe
-        let queue = ProductionPCMQueue(frames: recipe.programFrames, diagnostics: diagnostics, prepare: { [self] frames in
+        let inputFrames = (recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames))..<recipe.programFrames.upperBound
+        let queue = ProductionPCMQueue(frames: inputFrames, diagnostics: diagnostics, prepare: { [self] frames in
             try check()
             guard output.generation == outputGeneration else { throw CancellationError() }
             return try await runtime.productionPCM(recipe: recipe, model: model, frames: frames)
@@ -162,8 +163,11 @@ final class ProductionMixPlayback: Sendable {
                     let end = min(input.frames.upperBound, next + Int64(MixerLiveTiming.processingBlockFrames))
                     let lower = Int(next - input.frames.lowerBound)
                     let channels = input.channels.mapValues { Array($0[lower..<(lower + Int(end - next))]) }
+                    let tracks = input.audioTracks.mapValues {
+                        $0.map { Array($0[lower..<(lower + Int(end - next))]) }
+                    }
                     try await synchronizeControls()
-                    let block = MixerPCMWindow(frames: next..<end, channels: channels)
+                    let block = MixerPCMWindow(frames: next..<end, channels: channels, audioTracks: tracks)
                     let rendered = try await diagnostics.measureAsync(.dsp) { [processor] in try await processor.process(block) }
                     state.withLock { $0.output = rendered }
                     let final = end == recipe.programFrames.upperBound && processor.latencyFrames == 0 && processor.tailFrames == 0
@@ -193,6 +197,8 @@ final class ProductionMixPlayback: Sendable {
                 if let failure = output.failure { throw failure }
                 try await Task.sleep(for: .milliseconds(5))
             }
+            try await validate(recipe: recipe)
+            try check()
             validation?.cancel()
             await queue.stop()
         } catch {

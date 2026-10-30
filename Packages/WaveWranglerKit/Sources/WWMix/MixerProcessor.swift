@@ -6,14 +6,18 @@ import WWCore
 public struct MixerLiveControls: Sendable {
     public var inputGainDB: [ChannelReference: Double]
     public var speakers: [SpeakerID: SpeakerMixState]
+    public var audioTracks: [AudioTrackID: AudioTrackMixState]
     public var masterGainDB: Double
     public var mutedSpeakers: Set<SpeakerID> = []
     public var soloedSpeakers: Set<SpeakerID> = []
+    public var mutedAudioTracks: Set<AudioTrackID> = []
+    public var soloedAudioTracks: Set<AudioTrackID> = []
     public var masterMuted = false
 
     public init(recipe: MixerRecipe) {
         inputGainDB = Dictionary(uniqueKeysWithValues: recipe.routes.map { ($0.reference, $0.inputGainDB) })
         speakers = Dictionary(uniqueKeysWithValues: recipe.routes.map { ($0.speaker, $0.strip) })
+        audioTracks = Dictionary(uniqueKeysWithValues: recipe.audioTracks.map { ($0.track, $0.strip) })
         masterGainDB = recipe.master.gainDB
     }
 }
@@ -24,14 +28,17 @@ public enum MixerLoadingEvent: Sendable {
 }
 
 /// One serial non-realtime DSP owner. Playback and offline use independent instances of this exact
-/// graph. Only already-authorized, time-corrected/cut PCM enters; no paths or readers reach effects.
+/// graph. Only authorized program-grid mono speaker/stereo track PCM enters; no readers reach effects.
 public actor MixerProcessor {
     public nonisolated let recipe: MixerRecipe
     public nonisolated let latencyFrames: Int
     public nonisolated let tailFrames: Int
     private let speakerUnits: [[NativeAudioUnit]]
+    private let audioTrackUnits: [[NativeAudioUnit]]
     private let masterUnits: [NativeAudioUnit]
     private var delays: [FrameDelay]
+    private var audioTrackDelays: [[FrameDelay]]
+    private var audioTrackGains: [[GainRamp]]
     private var inputGains: [GainRamp]
     private var leftGains: [GainRamp]
     private var rightGains: [GainRamp]
@@ -64,27 +71,42 @@ public actor MixerProcessor {
         }
         var speakers: [[NativeAudioUnit]] = []
         for route in recipe.routes { speakers.append(try await chain(route.strip.inserts, channels: 1)) }
+        var tracks: [[NativeAudioUnit]] = []
+        for route in recipe.audioTracks { tracks.append(try await chain(route.strip.inserts, channels: 2)) }
         let master = try await chain(recipe.master.inserts, channels: 2)
         try Task.checkCancellation()
-        return try MixerProcessor(recipe: recipe, speakerUnits: speakers, masterUnits: master)
+        return try MixerProcessor(recipe: recipe, speakerUnits: speakers, masterUnits: master, audioTrackUnits: tracks)
         #endif
     }
 
-    init(recipe: MixerRecipe, speakerUnits: [[NativeAudioUnit]], masterUnits: [NativeAudioUnit]) throws {
+    init(recipe: MixerRecipe, speakerUnits: [[NativeAudioUnit]], masterUnits: [NativeAudioUnit],
+         audioTrackUnits: [[NativeAudioUnit]] = []) throws {
+        guard speakerUnits.count == recipe.routes.count, audioTrackUnits.count == recipe.audioTracks.count else {
+            throw MixerFailure.invalidRecipe("unit chains do not match bus routes")
+        }
         self.recipe = recipe
         self.speakerUnits = speakerUnits
+        self.audioTrackUnits = audioTrackUnits
         self.masterUnits = masterUnits
-        let latencies = speakerUnits.map { $0.reduce(0) { $0 + $1.latencyFrames } }
+        let latencies = (speakerUnits + audioTrackUnits).map { $0.reduce(0) { $0 + $1.latencyFrames } }
         let parallelLatency = latencies.max() ?? 0
         latencyFrames = parallelLatency + masterUnits.reduce(0) { $0 + $1.latencyFrames }
-        let reportedTail = (speakerUnits.map { $0.reduce(0) { $0 + $1.tailFrames } }.max() ?? 0)
+        let reportedTail = ((speakerUnits + audioTrackUnits).map { $0.reduce(0) { $0 + $1.tailFrames } }.max() ?? 0)
             + masterUnits.reduce(0) { $0 + $1.tailFrames }
         guard latencyFrames <= recipe.policy.maximumLatencyFrames else { throw MixerFailure.latencyLimit }
         guard recipe.policy.tail == .truncate || reportedTail <= recipe.policy.maximumTailFrames else {
             throw MixerFailure.tailLimit
         }
         tailFrames = recipe.policy.tail == .truncate ? 0 : reportedTail
-        delays = latencies.map { FrameDelay(frames: parallelLatency - $0) }
+        delays = latencies.prefix(speakerUnits.count).map { FrameDelay(frames: parallelLatency - $0) }
+        audioTrackDelays = latencies.dropFirst(speakerUnits.count).map {
+            [FrameDelay(frames: parallelLatency - $0), FrameDelay(frames: parallelLatency - $0)]
+        }
+        audioTrackGains = recipe.audioTracks.map {
+            let balance = MixerStereoBalance.gains(balance: $0.strip.balance)
+            let gain = Self.amplitude($0.strip.gainDB)
+            return [GainRamp(balance.left * gain), GainRamp(balance.right * gain)]
+        }
         inputGains = recipe.routes.map { GainRamp(Self.amplitude($0.inputGainDB)) }
         leftGains = recipe.routes.map {
             GainRamp(recipe.panLaw.gains(pan: $0.strip.pan).left * Self.amplitude($0.strip.gainDB))
@@ -127,10 +149,16 @@ public actor MixerProcessor {
         try ensureActive()
         guard Set(controls.inputGainDB.keys) == Set(recipe.routes.map(\.reference)),
               Set(controls.speakers.keys) == Set(recipe.routes.map(\.speaker)),
+              Set(controls.audioTracks.keys) == Set(recipe.audioTracks.map(\.track)),
               controls.inputGainDB.values.allSatisfy(EpisodeMixState.isValidGain),
               EpisodeMixState.isValidGain(controls.masterGainDB),
               controls.mutedSpeakers.isSubset(of: Set(controls.speakers.keys)),
               controls.soloedSpeakers.isSubset(of: Set(controls.speakers.keys)),
+              controls.mutedAudioTracks.isSubset(of: Set(controls.audioTracks.keys)),
+              controls.soloedAudioTracks.isSubset(of: Set(controls.audioTracks.keys)),
+              controls.audioTracks.values.allSatisfy({
+                  EpisodeMixState.isValidGain($0.gainDB) && $0.balance.isFinite && (-1...1).contains($0.balance)
+              }),
               controls.speakers.values.allSatisfy({
                   EpisodeMixState.isValidGain($0.gainDB) && $0.pan.isFinite && (-1...1).contains($0.pan)
               }) else {
@@ -139,18 +167,31 @@ public actor MixerProcessor {
         guard recipe.routes.allSatisfy({ route in
             controls.speakers[route.speaker]?.speaker == route.speaker
                 && controls.speakers[route.speaker]?.inserts == route.strip.inserts
+        }), recipe.audioTracks.allSatisfy({
+            controls.audioTracks[$0.track]?.track == $0.track
+                && controls.audioTracks[$0.track]?.inserts == $0.strip.inserts
         }) else { throw MixerFailure.staleDependencies }
+        let hasSolo = !controls.soloedSpeakers.isEmpty || !controls.soloedAudioTracks.isEmpty
         for (index, route) in recipe.routes.enumerated() {
             guard let gain = controls.inputGainDB[route.reference], let strip = controls.speakers[route.speaker] else {
                 throw MixerFailure.staleDependencies
             }
             let pan = recipe.panLaw.gains(pan: strip.pan)
             let audible = !controls.mutedSpeakers.contains(route.speaker)
-                && (controls.soloedSpeakers.isEmpty || controls.soloedSpeakers.contains(route.speaker))
+                && (!hasSolo || controls.soloedSpeakers.contains(route.speaker))
             let fader = audible ? Self.amplitude(strip.gainDB) : 0
             inputGains[index].set(Self.amplitude(gain))
             leftGains[index].set(fader * pan.left)
             rightGains[index].set(fader * pan.right)
+        }
+        for (index, route) in recipe.audioTracks.enumerated() {
+            guard let strip = controls.audioTracks[route.track] else { throw MixerFailure.staleDependencies }
+            let audible = !controls.mutedAudioTracks.contains(route.track)
+                && (!hasSolo || controls.soloedAudioTracks.contains(route.track))
+            let balance = MixerStereoBalance.gains(balance: strip.balance)
+            let gain = audible ? Self.amplitude(strip.gainDB) : 0
+            audioTrackGains[index][0].set(gain * balance.left)
+            audioTrackGains[index][1].set(gain * balance.right)
         }
         masterGain.set(controls.masterMuted ? 0 : Self.amplitude(controls.masterGainDB))
     }
@@ -165,12 +206,19 @@ public actor MixerProcessor {
         }
         guard !window.frames.isEmpty, window.frames.count <= MixerRecipe.maximumWindowFrames,
               Set(window.channels.keys) == Set(recipe.routes.map(\.reference)),
-              window.channels.values.allSatisfy({ $0.count == window.frames.count }) else {
+              window.channels.values.allSatisfy({ $0.count == window.frames.count }),
+              Set(window.audioTracks.keys) == Set(recipe.audioTracks.map(\.track)),
+              window.audioTracks.values.allSatisfy({
+                  $0.count == 2 && $0.allSatisfy({ $0.count == window.frames.count })
+              }) else {
             throw MixerFailure.incompletePCM
         }
-        guard window.channels.values.allSatisfy({ $0.allSatisfy(\.isFinite) }) else { throw MixerFailure.nonfinitePCM }
+        guard window.channels.values.allSatisfy({ $0.allSatisfy(\.isFinite) }),
+              window.audioTracks.values.allSatisfy({ $0.allSatisfy({ $0.allSatisfy(\.isFinite) }) }) else {
+            throw MixerFailure.nonfinitePCM
+        }
         do {
-            let result = try render(channels: window.channels, count: window.frames.count)
+            let result = try render(channels: window.channels, audioTracks: window.audioTracks, count: window.frames.count)
             nextInput = window.frames.upperBound
             return result
         } catch {
@@ -201,8 +249,11 @@ public actor MixerProcessor {
         let zeros = Dictionary(uniqueKeysWithValues: recipe.routes.map {
             ($0.reference, [Float](repeating: 0, count: count))
         })
+        let tracks = Dictionary(uniqueKeysWithValues: recipe.audioTracks.map {
+            ($0.track, Array(repeating: [Float](repeating: 0, count: count), count: 2))
+        })
         do {
-            let result = try render(channels: zeros, count: count)
+            let result = try render(channels: zeros, audioTracks: tracks, count: count)
             flushRemaining = remaining - count
             return result
         } catch {
@@ -212,7 +263,7 @@ public actor MixerProcessor {
         }
     }
 
-    private var allUnits: [NativeAudioUnit] { speakerUnits.flatMap { $0 } + masterUnits }
+    private var allUnits: [NativeAudioUnit] { (speakerUnits + audioTrackUnits).flatMap { $0 } + masterUnits }
     private func unit(_ id: AudioUnitSlotID) throws -> NativeAudioUnit {
         guard let unit = allUnits.first(where: { $0.slot.id == id }) else { throw MixerFailure.missingUnit(id) }
         return unit
@@ -223,12 +274,14 @@ public actor MixerProcessor {
     }
     private static func amplitude(_ db: Double) -> Float { Float(pow(10, db / 20)) }
 
-    private func render(channels: [ChannelReference: [Float]], count: Int) throws -> MixerPCMOutput {
+    private func render(channels: [ChannelReference: [Float]], audioTracks: [AudioTrackID: [[Float]]],
+                        count: Int) throws -> MixerPCMOutput {
         let firstFrame = recipe.programFrames.lowerBound + emitted
         var output = [[Float](), [Float]()]
         output[0].reserveCapacity(count)
         output[1].reserveCapacity(count)
         var metered = Array(repeating: [Float](), count: recipe.routes.count)
+        var trackMeters = Array(repeating: [[Float](), [Float]()], count: recipe.audioTracks.count)
         for offset in stride(from: 0, to: count, by: MixerRecipe.blockFrames) {
             try Task.checkCancellation()
             let blockCount = min(MixerRecipe.blockFrames, count - offset)
@@ -247,6 +300,20 @@ public actor MixerProcessor {
                     metered[index].append(max(abs(left), abs(right)))
                 }
             }
+            for (index, route) in recipe.audioTracks.enumerated() {
+                guard let input = audioTracks[route.track] else { throw MixerFailure.incompletePCM }
+                var stereo = input.map { Array($0[offset..<(offset + blockCount)]) }
+                for unit in audioTrackUnits[index] { stereo = try unit.render(stereo) }
+                for channel in 0..<2 {
+                    stereo[channel] = audioTrackDelays[index][channel].process(stereo[channel])
+                    for frame in 0..<blockCount {
+                        let sample = stereo[channel][frame] * audioTrackGains[index][channel].next()
+                        guard sample.isFinite else { throw MixerFailure.nonfinitePCM }
+                        sum[channel][frame] += sample
+                        trackMeters[index][channel].append(sample)
+                    }
+                }
+            }
             for unit in masterUnits { sum = try unit.render(sum) }
             let skip = min(discarded, blockCount)
             discarded -= skip
@@ -261,6 +328,8 @@ public actor MixerProcessor {
         return MixerPCMOutput(firstFrame: firstFrame, channels: output,
             speakerMeters: Dictionary(uniqueKeysWithValues: zip(recipe.routes, metered).map {
                 ($0.0.speaker, MixerMeter($0.1))
+            }), audioTrackMeters: Dictionary(uniqueKeysWithValues: zip(recipe.audioTracks, trackMeters).map {
+                ($0.0.track, $0.1.map(MixerMeter.init))
             }))
     }
 }

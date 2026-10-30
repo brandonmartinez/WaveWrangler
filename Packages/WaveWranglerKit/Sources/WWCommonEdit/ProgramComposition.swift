@@ -18,7 +18,8 @@ public struct ProgramAudioClip: Sendable, Equatable {
     public func sourcePosition(atProgramFrame frame: Int64) throws(TimeMapError) -> AudioClipSampleMapping {
         guard programFrames.contains(frame) else { return .outsideCoverage }
         let local = frame - programFrames.lowerBound
-        let offset = try ExactRational(local).multiplied(by: ExactRational(Int64(asset.sampleRate)))
+        let output = local + (clip.outputWindow?.offsetFrames ?? 0)
+        let offset = try ExactRational(output).multiplied(by: ExactRational(Int64(asset.sampleRate)))
             .divided(by: ExactRational(AudioArrangement.frameRate))
         return .source(localFrame: local, nativeFrame: try ExactRational(clip.trim.startFrame).adding(offset))
     }

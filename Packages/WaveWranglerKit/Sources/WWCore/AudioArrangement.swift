@@ -155,6 +155,17 @@ public struct AudioInsertionRegion: Sendable, Equatable, Codable, Identifiable {
     }
 }
 
+/// A selection on the retained trim's nominal 48 kHz sample grid, not a new native trim.
+public struct AudioClipOutputWindow: Sendable, Equatable, Codable {
+    public var offsetFrames: Int64
+    public var countFrames: Int64
+
+    public init(offsetFrames: Int64, countFrames: Int64) {
+        self.offsetFrames = offsetFrames
+        self.countFrames = countFrames
+    }
+}
+
 public struct AudioClip: Sendable, Equatable, Codable, Identifiable {
     public var id: AudioClipID
     public var track: AudioTrackID
@@ -164,10 +175,12 @@ public struct AudioClip: Sendable, Equatable, Codable, Identifiable {
     public var channels: [Int]?
     public var anchor: AudioPlacementAnchor
     public var envelope: AudioClipEnvelope
+    /// When present, trim is retained SRC support; this window owns the actual output samples.
+    public var outputWindow: AudioClipOutputWindow?
 
     public init(id: AudioClipID = AudioClipID(), track: AudioTrackID, source: SourceID,
                 trim: AudioSourceTrim, channels: [Int]? = nil, anchor: AudioPlacementAnchor,
-                envelope: AudioClipEnvelope = AudioClipEnvelope()) {
+                envelope: AudioClipEnvelope = AudioClipEnvelope(), outputWindow: AudioClipOutputWindow? = nil) {
         self.id = id
         self.track = track
         self.source = source
@@ -175,10 +188,27 @@ public struct AudioClip: Sendable, Equatable, Codable, Identifiable {
         self.channels = channels
         self.anchor = anchor
         self.envelope = envelope
+        self.outputWindow = outputWindow
     }
 
     /// Round up the final fractional output frame. Validation bounds operands before multiplication.
     public func durationFrames(asset: AudioAsset) -> Int64? {
+        guard let duration = nominalDurationFrames(asset: asset) else { return nil }
+        guard let outputWindow else { return duration }
+        guard outputWindow.offsetFrames >= 0, outputWindow.countFrames > 0,
+              outputWindow.offsetFrames < duration,
+              outputWindow.countFrames <= duration - outputWindow.offsetFrames else { return nil }
+        return outputWindow.countFrames
+    }
+
+    public func ownedOutputFrames(asset: AudioAsset) -> Range<Int64>? {
+        guard let duration = durationFrames(asset: asset) else { return nil }
+        let start = outputWindow?.offsetFrames ?? 0
+        return start..<(start + duration)
+    }
+
+    /// Ordinary integer-trim CEIL duration, before an optional nominal-output selection.
+    public func nominalDurationFrames(asset: AudioAsset) -> Int64? {
         guard asset.isValid, trim.startFrame >= 0, trim.endFrame > trim.startFrame,
               trim.endFrame <= asset.frameCount else { return nil }
         let frames = trim.endFrame - trim.startFrame

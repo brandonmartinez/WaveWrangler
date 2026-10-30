@@ -76,12 +76,14 @@ complete composition.
 ## Source scheduling and extents (F4/F5/F8)
 
 `ProgramAudioClip` retains the exact original clip, asset geometry, and separate
-`programFrames`. Duration is F1's checked
-`CEIL((nativeEnd-nativeStart) * 48000 / nativeRate)`. Clips sharing a source retain
+`programFrames`. Ordinary duration is F1's checked
+`CEIL((nativeEnd-nativeStart) * 48000 / nativeRate)`; a checked `outputWindow`
+selects a subrange of that nominal grid without changing native support. Clips sharing a source retain
 distinct clip IDs, trims, channel orders, envelopes, and placements.
 `sourceChannels` expands nil to native channel order without changing saved state.
 `sourcePosition(atProgramFrame:)` returns exact native position
-`nativeTrimStart + localProgramFrame * nativeRate / 48000`, or outside coverage.
+`nativeTrimStart + (outputWindow.offsetFrames + localProgramFrame) * nativeRate / 48000`,
+or outside coverage (an absent output window has offset zero).
 The exclusive program endpoint is not scheduled; the final CEIL-owned sample's
 native position is still strictly inside the trim.
 
@@ -90,11 +92,13 @@ all clips, independent of visibility, mute, Solo, and live faders. Nil means tru
 empty. Overflow, bounds violations, invalid shapes, unsupported anchors, and
 review requirements are typed refusals. No live controls are inputs to projection.
 
-F4 must freeze normal `EpisodeProcessingInputs`, current accepted timing, live
-source witnesses and decoder interpretation in its own recipe. Program placement
+F4's `MixerRecipe` freezes normal `EpisodeProcessingInputs`, current accepted timing
+through the full processing inputs and `ProgramComposition`, live source witnesses,
+decoder interpretation, supplemental access-generation evidence, track routes, program
+range and seek/latency/tail policy. Program placement
 does not reset/reanalyze recordings or invalidate original transcript/word/source
-waveform partitions. F3 preparation is a separate dependency; the current
-`MixerRecipe` refusal remains until actual clip routing is integrated.
+waveform partitions. Nonempty arrangement recipes require the complete composition;
+the legacy speaker-only initializer cannot silently omit clips or insertions.
 
 ## Exact envelopes and the additive schema-10 shape
 
@@ -134,7 +138,7 @@ offsets. Further trim/split/Codable reopen preserves the same continuous
 piecewise-linear curve and identical evaluated gains at matching sample instants,
 not approximations accumulated from earlier sampled boundary values.
 
-### Remaining SRC/frame-ownership obligation
+### Retained nominal output ownership (F4/F5)
 
 This is **not** a claim of sample-for-sample concatenation of independently
 CEIL-rounded native splits. A 44.1 kHz `[0,441)` trim owns 480 program frames.
@@ -143,9 +147,94 @@ total **481**, not 480. The leading sample positions are native `0, 147/160`;
 the trailing first position is native `1`. Appending the trailing clip at
 program frame 2 is not the unsplit native position `294/160`.
 
-The regression preserves that discrepancy explicitly: for a 0-to-1 ramp over
+The original regression preserves that discrepancy explicitly: for a 0-to-1 ramp over
 480 frames, the trailing first gain is `1/441`, not the original frame-2 gain
-`1/240`. F4 must decide and verify global SRC phase/frame ownership for any
-sample-preserving split operation. F2 neither hides the difference by dropping/
-duplicating a frame nor changes F1 duration semantics. Envelope correctness and
-DSP sample-grid continuity are separate obligations.
+`1/240`. Ordinary integer trims still behave exactly that way.
+
+The additive schema-10 `AudioClip.outputWindow: AudioClipOutputWindow?` resolves
+sample-preserving edits. It stores `offsetFrames` and positive `countFrames` on the
+**retained trim's nominal 48 kHz output grid**, bounded by its ordinary CEIL duration.
+Absent means the old shape and bytes. Present means `trim` is retained processing
+support, not the effective selected audio; `durationFrames(asset:)` is the owned count.
+`nominalDurationFrames(asset:)` and `ownedOutputFrames(asset:)` distinguish support
+from selection. No source frames are deleted or fabricated.
+
+F5 uses `ProgramAudioClip.split(atProgramFrame:timeline:)` against the current
+projection. Leading retains the clip ID; trailing receives a new ID and a
+position-preserving inverse anchor, or absolute placement for a pinned clip.
+Already-windowed clips split relative to their current window. Both halves retain
+identical native support and SRC origin. Envelopes use the existing exact
+`sliced(to:)` operation, not a resampled boundary gain or a source offset copied
+into the envelope domain. Apply both clips in one whole-value arrangement edit/Undo.
+
+Thus splitting the example at program frame 2 owns **2 + 478 = 480** frames.
+Trailing begins at native `294/160` and curve gain `1/240`, exactly matching the
+unsplit signal. Repeated splits, odd producer windows, seeks and 147 Codable
+reopens retain sample-for-sample asymmetric stereo/impulse/envelope results.
+`NominalPCMRenderer` uses absolute rational source phase and the existing sinc
+prototype, with exact-copy 48 kHz identity routing. Only taps outside the original
+retained trim use explicit zero; a cropped output window never resets/clamps taps.
+This reuse does not extend historical DSP qualification.
+
+For edge edits, `cropped(toLocalFrames:)` preserves phase and the local curve.
+`AudioClip.selectingOutputFrames(_:asset:envelope:)` can crop or extend ownership
+within that same retained support, with an explicitly supplied valid new curve.
+It preserves placement; use the current timeline inverse helper separately if the
+start moves. Discarded envelope knots cannot be invented by extending a crop.
+The native-trim envelope helpers explicitly refuse an existing output window;
+never clear it or round its first fractional source position to a native frame.
+
+F7 continues to submit insertion regions/anchors through `ProgramTimeline`;
+the production adapter partitions dialogue, insertion-only space and exterior
+gaps before calling the existing accepted/adaptive recording readers.
+`AlignmentRuntime.programComposition` provides complete bounds without requiring
+fake accepted timing for audio-only episodes. `playProductionMix(interval:)` takes
+program seconds; `productionPlayheadSeconds` retains the final program clock while
+existing recording waveforms hold the following seam during insertion-only time.
+F8 evaluates/adds fade points on the **current clip-local output grid** through
+`AudioEnvelopeEvaluator`, including after splits/windows. No F5/F7/F8 editor,
+Add Audio/drop controls, fade UI or delivery-file/export path is included in F4.
+
+## F4 verification record (synthetic only, October 30, 2026)
+
+The exact F2/F1/main base was verified before changes. Both independent F3 commits
+were integrated in order: `0ae89f2` became `ba6f93f6`, then the required legacy
+accepted-timing correction `25d221c` became `37d2d124`. The clean combined
+prerequisite baseline reported 563 selected tests across eight package binaries.
+The combined F4 run reported 722 selected tests across ten binaries with nine
+explicit opt-in skips and no failures, including generated LAME MP3 preparation
+and persisted-v1 plain/adaptive compatibility/negative controls.
+
+Load the configured shell environment, use umask 022, and run:
+
+```sh
+WW_MP3_LAME="$(command -v lame)" \
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 \
+swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm \
+  --jobs 2 --filter 'WWCoreTests|WWCommonEditTests|WWDecodeTests|WWDerivedTests|WWEpisodeSetupTests|WWMixTests|WWRenderTests|WWSourcesTests|WWPersistenceTests.ShowSchema9MigrationTests|WWAlignPipelineTests.(EnvelopeCompatibilityTests|MapCurrencyTests|ManualTimingIsolationTests|EpisodeSourceAccessTests|GuardTests|EligibilityTests)'
+```
+
+The final lifecycle follow-up also passed 97 selected package tests with
+`--filter 'WWMixTests|WWRenderTests|ForbiddenAPITests'`. An isolated two-job Debug
+app build and `WaveWranglerHostedTests` build-for-testing both succeeded without
+launching the development app. A leased **VM ww-ui-1 (Virtualization.framework,
+macOS 27.0/26A428, Xcode 27.0/27A266a, 4 vCPU)** development shard then reported
+39 selected / 37 passed / 0 failed / 2 explicit timing opt-in skips. It included
+`SupplementalProductionHostedTests`, `MixerHostedTests`,
+`MixerReviewRegressionTests`, `EpisodeOpenShowBindingTests`, and
+`CleanupSourceIdentityHostedTests`; the seven new supplemental adapter methods
+all ran. The dirty-tree result is development feedback, not clean-commit
+qualification. Its guest artifact is
+`~/ww-uitest-runs/f4-hosted-f9ae9c16-20261030-dev2/result.xcresult`.
+Final clean-commit qualification and exact commit are recorded in the handoff.
+UI/accessibility/performance/holdout suites and physical/acoustic qualification
+were not run or inferred from these results.
+
+The working-tree-aware maintenance helper changed only the render record's
+`currentTrees`: `Sources/WWRender`
+`9de7878720f99808a11f16d55d0928cf3061cc0c` ->
+`0faec6501b7df12bc80cf3a603e87a5bb98a9ca0`, and `Tests/WWRenderTests`
+`f45827e1228900de7f64f96fed430d42481df88d` ->
+`b238df441a71220bf7bdbc4eb197924c3dd6f145`.
+Historical record/path/SHA, kernels/specs/policies, seeds and measurements are
+unchanged. Historical holdouts still refuse changed historical trees.

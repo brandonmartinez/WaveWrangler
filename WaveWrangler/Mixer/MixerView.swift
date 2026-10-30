@@ -11,9 +11,10 @@ struct MixerView: View {
             HStack {
                 Text("Mixer").font(.headline)
                 Button("Play Mix", systemImage: "play.fill") { playMix() }
-                    .disabled(presentation.model == nil || presentation.episode?.speakerAssignments.isEmpty != false)
+                    .disabled(presentation.model == nil || (presentation.episode?.speakerAssignments.isEmpty != false
+                        && presentation.episode?.audioArrangement?.clips.isEmpty != false))
                     .accessibilityIdentifier("ww.mixer.play")
-                    .help("Play only confirmed speaker Primaries through the production mixer. Source audition is unchanged.")
+                    .help("Play confirmed speaker Primaries and supplemental audio tracks through the production mixer. Source audition is unchanged.")
                 Button("Stop", systemImage: "stop.fill") { presentation.model?.stopAudition() }
                     .disabled(presentation.model?.canStopAudition != true)
                     .accessibilityIdentifier("ww.mixer.stop")
@@ -51,9 +52,14 @@ struct MixerView: View {
                                 MixerStrip(presentation: presentation, bus: .speaker(assignment.speakerID))
                                     .frame(width: 218)
                             }
-                            if presentation.episode?.speakerAssignments.isEmpty == true {
-                                ContentUnavailableView("No speakers", systemImage: "person.wave.2",
-                                    description: Text("Assign speakers and confirm their Primary recordings in Recordings & Speakers."))
+                            ForEach(presentation.episode?.audioArrangement?.tracks ?? []) { track in
+                                MixerStrip(presentation: presentation, bus: .audioTrack(track.id))
+                                    .frame(width: 218)
+                            }
+                            if presentation.episode?.speakerAssignments.isEmpty == true
+                                && presentation.episode?.audioArrangement?.tracks.isEmpty != false {
+                                ContentUnavailableView("No mixer tracks", systemImage: "person.wave.2",
+                                    description: Text("Assign confirmed speaker Primaries or add supplemental audio tracks."))
                                     .frame(width: 240)
                             }
                         }
@@ -110,6 +116,7 @@ private struct MixerStrip: View {
     private var gain: Double {
         switch bus {
         case .speaker(let id): presentation.mix.state(for: id).gainDB
+        case .audioTrack(let id): presentation.mix.state(for: id).gainDB
         case .master: presentation.mix.master.gainDB
         }
     }
@@ -167,6 +174,21 @@ private struct MixerStrip: View {
                     }.toggleStyle(.button)
                     MixerLevelView(meters: presentation.controller?.meters?.speakerMeters[speaker].map { [$0] } ?? [],
                                    identifier: "\(identifier).level")
+                } else if case .audioTrack(let track) = bus {
+                    MixerNumberControl(title: "Balance", value: Binding(
+                        get: { presentation.mix.state(for: track).balance },
+                        set: { presentation.setBalance($0, track: track) }),
+                        range: -1...1, identifier: "\(identifier).balance",
+                        endEditing: { presentation.state?.store.endCoalescing() })
+                        .disabled(!canEdit)
+                    HStack {
+                        Toggle("Solo", isOn: audioListeningBinding(track: track, solo: true))
+                            .accessibilityIdentifier("\(identifier).solo")
+                        Toggle("Mute", isOn: audioListeningBinding(track: track, solo: false))
+                            .accessibilityIdentifier("\(identifier).mute")
+                    }.toggleStyle(.button)
+                    MixerLevelView(meters: presentation.controller?.meters?.audioTrackMeters[track] ?? [],
+                                   identifier: "\(identifier).level")
                 } else {
                     Toggle("Mute Master", isOn: Binding(
                         get: { presentation.controller?.masterMuted ?? false },
@@ -192,6 +214,7 @@ private struct MixerStrip: View {
     private var name: String {
         switch bus {
         case .speaker(let id): presentation.state?.store.model.speaker(id)?.name ?? "Unknown speaker"
+        case .audioTrack(let id): presentation.episode?.audioArrangement?.tracks.first { $0.id == id }?.name ?? "Audio track"
         case .master: "Master"
         }
     }
@@ -220,9 +243,25 @@ private struct MixerStrip: View {
                     .font(.caption).foregroundStyle(.red)
                     .accessibilityIdentifier("\(identifier).input")
             }
+        } else if case .audioTrack = bus {
+            Text("Stereo clip sum").font(.caption).foregroundStyle(.secondary)
         } else {
-            Text("Stereo speaker sum").font(.caption).foregroundStyle(.secondary)
+            Text("Stereo program sum").font(.caption).foregroundStyle(.secondary)
         }
+    }
+
+    private func audioListeningBinding(track: AudioTrackID, solo: Bool) -> Binding<Bool> {
+        Binding(get: {
+            (solo ? presentation.controller?.soloedAudioTracks : presentation.controller?.mutedAudioTracks)?
+                .contains(track) ?? false
+        }, set: { value in
+            guard let controller = presentation.controller else { return }
+            if solo {
+                if value { controller.soloedAudioTracks.insert(track) } else { controller.soloedAudioTracks.remove(track) }
+            } else {
+                if value { controller.mutedAudioTracks.insert(track) } else { controller.mutedAudioTracks.remove(track) }
+            }
+        })
     }
 
     private func listeningBinding(speaker: SpeakerID, solo: Bool) -> Binding<Bool> {

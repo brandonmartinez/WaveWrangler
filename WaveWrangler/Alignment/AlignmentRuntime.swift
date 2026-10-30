@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import OSLog
 import WWAlignPipeline
 import WWCore
 import WWDecode
@@ -9,6 +10,7 @@ import WWSources
 import WWTimeMap
 import WWSpeech
 import WWMix
+import WWCommonEdit
 
 actor AlignmentRuntime {
     enum AuditionTimebase: Sendable, Equatable {
@@ -58,6 +60,9 @@ actor AlignmentRuntime {
     private var openedDocuments = OpenedDocumentPublications()
     private var publicationReconcilers: [EpisodeID: VerifiedDocumentReconciler] = [:]
     private let auditionPCM: AlignedAuditionPCMCache
+    private let nativeSources: NativeSourcePreparation
+    private let nativeCacheRoot: URL
+    private var supplementalSchedulers: [EpisodeID: SupplementalClipScheduler] = [:]
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
     private var productionValidationHook: (@Sendable () async throws -> Void)?
@@ -65,21 +70,37 @@ actor AlignmentRuntime {
     func setProductionValidationHookForTesting(_ hook: (@Sendable () async throws -> Void)?) {
         productionValidationHook = hook
     }
+
+    nonisolated var nativeCacheRootForTesting: URL { nativeCacheRoot }
     #endif
 
     private init(
         showID: ShowID,
         accessStore: any DeviceAccessStore,
         access: SourceAccessContext,
-        derived: DerivedAssetStore
+        derived: DerivedAssetStore,
+        nativeSources: NativeSourcePreparation, nativeCacheRoot: URL
     ) {
         self.showID = showID
         self.accessStore = accessStore
         self.access = access
+        self.nativeSources = nativeSources
+        self.nativeCacheRoot = nativeCacheRoot
         mediaInspector = SourceMediaInspector(accessStore: accessStore, access: access)
         coordinator = DerivedJobCoordinator(store: derived)
         auditionPCM = AlignedAuditionPCMCache(coordinator: coordinator)
         pipeline = AlignmentPipeline(coordinator: coordinator, decoder: SourceDecoder(access: access))
+    }
+
+    deinit {
+        Task.detached(priority: .utility) { [root = nativeCacheRoot] in
+            do {
+                try FileManager.default.removeItem(at: root)
+            } catch {
+                Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "ProductionPCM")
+                    .error("Disposable supplemental PCM cache cleanup failed: \(error.localizedDescription, privacy: .private)")
+            }
+        }
     }
 
     nonisolated static func make(
@@ -88,14 +109,19 @@ actor AlignmentRuntime {
         access: SourceAccessContext
     ) async throws -> AlignmentRuntime {
         let root = PersistenceEnvironment.caches("Derived/\(showID)")
-        let derived = try await Task.detached(priority: .userInitiated) {
-            try DerivedAssetStore(root: root, sourceLocations: [])
+        let stores = try await Task.detached(priority: .userInitiated) {
+            let derived = try DerivedAssetStore(root: root, sourceLocations: [])
+            let nativeRoot = root.appendingPathComponent("production-\(UUID().uuidString)", isDirectory: true)
+            let native = try NativeSourcePreparation(
+                root: nativeRoot,
+                sourceLocations: [], access: access)
+            return (derived, native, nativeRoot)
         }.value
         return AlignmentRuntime(
             showID: showID,
             accessStore: accessStore,
             access: access,
-            derived: derived
+            derived: stores.0, nativeSources: stores.1, nativeCacheRoot: stores.2
         )
     }
 
@@ -984,14 +1010,61 @@ actor AlignmentRuntime {
     }
 
     /// Freeze actual admitted identities/channels, not metadata guesses or sparse strip entries.
+    func programComposition(model: ShowDocumentModel, episode episodeID: EpisodeID) async throws -> ProgramComposition {
+        guard let episode = model.episode(episodeID) else { throw MixerFailure.staleDependencies }
+        var coverage: Range<Int64>?
+        if episode.alignment?.acceptedMap != nil {
+            _ = try await resolveSources(episode.sources)
+            try await pipeline.activate(model: model, episode: episodeID)
+            let map = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+            var ranges: [Range<Int64>] = []
+            for group in map.groups {
+                for placement in group.placements {
+                    for span in placement.spans {
+                        guard let epoch = group.epochs.first(where: { $0.epoch == span.epoch }),
+                              case .mapped(let segments, _) = epoch.mapping else { continue }
+                        let rate = placement.occurrence.nominalRate.framesPerSecond
+                        let first = try ExactRational(span.startFrame, rate).adding(span.groupClockOffset)
+                        let end = try ExactRational(span.endFrame, rate).adding(span.groupClockOffset)
+                        for segment in segments {
+                            let lo = max(first, segment.groupClockStart), hi = min(end, segment.groupClockEnd)
+                            guard lo < hi else { continue }
+                            let start = try lo.multiplied(by: segment.rateRatio).adding(segment.alignedOffset)
+                                .multiplied(by: ExactRational(AudioArrangement.frameRate)).ceil()
+                            let last = try hi.multiplied(by: segment.rateRatio).adding(segment.alignedOffset)
+                                .multiplied(by: ExactRational(AudioArrangement.frameRate)).ceil()
+                            guard let a = Int64(exactly: start), let b = Int64(exactly: last), a < b else {
+                                throw MixerFailure.invalidRecipe("invalid accepted dialogue extent")
+                            }
+                            ranges.append(a..<b)
+                        }
+                    }
+                }
+            }
+            for correction in episode.alignment?.acceptedMap?.sourceCorrections ?? [] {
+                for segment in correction.segments {
+                    let a = Int64(ceil(segment.alignedStart * 48_000))
+                    let b = Int64(ceil(segment.alignedEnd * 48_000))
+                    if a < b { ranges.append(a..<b) }
+                }
+            }
+            guard let start = ranges.map(\.lowerBound).min(), let end = ranges.map(\.upperBound).max() else {
+                throw MixerFailure.invalidRecipe("accepted timing has no complete dialogue extent")
+            }
+            coverage = start..<end
+        } else if !episode.speakerAssignments.isEmpty {
+            throw MixerFailure.invalidRecipe("dialogue production requires verified accepted timing")
+        }
+        return try ProgramTimeline(episode: episode, dialogueFrames: coverage).composition()
+    }
+
     func mixerRecipe(
         model: ShowDocumentModel, episode episodeID: EpisodeID, programFrames: Range<Int64>,
         policy: MixerRenderPolicy = .init()
     ) async throws -> MixerRecipe {
         guard let episode = model.episode(episodeID) else { throw MixerFailure.staleDependencies }
+        let composition = try await programComposition(model: model, episode: episodeID)
         let resolved = try await resolveSources(episode.sources)
-        try await pipeline.activate(model: model, episode: episodeID)
-        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         var snapshots: [MixerSourceSnapshot] = []
         for assignment in episode.speakerAssignments {
             guard assignment.primaryConfirmation == .userConfirmed, let primary = assignment.primary else {
@@ -1004,15 +1077,87 @@ actor AlignmentRuntime {
             try await reverify(admission)
             snapshots.append(.init(source: primary.sourceID, witness: admission.witness, interpretation: interpretation))
         }
-        _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
-        return try MixerRecipe(episode: episode, sources: snapshots, programFrames: programFrames, policy: policy)
+        for id in Set(composition.clips.map(\.clip.source)).sorted(by: { $0.description < $1.description }) {
+            let admitted = try await supplementalAdmission(id, episode: episode)
+            let admission = admitted.read
+            let interpretation = try await AlignedAuditionWindowReader.inspectFormat(
+                sourceURL: admission.location, source: id, matching: admission.witness, decoder: pipeline.decoder)
+            try await admission.validateCurrentAccess()
+            snapshots.append(.init(source: id, witness: admission.witness, interpretation: interpretation,
+                                   accessGeneration: admitted.generation))
+        }
+        if episode.alignment?.acceptedMap != nil {
+            _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        }
+        return try MixerRecipe(episode: episode, sources: snapshots, programFrames: programFrames,
+                               policy: policy, composition: composition)
+    }
+
+    private struct SupplementalAdmission: Sendable {
+        let read: SourceReadAdmission
+        let generation: DeviceAccessGeneration?
+    }
+
+    private func supplementalAdmission(_ id: SourceID, episode: Episode) async throws -> SupplementalAdmission {
+        guard episode.source(id)?.purpose == .supplementalAudio else { throw MixerFailure.staleDependencies }
+        guard let store = accessStore as? any DeviceAccessSnapshotStore else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
+        let key = DeviceAccessKey(showID: showID, sourceID: id)
+        let record = try await sourceAccess.record(for: key)
+        let evaluation = SourceAvailabilityEvaluator(context: access).evaluate(key: key, record: record, setting: .on)
+        if let refreshed = evaluation.refreshedRecord { try await sourceAccess.refresh(refreshed) }
+        guard let url = evaluation.resolvedURL, evaluation.observation.access == .granted,
+              evaluation.observation.identity == .matchesRecorded, evaluation.observation.location == .present,
+              evaluation.observation.residency == .local,
+              let snapshot = try await store.snapshot(for: key),
+              let fingerprint = snapshot.record.recordedIdentity?.fingerprint else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
+        let witness = try await pipeline.decoder.captureRawIdentity(url, matching: fingerprint)
+        let admitted = WaveformSourceAdmission(key: key, record: snapshot.record, url: url, witness: witness)
+        try await validateSupplementalAccess(admitted, snapshot: snapshot)
+        let read = SourceReadAdmission(source: id, location: url, witness: witness,
+            authorization: .explicitUserRequest(for: id), availability: .on) { [weak self] in
+                guard let self else { throw MixerFailure.staleDependencies }
+                try await self.validateSupplementalAccess(admitted, snapshot: snapshot)
+            }
+        return .init(read: read, generation: snapshot.mutationGeneration)
+    }
+
+    private func validateSupplementalAccess(_ admission: WaveformSourceAdmission, snapshot: DeviceAccessSnapshot) async throws {
+        guard let store = accessStore as? any DeviceAccessSnapshotStore,
+              try await store.snapshot(for: admission.key) == snapshot else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
+        try await reverify(admission)
+        guard try await store.snapshot(for: admission.key) == snapshot else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
+        let evaluation = SourceAvailabilityEvaluator(context: access).evaluate(
+            key: admission.key, record: admission.record, setting: .on)
+        guard evaluation.resolvedURL == admission.url, evaluation.observation.access == .granted,
+              evaluation.observation.identity == .matchesRecorded, evaluation.observation.location == .present,
+              evaluation.observation.residency == .local else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
+        try await reverify(admission)
+        guard try await store.snapshot(for: admission.key) == snapshot else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
     }
 
     func productionPCM(recipe: MixerRecipe, model: ShowDocumentModel, frames: Range<Int64>) async throws -> MixerPCMWindow {
+        guard !frames.isEmpty, frames.count <= MixerRecipe.maximumWindowFrames,
+              frames.lowerBound >= recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames),
+              frames.upperBound <= recipe.programFrames.upperBound else { throw MixerFailure.incompletePCM }
         guard let episode = model.episode(recipe.episode), EpisodeProcessingInputs(episode) == recipe.dependencies else {
             throw MixerFailure.staleDependencies
         }
-        var channels: [ChannelReference: [Float]] = [:]
+        guard let composition = recipe.composition else { throw MixerFailure.staleDependencies }
+        var channels = Dictionary(uniqueKeysWithValues: recipe.routes.map {
+            ($0.reference, [Float](repeating: 0, count: frames.count))
+        })
         // Each admitted recording is mono/stereo, so at most two channel passes are needed.
         // Batch admissions across sources rather than re-resolving every recording for each strip.
         var first: [MixerRoute] = [], second: [MixerRoute] = []
@@ -1021,29 +1166,50 @@ actor AlignmentRuntime {
             if seen.insert(route.reference.sourceID).inserted { first.append(route) }
             else { second.append(route) }
         }
-        for routes in [first, second] where !routes.isEmpty {
-            var decodedChannels: [SourceID: Int] = [:]
-            for route in routes {
-                guard let channel = route.reference.channel.value else {
-                    throw MixerFailure.unresolvedChannel(route.reference.sourceID)
+        for segment in try composition.timeline.segments(in: frames) {
+            guard case .dialogue(let span) = segment else { continue }
+            for routes in [first, second] where !routes.isEmpty {
+                var decodedChannels: [SourceID: Int] = [:]
+                for route in routes {
+                    guard let channel = route.reference.channel.value else {
+                        throw MixerFailure.unresolvedChannel(route.reference.sourceID)
+                    }
+                    decodedChannels[route.reference.sourceID] = channel
                 }
-                decodedChannels[route.reference.sourceID] = channel
-            }
-            let clips = try await sourceAuditions(
-                model: model, episode: recipe.episode, sources: routes.map(\.reference.sourceID),
-                outputFrames: frames, decodedChannels: decodedChannels,
-                applyingInputGain: false, frozenSources: routes.map(\.source)
-            )
-            for route in routes {
-                guard let clip = clips[route.reference.sourceID] else { throw MixerFailure.incompletePCM }
-                channels[route.reference] = clip.samples
+                let clips = try await sourceAuditions(
+                    model: model, episode: recipe.episode, sources: routes.map(\.reference.sourceID),
+                    outputFrames: span.originalFrames, applyingCuts: false, decodedChannels: decodedChannels,
+                    applyingInputGain: false, frozenSources: routes.map(\.source)
+                )
+                for route in routes {
+                    guard let clip = clips[route.reference.sourceID] else { throw MixerFailure.incompletePCM }
+                    guard clip.samples.count == span.programFrames.count else { throw MixerFailure.incompletePCM }
+                    let offset = Int(span.programFrames.lowerBound - frames.lowerBound)
+                    channels[route.reference]?.replaceSubrange(offset..<(offset + clip.samples.count), with: clip.samples)
+                }
             }
         }
+        if supplementalSchedulers[recipe.episode]?.recipe != recipe {
+            var admissions: [SourceID: SourceReadAdmission] = [:]
+            for snapshot in recipe.audioSources {
+                let admission = try await supplementalAdmission(snapshot.source, episode: episode)
+                guard admission.generation == snapshot.accessGeneration else { throw MixerFailure.staleDependencies }
+                admissions[snapshot.source] = admission.read
+            }
+            let scheduler = try await SupplementalClipScheduler(recipe: recipe, preparation: nativeSources,
+                                                               admissions: admissions)
+            try Task.checkCancellation()
+            supplementalSchedulers[recipe.episode] = scheduler
+        }
+        guard let scheduler = supplementalSchedulers[recipe.episode], scheduler.recipe == recipe else {
+            throw MixerFailure.staleDependencies
+        }
+        let tracks = try await scheduler.read(frames)
         // Source access, identity and timing are checked again across the complete multi-source window.
         let current = try await mixerRecipe(model: model, episode: recipe.episode,
             programFrames: recipe.programFrames, policy: recipe.policy)
         guard current == recipe else { throw MixerFailure.staleDependencies }
-        return MixerPCMWindow(frames: frames, channels: channels)
+        return MixerPCMWindow(frames: frames, channels: channels, audioTracks: tracks)
     }
 
     func validateProduction(recipe: MixerRecipe, model: ShowDocumentModel) async throws {
