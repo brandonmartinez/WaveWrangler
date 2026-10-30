@@ -289,7 +289,8 @@ fade-point UI is part of this slice.
 The macOS 26 drop adapter binds the target's whole `DropSession.itemsCount`, `id`,
 and phase through a live `activeDropSession` binding. Pending and target-bound
 snapshots support metadata-first and legacy-entry-first callback order without a
-filtered-count or maximum-count fallback. A drop consumes a positive current
+filtered-count or maximum-count fallback. A filtered `public.item` roster is never
+count authority. A drop consumes a positive current
 active inventory once. Exit/disappearance clear usable snapshots; ended or
 consumed IDs cannot replay, and a session-ID mismatch requires a fresh entry.
 Only exact file-URL providers are requested. Their count must equal the unfiltered
