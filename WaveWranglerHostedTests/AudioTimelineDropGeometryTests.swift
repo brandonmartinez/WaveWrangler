@@ -92,18 +92,20 @@ struct AudioTimelineDropGeometryTests {
         metadata.updated(id: first, phase: .active, itemCount: 2)
         #expect(throws: (any Error).self) { try metadata.consumeCount() }
         metadata.entered()
-        #expect(throws: (any Error).self) { try metadata.consumeCount() }
-        metadata.updated(id: first, phase: .entering, itemCount: 2)
-        #expect(throws: (any Error).self) { try metadata.consumeCount() }
-        metadata.updated(id: first, phase: .active, itemCount: 2)
         #expect(try metadata.consumeCount() == 2)
         #expect(throws: (any Error).self) { try metadata.consumeCount() }
         metadata.entered()
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
         metadata.updated(id: first, phase: .ended, itemCount: 2)
         metadata.updated(id: first, phase: .active, itemCount: 2)
         #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.updated(id: second, phase: .entering, itemCount: 3)
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
         metadata.updated(id: second, phase: .active, itemCount: 3)
         #expect(try metadata.consumeCount() == 3)
+        metadata.updated(id: first, phase: .active, itemCount: 2)
+        metadata.entered()
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
         metadata.entered()
         metadata.updated(id: third, phase: .active, itemCount: 1)
         metadata.exited()
@@ -111,10 +113,15 @@ struct AudioTimelineDropGeometryTests {
         #expect(throws: (any Error).self) { try metadata.consumeCount() }
         metadata.updated(id: third, phase: .active, itemCount: 1)
         #expect(try metadata.consumeCount() == 1)
+        metadata.updated(id: UUID(), phase: .active, itemCount: 1)
+        metadata.exited()
+        metadata.entered()
+        #expect(throws: (any Error).self) { try metadata.consumeCount() }
         metadata.entered()
         metadata.updated(id: UUID(), phase: .active, itemCount: 1)
         metadata.updated(id: UUID(), phase: .active, itemCount: 1)
         #expect(throws: (any Error).self) { try metadata.consumeCount() }
+        metadata.exited()
         metadata.entered()
         metadata.updated(id: UUID(), phase: .active, itemCount: 0)
         #expect(throws: (any Error).self) { try metadata.consumeCount() }

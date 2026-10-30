@@ -43,55 +43,71 @@ enum AudioTimelineFileDropPayload {
 /// One target's live, whole-session inventory. Exiting or consuming clears every usable count.
 struct AudioTimelineDropSessionMetadata<SessionID: Hashable> {
     enum Phase: String, Equatable { case entering, active, exiting, ended }
+    private struct Snapshot {
+        let id: SessionID
+        let phase: Phase
+        let itemCount: Int
+    }
     private var isTargeted = false
-    private var sessionID: SessionID?
-    private var phase: Phase?
-    private var itemCount: Int?
-    private var lastEndedID: SessionID?
+    private var pending: Snapshot?
+    private var bound: Snapshot?
+    private var endedIDs: Set<SessionID> = []
     private var lastObservedPhase: Phase?
 
     mutating func entered() {
         isTargeted = true
-        sessionID = nil
-        phase = nil
-        itemCount = nil
+        bound = pending
+        pending = nil
     }
 
     mutating func updated(id: SessionID, phase nextPhase: Phase, itemCount count: Int) {
         lastObservedPhase = nextPhase
         switch nextPhase {
         case .entering, .active:
-            guard isTargeted, id != lastEndedID else { return }
-            guard sessionID == nil || sessionID == id else { exited(); return }
-            sessionID = id
-            phase = nextPhase
-            itemCount = nextPhase == .active ? count : nil
-        case .exiting:
-            if sessionID == id { exited() }
-        case .ended:
-            if sessionID == nil || sessionID == id {
-                lastEndedID = id
-                if sessionID == id { exited() }
+            guard !endedIDs.contains(id) else { return }
+            let snapshot = Snapshot(id: id, phase: nextPhase, itemCount: count)
+            if isTargeted {
+                if bound == nil || bound?.id == id {
+                    bound = snapshot
+                } else {
+                    isTargeted = false
+                    bound = nil
+                    pending = snapshot
+                }
+            } else {
+                pending = snapshot
             }
+        case .exiting:
+            if bound?.id == id {
+                isTargeted = false
+                bound = nil
+            }
+            if pending?.id == id { pending = nil }
+        case .ended:
+            endedIDs.insert(id)
+            if bound?.id == id {
+                isTargeted = false
+                bound = nil
+            }
+            if pending?.id == id { pending = nil }
         }
     }
 
     mutating func exited() {
         isTargeted = false
-        sessionID = nil
-        phase = nil
-        itemCount = nil
+        pending = nil
+        bound = nil
     }
 
     mutating func consumeCount() throws -> Int {
-        guard isTargeted, let sessionID, sessionID != lastEndedID,
-              phase == .active, let itemCount, itemCount > 0 else {
+        guard isTargeted, let bound, !endedIDs.contains(bound.id),
+              bound.phase == .active, bound.itemCount > 0 else {
             throw StagedAudioImportCoordinator.Refusal(
                 "The current drag session metadata is unavailable or stale (last phase: \(lastObservedPhase?.rawValue ?? "none")). Move the files onto the canvas and drop again.")
         }
-        lastEndedID = sessionID
+        endedIDs.insert(bound.id)
         exited()
-        return itemCount
+        return bound.itemCount
     }
 }
 
