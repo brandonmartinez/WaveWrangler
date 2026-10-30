@@ -396,8 +396,10 @@ struct AudioClipEditorHostedTests {
 
     @Test func droppedAssetCrossEpisodeCopyKeepsOriginAndIndependentProductionRoutes() async throws {
         let f = try await fixture()
-        defer { f.close() }
+        var mayClose = true
+        defer { if mayClose { f.close() } }
         let first = try await imported(f)
+        let originalBytes = try Data(contentsOf: f.file)
         let firstEpisodeID = f.model.episodeID
         let originRecord = try #require(try await f.access.record(for: .init(showID: f.document.store.model.show.id,
                                                                            sourceID: first.clip.source)))
@@ -411,10 +413,6 @@ struct AudioClipEditorHostedTests {
         try #require(f.document.store.apply("Synthetic origin insert") { model throws(DomainError) in
             try model.settingAudioTrackMix(.init(track: first.clip.track, inserts: [slot]), in: firstEpisodeID)
         })
-        _ = try await f.model.mixer.prepare(programFrames: 0..<2048)
-        try await f.model.mixer.beginEditorObservation(coalescing: "f6.origin")
-        let originProcessor = try #require(f.model.mixer.processor)
-        let firstEpisode = try #require(f.editor.episode)
         let model = EpisodeAlignmentModel(document: f.document, episodeID: second.id, runtime: f.runtime)
         let state = ShowWindowState(store: f.document.store, episodeID: second.id)
         state.alignmentModel = model
@@ -425,46 +423,65 @@ struct AudioClipEditorHostedTests {
         defer { model.suspend(); owner.close() }
         model.audioEditor.importer.sourceEngineForTesting = f.engine
         model.load()
-        model.audioEditor.importer.scan([f.file], in: state, destination: .init(frame: 24_000, track: .newTrack))
-        try await wait { model.audioEditor.importer.review != nil || model.audioEditor.importer.error != nil }
-        let review = try #require(model.audioEditor.importer.review)
-        guard case .copy = review.choices[try #require(review.order.first)] else {
-            Issue.record("Cross-episode reuse must be explicitly reviewed as a new episode-owned reference.")
-            return
+        let outcome: Result<Void, any Error>
+        do {
+            _ = try await f.model.mixer.prepare(programFrames: 0..<2048)
+            try await f.model.mixer.beginEditorObservation(coalescing: "f6.origin")
+            let originProcessor = try #require(f.model.mixer.processor)
+            let firstEpisode = try #require(f.editor.episode)
+            model.audioEditor.importer.scan([f.file], in: state, destination: .init(frame: 24_000, track: .newTrack))
+            try await wait { model.audioEditor.importer.review != nil || model.audioEditor.importer.error != nil }
+            let review = try #require(model.audioEditor.importer.review)
+            guard case .copy = review.choices[try #require(review.order.first)] else {
+                throw StagedAudioImportCoordinator.Refusal(
+                    "Cross-episode reuse must be explicitly reviewed as a new episode-owned reference.")
+            }
+            model.audioEditor.importer.commit(review)
+            try await wait { model.audioEditor.importer.processing == nil }
+            try #require(model.audioEditor.importer.error == nil, Comment(rawValue: model.audioEditor.importer.error ?? ""))
+            model.audioEditor.refresh()
+            let copied = try #require(model.audioEditor.composition?.clips.first)
+            #expect(copied.clip.source != first.clip.source && copied.clip.id != first.clip.id)
+            #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
+            #expect(f.model.mixer.processor === originProcessor && f.model.mixer.editorObservationKey == "f6.origin")
+            #expect(try await f.access.record(for: originRecord.key) == originRecord)
+            #expect(try await f.access.allRecords().count == 2)
+            let singleModel = f.document.store.model
+            let singleRecipe = try await f.runtime.mixerRecipe(model: singleModel, episode: second.id,
+                programFrames: 24_000..<24_480)
+            let singlePCM = try await f.runtime.productionPCM(recipe: singleRecipe, model: singleModel,
+                frames: 24_000..<24_480)
+            model.audioEditor.select(copied.clip.id)
+            model.audioEditor.duplicateSelected()
+            let composition = try #require(model.audioEditor.composition)
+            let recipe = try await f.runtime.mixerRecipe(model: f.document.store.model, episode: second.id,
+                programFrames: 24_000..<24_480)
+            let pcm = try await f.runtime.productionPCM(recipe: recipe, model: f.document.store.model, frames: 24_000..<24_480)
+            let trackPCM = try #require(pcm.audioTracks[copied.clip.track])
+            #expect(composition.clips.count == 2 && trackPCM.flatMap { $0 }.contains { $0 != 0 })
+            let singleTrack = try #require(singlePCM.audioTracks[copied.clip.track])
+            for channel in trackPCM.indices {
+                #expect(zip(trackPCM[channel], singleTrack[channel]).allSatisfy { abs($0 - 2 * $1) < 0.000_001 })
+            }
+            #expect(Set(composition.clips.map(\.clip.source)) == [copied.clip.source])
+            #expect(composition.programFrames == 24_000..<72_000)
+            model.audioEditor.moveSelected(start: "2", track: copied.clip.track)
+            #expect(model.audioEditor.composition?.clips.map(\.programFrames.lowerBound) == [24_000, 96_000])
+            #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
+            try await MixerHostedTests().save(f.document)
+            #expect(try Data(contentsOf: f.file) == originalBytes)
+            outcome = .success(())
+        } catch {
+            outcome = .failure(error)
         }
-        model.audioEditor.importer.commit(review)
-        try await wait { model.audioEditor.importer.processing == nil }
-        try #require(model.audioEditor.importer.error == nil, Comment(rawValue: model.audioEditor.importer.error ?? ""))
-        model.audioEditor.refresh()
-        let copied = try #require(model.audioEditor.composition?.clips.first)
-        #expect(copied.clip.source != first.clip.source && copied.clip.id != first.clip.id)
-        #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
-        #expect(f.model.mixer.processor === originProcessor && f.model.mixer.editorObservationKey == "f6.origin")
-        #expect(try await f.access.record(for: originRecord.key) == originRecord)
-        #expect(try await f.access.allRecords().count == 2)
-        let singleModel = f.document.store.model
-        let singleRecipe = try await f.runtime.mixerRecipe(model: singleModel, episode: second.id,
-            programFrames: 24_000..<24_480)
-        let singlePCM = try await f.runtime.productionPCM(recipe: singleRecipe, model: singleModel,
-            frames: 24_000..<24_480)
-        model.audioEditor.select(copied.clip.id)
-        model.audioEditor.duplicateSelected()
-        let composition = try #require(model.audioEditor.composition)
-        let recipe = try await f.runtime.mixerRecipe(model: f.document.store.model, episode: second.id,
-            programFrames: 24_000..<24_480)
-        let pcm = try await f.runtime.productionPCM(recipe: recipe, model: f.document.store.model, frames: 24_000..<24_480)
-        let trackPCM = try #require(pcm.audioTracks[copied.clip.track])
-        #expect(composition.clips.count == 2 && trackPCM.flatMap { $0 }.contains { $0 != 0 })
-        let singleTrack = try #require(singlePCM.audioTracks[copied.clip.track])
-        for channel in trackPCM.indices {
-            #expect(zip(trackPCM[channel], singleTrack[channel]).allSatisfy { abs($0 - 2 * $1) < 0.000_001 })
+        do {
+            try await f.model.mixer.endEditorObservation()
+        } catch {
+            mayClose = false
+            Issue.record("Native editor teardown failed; synthetic fixture preserved at \(f.folder.path): \(error)")
+            throw error
         }
-        #expect(Set(composition.clips.map(\.clip.source)) == [copied.clip.source])
-        #expect(composition.programFrames == 24_000..<72_000)
-        model.audioEditor.moveSelected(start: "2", track: copied.clip.track)
-        #expect(model.audioEditor.composition?.clips.map(\.programFrames.lowerBound) == [24_000, 96_000])
-        #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
-        try await MixerHostedTests().save(f.document)
+        try outcome.get()
     }
 
     @Test func droppedLocationsCancelPromptlyAndRefuseClosedOrABADestinations() async throws {
