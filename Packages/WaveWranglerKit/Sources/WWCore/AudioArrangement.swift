@@ -43,22 +43,61 @@ public struct AudioSourceTrim: Sendable, Equatable, Codable {
     }
 }
 
-/// Clip-local 48 kHz frame and linear amplitude. Zero is exact silence, not negative infinity dB.
+/// Integer frame plus an optional exact proper fraction on the envelope's 48 kHz curve grid.
+/// Without a retained window that grid is clip-local. Zero amplitude is exact silence.
 public struct AudioEnvelopePoint: Sendable, Equatable, Codable {
     public var frame: Int64
     public var amplitude: Double
+    public var fraction: AudioEnvelopeCoordinate?
 
-    public init(frame: Int64, amplitude: Double) {
+    public init(frame: Int64, amplitude: Double, fraction: AudioEnvelopeCoordinate? = nil) {
         self.frame = frame
         self.amplitude = amplitude
+        self.fraction = fraction == .zero ? nil : fraction
+    }
+
+    public func coordinate() throws(AudioEnvelopeCoordinateError) -> AudioEnvelopeCoordinate {
+        guard fraction?.isProperFraction != false else { throw .invalidFraction }
+        let whole = try AudioEnvelopeCoordinate(numerator: frame)
+        if let fraction { return try whole.adding(fraction) }
+        return whole
     }
 }
 
 public struct AudioClipEnvelope: Sendable, Equatable, Codable {
     /// Empty is unity. Between points amplitude is linear; outside points the endpoint value holds.
     public var points: [AudioEnvelopePoint]
+    /// Retain the original curve and exact origin phase when trimming/splitting, without rounded gains.
+    public var window: AudioEnvelopeWindow?
 
-    public init(points: [AudioEnvelopePoint] = []) { self.points = points }
+    public init(points: [AudioEnvelopePoint] = [], window: AudioEnvelopeWindow? = nil) {
+        self.points = points
+        self.window = window
+    }
+
+    public func isValid(durationFrames: Int64) -> Bool {
+        guard durationFrames > 0, durationFrames <= AudioArrangement.frameLimit else { return false }
+        do {
+            let offset = window?.offset ?? .zero
+            guard offset >= .zero,
+                  offset <= (try AudioEnvelopeCoordinate(numerator: AudioArrangement.frameLimit)),
+                  !points.isEmpty || window == nil else { return false }
+            let end = try offset.adding(AudioEnvelopeCoordinate(numerator: durationFrames))
+            var previous: AudioEnvelopeCoordinate?
+            var before = 0, after = 0
+            for point in points {
+                let coordinate = try point.coordinate()
+                guard coordinate >= .zero, previous.map({ coordinate > $0 }) != false,
+                      point.amplitude.isFinite, (0...1).contains(point.amplitude) else { return false }
+                if coordinate < offset { before += 1 }
+                if coordinate > end { after += 1 }
+                previous = coordinate
+            }
+            // Windowed curves retain only the nearest support on each side. Ordinary legacy curves
+            // still require every point inside [0, duration], including the exclusive ramp endpoint.
+            return window == nil ? before == 0 && after == 0 : before <= 1 && after <= 1
+        } catch { return false }
+    }
 }
 
 /// The exact canonical map version whose original-aligned grid a follow anchor names.
@@ -260,15 +299,7 @@ public struct AudioArrangement: Sendable, Equatable, Codable {
             if !anchorValid(clip.anchor, allowsInsertion: true) || !fits(clip.anchor, duration: duration) {
                 invalid("clip \(clip.id) has an invalid or dangling placement anchor")
             }
-            var previous: Int64 = -1
-            for point in clip.envelope.points {
-                if point.frame <= previous || point.frame < 0 || point.frame > duration
-                    || !point.amplitude.isFinite || !(0...1).contains(point.amplitude) {
-                    invalid("clip \(clip.id) has invalid envelope points")
-                    break
-                }
-                previous = point.frame
-            }
+            if !clip.envelope.isValid(durationFrames: duration) { invalid("clip \(clip.id) has invalid envelope points/window") }
         }
         return issues
     }

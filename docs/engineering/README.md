@@ -54,8 +54,9 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 ```
 
 `WWTimeMap` contains the exact source/group/aligned coordinate maps.
-`WWCommonEdit` contains the provisional common episode edit-map implementation;
-its presence does not mean export or protected-cut acceptance is complete.
+`WWCommonEdit` contains the provisional common episode edit map and the
+[pure program-time composition kernel](program-timeline.md). Its presence does
+not mean playback integration, export, or protected-cut acceptance is complete.
 
 ### Manual cuts and editing layouts
 
@@ -1186,10 +1187,12 @@ returns recordings only, including its `nil`/Ungrouped case.
   with `init(map:frame:)` and recheck `isCurrent(in:)`; a same-number replacement
   is not admission. Retained but noncurrent anchors require later placement review.
 - `envelope: AudioClipEnvelope` holds ordered `AudioEnvelopePoint(frame:amplitude:)`
-  values on the clip-local 48 kHz grid. Empty means unity; amplitudes are finite
+  values on the clip-local 48 kHz grid by default. Empty means unity; amplitudes are finite
   0...1 with exact zero silence. Interpolation is piecewise linear amplitude;
   endpoint values hold outside the points. Points may include the exclusive clip
-  endpoint to define a final ramp.
+  endpoint to define a final ramp. F2 adds optional exact `fraction` coordinates and
+  an optional retained curve `window` for lossless native-rate trim/fade edits;
+  ordinary integer envelope bytes are unchanged.
 
 Program/clip-local coordinates use 48,000 frames per second, bounded to the
 existing signed 24-hour frame limits. Native assets are bounded to 24 hours,
@@ -1198,6 +1201,12 @@ Checked arithmetic rejects invalid trims, overflowing/extreme frames and danglin
 source/track/map/insertion references. F2 owns projection, cut ripple, extents and
 envelope evaluation; F1 does not shift clocks, alter accepted maps/transcripts or
 rewrite manual-cut provenance.
+
+The [pure program-time kernel contract](program-timeline.md) documents F2's
+`WWCommonEdit.ProgramTimeline`, exact cut/insertion boundaries, position-preserving
+anchor edits, source/program ownership, and shared envelope evaluator for F4/F5/F7/F8.
+Absolute clip pins are supported; absolute insertion-region anchors explicitly
+refuse. This kernel is not app playback/editor integration.
 
 `EpisodeMixState.audioTracks` is optional sparse `[AudioTrackMixState]`, keyed by
 `AudioTrackID`, beside existing speaker/Master keys. Each strip has finite

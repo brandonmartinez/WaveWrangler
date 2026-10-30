@@ -166,6 +166,30 @@ struct ShowSchema9MigrationTests {
         #expect(reopened.hasSameMediaInputs(as: original, in: fixture.episodeID))
     }
 
+    @Test func exactEnvelopeWindowAndFractionPublishAndRecoverInSchema10() throws {
+        var model = try audioShow()
+        model.episodes[0].audioArrangement?.clips[0].trim.startFrame = 1
+        model.episodes[0].audioArrangement?.clips[0].envelope = .init(points: [
+            .init(frame: 0, amplitude: 0),
+            .init(frame: 11, amplitude: 0.5, fraction: try .init(numerator: 13, denominator: 147)),
+            .init(frame: 96_000, amplitude: 0)
+        ], window: .init(offset: try .init(numerator: 160, denominator: 147)))
+        #expect(model.validationIssues().isEmpty)
+        let rig = Rig(), url = rig.url(), key = DocumentKey.show(model.show.id)
+        _ = try rig.publisher.publish(model, revision: 1, key: key, to: url, target: .newLocation)
+        let bytes = try Data(contentsOf: url)
+        #expect(try coder.decode(bytes).payload == model)
+        try rig.recovery.retainCheckpoint(bytes, for: key)
+        try Data("damaged synthetic canonical value".utf8).write(to: url)
+        #expect(ShowSchemaMigrationTests.opener(rig).candidates(url: url, key: key).map(\.document.payload) == [model])
+        var invalid = model
+        invalid.episodes[0].audioArrangement?.clips[0].envelope.points[1].fraction = try .init(numerator: 4, denominator: 3)
+        #expect(throws: PersistenceError.self) { try coder.encode(invalid, revision: 1) }
+        #expect(throws: PersistenceError.self) {
+            try coder.decode(ShowSchema8MigrationTests().unchecked(invalid, schema: 10))
+        }
+    }
+
     @Test func malformedCurrentAudioCannotBePublishedOrReopenedAndNewerIsRefused() throws {
         let model = try audioShow(), helper = ShowSchema8MigrationTests()
         for damage in ["source", "track", "envelope", "asset", "mix"] {
