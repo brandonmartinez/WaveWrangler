@@ -100,13 +100,18 @@ final class AudioFadeUITests: XCTestCase {
         let app = launch(dialogue: true, minimum: true)
         defer { app.terminate() }
         try importAudio(file, in: app)
+        let origin = app.windows["ww.show.window"]
+        XCTAssertEqual(origin.frame.width, 760, accuracy: 1)
+        XCTAssertEqual(origin.frame.height, 492, accuracy: 1)
+        XCTAssertEqual(app.scrollViews["ww.inspector"].frame.width, 300, accuracy: 1)
         app.buttons["ww.review.toggle"].click()
-        let detach = app.buttons["ww.review.detach"], origin = app.windows["ww.show.window"]
+        let detach = app.buttons["ww.review.detach"]
         XCTAssertTrue(detach.waitForExistence(timeout: 5) && detach.isHittable, app.debugDescription)
         XCTAssertTrue(origin.frame.contains(detach.frame), "Review detach must be inside the actual minimum-size window.")
         detach.click()
         let review = app.windows["ww.review.window"]
         XCTAssertTrue(review.waitForExistence(timeout: 5))
+        focusWindow(origin, in: app)
         let chrome = app.textFields["alignment.waveforms.playhead"].frame
         let clip = clips(app).firstMatch, lane = clip.frame
         fade(app, direction: "out", start: "0.5", duration: "0.5", level: "0.25")
@@ -124,6 +129,7 @@ final class AudioFadeUITests: XCTestCase {
                       app.debugDescription)
         app.buttons["alignment.waveforms.transport.play"].click()
         screenshot(app, name: "F8 detached review keeps fixed timeline chrome and unchanged clip lane")
+        focusWindow(review, in: app)
         review.buttons["ww.review.reattach"].click()
         XCTAssertTrue(wait { !review.exists })
     }
@@ -245,10 +251,25 @@ final class AudioFadeUITests: XCTestCase {
     }
 
     private func screenshot(_ app: XCUIApplication, name: String) {
-        let attachment = XCTAttachment(screenshot: app.windows["ww.show.window"].screenshot())
+        let sheet = app.sheets.firstMatch
+        let attachment = XCTAttachment(screenshot: sheet.exists ? sheet.screenshot()
+                                       : app.windows["ww.show.window"].screenshot())
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func focusWindow(_ window: XCUIElement, in app: XCUIApplication) {
+        let title = window.title.components(separatedBy: " \u{2013} ").first ?? window.title
+        app.menuBars.menuBarItems["Window"].click()
+        let matching = app.menuBars.menuItems.matching(NSPredicate(
+            format: "title BEGINSWITH %@ OR label BEGINSWITH %@", title, title))
+        let item = window.identifier == "ww.show.window"
+            ? matching.matching(NSPredicate(format:
+                "NOT (title CONTAINS %@ OR label CONTAINS %@)", "Transcript & Review", "Transcript & Review")).firstMatch
+            : matching.firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
+        item.click()
     }
 
     private func wait(_ condition: () -> Bool) -> Bool {
