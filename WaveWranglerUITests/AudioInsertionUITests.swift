@@ -16,6 +16,7 @@ final class AudioInsertionUITests: XCTestCase {
         app.buttons["ww.addAudio.import"].click()
         let clip = clips(app).firstMatch
         XCTAssertTrue(clip.waitForExistence(timeout: 20), app.debugDescription)
+        let clipID = clip.identifier
         clip.click()
         let start = app.textFields["ww.audioClip.start"]
         XCTAssertTrue(start.waitForExistence(timeout: 5), app.debugDescription)
@@ -53,7 +54,17 @@ final class AudioInsertionUITests: XCTestCase {
         XCTAssertTrue(wait { regionCount(app) == "0 regions" }, app.debugDescription)
         app.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(wait { regionCount(app) == "1 regions" }, app.debugDescription)
+        let restoredClip = app.buttons[clipID]
+        XCTAssertTrue(wait {
+            app.buttons["ww.audioWorkspace.playMix"].isEnabled
+                && clips(app).count == 1
+                && restoredClip.exists
+                && restoredClip.isHittable
+        }, "Redo must publish the retained clip after timeline reprojection: \(app.debugDescription)")
         XCTAssertEqual(clips(app).count, 1)
+        XCTAssertEqual(clips(app).firstMatch.identifier, clipID)
+        XCTAssertEqual(restoredClip.value as? String, "Program start 0.000 seconds; duration 40.000 seconds")
+        XCTAssertEqual(String(describing: app.checkBoxes["ww.audioClip.pinned"].value ?? ""), "0")
         let playhead = app.textFields["alignment.waveforms.playhead"]
         replace(playhead, with: "10.25")
         playhead.typeKey(.return, modifierFlags: [])
