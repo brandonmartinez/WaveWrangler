@@ -49,8 +49,16 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertEqual(playhead.value as? String, beforePanPlayhead, "Panning must not scrub the playhead.")
         clip = clips(app).firstMatch
         let blockFrame = clip.frame
+        let laneFrame = app.staticTexts["ww.audioDrop.newTrack"].frame
         XCTAssertGreaterThan(blockFrame.width, 30)
         XCTAssertGreaterThan(blockFrame.minX, app.windows["ww.show.window"].frame.minX + 190)
+        XCTAssertLessThan(blockFrame.width, laneFrame.width, "A clip's native AX frame must not cover the whole lane.")
+        XCTAssertGreaterThan(blockFrame.minX, laneFrame.minX)
+        XCTAssertLessThan(blockFrame.maxX, laneFrame.maxX)
+        let geometryEvidence = XCTAttachment(string: "Native clip AX frame: \(blockFrame); lane canvas: \(laneFrame)")
+        geometryEvidence.name = "F6 visible block versus lane geometry before the exact midpoint drop"
+        geometryEvidence.lifetime = .keepAlways
+        add(geometryEvidence)
         drop(first.lastPathComponent, window: window, finder: finder, app: app,
              to: clip.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)))
         XCTAssertEqual(try reviewPosition(app), start + 1, accuracy: 1.0 / 48_000)
@@ -158,6 +166,9 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(window.waitForExistence(timeout: 10))
         arrangeFinder(window, finder: finder, app: app)
         finder.activate()
+        let destination = app.staticTexts["ww.audioDrop.empty"]
+            .coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+        exposeDropDestination(destination, window: window, finder: finder, app: app)
         func item(_ name: String) -> XCUIElement {
             window.descendants(matching: .any).matching(NSPredicate(
                 format: "label == %@ OR value == %@", name, name)).firstMatch
@@ -166,8 +177,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         item(long.lastPathComponent).click()
         XCUIElement.perform(withKeyModifiers: .command) { item(short.lastPathComponent).click() }
         item(short.lastPathComponent).coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
-            .click(forDuration: 0.3, thenDragTo: app.staticTexts["ww.audioDrop.empty"]
-                .coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)))
+            .click(forDuration: 0.3, thenDragTo: destination)
         app.activate()
         waitForReview(app)
         let candidates = app.checkBoxes.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.addAudio.candidate.'"))
@@ -176,22 +186,39 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         let shortID = String(shortRow.identifier.dropFirst("ww.addAudio.candidate.".count))
         let earlier = app.buttons["ww.addAudio.earlier.\(shortID)"]
         if earlier.isEnabled { earlier.click() }
+        let longRow = candidates.matching(NSPredicate(format: "label CONTAINS 'long.wav'")).firstMatch
+        XCTAssertFalse(earlier.isEnabled)
+        XCTAssertLessThan(shortRow.frame.minY, longRow.frame.minY, "The review must visibly place short.wav first.")
         let start = try reviewPosition(app)
         confirmImport(app, visibleClips: 2)
-        let first = clips(app).allElementsBoundByIndex[0], second = clips(app).allElementsBoundByIndex[1]
-        XCTAssertTrue(first.label.contains("short.wav"))
-        first.click()
+        let first = clips(app).matching(NSPredicate(format: "label == 'Audio Clip: short.wav'")).firstMatch
+        let second = clips(app).matching(NSPredicate(format: "label == 'Audio Clip: long.wav'")).firstMatch
+        XCTAssertTrue(first.exists && second.exists)
+        XCTAssertNotEqual(first.identifier, second.identifier)
+        let clipMenu = app.menuButtons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.audioTrack.clips.'")).firstMatch
+        clipMenu.click()
+        app.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'short.wav'")).firstMatch.click()
+        XCTAssertTrue(wait { first.isSelected })
         XCTAssertEqual(Double(app.textFields["ww.audioClip.start"].value as? String ?? "") ?? .nan,
                        start, accuracy: 1.0 / 48_000)
-        second.click()
+        XCTAssertEqual(app.textFields["ww.audioClip.trimStart"].value as? String, "0")
+        XCTAssertEqual(app.textFields["ww.audioClip.trimEnd"].value as? String, "24000")
+        clipMenu.click()
+        app.menuItems.matching(NSPredicate(format: "title BEGINSWITH 'long.wav'")).firstMatch.click()
+        XCTAssertTrue(wait { second.isSelected })
         XCTAssertEqual(Double(app.textFields["ww.audioClip.start"].value as? String ?? "") ?? .nan,
                        start + 0.5, accuracy: 1.0 / 48_000)
+        XCTAssertEqual(app.textFields["ww.audioClip.trimStart"].value as? String, "0")
+        XCTAssertEqual(app.textFields["ww.audioClip.trimEnd"].value as? String, "96000")
         app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
             .coordinate(withNormalizedOffset: .init(dx: 0.1, dy: 0.2)).click()
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(wait { self.clips(app).count == 0 })
         app.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(wait { self.clips(app).count == 2 })
+        XCTAssertEqual(try Data(contentsOf: long), Self.wave())
+        XCTAssertEqual(try Data(contentsOf: short), Self.wave(frames: 24_000))
     }
 
     private func launch() -> XCUIApplication {
@@ -222,9 +249,27 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         app.activate()
     }
 
+    private func exposeDropDestination(_ destination: XCUICoordinate, window: XCUIElement,
+                                       finder: XCUIApplication, app: XCUIApplication) {
+        let point = destination.screenPoint
+        if window.frame.contains(point) {
+            let old = window.frame
+            let top = app.windows["ww.show.window"].frame.minY
+            let targetY = top + old.height < point.y ? top : point.y + 8
+            let title = window.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0))
+                .withOffset(.init(dx: 0, dy: 8))
+            title.click(forDuration: 0.1, thenDragTo: title.withOffset(.init(dx: 0, dy: targetY - old.minY)))
+            XCTAssertTrue(wait { !window.frame.contains(point) }, "The owned Finder window still covers the drop point.")
+        }
+        XCTAssertEqual(destination.screenPoint, point, "Moving Finder must not change the actual drop destination.")
+        let occludingFrames = finder.windows.allElementsBoundByIndex.map(\.frame).filter { $0.contains(point) }
+        XCTAssertTrue(occludingFrames.isEmpty, "Finder windows still cover drop point \(point): \(occludingFrames)")
+    }
+
     private func drop(_ name: String, window: XCUIElement, finder: XCUIApplication, app: XCUIApplication,
                       to destination: XCUICoordinate) {
         finder.activate()
+        exposeDropDestination(destination, window: window, finder: finder, app: app)
         let item = window.descendants(matching: .any).matching(NSPredicate(
             format: "label == %@ OR value == %@", name, name)).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), finder.debugDescription)

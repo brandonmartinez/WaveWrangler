@@ -108,6 +108,7 @@ struct AudioClipTrackView: View {
             } label: {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.teal.opacity(selected ? 0.28 : 0.13))
+                    .frame(width: blockWidth, height: blockHeight)
                     .overlay {
                         AudioClipWaveformDrawing(clip: projected,
                             renderedClip: renderedClip,
