@@ -36,13 +36,17 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         replace(playhead, with: "\(start + 1)")
         playhead.typeKey(.return, modifierFlags: [])
         app.buttons["alignment.waveforms.fitTimeline"].click()
+        let fittedViewport = try viewport(app)
         app.buttons["alignment.waveforms.zoomOut"].click()
         app.buttons["alignment.waveforms.zoomOut"].click()
         let ruler = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
-        let pan = ruler.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.2))
+        let pan = ruler.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.4))
         let beforePan = try viewport(app)
+        XCTAssertGreaterThan(beforePan.duration, fittedViewport.duration)
+        let beforePanPlayhead = try XCTUnwrap(playhead.value as? String)
         pan.click(forDuration: 0.1, thenDragTo: pan.withOffset(.init(dx: -15, dy: 0)))
         XCTAssertTrue(wait { (try? self.viewport(app).start) != beforePan.start })
+        XCTAssertEqual(playhead.value as? String, beforePanPlayhead, "Panning must not scrub the playhead.")
         clip = clips(app).firstMatch
         let blockFrame = clip.frame
         XCTAssertGreaterThan(blockFrame.width, 30)
@@ -52,7 +56,8 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertEqual(try reviewPosition(app), start + 1, accuracy: 1.0 / 48_000)
         XCTAssertEqual(app.popUpButtons["ww.addAudio.track"].value as? String, "Drop Track")
         XCTAssertFalse(app.textFields["ww.addAudio.trackName"].exists)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS 'Reuse this episode'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "value CONTAINS %@ OR label CONTAINS %@", "Reuse this episode", "Reuse this episode")).firstMatch.exists)
         app.buttons["ww.addAudio.cancel"].click()
         XCTAssertTrue(wait { !app.buttons["ww.addAudio.import"].exists })
         XCTAssertEqual(clips(app).count, 1)
@@ -130,7 +135,8 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         drop(nested.lastPathComponent, window: window, finder: finder, app: app,
              to: app.staticTexts["ww.audioDrop.empty"].coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)))
         XCTAssertFalse(app.buttons["ww.addAudio.import"].isEnabled)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '1 folders (not scanned)'")).firstMatch.exists)
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "value CONTAINS %@ OR label CONTAINS %@", "1 folders (not scanned)", "1 folders (not scanned)")).firstMatch.exists)
         XCTAssertEqual(clips(app).count, 0)
         app.buttons["ww.addAudio.cancel"].click()
         XCTAssertTrue(wait { !app.buttons["ww.addAudio.import"].exists })
