@@ -63,7 +63,7 @@ final class AudioInsertionUITests: XCTestCase {
         }, "Redo must publish the retained clip after timeline reprojection: \(app.debugDescription)")
         XCTAssertEqual(clips(app).count, 1)
         XCTAssertEqual(clips(app).firstMatch.identifier, clipID)
-        XCTAssertEqual(restoredClip.value as? String, "Program start 0.000 seconds; duration 40.000 seconds")
+        XCTAssertEqual(restoredClip.value as? String, "Program start 0.000 seconds; duration 40.000 seconds; 0 fade points")
         XCTAssertEqual(String(describing: app.checkBoxes["ww.audioClip.pinned"].value ?? ""), "0")
         let playhead = app.textFields["alignment.waveforms.playhead"]
         replace(playhead, with: "10.25")

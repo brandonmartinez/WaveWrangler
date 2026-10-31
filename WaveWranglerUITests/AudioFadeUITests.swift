@@ -50,7 +50,7 @@ final class AudioFadeUITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let file = root.appendingPathComponent("synthetic-f8-conflict.wav")
         try wave().write(to: file)
-        let app = launch()
+        let app = launch(dialogue: true)
         defer { app.terminate() }
         try importAudio(file, in: app)
         fade(app, direction: "out", start: "1", duration: "1", level: "0.25")
@@ -87,9 +87,37 @@ final class AudioFadeUITests: XCTestCase {
         point(2, in: app)
         XCTAssertEqual(String(describing: app.checkBoxes["ww.audioFade.silence"].value ?? ""), "1")
         app.buttons["ww.audioFade.cancel"].click()
-        openFade(app, direction: "out", start: "7")
+        XCTAssertTrue(wait {
+            !app.sheets.firstMatch.exists && !app.buttons["ww.audioFade.apply"].exists
+                && app.buttons["ww.audioWorkspace.playMix"].isEnabled
+                && app.buttons["ww.audioFade.out"].isEnabled
+        }, "Point editing must finish dismissing before the next seek and fade action.")
+        let selected = clips(app).firstMatch
+        XCTAssertEqual(selected.value as? String, "Program start 0.000 seconds; duration 6.000 seconds; 3 fade points")
+        app.buttons["alignment.waveforms.fitTimeline"].click()
+        let ruler = app.staticTexts["alignment.waveforms.ruler"]
+        XCTAssertTrue(wait {
+            let bounds = text(ruler).split(separator: " ").compactMap { Double($0) }
+            return bounds.count == 2 && bounds.last.map { $0 > 7 } == true
+        }, "The fitted program must extend beyond the selected six-second clip.")
+        let programBounds = text(ruler).split(separator: " ").compactMap { Double($0) }
+        XCTAssertEqual(programBounds.count, 2)
+        XCTAssertLessThanOrEqual(try XCTUnwrap(programBounds.first), 0)
+        XCTAssertGreaterThan(try XCTUnwrap(programBounds.last), 7)
+        seek(app, to: "7")
+        let playhead = app.textFields["alignment.waveforms.playhead"]
+        XCTAssertTrue(wait { playhead.value as? String == "7.000" },
+                      "Return must commit the actual program playhead outside the selected six-second clip.")
+        let fadeOut = app.buttons["ww.audioFade.out"]
+        reveal(fadeOut, in: app)
+        fadeOut.click()
+        let refusal = app.descendants(matching: .any)["ww.audioEditor.error"]
+        XCTAssertTrue(wait {
+            text(refusal).contains("audible") && !app.sheets.firstMatch.exists
+                && !app.buttons["ww.audioFade.apply"].exists
+        }, "An actual outside-selected-clip production position must refuse without a new fade sheet.")
         XCTAssertFalse(app.buttons["ww.audioFade.apply"].exists)
-        XCTAssertTrue(text(app.descendants(matching: .any)["ww.audioEditor.error"]).contains("audible"))
+        XCTAssertTrue(text(refusal).contains("audible"))
     }
 
     func testFadesKeepFixedChromeLanesAndProductionWithDetachedReview() throws {
