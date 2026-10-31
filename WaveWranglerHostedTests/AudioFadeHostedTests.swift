@@ -57,17 +57,25 @@ struct AudioFadeHostedTests {
         return undo
     }
 
+    private func requireFadeSession(_ editor: AudioClipEditorModel) throws -> AudioFadeSession {
+        let session = editor.fadeSession
+        let refusal = editor.error
+        return try #require(session, Comment(rawValue: refusal ?? "The fade preview did not open."))
+    }
+
     private func fade(_ editor: AudioClipEditorModel, start: Double, duration: String, level: String,
                       direction: AudioFadeDirection = .fadeOut, silenceStart: Bool = false) async throws {
         await editor.requestFade(direction, programSeconds: start)
-        let session = try #require(editor.fadeSession, Comment(rawValue: editor.error ?? ""))
+        let session = try requireFadeSession(editor)
         var draft = AudioFadeDraft(session: session)
         draft.length = duration
         draft.level = level
         draft.silence = level == "0"
         draft.initializingSilence = silenceStart
         draft.replacing = true
-        try #require(editor.commitFade(session, draft: draft), Comment(rawValue: editor.error ?? ""))
+        let applied = editor.commitFade(session, draft: draft)
+        let refusal = editor.error
+        try #require(applied, Comment(rawValue: refusal ?? "The fade was not applied."))
     }
 
     @Test func sequencesUndoSaveReopenAndProductionShareTheExactCurrentLocalCurve() async throws {
@@ -134,7 +142,7 @@ struct AudioFadeHostedTests {
         defer { undo.groupsByEvent = true }
         for text in ["", "nan", "inf", "0", "-1", "86401", "1e300"] {
             await editor.requestFade(.fadeOut, programSeconds: 2)
-            let session = try #require(editor.fadeSession)
+            let session = try requireFadeSession(editor)
             var draft = AudioFadeDraft(session: session)
             draft.length = text
             let before = f.document.store.model, action = undo.undoActionName
@@ -148,7 +156,7 @@ struct AudioFadeHostedTests {
         }
         for scenario in 0..<5 {
             await editor.requestFade(.fadeOut, programSeconds: 2)
-            let session = try #require(editor.fadeSession)
+            let session = try requireFadeSession(editor)
             let before = f.document.store.model
             switch scenario {
             case 0:
@@ -171,7 +179,7 @@ struct AudioFadeHostedTests {
         }
         try await fade(editor, start: 2, duration: "1", level: "0.25")
         await editor.requestFade(.fadeOut, programSeconds: 2.5)
-        let session = try #require(editor.fadeSession)
+        let session = try requireFadeSession(editor)
         var draft = AudioFadeDraft(session: session)
         draft.length = "0.25"
         draft.level = "0"
@@ -203,13 +211,15 @@ struct AudioFadeHostedTests {
         let before = f.document.store.model, selected = try #require(editor.selected)
         let point = try #require(try editor.fadePoints().get().first(where: \.editable))
         await editor.requestFadePoint(point.index)
-        let session = try #require(editor.fadeSession)
+        let session = try requireFadeSession(editor)
         var draft = AudioFadeDraft(session: session)
         #expect(draft.localFrame.contains("/"))
         draft.level = "0.75"
         draft.silence = false
         draft.replacing = true
-        try #require(editor.commitFade(session, draft: draft))
+        let edited = editor.commitFade(session, draft: draft)
+        let editRefusal = editor.error
+        try #require(edited, Comment(rawValue: editRefusal ?? "The fade point was not edited."))
         #expect(editor.selected?.clip.trim == selected.clip.trim && editor.selected?.clip.outputWindow == selected.clip.outputWindow)
         #expect(try editor.selected?.clip.envelope.points[point.index].coordinate() == selected.clip.envelope.points[point.index].coordinate())
         #expect(undo.undoActionName == "Edit Fade Point")
@@ -219,11 +229,13 @@ struct AudioFadeHostedTests {
         undo.redo()
         editor.refresh()
         await editor.requestFadePoint(point.index)
-        let removal = try #require(editor.fadeSession)
+        let removal = try requireFadeSession(editor)
         var removing = AudioFadeDraft(session: removal)
         removing.removing = true
         removing.replacing = true
-        try #require(editor.commitFade(removal, draft: removing))
+        let removed = editor.commitFade(removal, draft: removing)
+        let removalRefusal = editor.error
+        try #require(removed, Comment(rawValue: removalRefusal ?? "The fade point was not removed."))
         #expect(undo.undoActionName == "Remove Fade Point")
         #expect(editor.selected?.clip.envelope.points.first == selected.clip.envelope.points.first,
                 "The outside-trim support point is not discarded by local point removal.")
@@ -328,29 +340,48 @@ struct AudioFadeHostedTests {
             try await processor.setParameter(slot: slot.id, address: parameter.address,
                 value: parameter.value == parameter.minimum ? parameter.maximum : parameter.minimum)
             await editor.requestFade(.fadeOut, programSeconds: 2)
-            let captured = try #require(editor.fadeSession, Comment(rawValue: editor.error ?? ""))
-            #expect(editor.episode?.mix?.master.inserts.first?.documentState != nil && f.model.mixer.processor == nil)
-            try #require(editor.commitFade(captured, draft: AudioFadeDraft(session: captured)))
+            let captured = try requireFadeSession(editor)
+            let capturedState = editor.episode?.mix?.master.inserts.first?.documentState
+            let captureEndedObservation = !f.model.mixer.hasObservedState && f.model.mixer.processor == nil
+            #expect(capturedState != nil && captureEndedObservation)
+            let applied = editor.commitFade(captured, draft: AudioFadeDraft(session: captured))
+            let applyRefusal = editor.error
+            try #require(applied, Comment(rawValue: applyRefusal ?? "The captured fade was not applied."))
+            f.model.load()
+            try await helper.wait("Waiting for the editable fade projection; \(editor.error ?? "no refusal")") {
+                editor.store.canEdit && bed.owner.state.canEdit && editor.selected != nil
+                    && editor.canPlaceDroppedAudio
+                    && TrackProcessingOperation.current(alignment: f.model, cleanup: bed.owner.state.cleanupModel) == nil
+            }
             await editor.requestFade(.fadeIn, programSeconds: 3.5)
-            let late = try #require(editor.fadeSession)
+            let late = try requireFadeSession(editor)
             var draft = AudioFadeDraft(session: late)
             draft.length = "0.25"
             _ = try await f.model.mixer.prepare(programFrames: 96_000..<98_048)
             try await f.model.mixer.beginEditorObservation(coalescing: "f8.late")
             await f.model.mixer.suspendEditorObservation()
             let lateProcessor = try #require(f.model.mixer.processor)
+            let ownsPendingObservation = f.model.mixer.hasObservedState && f.model.mixer.processor === lateProcessor
+            #expect(ownsPendingObservation)
             try await lateProcessor.setParameter(slot: slot.id, address: parameter.address, value: parameter.value)
             let before = f.document.store.model
-            #expect(!editor.commitFade(late, draft: draft))
-            #expect(editor.error?.contains("Audio Unit") == true && f.document.store.model == before)
+            let lateApplied = editor.commitFade(late, draft: draft)
+            let lateRefusal = editor.error
+            let after = f.document.store.model
+            #expect(!lateApplied)
+            #expect(lateRefusal?.contains("Audio Unit") == true && after == before)
             outcome = .success(())
         } catch { outcome = .failure(error) }
-        do { try await f.model.mixer.endEditorObservation() }
-        catch {
-            mayClose = false
-            Issue.record("Native-observation teardown failed; F8 fixture preserved at \(f.folder.path): \(error)")
-            try outcome.get()
-            throw error
+        // The first fade barrier already captured and discarded its observation. Only a still-owned
+        // pending observation needs another capture before fixture files can be removed.
+        if f.model.mixer.hasObservedState {
+            do { try await f.model.mixer.endEditorObservation() }
+            catch {
+                mayClose = false
+                Issue.record("Native-observation teardown failed; F8 fixture preserved at \(f.folder.path): \(error)")
+                try outcome.get()
+                throw error
+            }
         }
         try outcome.get()
     }
