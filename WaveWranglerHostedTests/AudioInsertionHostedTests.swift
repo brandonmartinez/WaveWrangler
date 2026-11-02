@@ -255,10 +255,14 @@ struct AudioInsertionHostedTests {
         defer { undo.groupsByEvent = true }
         let owner = helper.owner(f), editor = f.model.audioEditor
         _ = owner
-        try await helper.wait { editor.composition != nil && f.model.trackProcessingOperation == nil }
+        try await helper.wait {
+            f.document.store.canEdit && editor.canPlaceDroppedAudio
+                && TrackProcessingOperation.current(alignment: f.model, cleanup: owner.state.cleanupModel) == nil
+        }
         for length in ["", "nan", "inf", "0", "-1", "86401", "1e300"] {
             editor.requestInsertion(intro: true, programSeconds: nil)
-            let session = try #require(editor.insertionSession)
+            let pending = editor.insertionSession, refusal = editor.error
+            let session = try #require(pending, Comment(rawValue: refusal ?? "Insertion preview was not presented."))
             let before = f.document.store.model, action = undo.undoActionName
             #expect(!editor.commitInsertion(session, position: "0", length: length,
                 usingEnd: false, retarget: false, removing: false))
@@ -266,8 +270,14 @@ struct AudioInsertionHostedTests {
             editor.dismissInsertion()
         }
         for replaceLoaded in [false, true] {
+            f.model.load()
+            try await helper.wait {
+                f.document.store.canEdit && editor.canPlaceDroppedAudio
+                    && TrackProcessingOperation.current(alignment: f.model, cleanup: owner.state.cleanupModel) == nil
+            }
             editor.requestInsertion(intro: true, programSeconds: nil)
-            let session = try #require(editor.insertionSession)
+            let pending = editor.insertionSession, refusal = editor.error
+            let session = try #require(pending, Comment(rawValue: refusal ?? "Insertion preview was not presented."))
             let before = f.document.store.model
             if replaceLoaded { f.document.store.replaceLoadedModel(before) }
             else {
