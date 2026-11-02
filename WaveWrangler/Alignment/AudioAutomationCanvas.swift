@@ -1,307 +1,349 @@
 import AppKit
+import Observation
 import SwiftUI
 import WWCommonEdit
 import WWCore
 
-struct AudioAutomationCanvas: NSViewRepresentable {
+struct AudioAutomationCanvas: View {
     struct Item {
         let projected: ProgramAudioClip
         let frame: CGRect
         let key: AudioEnvelopeGeometryKey
         let geometry: AudioEnvelopeGeometry
         var clip: AudioClipID { projected.clip.id }
+        var context: Context {
+            .init(clip: projected, frame: frame, key: .init(
+                envelope: projected.clip.envelope, durationFrames: key.durationFrames,
+                programStart: key.programStart, viewportStart: key.viewportStart,
+                viewportDuration: key.viewportDuration, viewportWidth: key.viewportWidth,
+                left: key.left, width: key.width, height: key.height, projection: key.projection))
+        }
     }
-
+    struct Context: Equatable {
+        let clip: ProgramAudioClip
+        let frame: CGRect
+        let key: AudioEnvelopeGeometryKey
+    }
     let size: CGSize
     let items: [Item]
-    let editor: AudioClipEditorModel
     let isActive: @MainActor () -> Bool
+    @State private var input: AudioAutomationInput
+    @State private var started = false
+    @State private var horizontalCursor: Bool?
+    @GestureState private var dragging = false
+    @FocusState private var focused: Bool
 
-    func makeNSView(context: Context) -> CanvasView { CanvasView(editor: editor) }
-    func sizeThatFits(_ proposal: ProposedViewSize, nsView: CanvasView, context: Context) -> CGSize? { size }
-    func updateNSView(_ view: CanvasView, context: Context) {
-        if view.frame.size != size { view.setFrameSize(size) }
-        view.update(items, enabled: context.environment.isEnabled, isActive: isActive)
+    init(size: CGSize, items: [Item], editor: AudioClipEditorModel, isActive: @escaping @MainActor () -> Bool) {
+        self.size = size
+        self.items = items
+        self.isActive = isActive
+        _input = State(initialValue: AudioAutomationInput(editor: editor))
     }
-    static func dismantleNSView(_ view: CanvasView, coordinator: ()) { view.stop() }
 
-    @MainActor
-    final class CanvasView: NSView {
-        private struct Drag {
-            let item: Item
-            let target: AudioAutomationTarget
-            let origin: CGPoint
-            let windowFrame: CGRect
-            var translation = CGPoint.zero
-            var ready = false
-            var ended = false
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            AudioAutomationAccessibility(size: size, items: items, focus: { item, target in
+                input.focused = .init(item: item, target: target)
+                focused = true
+            }, nudge: { item, target, frames, level in
+                guard isActive() else { return false }
+                return input.nudge(item, target: target, frames: frames, level: level)
+            })
+            .allowsHitTesting(false)
+            Canvas { context, _ in
+                for item in items {
+                    for point in item.geometry.points {
+                        let frame = CGRect(x: item.frame.minX + point.position.x - 4,
+                            y: item.frame.minY + point.position.y - 4, width: 8, height: 8)
+                        context.fill(Path(ellipseIn: frame), with: .color(.orange))
+                    }
+                }
+            }.allowsHitTesting(false).accessibilityHidden(true)
+            Color.clear
+                .frame(width: size.width, height: size.height)
+                .contentShape(HandleShape(items: items))
+                .highPriorityGesture(DragGesture(minimumDistance: 1, coordinateSpace: .local)
+                    .updating($dragging) { _, value, _ in value = true }
+                    .onChanged { value in
+                        guard isActive() else { input.cancel(); return }
+                        if !started {
+                            started = true
+                            guard let (item, target) = hit(value.startLocation) else { return }
+                            input.begin(item, target: target)
+                            focused = true
+                        }
+                        input.change(.init(x: value.translation.width, y: value.translation.height))
+                        cursor(input.focused?.target)
+                    }
+                    .onEnded { value in
+                        started = false
+                        guard isActive() else { input.cancel(); return }
+                        input.end(.init(x: value.translation.width, y: value.translation.height))
+                        cursor(nil)
+                    })
+                .onTapGesture { point in
+                    guard isActive(), let (item, target) = hit(point) else { return }
+                    input.focused = .init(item: item, target: target)
+                    focused = true
+                }
+                .onContinuousHover { phase in
+                    if input.tracking { return }
+                    switch phase {
+                    case .active(let point): cursor(hit(point)?.1)
+                    case .ended: cursor(nil)
+                    }
+                }
+                .focusable()
+                .focused($focused)
+                .onKeyPress(.escape) { started = false; input.cancel(); cursor(nil); return .handled }
+                .onKeyPress(.leftArrow) { key(frames: -1, level: 0) }
+                .onKeyPress(.rightArrow) { key(frames: 1, level: 0) }
+                .onKeyPress(.upArrow) { key(frames: 0, level: 0.01) }
+                .onKeyPress(.downArrow) { key(frames: 0, level: -0.01) }
+                .accessibilityHidden(true)
         }
-        let editor: AudioClipEditorModel
-        private var items: [Item] = []
-        private var enabled = true
-        private var active: @MainActor () -> Bool = { false }
-        private var drag: Drag?
-        private var task: Task<Void, Never>?
-        private var operation = UUID()
-        private var focused: (AudioClipID, AudioAutomationTarget)?
-        private var observer: NSObjectProtocol?
-        private var buttons: [String: HandleButton] = [:]
-        private var orderedButtons: [HandleButton] = []
-
-        init(editor: AudioClipEditorModel) {
-            self.editor = editor
-            super.init(frame: .zero)
-            setAccessibilityElement(false)
+        .frame(width: size.width, height: size.height)
+        .disabled(!input.editor.store.canEdit || input.editor.processing != nil)
+        .onChange(of: items.map(\.context)) { _, _ in input.validate(items) }
+        .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: { _ in
+            if input.tracking { started = false; input.cancel(); cursor(nil) }
         }
-        required init?(coder: NSCoder) { nil }
-        override var isFlipped: Bool { true }
-        override var acceptsFirstResponder: Bool { true }
-
-        override func viewDidMoveToWindow() {
-            super.viewDidMoveToWindow()
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            guard let window else { cancel(); return }
-            observer = NotificationCenter.default.addObserver(
-                forName: NSWindow.didResignKeyNotification, object: window, queue: .main
-            ) { [weak self] _ in MainActor.assumeIsolated { self?.cancel() } }
-        }
-
-        func stop() {
-            cancel()
-            if let observer { NotificationCenter.default.removeObserver(observer) }
-            observer = nil
-        }
-
-        func update(_ items: [Item], enabled: Bool, isActive: @escaping @MainActor () -> Bool) {
-            if let drag {
-                let current = items.first { $0.clip == drag.item.clip }
-                if !enabled || !isActive() || current?.frame != drag.item.frame
-                    || current?.key.viewportStart != drag.item.key.viewportStart
-                    || current?.key.viewportDuration != drag.item.key.viewportDuration
-                    || current?.key.viewportWidth != drag.item.key.viewportWidth
-                    || current?.key.programStart != drag.item.key.programStart
-                    || current?.key.durationFrames != drag.item.key.durationFrames
-                    || current?.key.left != drag.item.key.left
-                    || current?.key.height != drag.item.key.height
-                    || current?.key.projection != drag.item.key.projection
-                    || convert(bounds, to: nil) != drag.windowFrame
-                    || drag.ready && editor.automationGesture == nil {
-                    cancel()
+        .onChange(of: dragging) { _, active in
+            if !active {
+                Task { @MainActor in
+                    await Task.yield()
+                    if !dragging, started { started = false; input.cancel(); cursor(nil) }
                 }
             }
-            self.items = items
-            if let focused, !items.contains(where: { $0.clip == focused.0 }) { self.focused = nil }
-            self.enabled = enabled
-            active = isActive
-            updateButtons()
-            needsDisplay = true
-            window?.invalidateCursorRects(for: self)
         }
+        .onDisappear { input.cancel(); cursor(nil) }
+    }
 
-        override func hitTest(_ point: NSPoint) -> NSView? {
-            let local = convert(point, from: superview)
-            guard enabled, active(), bounds.contains(local),
-                  items.contains(where: { $0.frame.insetBy(dx: -8, dy: -8).contains(local) }) else { return nil }
-            return self
+    private func hit(_ point: CGPoint) -> (Item, AudioAutomationTarget)? {
+        for item in items {
+            if let target = item.geometry.target(at: .init(x: point.x - item.frame.minX, y: point.y - item.frame.minY)) {
+                return (item, target)
+            }
         }
+        return nil
+    }
 
-        override func resetCursorRects() {
+    private func cursor(_ target: AudioAutomationTarget?) {
+        let next: Bool?
+        switch target {
+        case .point: next = true
+        case .level: next = false
+        case nil: next = nil
+        }
+        guard next != horizontalCursor else { return }
+        if horizontalCursor != nil { NSCursor.pop() }
+        horizontalCursor = next
+        if let next { (next ? NSCursor.resizeLeftRight : NSCursor.resizeUpDown).push() }
+    }
+
+    private func key(frames: Int64, level: Double) -> KeyPress.Result {
+        guard isActive(), let target = input.focused else { return .ignored }
+        switch target.target {
+        case .point: if frames != 0 { input.nudge(target.item, target: target.target, frames: frames, level: 0) }
+        case .level: if level != 0 { input.nudge(target.item, target: target.target, frames: 0, level: level) }
+        }
+        return .handled
+    }
+
+    private struct HandleShape: Shape {
+        let items: [Item]
+        func path(in rect: CGRect) -> Path {
+            var path = Path()
             for item in items {
+                for point in item.geometry.points {
+                    path.addEllipse(in: CGRect(x: item.frame.minX + point.position.x - 8,
+                        y: item.frame.minY + point.position.y - 8, width: 16, height: 16))
+                }
                 for segment in item.geometry.segments {
-                    addCursorRect(segment.frame.offsetBy(dx: item.frame.minX, dy: item.frame.minY), cursor: .resizeUpDown)
-                }
-                for point in item.geometry.points {
-                    addCursorRect(pointFrame(point.position, in: item), cursor: .resizeLeftRight)
+                    path.addRect(segment.frame.offsetBy(dx: item.frame.minX, dy: item.frame.minY))
                 }
             }
+            return path
         }
+    }
+}
 
-        override func draw(_ dirtyRect: NSRect) {
-            NSColor.systemOrange.setFill()
-            for item in items {
-                for point in item.geometry.points {
-                    let frame = pointFrame(point.position, in: item).insetBy(dx: 4, dy: 4)
-                    NSBezierPath(ovalIn: frame).fill()
-                }
-            }
-            if window?.isKeyWindow == true, let focused,
-               let item = items.first(where: { $0.clip == focused.0 }) {
-                NSColor.controlAccentColor.setStroke()
-                switch focused.1 {
-                case .point(let index):
-                    if let point = item.geometry.points.first(where: { $0.index == index }) {
-                        NSBezierPath(ovalIn: pointFrame(point.position, in: item).insetBy(dx: 2, dy: 2)).stroke()
-                    }
-                case .level(let first, let last):
-                    for segment in item.geometry.segments where segment.first == first && segment.last == last {
-                        NSBezierPath(rect: segment.frame.offsetBy(dx: item.frame.minX, dy: item.frame.minY)).stroke()
-                    }
-                }
-            }
+@MainActor @Observable
+final class AudioAutomationInput {
+    struct Focus {
+        let item: AudioAutomationCanvas.Item
+        let target: AudioAutomationTarget
+    }
+    private struct Drag {
+        let item: AudioAutomationCanvas.Item
+        let target: AudioAutomationTarget
+        var translation = CGPoint.zero
+        var ready = false
+        var ended = false
+    }
+    let editor: AudioClipEditorModel
+    var focused: Focus?
+    private var drag: Drag?
+    @ObservationIgnored private var task: Task<Void, Never>?
+    private var operation = UUID()
+    private var committedGeneration: UInt64?
+    var tracking: Bool { drag != nil }
+
+    init(editor: AudioClipEditorModel) { self.editor = editor }
+
+    func begin(_ item: AudioAutomationCanvas.Item, target: AudioAutomationTarget) {
+        cancel()
+        guard item.key.envelope == item.projected.clip.envelope else {
+            editor.refuse("Wait for the current curve before starting another automation drag.")
+            return
         }
+        focused = .init(item: item, target: target)
+        drag = .init(item: item, target: target)
+        let token = operation
+        task = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            let ready = await editor.beginAutomationGesture(clip: item.clip, target: target, expected: item.projected)
+            guard operation == token, !Task.isCancelled else { return }
+            guard ready else { cancel(); return }
+            drag?.ready = true
+            preview()
+            if drag?.ended == true { finish() }
+        }
+    }
 
-        override func mouseDown(with event: NSEvent) {
-            cancel()
-            guard enabled, active(), editor.store.canEdit, window?.attachedSheet == nil else { return }
-            let origin = convert(event.locationInWindow, from: nil)
-            guard let item = items.first(where: { $0.frame.insetBy(dx: -8, dy: -8).contains(origin) }),
-                  let target = item.geometry.target(at: .init(x: origin.x - item.frame.minX, y: origin.y - item.frame.minY))
-            else { return }
-            guard item.key.envelope == item.projected.clip.envelope else {
-                editor.refuse("Wait for the current curve before starting another automation drag.")
+    func change(_ translation: CGPoint) {
+        drag?.translation = translation; preview()
+    }
+    func end(_ translation: CGPoint) {
+        change(translation)
+        drag?.ended = true
+        if drag?.ready == true { finish() }
+    }
+    func cancel() {
+        operation = UUID()
+        task?.cancel()
+        task = nil
+        drag = nil
+        editor.cancelAutomationGesture()
+    }
+    func validate(_ items: [AudioAutomationCanvas.Item]) {
+        if let drag, !items.contains(where: { $0.context == drag.item.context }) { cancel() }
+        if let focused, !items.contains(where: { $0.context == focused.item.context }) {
+            if committedGeneration == editor.store.modelGeneration,
+               let current = items.first(where: { $0.clip == focused.item.clip }) {
+                self.focused = .init(item: current, target: focused.target)
+            } else { self.focused = nil }
+        }
+        committedGeneration = nil
+    }
+
+    private func preview() {
+        guard let drag, drag.ready else { return }
+        switch drag.target {
+        case .point(let index):
+            guard let point = drag.item.geometry.points.first(where: { $0.index == index }) else {
+                editor.refuseAutomationGesture("This fade point is no longer visible.")
                 return
             }
-            window?.makeFirstResponder(self)
-            focused = (item.clip, target)
-            switch target {
-            case .point: NSCursor.resizeLeftRight.set()
-            case .level: NSCursor.resizeUpDown.set()
+            let key = drag.item.key
+            let display = key.viewportStart
+                + (key.left + point.position.x + drag.translation.x) / key.viewportWidth * key.viewportDuration
+            guard let program = key.projection.programTime(forDisplayTime: display) else {
+                editor.refuseAutomationGesture("Show cut's removed audio is review-only. Move the point to production time.")
+                return
             }
-            drag = .init(item: item, target: target, origin: origin, windowFrame: convert(bounds, to: nil))
-            let token = operation
-            task = Task { [weak self] in
-                guard let self, !Task.isCancelled else { return }
-                let ready = await editor.beginAutomationGesture(clip: item.clip, target: target, expected: item.projected)
-                guard operation == token, !Task.isCancelled else { return }
-                guard ready else { cancel(); return }
-                drag?.ready = true
-                preview()
-                if drag?.ended == true { finish() }
-            }
+            let local = Double(point.local.numerator) / Double(point.local.denominator)
+            let value = ((program - key.programStart) * 48_000 - local).rounded(.toNearestOrEven)
+            guard value.isFinite else { editor.refuseAutomationGesture("The fade time is not finite."); return }
+            let limit = Double(AudioEnvelopeCoordinate.maximumMagnitude)
+            editor.previewAutomationGesture(frames: Int64(min(limit, max(-limit, value))))
+        case .level:
+            editor.previewAutomationGesture(levelDelta: -drag.translation.y / (drag.item.key.height - 12))
         }
+    }
 
-        override func mouseDragged(with event: NSEvent) { updateDrag(event); preview() }
-        override func mouseUp(with event: NSEvent) {
-            updateDrag(event)
-            drag?.ended = true
-            if drag?.ready == true { preview(); finish() }
+    private func finish() {
+        if editor.completeAutomationGesture() { committedGeneration = editor.store.modelGeneration }
+        drag = nil
+        task = nil
+    }
+
+    @discardableResult
+    func nudge(_ item: AudioAutomationCanvas.Item, target: AudioAutomationTarget, frames: Int64, level: Double) -> Bool {
+        guard task == nil else { return false }
+        let token = operation
+        task = Task { [weak self] in
+            guard let self, !Task.isCancelled else { return }
+            defer { if operation == token { task = nil } }
+            let ready = await editor.beginAutomationGesture(clip: item.clip, target: target, expected: item.projected)
+            guard operation == token, !Task.isCancelled else { return }
+            guard ready else { return }
+            if editor.previewAutomationGesture(frames: frames, levelDelta: level) {
+                if editor.completeAutomationGesture() { committedGeneration = editor.store.modelGeneration }
+            } else { editor.cancelAutomationGesture() }
         }
+        return true
+    }
+}
 
-        private func updateDrag(_ event: NSEvent) {
-            guard let current = drag else { return }
-            let position = convert(event.locationInWindow, from: nil)
-            drag?.translation = .init(x: position.x - current.origin.x, y: position.y - current.origin.y)
+private struct AudioAutomationAccessibility: NSViewRepresentable {
+    let size: CGSize
+    let items: [AudioAutomationCanvas.Item]
+    let focus: @MainActor (AudioAutomationCanvas.Item, AudioAutomationTarget) -> Void
+    let nudge: @MainActor (AudioAutomationCanvas.Item, AudioAutomationTarget, Int64, Double) -> Bool
+
+    func makeNSView(context: Context) -> Controls { Controls(frame: .zero) }
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: Controls, context: Context) -> CGSize? { size }
+    func updateNSView(_ view: Controls, context: Context) {
+        view.update(items, enabled: context.environment.isEnabled, focus: focus, nudge: nudge)
+    }
+
+    final class Controls: NSView {
+        private var buttons: [String: Button] = [:]
+        private var ordered: [Button] = []
+        override var isFlipped: Bool { true }
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func accessibilityChildren() -> [Any]? {
+            let children: [Button] = MainActor.assumeIsolated { ordered }
+            return children
         }
-
-        private func preview() {
-            guard let drag, drag.ready else { return }
-            guard active(), convert(bounds, to: nil) == drag.windowFrame else { cancel(); return }
-            switch drag.target {
-            case .point(let index):
-                NSCursor.resizeLeftRight.set()
-                guard let point = drag.item.geometry.points.first(where: { $0.index == index }) else {
-                    editor.refuseAutomationGesture("This fade point is no longer visible.")
-                    return
-                }
-                let key = drag.item.key
-                let display = key.viewportStart
-                    + (key.left + point.position.x + drag.translation.x) / key.viewportWidth * key.viewportDuration
-                guard let program = key.projection.programTime(forDisplayTime: display) else {
-                    editor.refuseAutomationGesture("Show cut's removed audio is review-only. Move the fade point to production time.")
-                    return
-                }
-                let local = Double(point.local.numerator) / Double(point.local.denominator)
-                let value = ((program - key.programStart) * 48_000 - local).rounded(.toNearestOrEven)
-                guard value.isFinite else { editor.refuseAutomationGesture("The fade time is not finite."); return }
-                let limit = Double(AudioEnvelopeCoordinate.maximumMagnitude)
-                editor.previewAutomationGesture(frames: Int64(min(limit, max(-limit, value))))
-            case .level:
-                NSCursor.resizeUpDown.set()
-                editor.previewAutomationGesture(levelDelta: -drag.translation.y / (drag.item.key.height - 12))
-            }
+        override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+            let button: Button? = MainActor.assumeIsolated { ordered.first { $0.accessibilityFrame().contains(point) } }
+            return button
         }
-
-        private func finish() {
-            guard active() else { cancel(); return }
-            _ = editor.completeAutomationGesture()
-            drag = nil
-            task = nil
-            window?.invalidateCursorRects(for: self)
-        }
-
-        private func cancel() {
-            operation = UUID()
-            task?.cancel()
-            task = nil
-            drag = nil
-            editor.cancelAutomationGesture()
-            needsDisplay = true
-            window?.invalidateCursorRects(for: self)
-        }
-
-        override func keyDown(with event: NSEvent) {
-            if event.keyCode == 53 { cancel(); return }
-            guard let focused, [123, 124, 125, 126].contains(event.keyCode) else { super.keyDown(with: event); return }
-            switch focused.1 {
-            case .point:
-                if event.keyCode == 123 || event.keyCode == 124 {
-                    nudge(focused.0, target: focused.1, frames: event.keyCode == 123 ? -1 : 1)
-                }
-            case .level:
-                if event.keyCode == 125 || event.keyCode == 126 {
-                    nudge(focused.0, target: focused.1, level: event.keyCode == 125 ? -0.01 : 0.01)
-                }
-            }
-        }
-
-        @discardableResult
-        private func nudge(_ clip: AudioClipID, target: AudioAutomationTarget, frames: Int64 = 0, level: Double = 0) -> Bool {
-            guard enabled, active(), task == nil, window?.attachedSheet == nil,
-                  let item = items.first(where: { $0.clip == clip }) else { return false }
-            let token = operation
-            task = Task { [weak self] in
-                guard let self, !Task.isCancelled else { return }
-                defer { if operation == token { task = nil } }
-                let ready = await editor.beginAutomationGesture(clip: clip, target: target, expected: item.projected)
-                guard operation == token, !Task.isCancelled else { return }
-                guard ready, active() else { editor.cancelAutomationGesture(); return }
-                if editor.previewAutomationGesture(frames: frames, levelDelta: level) {
-                    _ = editor.completeAutomationGesture()
-                }
-            }
-            return true
-        }
-
-        private func pointFrame(_ position: CGPoint, in item: Item) -> CGRect {
-            CGRect(x: item.frame.minX + position.x - 8, y: item.frame.minY + position.y - 8, width: 16, height: 16)
-        }
-
-        private func updateButtons() {
-            var ordered: [HandleButton] = []
-            func add(_ id: String, frame: CGRect, label: String, value: String, item: Item, target: AudioAutomationTarget) {
-                let button = buttons[id] ?? HandleButton()
+        func update(_ items: [AudioAutomationCanvas.Item], enabled: Bool,
+                    focus: @escaping @MainActor (AudioAutomationCanvas.Item, AudioAutomationTarget) -> Void,
+                    nudge: @escaping @MainActor (AudioAutomationCanvas.Item, AudioAutomationTarget, Int64, Double) -> Bool) {
+            setAccessibilityElement(false)
+            var current: [Button] = []
+            func add(_ id: String, frame: CGRect, label: String, value: String,
+                     item: AudioAutomationCanvas.Item, target: AudioAutomationTarget) {
+                let button = buttons[id] ?? Button()
                 if button.superview == nil { addSubview(button) }
                 buttons[id] = button
-                let visible = frame.intersection(bounds)
-                guard !visible.isNull, !visible.isEmpty else { return }
-                button.frame = visible
-                button.isEnabled = enabled && editor.store.canEdit
-                button.setAccessibilityIdentifier("ww.audioAutomation.\(id)")
+                button.frame = frame
+                button.isEnabled = enabled
+                button.value = value
+                button.perform = { focus(item, target) }
                 button.setAccessibilityLabel(label)
-                button.programValue = value
-                button.perform = { [weak self] in
-                    self?.focused = (item.clip, target)
-                    self?.window?.makeFirstResponder(self)
-                    self?.needsDisplay = true
-                }
+                button.setAccessibilityIdentifier("ww.audioAutomation.\(id)")
                 let point: Bool
                 if case .point = target { point = true } else { point = false }
                 button.setAccessibilityCustomActions([
-                    .init(name: point ? "Move earlier one frame" : "Lower level one percent", handler: { [weak self] in
-                        self?.nudge(item.clip, target: target, frames: point ? -1 : 0, level: point ? 0 : -0.01) ?? false
-                    }),
-                    .init(name: point ? "Move later one frame" : "Raise level one percent", handler: { [weak self] in
-                        self?.nudge(item.clip, target: target, frames: point ? 1 : 0, level: point ? 0 : 0.01) ?? false
-                    }),
+                    .init(name: point ? "Move earlier one frame" : "Lower level one percent",
+                          handler: { nudge(item, target, point ? -1 : 0, point ? 0 : -0.01) }),
+                    .init(name: point ? "Move later one frame" : "Raise level one percent",
+                          handler: { nudge(item, target, point ? 1 : 0, point ? 0 : 0.01) }),
                 ])
-                ordered.append(button)
+                current.append(button)
             }
             for item in items {
                 for point in item.geometry.points {
-                    let value = item.key.envelope.points[point.index].amplitude
-                    add("point.\(item.clip).\(point.index)", frame: pointFrame(point.position, in: item),
+                    add("point.\(item.clip).\(point.index)",
+                        frame: .init(x: item.frame.minX + point.position.x - 8,
+                                     y: item.frame.minY + point.position.y - 8, width: 16, height: 16),
                         label: "Fade point \(point.index + 1) timing",
-                        value: "Local frame \(AudioFadeInput.frameText(point.local)); amplitude \(value)",
+                        value: "Local frame \(AudioFadeInput.frameText(point.local)); amplitude \(item.key.envelope.points[point.index].amplitude)",
                         item: item, target: .point(point.index))
                 }
                 for (index, segment) in item.geometry.segments.enumerated() {
@@ -311,28 +353,16 @@ struct AudioAutomationCanvas: NSViewRepresentable {
                         item: item, target: .level(first: segment.first, last: segment.last))
                 }
             }
-            let live = Set(ordered.map(ObjectIdentifier.init))
+            let live = Set(current.map(ObjectIdentifier.init))
             for key in Array(buttons.keys) where buttons[key].map({ !live.contains(ObjectIdentifier($0)) }) == true {
                 buttons.removeValue(forKey: key)?.removeFromSuperview()
             }
-            orderedButtons = ordered
-        }
-
-        override func accessibilityChildren() -> [Any]? {
-            let children: [HandleButton] = MainActor.assumeIsolated { orderedButtons }
-            return children
-        }
-        override func accessibilityHitTest(_ point: NSPoint) -> Any? {
-            let button: HandleButton? = MainActor.assumeIsolated {
-                orderedButtons.first { $0.accessibilityFrame().contains(point) }
-            }
-            return button
+            ordered = current
         }
     }
-
-    final class HandleButton: NSButton {
+    final class Button: NSButton {
+        var value = ""
         var perform: @MainActor () -> Void = {}
-        var programValue = ""
         init() {
             super.init(frame: .zero)
             title = ""
@@ -345,7 +375,7 @@ struct AudioAutomationCanvas: NSViewRepresentable {
         }
         required init?(coder: NSCoder) { nil }
         override func accessibilityValue() -> Any? {
-            let value: String = MainActor.assumeIsolated { programValue }
+            let value: String = MainActor.assumeIsolated { self.value }
             return value
         }
         override func accessibilityFrame() -> NSRect {

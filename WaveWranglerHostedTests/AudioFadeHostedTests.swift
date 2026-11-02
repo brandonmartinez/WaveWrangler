@@ -231,7 +231,7 @@ struct AudioFadeHostedTests {
         }
     }
 
-    @Test func nativeAutomationEscapeDiscardsAnInFlightPointDrag() async throws {
+    @Test func automationInputCancellationDiscardsAnInFlightPointDrag() async throws {
         let f = try await helper.ready()
         defer { f.close() }
         let bed = try await importBed(f)
@@ -243,37 +243,27 @@ struct AudioFadeHostedTests {
             programStart: 2, viewportStart: 2, viewportDuration: 2, viewportWidth: 640,
             left: 0, width: 640, height: 100, projection: .unedited)
         let geometry = try AudioEnvelopeGeometry.make(key)
-        let host = HostedTimelineWindow(width: 640, height: 100, content: AudioAutomationCanvas(
-            size: .init(width: 640, height: 100),
-            items: [.init(projected: clip, frame: .init(x: 0, y: 0, width: 640, height: 100),
-                          key: key, geometry: geometry)],
-            editor: editor, isActive: { true }))
-        defer { host.close() }
-        try await host.settle()
-        let canvas = host.descendants.compactMap { $0 as? AudioAutomationCanvas.CanvasView }.first
-        let view = try #require(canvas), window = host.window
-        let point = try #require(geometry.points.first { $0.index == 1 }).position
-        func mouse(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
-            try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil),
-                modifierFlags: [], timestamp: 0, windowNumber: window.windowNumber,
-                context: nil, eventNumber: 0, clickCount: 1, pressure: 1))
-        }
+        let item = AudioAutomationCanvas.Item(projected: clip,
+            frame: .init(x: 0, y: 0, width: 640, height: 100), key: key, geometry: geometry)
+        let input = AudioAutomationInput(editor: editor)
         let before = f.document.store.model
-        view.mouseDown(with: try mouse(.leftMouseDown, at: point))
+        input.begin(item, target: .point(1))
         try await helper.wait { editor.automationGesture != nil }
-        view.mouseDragged(with: try mouse(.leftMouseDragged, at: .init(x: point.x + 40, y: point.y + 20)))
+        input.change(.init(x: 40, y: 20))
         try await helper.wait { editor.automationGesture.map { $0.previewClip != clip.clip } == true }
         let during = f.document.store.model
         let preview = editor.automationGesture?.previewClip
         #expect(during == before && preview != clip.clip)
-        let escape = try #require(NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
-            timestamp: 0, windowNumber: window.windowNumber, context: nil, characters: "\u{1b}",
-            charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53))
-        view.keyDown(with: escape)
-        view.mouseUp(with: try mouse(.leftMouseUp, at: point))
+        input.cancel()
+        input.end(.zero)
         let after = f.document.store.model
         let stillDragging = editor.automationGesture != nil
         #expect(after == before && !stillDragging)
+        input.begin(item, target: .point(1))
+        input.end(.init(x: 40, y: 20))
+        try await helper.wait { f.document.store.model != before }
+        let finished = f.document.store.model
+        #expect(finished != before && !input.tracking)
     }
 
     @Test func invalidInputsConflictReviewAndStaleSelectionDocumentAndOwnerNeverPublish() async throws {

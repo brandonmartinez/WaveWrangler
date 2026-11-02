@@ -71,6 +71,7 @@ struct AudioClipTrackView: View {
                             editor: editor, isActive: {
                                 listening?.effectiveTool == .automation
                             })
+                            .zIndex(2)
                     }
                     if duration > 0, playhead >= start, playhead <= start + duration {
                         Rectangle().fill(.red.opacity(0.8)).frame(width: 1)
