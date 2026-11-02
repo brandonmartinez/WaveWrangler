@@ -73,6 +73,13 @@ changed originals, unavailable grants, cloud placeholders, and storage limits
 refuse visibly. No cloud materialization, source-file mutation, or delivery file
 is part of this action.
 
+Ordinary mono/stereo AAC and ALAC M4A files may omit a separate container layout.
+For those files, the gateway verifies the order from the decompression cookie's
+native format list, matching codec, rate, channel count, packet size, and standard
+mono/stereo layout. It never infers order from the channel count alone or overrides
+a declared custom layout. This nonserialized evidence is rechecked on cached reads;
+raw layout facts and saved format interpretations remain unchanged.
+
 Finder/local file-location drops enter the same review. Audio lane drops retain
 that lane; empty/recording canvases and unused canvas space explicitly review a
 new generic Audio Track, never a recorder conversion. The canvas excludes row

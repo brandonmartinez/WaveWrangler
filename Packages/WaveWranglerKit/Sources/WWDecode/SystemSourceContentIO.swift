@@ -26,6 +26,21 @@ public struct LegacyWavePCMChannelOrderEvidence: Sendable, Equatable {
     }
 }
 
+/// Codec-declared order from the opened M4A's decompression cookie, not an inferred container layout.
+public struct M4ACodecChannelOrderEvidence: Sendable, Equatable {
+    package let channelCount: Int
+    private let formatID: UInt32
+    private let layoutTag: UInt32
+    private let cookie: Data
+
+    fileprivate init(channelCount: Int, formatID: UInt32, layoutTag: UInt32, cookie: Data) {
+        self.channelCount = channelCount
+        self.formatID = formatID
+        self.layoutTag = layoutTag
+        self.cookie = cookie
+    }
+}
+
 /// The production `SourceContentIO`. This is the only file in the codebase allowed to open source
 /// content, and it opens it read-only:
 ///
@@ -505,7 +520,9 @@ private final class SystemDecodingReader: DecodingContentReader {
             legacyWavePCMChannelOrder: legacyWavePCMChannelOrder(
                 file: file, containerType: containerType, format: format, layout: layout,
                 nativeDataOffset: hasDataOffset ? dataOffset : nil,
-                nativeDataBytes: hasByteCount ? Int64(exactly: byteCount) : nil, nativeFrames: readerLength)
+                nativeDataBytes: hasByteCount ? Int64(exactly: byteCount) : nil, nativeFrames: readerLength),
+            m4aCodecChannelOrder: m4aCodecChannelOrder(
+                audioFile, containerType: containerType, format: format, layout: layout)
         )
         if file.lastErrno != 0 {
             discard(extFile)
@@ -722,6 +739,50 @@ private func legacyWavePCMChannelOrder(
           factFrames.map({ Int64($0) == nativeFrames }) != false else { return nil }
     return .init(channelCount: Int(channels), formatBytes: bytes, riffBytes: end,
                  formatOffset: fmt.offset, dataOffset: data.offset, dataBytes: data.bytes, factFrames: factFrames)
+}
+
+private func m4aCodecChannelOrder(
+    _ file: AudioFileID, containerType: UInt32, format: AudioStreamBasicDescription,
+    layout: ChannelLayoutFacts
+) -> M4ACodecChannelOrderEvidence? {
+    guard containerType == kAudioFileM4AType, layout == .undeclared,
+          [kAudioFormatMPEG4AAC, kAudioFormatAppleLossless].contains(format.mFormatID),
+          (1...2).contains(format.mChannelsPerFrame) else { return nil }
+    var size: UInt32 = 0
+    guard AudioFileGetPropertyInfo(file, kAudioFilePropertyMagicCookieData, &size, nil) == noErr,
+          size > 0, size <= 65_536 else { return nil }
+    var cookie = Data(count: Int(size))
+    let status = cookie.withUnsafeMutableBytes {
+        AudioFileGetProperty(file, kAudioFilePropertyMagicCookieData, &size, $0.baseAddress!)
+    }
+    guard status == noErr, size > 0, Int(size) <= cookie.count else { return nil }
+    cookie = Data(cookie.prefix(Int(size)))
+    return cookie.withUnsafeBytes { bytes in
+        // Supply no guessed rate or channel count: FormatList must derive them from the cookie.
+        var codec = AudioStreamBasicDescription()
+        codec.mFormatID = format.mFormatID
+        var info = AudioFormatInfo(mASBD: codec, mMagicCookie: bytes.baseAddress!, mMagicCookieSize: size)
+        let infoSize = UInt32(MemoryLayout<AudioFormatInfo>.size)
+        var resultSize: UInt32 = 0
+        let itemSize = UInt32(MemoryLayout<AudioFormatListItem>.stride)
+        guard AudioFormatGetPropertyInfo(kAudioFormatProperty_FormatList, infoSize, &info, &resultSize) == noErr,
+              resultSize > 0, resultSize <= itemSize * 16, resultSize % itemSize == 0 else { return nil }
+        let capacity = resultSize
+        var items = Array(repeating: AudioFormatListItem(), count: Int(resultSize / itemSize))
+        let itemStatus = items.withUnsafeMutableBytes {
+            AudioFormatGetProperty(kAudioFormatProperty_FormatList, infoSize, &info, &resultSize, $0.baseAddress!)
+        }
+        guard itemStatus == noErr, resultSize > 0, resultSize <= capacity, resultSize % itemSize == 0 else { return nil }
+        let matching = items.prefix(Int(resultSize / itemSize)).filter {
+            $0.mASBD.mFormatID == format.mFormatID && $0.mASBD.mSampleRate == format.mSampleRate
+                && $0.mASBD.mChannelsPerFrame == format.mChannelsPerFrame
+                && $0.mASBD.mFramesPerPacket == format.mFramesPerPacket
+        }
+        let tag = format.mChannelsPerFrame == 1 ? kAudioChannelLayoutTag_Mono : kAudioChannelLayoutTag_Stereo
+        guard !matching.isEmpty, matching.allSatisfy({ $0.mChannelLayoutTag == tag }) else { return nil }
+        return M4ACodecChannelOrderEvidence(channelCount: Int(format.mChannelsPerFrame),
+            formatID: format.mFormatID, layoutTag: tag, cookie: cookie)
+    }
 }
 
 /// The declared layout and its channel labels (expanded from a tag or bitmap by AudioFormat).

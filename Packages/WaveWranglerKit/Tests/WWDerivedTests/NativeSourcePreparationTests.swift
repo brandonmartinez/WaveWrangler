@@ -21,12 +21,14 @@ struct NativeSourcePreparationTests {
         static func make(
             frames: Int = 23_457, channels: Int = 2,
             rate: Int = 44_100, codec: UInt32 = kAudioFormatAppleLossless,
-            mp3: Bool = false, declareLayout: Bool = true
+            mp3: Bool = false, declareLayout: Bool = true,
+            containerType: UInt32 = kAudioFileCAFType
         ) async throws -> Self {
             let directory = try TemporaryDirectory("native-pcm")
             let originals = try directory.folder("originals")
-            var url = originals.appendingPathComponent("generated.caf")
-            try writeCAF(url, frames: frames, channels: channels, rate: rate, codec: codec, declareLayout: declareLayout)
+            var url = originals.appendingPathComponent(containerType == kAudioFileM4AType ? "generated.m4a" : "generated.caf")
+            try writeAudio(url, frames: frames, channels: channels, rate: rate, codec: codec,
+                           declareLayout: declareLayout, containerType: containerType)
             if mp3 {
                 let wave = originals.appendingPathComponent("encoder-input.wav")
                 try run("/usr/bin/afconvert", ["-f", "WAVE", "-d", "LEI16", url.path, wave.path])
@@ -153,8 +155,8 @@ struct NativeSourcePreparationTests {
             Float((frame &* (channel == 0 ? 13 : 31) + channel * 997) % 20_000 - 10_000) / 32768
         }
 
-        static func writeCAF(_ url: URL, frames: Int, channels: Int, rate: Int, codec: UInt32,
-                             declareLayout: Bool = true) throws {
+        static func writeAudio(_ url: URL, frames: Int, channels: Int, rate: Int, codec: UInt32,
+                               declareLayout: Bool = true, containerType: UInt32 = kAudioFileCAFType) throws {
             var format = AudioStreamBasicDescription()
             format.mFormatID = codec
             format.mSampleRate = Double(rate)
@@ -168,7 +170,7 @@ struct NativeSourcePreparationTests {
                 format.mBytesPerPacket = format.mBytesPerFrame
             }
             var created: ExtAudioFileRef?
-            try requireStatus(ExtAudioFileCreateWithURL(url as CFURL, kAudioFileCAFType, &format, nil, 0, &created))
+            try requireStatus(ExtAudioFileCreateWithURL(url as CFURL, containerType, &format, nil, 0, &created))
             let file = try #require(created)
             defer { ExtAudioFileDispose(file) }
             var layout = AudioChannelLayout()
@@ -215,6 +217,43 @@ struct NativeSourcePreparationTests {
             try process.run()
             process.waitUntilExit()
             try #require(process.terminationStatus == 0)
+        }
+    }
+
+    @Test(arguments: [kAudioFormatMPEG4AAC, kAudioFormatAppleLossless], [1, 2])
+    func m4aMonoAndStereoPrepareWithoutChangingRawFormatFacts(codec: UInt32, channels: Int) async throws {
+        for rate in [44_100, 48_000] {
+            let fixture = try await Fixture.make(
+                frames: 4410, channels: channels, rate: rate, codec: codec, containerType: kAudioFileM4AType)
+            let before = try FileSnapshot(fixture.url)
+            let preparation = try fixture.preparation()
+            let audio = try await preparation.prepare(fixture.admission(), expectedFormat: fixture.format)
+            #expect(audio.interpretation == fixture.format)
+            #expect(audio.channelCount == channels && audio.sourceFrameCount == fixture.format.frames.validFrames)
+            let window = try await preparation.readWindow(100..<200, from: audio, admission: fixture.admission())
+            let reference = try await SourceDecoder(access: fixture.access).withDecodingCursor(
+                fixture.url, source: fixture.source
+            ) { cursor in
+                var samples = Array(repeating: [Float](), count: channels)
+                while let chunk = try await cursor.next(upToSourceFrame: 200) {
+                    let start = Int(chunk.firstSourceFrame)
+                    let low = max(100, start), high = min(200, start + chunk.frameCount)
+                    if low < high {
+                        for channel in 0..<channels {
+                            samples[channel].append(contentsOf: chunk.channel(channel).dropFirst(low - start).prefix(high - low))
+                        }
+                    }
+                    if start + chunk.frameCount == 200 { break }
+                }
+                return samples.flatMap { $0 }
+            }
+            #expect(window.samples.count == channels * 100 && window.samples == reference)
+            let warm = try await preparation.prepare(fixture.admission(), expectedFormat: fixture.format)
+            #expect(warm.interpretation == audio.interpretation && warm.sourceFrameCount == audio.sourceFrameCount)
+            let resolved = try await preparation.readWindow(
+                100..<200, expectedFormat: fixture.format, admission: fixture.admission())
+            #expect(resolved.samples == reference)
+            #expect(try FileSnapshot(fixture.url) == before)
         }
     }
 

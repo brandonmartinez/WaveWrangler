@@ -66,16 +66,17 @@ struct SupplementalProductionHostedTests {
                      source: source, track: track, episode: episode.id)
     }
 
-    private static func writeAudio(_ url: URL, codec: UInt32 = kAudioFormatLinearPCM) throws {
+    static func writeAudio(_ url: URL, codec: UInt32 = kAudioFormatLinearPCM,
+                           containerType: UInt32 = kAudioFileCAFType) throws {
         var client = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
             mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4,
             mChannelsPerFrame: 2, mBitsPerChannel: 16, mReserved: 0)
         var format = codec == kAudioFormatLinearPCM ? client : AudioStreamBasicDescription(
-            mSampleRate: 48_000, mFormatID: codec, mFormatFlags: 1, mBytesPerPacket: 0,
+            mSampleRate: 48_000, mFormatID: codec, mFormatFlags: codec == kAudioFormatAppleLossless ? 1 : 0, mBytesPerPacket: 0,
             mFramesPerPacket: 0, mBytesPerFrame: 0, mChannelsPerFrame: 2, mBitsPerChannel: 0, mReserved: 0)
         var created: ExtAudioFileRef?
-        try #require(ExtAudioFileCreateWithURL(url as CFURL, kAudioFileCAFType, &format, nil, 0, &created) == noErr)
+        try #require(ExtAudioFileCreateWithURL(url as CFURL, containerType, &format, nil, 0, &created) == noErr)
         let file = try #require(created)
         var layout = AudioChannelLayout()
         layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo

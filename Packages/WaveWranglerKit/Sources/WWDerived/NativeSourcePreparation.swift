@@ -58,6 +58,7 @@ public struct PreparedSourceAudio: Sendable {
     fileprivate let session: String
     fileprivate let manifestKey: DerivedAssetKey
     fileprivate let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
+    fileprivate let m4aCodecChannelOrder: M4ACodecChannelOrderEvidence?
     fileprivate let supportsRandomAccess: Bool
 
     public var sourceFrameCount: Int64 { interpretation.frames.validFrames }
@@ -202,9 +203,11 @@ public actor NativeSourcePreparation {
                 admission.location, source: admission.source, matching: admission.witness
             ) { cursor in
                 try Self.requireFormat(cursor.interpretation, expected: expectedFormat, source: admission.source,
-                                       legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder)
+                                       legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder,
+                                       m4aCodecChannelOrder: cursor.m4aCodecChannelOrder)
                 if let cached = try await self.cached(identity) {
                     guard cached.legacyWavePCMChannelOrder == cursor.legacyWavePCMChannelOrder,
+                          cached.m4aCodecChannelOrder == cursor.m4aCodecChannelOrder,
                           cached.supportsRandomAccess == cursor.supportsRandomAccess else {
                         throw NativeSourcePreparationFailure.formatMismatch
                     }
@@ -221,6 +224,7 @@ public actor NativeSourcePreparation {
                         chunk.firstSourceFrame + Int64(chunk.frameCount), expectedFormat.frames.validFrames)
                 }
                 let audio = try await session.complete(legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder,
+                    m4aCodecChannelOrder: cursor.m4aCodecChannelOrder,
                     supportsRandomAccess: cursor.supportsRandomAccess)
                 let staged = await session.stagedAssets()
                 try await admission.validate()
@@ -307,8 +311,10 @@ public actor NativeSourcePreparation {
             admission.location, source: admission.source, matching: admission.witness
         ) { cursor in
             try Self.requireFormat(cursor.interpretation, expected: audio.interpretation, source: admission.source,
-                                   legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder)
-            guard cursor.legacyWavePCMChannelOrder == audio.legacyWavePCMChannelOrder else {
+                                   legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder,
+                                   m4aCodecChannelOrder: cursor.m4aCodecChannelOrder)
+            guard cursor.legacyWavePCMChannelOrder == audio.legacyWavePCMChannelOrder,
+                  cursor.m4aCodecChannelOrder == audio.m4aCodecChannelOrder else {
                 throw NativeSourcePreparationFailure.formatMismatch
             }
             let result = try await self.window(range, audio: audio)
@@ -338,10 +344,12 @@ public actor NativeSourcePreparation {
             admission.location, source: admission.source, matching: admission.witness
         ) { cursor in
             try Self.requireFormat(cursor.interpretation, expected: expectedFormat, source: admission.source,
-                                   legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder)
+                                   legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder,
+                                   m4aCodecChannelOrder: cursor.m4aCodecChannelOrder)
             let result: PreparedSourceWindow
             if let cached = try await self.cachedWindow(range, expectedFormat: expectedFormat, admission: admission,
-                legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder) {
+                legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder,
+                m4aCodecChannelOrder: cursor.m4aCodecChannelOrder) {
                 result = cached
             } else {
                 result = try await Self.uncachedWindow(range, cursor: cursor)
@@ -356,11 +364,13 @@ public actor NativeSourcePreparation {
 
     private func cachedWindow(
         _ range: Range<Int64>, expectedFormat: FormatInterpretation, admission: SourceReadAdmission,
-        legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
+        legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?,
+        m4aCodecChannelOrder: M4ACodecChannelOrderEvidence?
     ) throws -> PreparedSourceWindow? {
         let identity = preparationIdentity(admission: admission, expectedFormat: expectedFormat)
         guard let audio = try cached(identity) else { return nil }
-        guard audio.legacyWavePCMChannelOrder == legacyWavePCMChannelOrder else {
+        guard audio.legacyWavePCMChannelOrder == legacyWavePCMChannelOrder,
+              audio.m4aCodecChannelOrder == m4aCodecChannelOrder else {
             throw NativeSourcePreparationFailure.formatMismatch
         }
         touch(identity)
@@ -454,7 +464,8 @@ public actor NativeSourcePreparation {
 
     private static func requireFormat(
         _ actual: FormatInterpretation, expected: FormatInterpretation,
-        source: SourceID, legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
+        source: SourceID, legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?,
+        m4aCodecChannelOrder: M4ACodecChannelOrderEvidence?
     ) throws {
         guard actual == expected, actual.source == source,
             actual.envelopeVersion == DecodeEnvelope.version,
@@ -467,7 +478,10 @@ public actor NativeSourcePreparation {
                 || (actual.channelCount == 2 && actual.channelLayout.channelLabels == [1, 2]))
         let legacy = actual.channelLayout == .undeclared
             && legacyWavePCMChannelOrder?.channelCount == actual.channelCount
-        guard declared || legacy else {
+        let m4a = actual.channelLayout == .undeclared && actual.container.kind == .m4a
+            && [.aac, .appleLossless].contains(actual.codec.kind)
+            && m4aCodecChannelOrder?.channelCount == actual.channelCount
+        guard declared || legacy || m4a else {
             throw NativeSourcePreparationFailure.unsupportedChannelLayout
         }
     }
@@ -543,7 +557,7 @@ private actor PCMPreparationSession {
         audio = PreparedSourceAudio(
             interpretation: format, tileFrames: tileFrames, witness: witness,
             identity: identity, session: UUID().uuidString, manifestKey: manifestKey,
-            legacyWavePCMChannelOrder: nil, supportsRandomAccess: false)
+            legacyWavePCMChannelOrder: nil, m4aCodecChannelOrder: nil, supportsRandomAccess: false)
         channels = []
     }
 
@@ -586,12 +600,14 @@ private actor PCMPreparationSession {
     }
 
     func complete(legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?,
+                  m4aCodecChannelOrder: M4ACodecChannelOrderEvidence?,
                   supportsRandomAccess: Bool) throws -> PreparedSourceAudio {
         guard received == audio.sourceFrameCount else { throw NativeSourcePreparationFailure.incompleteOrInvalidPCM }
         try flush()
         return PreparedSourceAudio(interpretation: audio.interpretation, tileFrames: audio.tileFrames,
             witness: audio.witness, identity: audio.identity, session: audio.session, manifestKey: audio.manifestKey,
-            legacyWavePCMChannelOrder: legacyWavePCMChannelOrder, supportsRandomAccess: supportsRandomAccess)
+            legacyWavePCMChannelOrder: legacyWavePCMChannelOrder, m4aCodecChannelOrder: m4aCodecChannelOrder,
+            supportsRandomAccess: supportsRandomAccess)
     }
 
     func stagedAssets() -> [StagedDerivedAsset] { tiles }

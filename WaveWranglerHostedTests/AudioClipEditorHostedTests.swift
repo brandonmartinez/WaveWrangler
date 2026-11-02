@@ -1,4 +1,5 @@
 import AppKit
+import AudioToolbox
 import CoreTransferable
 import Foundation
 import Testing
@@ -133,6 +134,44 @@ struct AudioClipEditorHostedTests {
         f.editor.reloadWaveforms()
         try await wait { !f.editor.isPreparingWaveforms }
         #expect(f.editor.waveforms[source.id] == nil && f.editor.error?.contains("blocked") == true)
+    }
+
+    @Test func m4aAddAudioPreservesChannelsUndoAndSavedOriginals() async throws {
+        for codec in [kAudioFormatMPEG4AAC, kAudioFormatAppleLossless] {
+            let f = try await fixture()
+            defer { f.close() }
+            let file = f.folder.appendingPathComponent("generated.m4a")
+            try SupplementalProductionHostedTests.writeAudio(file, codec: codec, containerType: kAudioFileM4AType)
+            let original = try Data(contentsOf: file), before = f.document.store.model
+            f.editor.importer.commit(try await review(f, files: [file]))
+            try await wait { f.editor.importer.processing == nil }
+            let error = f.editor.importer.error
+            try #require(error == nil, Comment(rawValue: error ?? ""))
+            f.editor.refresh()
+            let after = f.document.store.model
+            let episode = try #require(after.episode(f.model.episodeID))
+            let track = try #require(episode.audioArrangement?.tracks.first)
+            #expect(episode.alignment == nil && episode.alignmentSources.isEmpty)
+            #expect(episode.audioArrangement?.assets.first?.channelCount == 2)
+            #expect(episode.audioArrangement?.assets.first?.frameCount == 4800)
+            let recipe = try await f.runtime.mixerRecipe(
+                model: after, episode: f.model.episodeID, programFrames: 0..<4800)
+            let pcm = try await f.runtime.productionPCM(recipe: recipe, model: after, frames: 0..<4800)
+            let channels = try #require(pcm.audioTracks[track.id])
+            #expect(channels.count == 2 && channels.allSatisfy { $0.count == 4800 })
+            #expect(channels.allSatisfy { $0.contains { $0 != 0 } })
+            f.document.undoManager?.undo()
+            let undone = f.document.store.model
+            #expect(undone == before)
+            f.document.undoManager?.redo()
+            let redone = f.document.store.model
+            #expect(redone == after)
+            try await MixerHostedTests().save(f.document)
+            let savedURL = f.document.fileURL
+            let saved = try Data(contentsOf: #require(savedURL))
+            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(saved).payload == after)
+            #expect(try Data(contentsOf: file) == original)
+        }
     }
 
     @Test func multiFileOverlapTrackMovesPinsTrimsAndSplitsKeepExactOutputAndUndo() async throws {
