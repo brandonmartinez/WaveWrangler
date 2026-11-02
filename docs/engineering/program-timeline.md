@@ -307,15 +307,14 @@ converts current display position through `AudioTimelineProjection` to a checked
 whole 48 kHz program frame. Review-only cut interiors refuse. Header-only/ambiguous
 drops have no target; nothing silently clamps to zero. Hover is a point and label,
 not a provider load, header read, audio preview, or guessed duration.
-Clip button labels, outer frames, and native accessibility buttons share the same
-computed block size. Native accessibility bounds must describe the visible clip,
+Clip button labels and outer frames share the same computed block size.
+Native accessibility bounds must describe the visible clip,
 not its entire lane. Finder UI
 coverage uses those real bounds and refuses an occluded destination rather than
 substituting another drop point.
-Each composite clip uses one AppKit accessibility button with its real view bounds,
-selection state, value, and press action. This view does not intercept pointer events;
-the existing SwiftUI button and gestures remain responsible for mouse interaction.
-The decorative waveform, envelope, label, and trim handles are not separate controls.
+Place clip buttons with leading/top layout padding inside the explicitly sized
+viewport stack, not a visual-only offset. Accessibility belongs to the fixed-size
+button before that positioning padding so its frame describes the actual control.
 
 The captured destination uses distinct `.defaultTrack`, `.existing(id)`, and
 `.newTrack` intents; review resolves the default before confirmation. Audio lanes
