@@ -117,13 +117,13 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         placementEvidence.name = "F6 Finder placements after control, Undo, save, and source-byte assertions"
         placementEvidence.lifetime = .keepAlways
         add(placementEvidence)
-        let capturedClipMidX = app.buttons[originalClipID].frame.midX
-        let capturedRulerFrame = ruler.frame
-        let capturedViewport = try viewport(app)
         for _ in 0..<7 {
             app.descendants(matching: .any)["ww.audioWorkspace.audioTracks"].click()
             app.menuItems["New Audio Track"].click()
         }
+        let capturedClipMidX = app.buttons[originalClipID].frame.midX
+        let capturedRulerFrame = ruler.frame
+        let capturedViewport = try viewport(app)
         let lastTrack = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.audioTrack.select.' AND label == 'Audio 8'")).firstMatch
         let workspace = app.scrollViews["ww.alignment.workspace"]
