@@ -356,9 +356,9 @@ private struct AudioClipAccessibilityCanvas: NSViewRepresentable {
             super.init(frame: .zero)
             title = ""
             isBordered = false
-            isTransparent = true
             setButtonType(.momentaryPushIn)
             setAccessibilityElement(true)
+            setAccessibilityRole(.button)
             target = self
             action = #selector(performSelection(_:))
         }

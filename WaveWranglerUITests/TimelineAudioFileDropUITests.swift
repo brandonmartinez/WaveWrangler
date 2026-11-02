@@ -17,6 +17,8 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(NSWorkspace.shared.open(root))
         let window = finder.windows[root.lastPathComponent]
         XCTAssertTrue(window.waitForExistence(timeout: 10))
+        registerFinderWindowCleanup(window)
+        defer { closeFinderWindow(window) }
         arrangeFinder(window, finder: finder, app: app)
         let empty = app.staticTexts["ww.audioDrop.empty"]
         XCTAssertTrue(empty.waitForExistence(timeout: 10), app.debugDescription)
@@ -143,6 +145,8 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(NSWorkspace.shared.open(root))
         let window = finder.windows[root.lastPathComponent]
         XCTAssertTrue(window.waitForExistence(timeout: 10))
+        registerFinderWindowCleanup(window)
+        defer { closeFinderWindow(window) }
         arrangeFinder(window, finder: finder, app: app)
         drop(nested.lastPathComponent, window: window, finder: finder, app: app,
              to: app.staticTexts["ww.audioDrop.empty"].coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)))
@@ -168,6 +172,8 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(NSWorkspace.shared.open(root))
         let window = finder.windows[root.lastPathComponent]
         XCTAssertTrue(window.waitForExistence(timeout: 10))
+        registerFinderWindowCleanup(window)
+        defer { closeFinderWindow(window) }
         arrangeFinder(window, finder: finder, app: app)
         finder.activate()
         let destination = app.staticTexts["ww.audioDrop.empty"]
@@ -238,6 +244,14 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         app.menuBars.menuBarItems["Window"].click()
         app.menuBars.menuItems["Zoom"].click()
         return app
+    }
+
+    private func registerFinderWindowCleanup(_ window: XCUIElement) {
+        addTeardownBlock { @MainActor () async in self.closeFinderWindow(window) }
+    }
+
+    private func closeFinderWindow(_ window: XCUIElement) {
+        if window.exists { window.buttons[XCUIIdentifierCloseWindow].click() }
     }
 
     private func arrangeFinder(_ window: XCUIElement, finder: XCUIApplication, app: XCUIApplication) {
