@@ -243,13 +243,15 @@ struct AudioFadeHostedTests {
             programStart: 2, viewportStart: 2, viewportDuration: 2, viewportWidth: 640,
             left: 0, width: 640, height: 100, projection: .unedited)
         let geometry = try AudioEnvelopeGeometry.make(key)
-        let window = try #require(bed.owner.window), content = try #require(window.contentView)
-        let view = AudioAutomationCanvas.CanvasView(editor: editor)
-        view.frame = .init(x: 0, y: 0, width: 640, height: 100)
-        content.addSubview(view)
-        defer { view.stop(); view.removeFromSuperview() }
-        view.update([.init(projected: clip, frame: view.bounds, key: key, geometry: geometry)],
-            enabled: true, isActive: { true })
+        let host = HostedTimelineWindow(width: 640, height: 100, content: AudioAutomationCanvas(
+            size: .init(width: 640, height: 100),
+            items: [.init(projected: clip, frame: .init(x: 0, y: 0, width: 640, height: 100),
+                          key: key, geometry: geometry)],
+            editor: editor, isActive: { true }))
+        defer { host.close() }
+        try await host.settle()
+        let canvas = host.descendants.compactMap { $0 as? AudioAutomationCanvas.CanvasView }.first
+        let view = try #require(canvas), window = host.window
         let point = try #require(geometry.points.first { $0.index == 1 }).position
         func mouse(_ type: NSEvent.EventType, at point: CGPoint) throws -> NSEvent {
             try #require(NSEvent.mouseEvent(with: type, location: view.convert(point, to: nil),

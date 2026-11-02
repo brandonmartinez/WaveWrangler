@@ -16,8 +16,8 @@ final class AudioFadeUITests: XCTestCase {
         fade(app, direction: "out", start: "4", duration: "1", level: "0")
         app.buttons["alignment.waveforms.fitTimeline"].click()
         let clip = clips(app).firstMatch, clipFrame = clip.frame, clipValue = clip.value as? String
-        let tools = app.buttons["alignment.waveforms.tool"]
-        XCTAssertTrue(tools.isHittable)
+        let tools = app.menuButtons["alignment.waveforms.tool"]
+        XCTAssertTrue(tools.isHittable, app.debugDescription)
         tools.click()
         app.menuItems["Automation"].click()
         let first = automationPoint(1, in: app), second = automationPoint(2, in: app)
