@@ -3,6 +3,11 @@ import SwiftUI
 import WWCommonEdit
 import WWCore
 
+enum AudioAutomationTarget: Hashable, Sendable {
+    case point(Int)
+    case level(first: Int, last: Int)
+}
+
 struct AudioEnvelopeGeometryKey: Equatable {
     let envelope: AudioClipEnvelope
     let durationFrames: Int64
@@ -19,10 +24,17 @@ struct AudioEnvelopeGeometryKey: Equatable {
 struct AudioEnvelopeGeometry {
     struct Point {
         let index: Int
+        let local: AudioEnvelopeCoordinate
         let position: CGPoint
+    }
+    struct Segment {
+        let first: Int
+        let last: Int
+        let frame: CGRect
     }
     let lines: [[CGPoint]]
     let points: [Point]
+    let segments: [Segment]
     static let maximumColumns = 8_192
 
     static func make(_ key: AudioEnvelopeGeometryKey) throws -> Self {
@@ -34,7 +46,7 @@ struct AudioEnvelopeGeometry {
             throw AudioFadeInput.Refusal("Envelope display needs a finite, positive viewport.")
         }
         let editing = try AudioEnvelopeEditing(envelope: key.envelope, durationFrames: key.durationFrames)
-        guard !key.envelope.points.isEmpty else { return .init(lines: [], points: []) }
+        guard !key.envelope.points.isEmpty else { return .init(lines: [], points: [], segments: []) }
         let columns = max(1, Int(ceil(min(Double(maximumColumns), key.width))))
         var xs = (0...(columns * 2)).map { Double($0) / Double(columns * 2) * key.width }
         var pointsByColumn: [Int: Point] = [:]
@@ -46,7 +58,7 @@ struct AudioEnvelopeGeometry {
             let x = (display - key.viewportStart) / key.viewportDuration * key.viewportWidth - key.left
             guard x >= 0, x <= key.width else { continue }
             let column = min(columns - 1, Int(x / key.width * Double(columns)))
-            pointsByColumn[column] = .init(index: index, position: .init(x: x, y: y(point.amplitude, key: key)))
+            pointsByColumn[column] = .init(index: index, local: local, position: .init(x: x, y: y(point.amplitude, key: key)))
         }
         let points = pointsByColumn.values.sorted { $0.position.x < $1.position.x }
         let knots = Dictionary(points.map { (Double($0.position.x), $0.position) }, uniquingKeysWith: { _, latest in latest })
@@ -86,7 +98,62 @@ struct AudioEnvelopeGeometry {
             line.append(.init(x: x, y: y(amplitude, key: key)))
         }
         if !line.isEmpty { lines.append(line) }
-        return .init(lines: lines, points: points)
+        return .init(lines: lines, points: points, segments: try flatSegments(key, editing: editing))
+    }
+
+    func target(at position: CGPoint) -> AudioAutomationTarget? {
+        if let point = points.filter({ hypot($0.position.x - position.x, $0.position.y - position.y) <= 8 })
+            .min(by: { hypot($0.position.x - position.x, $0.position.y - position.y)
+                < hypot($1.position.x - position.x, $1.position.y - position.y) }) {
+            return .point(point.index)
+        }
+        return segments.first(where: { $0.frame.contains(position) }).map { .level(first: $0.first, last: $0.last) }
+    }
+
+    private static func flatSegments(_ key: AudioEnvelopeGeometryKey, editing: AudioEnvelopeEditing) throws -> [Segment] {
+        let knots = key.envelope.points
+        let locals = try knots.map { try editing.localCoordinate(of: $0) }
+        let end = try AudioEnvelopeCoordinate(numerator: key.durationFrames)
+        var result: [Segment] = []
+        func add(_ first: Int, _ last: Int, from lo: Double, to hi: Double) {
+            guard hi > lo, result.count < maximumColumns else { return }
+            func x(_ local: Double) -> Double {
+                (key.projection.displayTime(forProgramTime: key.programStart + local / 48_000) - key.viewportStart)
+                    / key.viewportDuration * key.viewportWidth - key.left
+            }
+            let left = max(0, x(lo)), right = min(key.width, x(hi))
+            guard right > left else { return }
+            var ranges = [left..<right]
+            for gap in key.projection.reviewOnlyDisplayRanges {
+                let a = (gap.lowerBound - key.viewportStart) / key.viewportDuration * key.viewportWidth - key.left
+                let b = (gap.upperBound - key.viewportStart) / key.viewportDuration * key.viewportWidth - key.left
+                ranges = ranges.flatMap { range -> [Range<Double>] in
+                    guard a < range.upperBound, b > range.lowerBound else { return [range] }
+                    var kept: [Range<Double>] = []
+                    if a > range.lowerBound { kept.append(range.lowerBound..<a) }
+                    if b < range.upperBound { kept.append(b..<range.upperBound) }
+                    return kept
+                }
+            }
+            for range in ranges where range.upperBound - range.lowerBound >= 8 && result.count < maximumColumns {
+                result.append(.init(first: first, last: last,
+                    frame: .init(x: range.lowerBound, y: y(knots[first].amplitude, key: key) - 6,
+                                 width: range.upperBound - range.lowerBound, height: 12)))
+            }
+        }
+        func value(_ coordinate: AudioEnvelopeCoordinate) -> Double {
+            Double(coordinate.numerator) / Double(coordinate.denominator)
+        }
+        if let first = locals.first, first > .zero, first <= end { add(0, 0, from: 0, to: value(first)) }
+        for index in knots.indices.dropFirst()
+        where knots[index - 1].amplitude == knots[index].amplitude
+            && locals[index - 1] >= .zero && locals[index] <= end {
+            add(index - 1, index, from: value(locals[index - 1]), to: value(locals[index]))
+        }
+        if let last = locals.last, last >= .zero, last < end {
+            add(knots.count - 1, knots.count - 1, from: value(last), to: Double(key.durationFrames))
+        }
+        return result
     }
 
     private static func y(_ amplitude: Double, key: AudioEnvelopeGeometryKey) -> Double {

@@ -18,6 +18,7 @@
       "selectedTests": [
         "AudioClipEditorUITests/testEmptyEpisodeAddAudioEditsUndoAndAllLayouts()",
         "AudioFadeUITests/testFadeInLowFullSilenceNumericPointEditingRemovalUndoAndSave()",
+        "AudioFadeUITests/testAutomationToolDragsPointsInTimeAndFlatSegmentsInLevelWithUndo()",
         "TimelineAudioFileDropUITests/testFinderDropsReachEmptyCanvasWaveformBlockAndBlankLaneAtCapturedFrames()",
         "VisualAlignmentUITests/testNormalImportThroughSavedManualPlayback()",
         "UnifiedWorkspaceUITests/testIntegratedWorkspaceManagementSelectionCycleAndReadableTranscript()",

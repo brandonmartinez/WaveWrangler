@@ -13,9 +13,11 @@ struct AudioClipTrackView: View {
     let headerWidth: Double
     let normalized: Bool
     let projection: AudioTimelineProjection
+    var listening: EpisodeListeningState? = nil
     var workspaceState: ShowWindowState? = nil
     let showInspector: () -> Void
     @GestureState private var dragging = false
+    private var automationEnabled: Bool { listening?.effectiveTool == .automation }
 
     private var clips: [ProgramAudioClip] {
         editor.composition?.clips.filter { clip in
@@ -64,6 +66,12 @@ struct AudioClipTrackView: View {
                         editor.select(id)
                         showInspector()
                     }
+                    if automationEnabled {
+                        AudioAutomationCanvas(size: geometry.size, items: automationItems(blocks, size: geometry.size),
+                            editor: editor, isActive: {
+                                listening?.effectiveTool == .automation
+                            })
+                    }
                     if duration > 0, playhead >= start, playhead <= start + duration {
                         Rectangle().fill(.red.opacity(0.8)).frame(width: 1)
                             .offset(x: (playhead - start) / duration * geometry.size.width)
@@ -76,6 +84,12 @@ struct AudioClipTrackView: View {
                     editor.trackFrames[track.id] = $0
                 }
             }
+            .overlay(alignment: .bottomLeading) {
+                if automationEnabled, let error = editor.error {
+                    Text(error).font(.caption2).foregroundStyle(.red)
+                        .padding(4).allowsHitTesting(false)
+                }
+            }
             .modifier(AudioTimelineFileDropTarget(importer: editor.importer, state: workspaceState,
                 start: start, duration: duration, projection: projection, track: .existing(track.id)))
             .frame(height: height)
@@ -83,7 +97,7 @@ struct AudioClipTrackView: View {
         .frame(minHeight: height)
         .padding(8)
         .background(.quaternary.opacity(0.15), in: RoundedRectangle(cornerRadius: 8))
-        .onKeyPress(.escape) { editor.cancelGesture(); return .handled }
+        .onKeyPress(.escape) { editor.cancelGesture(); editor.cancelAutomationGesture(); return .handled }
         .onChange(of: dragging) { _, active in
             if !active {
                 Task { @MainActor in
@@ -119,6 +133,8 @@ struct AudioClipTrackView: View {
     private func placement(_ projected: ProgramAudioClip, size: CGSize) -> ClipBlock? {
         guard duration > 0, size.width > 0, size.height > 0 else { return nil }
         let preview = editor.gesture?.clip.clip.id == projected.clip.id ? editor.gesture : nil
+        let automation = editor.automationGesture?.session.projected.clip.id == projected.clip.id
+            ? editor.automationGesture : nil
         let programFirst = Double(preview?.startFrame ?? projected.programFrames.lowerBound) / 48_000
         let first = projection.displayTime(forProgramTime: programFirst)
         let count = Double(preview?.localFrames?.count ?? projected.programFrames.count) / 48_000
@@ -126,12 +142,29 @@ struct AudioClipTrackView: View {
         let left = max(0, (first - start) / duration * size.width)
         let right = min(size.width, (displayEnd - start) / duration * size.width)
         guard right >= left, displayEnd > start, first < start + duration else { return nil }
-        return .init(projected: projected, renderedClip: preview?.previewClip ?? projected.clip,
+        return .init(projected: projected, renderedClip: automation?.previewClip ?? preview?.previewClip ?? projected.clip,
                      frame: CGRect(x: left, y: 2, width: max(6, right - left), height: max(40, size.height - 4)),
                      first: first, displayEnd: displayEnd, programFirst: programFirst, count: count,
-                     selected: editor.selectedClip == projected.clip.id, invalid: preview?.previewError != nil,
+                     selected: editor.selectedClip == projected.clip.id,
+                     invalid: preview?.previewError != nil || automation?.previewError != nil,
                      dimmed: preview != nil && projected.clip.track == track.id && preview?.track != track.id,
                      name: name(projected))
+    }
+
+    private func envelopeKey(_ item: ClipBlock, size: CGSize) -> AudioEnvelopeGeometryKey? {
+        guard let frames = item.renderedClip.durationFrames(asset: item.projected.asset) else { return nil }
+        return .init(envelope: item.renderedClip.envelope, durationFrames: frames,
+            programStart: item.programFirst, viewportStart: start, viewportDuration: duration,
+            viewportWidth: size.width, left: item.frame.minX, width: item.frame.width,
+            height: item.frame.height, projection: projection)
+    }
+
+    private func automationItems(_ blocks: [ClipBlock], size: CGSize) -> [AudioAutomationCanvas.Item] {
+        blocks.filter(\.selected).compactMap { item in
+            guard let key = envelopeKey(item, size: size),
+                  let geometry = editor.envelopeGeometryCache.geometry(for: item.id, key: key).geometry else { return nil }
+            return .init(projected: item.projected, frame: item.frame, key: key, geometry: geometry)
+        }
     }
 
     private func accessibilityItems(_ blocks: [ClipBlock], size: CGSize) -> [AudioClipAccessibilityCanvas.Item] {
@@ -165,12 +198,9 @@ struct AudioClipTrackView: View {
                             .allowsHitTesting(false)
                     }
                     .overlay {
-                        if let frames = renderedClip.durationFrames(asset: projected.asset) {
+                        if let key = envelopeKey(item, size: size) {
                             AudioEnvelopeDrawing(cache: editor.envelopeGeometryCache, clip: projected.clip.id,
-                                key: .init(envelope: renderedClip.envelope, durationFrames: frames,
-                                    programStart: programFirst, viewportStart: start, viewportDuration: duration,
-                                    viewportWidth: size.width, left: left, width: blockWidth, height: blockHeight,
-                                    projection: projection))
+                                key: key)
                                 .equatable()
                         }
                     }
@@ -194,12 +224,12 @@ struct AudioClipTrackView: View {
             .buttonStyle(.plain)
             .frame(width: blockWidth, height: blockHeight)
             .contentShape(Rectangle())
-            .simultaneousGesture(moveGesture(projected, width: size.width))
+            .simultaneousGesture(moveGesture(projected, width: size.width), including: automationEnabled ? .none : .all)
             .overlay(alignment: .leading) {
-                if selected, editor.store.canEdit, item.first >= start { edge(projected, leading: true, width: size.width) }
+                if !automationEnabled, selected, editor.store.canEdit, item.first >= start { edge(projected, leading: true, width: size.width) }
             }
             .overlay(alignment: .trailing) {
-                if selected, editor.store.canEdit, item.displayEnd <= start + duration { edge(projected, leading: false, width: size.width) }
+                if !automationEnabled, selected, editor.store.canEdit, item.displayEnd <= start + duration { edge(projected, leading: false, width: size.width) }
             }
             .padding(.leading, left)
             .padding(.top, 2)

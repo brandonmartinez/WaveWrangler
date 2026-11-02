@@ -153,6 +153,20 @@ captured before opening a preview; the normal document replacement barrier still
 rejects later uncaptured changes. Orange curves and points are viewport-bounded
 and cached separately from raw waveforms and the live playhead.
 
+Choose **Automation** in the timeline's primary or Command-click tool menu to
+edit the selected clip directly. Point handles use a horizontal resize cursor:
+drag left/right to adjust time without changing level. Timing stops before
+neighboring knots and preserves exact fractional trim phase. Flat envelope
+segments use a vertical resize cursor: drag up/down to adjust both endpoint
+levels together, or the single endpoint of a held tail, without moving times.
+Levels clamp to 0...1. Each completed drag is one Undo action; previews do not
+save, and Escape, a tool/window/context change, or an invalid production
+coordinate cancels without a partial edit. Retained outside-trim support stays
+read-only. Clip movement and trim handles remain separate in the Pointer tool.
+Focus a native handle for arrow-key nudges (one frame or 0.01 amplitude);
+assistive custom actions expose the same changes. Existing numeric point
+editing remains available in the inspector.
+
 The shared staged import coordinator qualifies all selected candidates before
 one canonical **Add Audio** transaction inserts sources, assets, track, and clips.
 The existing source engine owns opaque, live pending tokens; evidence outside a
@@ -1200,7 +1214,7 @@ plan; a passing feature gate does not resolve or qualify this discrepancy.
 
 Per-PR GUI selection and the reviewed conditional flake-quarantine policy (currently only the
 #218 broad synthetic Library contrast test) are documented in [GUI flake quarantine](gui-flake-quarantine.md).
-`scripts/test.sh --ui` now selects the 10-test **PoC** feature gate, not the entire UI bundle.
+`scripts/test.sh --ui` selects the 17-test **PoC** feature gate, not the entire UI bundle.
 Explicit `--ui-profile=regression`, `--ui-profile=accessibility`, and
 `--ui-profile=performance` preserve broader coverage separately. Functional assertions,
 source safety, persistence, Undo/Redo, and ordinary keyboard shortcuts remain covered;
