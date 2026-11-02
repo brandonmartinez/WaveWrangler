@@ -3,7 +3,7 @@ import SwiftUI
 struct TrackProcessingOperation: Equatable {
     enum Kind: String {
         case alignmentAnalysis, adaptiveAnalysis, alignmentAcceptance, timingUpdate
-        case waveforms, audioPreparation, transcription
+        case waveforms, audioPreparation, transcription, audioImport
     }
 
     let kind: Kind
@@ -14,6 +14,7 @@ struct TrackProcessingOperation: Equatable {
 
     @MainActor
     static func current(alignment: EpisodeAlignmentModel, cleanup: EpisodeCleanupModel?) -> Self? {
+        if let operation = alignment.audioEditor.processing { return operation }
         let operation = alignment.trackProcessingOperation
         if let operation, operation.kind != .waveforms { return operation }
         if let cleanup, cleanup.isBusy {
@@ -25,7 +26,9 @@ struct TrackProcessingOperation: Equatable {
 
     @MainActor
     static func cancel(alignment: EpisodeAlignmentModel, cleanup: EpisodeCleanupModel?) {
-        if current(alignment: alignment, cleanup: cleanup)?.kind == .transcription {
+        if alignment.audioEditor.processing != nil {
+            alignment.audioEditor.cancelPreparation()
+        } else if current(alignment: alignment, cleanup: cleanup)?.kind == .transcription {
             cleanup?.cancelTranscription()
             cleanup?.message = "Transcription canceled. No partial result was saved."
         } else {

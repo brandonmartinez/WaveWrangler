@@ -61,6 +61,23 @@ struct EpisodeSourceAccessTests {
         #expect(fixture.content.total.opens == opens, "verification and recheck open no audio beyond fixture analysis")
     }
 
+    @Test func assetWithoutAccessDoesNotWeakenCompleteRecordingVerification() async throws {
+        let (f, store, verifier) = try await fixture()
+        let source = SourceRecord(displayNameHint: "Unavailable supplemental asset", purpose: .supplementalAudio)
+        f.model = try f.model.addingSource(source, to: f.episodeID)
+        let opens = f.content.total.opens
+        let inventory = try await verifier.survey(episode: f.episodeID) { Self.document(f.model) }
+        #expect(inventory.lanes.count == 4)
+        #expect(!inventory.lanes.contains { $0.source == source.id })
+        #expect(f.content.total.opens == opens)
+        let backup = DeviceAccessKey(showID: f.model.show.id, sourceID: f.id("backup"))
+        try await store.removeRecord(for: backup)
+        await #expect(throws: EpisodeSourceAccessRefusal.accessMissing(backup.sourceID)) {
+            try await verifier.survey(episode: f.episodeID) { Self.document(f.model) }
+        }
+        await f.pipeline.shutdown()
+    }
+
     @Test func missingOrDuplicateSourceAndUnknownChannelRefuse() async throws {
         let (fixture, _, verifier) = try await fixture()
         let original = fixture.model

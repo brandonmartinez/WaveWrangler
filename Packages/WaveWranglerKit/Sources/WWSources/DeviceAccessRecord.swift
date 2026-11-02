@@ -104,16 +104,37 @@ public struct DeviceAccessGeneration: Sendable, Hashable {
 public struct DeviceAccessSnapshot: Sendable, Equatable {
     public let record: DeviceAccessRecord
     public let mutationGeneration: DeviceAccessGeneration?
+    public let storeIdentity: UUID
 
-    fileprivate init(record: DeviceAccessRecord, mutationGeneration: DeviceAccessGeneration?) {
+    fileprivate init(record: DeviceAccessRecord, mutationGeneration: DeviceAccessGeneration?, storeIdentity: UUID) {
         self.record = record
         self.mutationGeneration = mutationGeneration
+        self.storeIdentity = storeIdentity
+    }
+
+    /// Existing snapshot equality is durable evidence across store reconstruction. Conditional import
+    /// cleanup additionally checks `storeIdentity`; equal durable bytes never transfer cleanup ownership.
+    public static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.record == rhs.record && lhs.mutationGeneration == rhs.mutationGeneration
     }
 }
 
 /// Additive snapshot seam; legacy DeviceAccessStore conformers do not silently gain authority.
 public protocol DeviceAccessSnapshotStore: DeviceAccessStore {
     func snapshot(for key: DeviceAccessKey) async throws -> DeviceAccessSnapshot?
+}
+
+/// Import-only conditional publication, serialized by the existing store actor. This does not claim
+/// cross-process compare-and-swap. Unsupported stores must refuse rather than fall back to `save`.
+public protocol DeviceAccessImportStore: DeviceAccessSnapshotStore {
+    func insertNew(_ records: [DeviceAccessRecord]) async throws -> [DeviceAccessSnapshot]
+    /// Returns ownership refusals; unrelated or subsequently mutated grants are never removed.
+    func discardImported(_ snapshots: [DeviceAccessSnapshot]) async throws -> [DeviceAccessKey]
+}
+
+public enum DeviceAccessImportError: Error, Sendable, Equatable {
+    case duplicateKey(DeviceAccessKey)
+    case occupiedKey(DeviceAccessKey)
 }
 
 extension Array where Element == DeviceAccessRecord {
@@ -128,11 +149,14 @@ public enum DeviceAccessStoreError: Error, Equatable, Sendable {
     case unreadable(SourceErrorDescriptor)
 }
 
-public actor InMemoryDeviceAccessStore: DeviceAccessSnapshotStore {
+public actor InMemoryDeviceAccessStore: DeviceAccessImportStore {
     private var records: [DeviceAccessKey: DeviceAccessSnapshot] = [:]
+    private let identity = UUID()
 
     public init(_ records: [DeviceAccessRecord] = []) {
-        for record in records { self.records[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: nil) }
+        for record in records {
+            self.records[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: nil, storeIdentity: identity)
+        }
     }
 
     public func snapshot(for key: DeviceAccessKey) -> DeviceAccessSnapshot? { records[key] }
@@ -142,17 +166,42 @@ public actor InMemoryDeviceAccessStore: DeviceAccessSnapshotStore {
     }
     public func allRecords() -> [DeviceAccessRecord] { records.values.map(\.record).sortedByKey() }
     public func save(_ record: DeviceAccessRecord) {
-        records[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: DeviceAccessGeneration(UUID()))
+        records[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: DeviceAccessGeneration(UUID()),
+                                                  storeIdentity: identity)
     }
     public func save(_ records: [DeviceAccessRecord]) { for record in records { save(record) } }
     public func removeRecord(for key: DeviceAccessKey) { records[key] = nil }
     public func removeRecords(in showID: ShowID) { records = records.filter { $0.key.showID != showID } }
+
+    public func insertNew(_ proposed: [DeviceAccessRecord]) throws -> [DeviceAccessSnapshot] {
+        var seen: Set<DeviceAccessKey> = []
+        for record in proposed {
+            guard seen.insert(record.key).inserted else { throw DeviceAccessImportError.duplicateKey(record.key) }
+            guard records[record.key] == nil else { throw DeviceAccessImportError.occupiedKey(record.key) }
+        }
+        let inserted = proposed.map {
+            DeviceAccessSnapshot(record: $0, mutationGeneration: DeviceAccessGeneration(UUID()), storeIdentity: identity)
+        }
+        for snapshot in inserted { records[snapshot.record.key] = snapshot }
+        return inserted
+    }
+
+    public func discardImported(_ inserted: [DeviceAccessSnapshot]) -> [DeviceAccessKey] {
+        var refused: [DeviceAccessKey] = []
+        for snapshot in inserted {
+            let key = snapshot.record.key
+            if snapshot.storeIdentity == identity, records[key] == snapshot { records[key] = nil }
+            else { refused.append(key) }
+        }
+        return refused
+    }
 }
 
 /// JSON-file store in the app container (Application Support). The store file is the only thing it
 /// ever writes; it never touches sources.
-public actor FileDeviceAccessStore: DeviceAccessSnapshotStore {
+public actor FileDeviceAccessStore: DeviceAccessImportStore {
     private static let storeSchemaVersion = 2
+    private let identity = UUID()
 
     private struct LegacyEnvelope: Decodable {
         var schemaVersion: Int
@@ -230,9 +279,40 @@ public actor FileDeviceAccessStore: DeviceAccessSnapshotStore {
     public func save(_ records: [DeviceAccessRecord]) throws {
         var all = try load()
         for record in records {
-            all[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: DeviceAccessGeneration(UUID()))
+            all[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: DeviceAccessGeneration(UUID()),
+                                                  storeIdentity: identity)
         }
         try persist(all)
+    }
+
+    public func insertNew(_ proposed: [DeviceAccessRecord]) throws -> [DeviceAccessSnapshot] {
+        var all = try load()
+        var seen: Set<DeviceAccessKey> = []
+        for record in proposed {
+            guard seen.insert(record.key).inserted else { throw DeviceAccessImportError.duplicateKey(record.key) }
+            guard all[record.key] == nil else { throw DeviceAccessImportError.occupiedKey(record.key) }
+        }
+        let inserted = proposed.map {
+            DeviceAccessSnapshot(record: $0, mutationGeneration: DeviceAccessGeneration(UUID()), storeIdentity: identity)
+        }
+        for snapshot in inserted { all[snapshot.record.key] = snapshot }
+        try persist(all)
+        return inserted
+    }
+
+    public func discardImported(_ inserted: [DeviceAccessSnapshot]) throws -> [DeviceAccessKey] {
+        var all = try load()
+        var refused: [DeviceAccessKey] = []
+        var removed = false
+        for snapshot in inserted {
+            let key = snapshot.record.key
+            if snapshot.storeIdentity == identity, all[key] == snapshot {
+                all[key] = nil
+                removed = true
+            } else { refused.append(key) }
+        }
+        if removed { try persist(all) }
+        return refused
     }
 
     public func removeRecord(for key: DeviceAccessKey) throws {
@@ -273,13 +353,13 @@ public actor FileDeviceAccessStore: DeviceAccessSnapshotStore {
             switch header.schemaVersion {
             case 1:
                 entries = try decoder.decode(LegacyEnvelope.self, from: data).records.map {
-                    DeviceAccessSnapshot(record: $0, mutationGeneration: nil)
+                    DeviceAccessSnapshot(record: $0, mutationGeneration: nil, storeIdentity: identity)
                 }
             case Self.storeSchemaVersion:
                 entries = try decoder.decode(Envelope.self, from: data).records.map {
                     DeviceAccessSnapshot(
                         record: $0.record,
-                        mutationGeneration: $0.generation.map(DeviceAccessGeneration.init)
+                        mutationGeneration: $0.generation.map(DeviceAccessGeneration.init), storeIdentity: identity
                     )
                 }
             default:

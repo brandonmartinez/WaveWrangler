@@ -128,21 +128,44 @@ public struct MasterMixState: Sendable, Equatable, Codable {
     }
 }
 
-/// Sparse controls, never an alternate routing table. Episode speaker assignments alone select Primaries.
+public struct AudioTrackMixState: Sendable, Equatable, Codable {
+    public var track: AudioTrackID
+    public var gainDB: Double
+    /// Stereo balance, not a speaker pan/downmix. Native ordered channels stay independent.
+    public var balance: Double
+    public var inserts: [AudioUnitSlot]
+
+    public init(track: AudioTrackID, gainDB: Double = 0, balance: Double = 0, inserts: [AudioUnitSlot] = []) {
+        self.track = track
+        self.gainDB = gainDB
+        self.balance = balance
+        self.inserts = inserts
+    }
+
+    public var isValid: Bool {
+        EpisodeMixState.isValidGain(gainDB) && balance.isFinite && (-1...1).contains(balance)
+            && inserts.count <= EpisodeMixState.maximumInsertsPerBus && inserts.allSatisfy(\.isValid)
+    }
+}
+
+/// Sparse controls, never an alternate routing table. Assignments select Primaries; clips select assets.
 public struct EpisodeMixState: Sendable, Equatable, Codable {
     public var inputGains: [RecordingInputGain]
     public var speakers: [SpeakerMixState]
     public var master: MasterMixState
+    /// Omitted before schema 10 and for neutral audio tracks.
+    public var audioTracks: [AudioTrackMixState]?
 
     public static let gainRangeDB: ClosedRange<Double> = -96...24
     public static let maximumInsertsPerBus = 64
     public static let maximumDocumentStateBytes = 64 * 1024 * 1024
 
     public init(inputGains: [RecordingInputGain] = [], speakers: [SpeakerMixState] = [],
-                master: MasterMixState = MasterMixState()) {
+                master: MasterMixState = MasterMixState(), audioTracks: [AudioTrackMixState]? = nil) {
         self.inputGains = inputGains
         self.speakers = speakers
         self.master = master
+        self.audioTracks = audioTracks
     }
 
     public static func isValidGain(_ value: Double) -> Bool { value.isFinite && gainRangeDB.contains(value) }
@@ -155,10 +178,16 @@ public struct EpisodeMixState: Sendable, Equatable, Codable {
         speakers.first { $0.speaker == speaker } ?? SpeakerMixState(speaker: speaker)
     }
 
+    public func state(for track: AudioTrackID) -> AudioTrackMixState {
+        audioTracks?.first { $0.track == track } ?? AudioTrackMixState(track: track)
+    }
+
     public func validationIssues(in episode: Episode) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
         func invalid(_ detail: String) { issues.append(.init(.invalidMix, "episode \(episode.id): \(detail)")) }
-        if !master.isValid || !speakers.allSatisfy(\.isValid) || !inputGains.allSatisfy(\.isValid) {
+        let tracks = audioTracks ?? []
+        if !master.isValid || !speakers.allSatisfy(\.isValid) || !inputGains.allSatisfy(\.isValid)
+            || !tracks.allSatisfy(\.isValid) {
             invalid("invalid gain, pan, insert identity, diagnostics, or document state")
         }
         if Set(inputGains.map(\.reference)).count != inputGains.count {
@@ -171,8 +200,12 @@ public struct EpisodeMixState: Sendable, Equatable, Codable {
         if !Set(speakers.map(\.speaker)).isSubset(of: episodeSpeakers) {
             invalid("speaker strips must refer to speakers listed in the episode")
         }
+        if Set(tracks.map(\.track)).count != tracks.count
+            || !Set(tracks.map(\.track)).isSubset(of: Set(episode.audioArrangement?.tracks.map(\.id) ?? [])) {
+            invalid("audio strips must uniquely reference tracks in this episode")
+        }
         for gain in inputGains {
-            guard let source = episode.source(gain.source) else {
+            guard let source = episode.source(gain.source), source.isRecording else {
                 invalid("input gain refers to a missing recording \(gain.source)")
                 continue
             }
@@ -180,7 +213,7 @@ public struct EpisodeMixState: Sendable, Equatable, Codable {
                 invalid("input gain channel \(gain.channel) is outside recording \(gain.source)")
             }
         }
-        let slots = speakers.flatMap(\.inserts) + master.inserts
+        let slots = speakers.flatMap(\.inserts) + master.inserts + tracks.flatMap(\.inserts)
         if Set(slots.map(\.id)).count != slots.count {
             invalid("insert slot IDs must be unique across the episode's buses")
         }

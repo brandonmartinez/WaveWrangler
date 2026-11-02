@@ -91,7 +91,7 @@ public struct PrimaryCleanupPlan: Sendable {
         if episode.speakerAssignments.isEmpty { blockers.append("Assign a Primary recording to each speaker in Setup.") }
         if episode.speakerAssignments.count > 64 { blockers.append("Cleanup currently supports at most 64 speaker Primaries.") }
         let assignedSources = Set(episode.speakerAssignments.compactMap(\.primary?.sourceID))
-        for source in episode.sources where source.role == .primary && !assignedSources.contains(source.id) {
+        for source in episode.alignmentSources where source.role == .primary && !assignedSources.contains(source.id) {
             blockers.append("\(source.displayNameHint): assign this Primary to a speaker before transcription.")
         }
         let range = episode.cleanup?.explicitWorkingRange
@@ -104,6 +104,7 @@ public struct PrimaryCleanupPlan: Sendable {
                   assignment.primaryConfirmation == .userConfirmed,
                   !assignment.backups.contains(primary),
                   let source = episode.source(primary.sourceID),
+                  source.isRecording,
                   source.role == .primary, source.roleConfirmation == .userConfirmed,
                   !episode.speakerAssignments.contains(where: {
                       $0.speakerID != assignment.speakerID && $0.primary == primary

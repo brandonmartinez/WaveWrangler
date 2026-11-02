@@ -181,6 +181,20 @@ struct AlignmentWorkspace: View {
                 EditAnchorSheet(model: model, anchorID: anchorID)
             }
         }
+        .sheet(item: Binding(get: { model.audioEditor.importer.review }, set: {
+            model.audioEditor.importer.review = $0
+        }), onDismiss: { model.audioEditor.importer.reviewDidDismiss() }) { review in
+            AudioImportReviewSheet(review: review, cancel: { model.audioEditor.importer.cancel() },
+                apply: { model.audioEditor.importer.commit($0) })
+        }
+        .onChange(of: model.audioEditor.importer.completedClips) { _, clips in
+            model.audioEditor.refresh()
+            if let clip = clips.first { model.audioEditor.select(clip) }
+        }
+        .onChange(of: model.audioEditor.geometryVersion) { _, _ in model.synchronizeCuts() }
+        .onChange(of: model.audioEditor.importer.processing) { _, current in
+            if current == nil { model.audioEditor.refresh() }
+        }
     }
 
     struct AlignmentBottomPane: View {
@@ -188,6 +202,7 @@ struct AlignmentWorkspace: View {
         @Bindable var model: EpisodeAlignmentModel
 
         var body: some View {
+            GeometryReader { geometry in
             VStack(spacing: 0) {
                 HStack {
                     Picker("Bottom pane", selection: $state.bottomPaneContent) {
@@ -203,11 +218,21 @@ struct AlignmentWorkspace: View {
                         .labelStyle(.iconOnly)
                         .help("Open Transcript & Review in a separate window for this episode.")
                         .accessibilityIdentifier("ww.review.detach")
+                    } else if state.bottomPaneContent == .mixer, !state.mixerPresentation.isDetached {
+                        Button("Detach mixer", systemImage: "macwindow.on.rectangle") {
+                            state.mixerPresentation.detach()
+                        }
+                        .labelStyle(.iconOnly)
+                        .help("Open the production mixer in a separate window, including when the docked content has yielded space to the tracks.")
+                        .accessibilityIdentifier("ww.bottomPane.detachMixer")
                     }
                     Button("Hide bottom pane", systemImage: "xmark") { state.bottomPanePresented = false }
                         .labelStyle(.iconOnly).accessibilityIdentifier("ww.bottomPane.hide")
                 }.padding(6)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
                 Divider()
+                Group {
                 if state.bottomPaneContent == .review, let cleanup = state.cleanupModel {
                     if state.reviewPresentation.isDetached {
                         VStack(spacing: 8) {
@@ -237,6 +262,14 @@ struct AlignmentWorkspace: View {
                         MixerView(presentation: state.mixerPresentation)
                     }
                 }
+                }
+                .frame(minHeight: 0, maxHeight: .infinity, alignment: .top)
+                .contentShape(Rectangle())
+                .clipped()
+                .allowsHitTesting(geometry.size.height >= 120)
+                .accessibilityHidden(geometry.size.height < 120)
+            }
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .top)
             }
             .frame(minHeight: 0, maxHeight: 1200)
             .clipped()
@@ -796,7 +829,7 @@ enum AlignmentKeyHandler {
             return key == .space || key == .leftArrow || key == .rightArrow
         }
         if key == .space {
-            if !repeating { model.canStopAudition ? model.pauseEnabledTracks() : model.playEnabledTracks() }
+            if !repeating { model.canStopAudition ? model.pauseEnabledTracks() : model.playTransport() }
             return true
         }
         guard key == .leftArrow || key == .rightArrow,

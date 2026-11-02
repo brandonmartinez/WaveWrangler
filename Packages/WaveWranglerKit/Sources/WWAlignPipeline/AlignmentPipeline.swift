@@ -40,7 +40,7 @@ public struct AlignmentInspectionSnapshot: Sendable {
         in episode: Episode, channelCounts: [SourceID: Int]
     ) -> [RecordingEpochID: [SpeakerMatchOption]] {
         guard episode.id == plan.episode else { return [:] }
-        var counts = Dictionary(uniqueKeysWithValues: episode.sources.compactMap { source in
+        var counts = Dictionary(uniqueKeysWithValues: episode.alignmentSources.compactMap { source in
             source.observations.channelCount.value.map { (source.id, $0) }
         })
         counts.merge(channelCounts) { _, measured in measured }
@@ -128,7 +128,7 @@ public final class AlignmentPipeline: Sendable {
     ) -> RecipeReference? {
         let tokens = Dictionary(uniqueKeysWithValues: revisions.map { ($0.source, $0.token) })
         return MapDependencies.digest(map: map, tokens: tokens, format: format)
-            .map { MapDependencies.recipe(digest: $0) }
+            .map { MapDependencies.recipe(digest: $0, format: format) }
     }
     #endif
 
@@ -914,7 +914,7 @@ public final class AlignmentPipeline: Sendable {
                 inputs: EmbeddedTimeMapCodec.usedSources(built.map, corrections: corrections).map {
                     TimeMapSourceInput(sourceID: $0, formatInterpretationVersion: inputs.format.interpretationVersion)
                 },
-                recipe: MapDependencies.recipe(digest: dependencies, acceptedProposals: acceptedProposals),
+                recipe: MapDependencies.recipe(digest: dependencies, format: inputs.format, acceptedProposals: acceptedProposals),
                 derivedFrom: priorRevision, sourceCorrections: corrections.isEmpty ? nil : corrections
             )
             accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)
@@ -1346,7 +1346,7 @@ public final class AlignmentPipeline: Sendable {
             let recorded: ShowDocumentModel
             (recorded, revision) = try model.recordingMap(
                 map, in: episodeID, inputs: priorVersion.inputs.sources,
-                recipe: MapDependencies.recipe(digest: dependencies, acceptedProposals: unchangedProposals),
+                recipe: MapDependencies.recipe(digest: dependencies, format: inputs.format, acceptedProposals: unchangedProposals),
                 derivedFrom: derivedFrom, sourceCorrections: corrections.isEmpty ? nil : corrections
             )
             accepted = try recorded.acceptingMap(revision: revision.revision, in: episodeID)

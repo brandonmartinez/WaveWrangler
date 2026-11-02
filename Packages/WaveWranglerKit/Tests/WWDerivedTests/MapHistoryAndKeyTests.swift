@@ -205,8 +205,8 @@ struct DerivedAssetKeyTests {
         k = reference; k.asset.revision = 2; variants["asset revision"] = k
         k = reference; k.setSources([SourceRevision(source: source, token: "t2")]); variants["source revision"] = k
         k = reference; k.setSources([SourceRevision(source: other, token: "t1")]); variants["source identity"] = k
-        k = reference; k.format = FormatRevision(interpretationVersion: 2, envelopeVersion: 1); variants["format interpretation"] = k
-        k = reference; k.format = FormatRevision(interpretationVersion: 1, envelopeVersion: 2); variants["format envelope"] = k
+        k = reference; k.format = FormatRevision(interpretationVersion: FormatRevision.current.interpretationVersion + 1, envelopeVersion: FormatRevision.current.envelopeVersion); variants["format interpretation"] = k
+        k = reference; k.format = FormatRevision(interpretationVersion: FormatRevision.current.interpretationVersion, envelopeVersion: FormatRevision.current.envelopeVersion + 1); variants["format envelope"] = k
         k = reference; k.epoch = RecordingEpochID(); variants["epoch"] = k
         k = reference; k.occurrence = SourceOccurrenceID(); variants["occurrence"] = k
         k = reference; k.channel = 1; variants["channel"] = k

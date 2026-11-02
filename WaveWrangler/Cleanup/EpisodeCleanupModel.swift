@@ -611,7 +611,7 @@ final class EpisodeCleanupModel {
         else { waveformGeneration = token; isLoadingWaveforms = true }
         let snapshot = state.store.model
         let revealingCut = listening.expandedManualCutID
-        let cuts = cutTimeline
+        let cuts = cutTimeline.cuts
         let task = Task { [weak self] in
             guard let self else { return }
             defer {
@@ -744,7 +744,7 @@ final class EpisodeCleanupModel {
 
     func play() {
         if let workspaceAlignment {
-            workspaceAlignment.playEnabledTracks()
+            workspaceAlignment.playTransport()
             return
         }
         play(interval: listening.cycleEnabled ? listening.cycleRange : nil, loop: listening.cycleEnabled)
@@ -752,8 +752,12 @@ final class EpisodeCleanupModel {
 
     func play(interval: ClosedRange<Double>?, loop: Bool, applyingCuts: Bool = true) {
         if let workspaceAlignment {
-            workspaceAlignment.playEnabledTracks(interval: interval, repeatInterval: loop,
-                repeatWhile: { [weak self] in self?.loopsFillerAudition == true }, applyingCuts: applyingCuts)
+            if applyingCuts, workspaceAlignment.listening.usesProductionMix {
+                workspaceAlignment.playProductionMix(interval: interval)
+            } else {
+                workspaceAlignment.playEnabledTracks(interval: interval, repeatInterval: loop,
+                    repeatWhile: { [weak self] in self?.loopsFillerAudition == true }, applyingCuts: applyingCuts)
+            }
             return
         }
         let regions = plan?.lanes.flatMap(\.regions) ?? []

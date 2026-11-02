@@ -62,6 +62,58 @@ This is buffered monitoring, not live microphone monitoring or zero-latency proc
 The initial processing scope is arm64, mono/stereo recordings, mono speaker inserts, and 48 kHz
 stereo Master/output. Compatibility is unit-specific. There is no export/file-delivery UI yet.
 
+## Audio intros and inserted time
+
+Ordinary Audio Clip placement overlays the program; it never creates a gap.
+Open the compact **Inserted Time** menu above the timeline and choose
+**Insert Intro...** or **Insert & Ripple...** to explicitly insert time.
+The preview shows signed **program** start, duration
+or end, every affected dialogue interval, clip start, and inserted region.
+Intro defaults to the earliest retained dialogue, inserted region, or unpinned
+clip, not an assumed zero. Unrelated earlier pins stay fixed; an audio-only
+program uses its first content boundary, or zero when empty. Current original
+IN/OUT values remain visible and unchanged.
+
+**Move selected clip to insertion start** is an explicit, initially unchecked
+choice. An unpinned selection starts at offset zero in the new region; a chosen
+pinned clip explicitly moves there and keeps its pin. Other pins do not move.
+The lead-in is independent of the clip's full length: a 40-second music bed with
+a 10-second intro lets speech begin under the remaining music. Trims, channels,
+output ownership, fades, and original media stay intact.
+
+**Inserted Time** lists existing regions for position/duration editing or
+removal. A moved destination is measured with that region removed; leaving its
+start unchanged preserves same-boundary order. Clips attached to a moved region
+follow it. Shortening clamps starts in the removed tail to the new end; removal
+clamps attached starts to the old start. Neither operation deletes clip audio.
+Later unpinned placements and dialogue ripple, spanning clips stay whole, and
+other pins remain fixed. Regions cannot nest or be pinned. Exact region edges
+are valid destinations; interiors and Show cut's review-only audio are not.
+
+Each Apply is one named Undo/Redo and normal Save operation. Previewing never
+seeks, starts playback, changes routing, or edits the document. Applying stops
+playback, clears temporary selection/cycle, and reprojects retained waveforms,
+words, and markers; a cursor inside shortened/removed time clamps to its seam.
+Alignment clocks, accepted timing, transcript provenance, manual cuts, and
+original recordings are never rewritten to make an intro.
+
+## Audio Clip fades
+
+Select an Audio Clip, position the playhead inside its audible trimmed interval,
+and choose **Fade In...** or **Fade Out...** in the inspector. The fade starts at
+that production position, captures the evaluated current level, and ends after
+the entered duration or at the entered program end time. Amplitude is linear:
+1 is full level, 0.25 is low, and 0 is exact **Silence**. Fade In at the clip
+beginning can explicitly initialize Silence. Repeat actions to build
+full-to-low-to-zero or zero-to-low-to-full-to-zero sequences.
+
+Conflicting points, crossed ramps, and changed later hold/start levels are
+reviewed before explicit replacement. **Edit Fade Point...** supports exact
+local frame/fraction and level editing or deliberate removal. Each apply is one
+Undo action. The visible curve is cached separately from the playhead and raw
+waveform; moves, trims, splits, saves, and Undo/Redo retain source ownership and
+the exact curve. Original recordings, alignment, and transcripts are unchanged.
+
 ## Visual alignment
 
 Import recordings in **Setup** to review device groups, recording segments, and speaker/channel

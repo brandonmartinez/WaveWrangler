@@ -28,7 +28,7 @@ public struct EpisodeMediaInputs: Sendable, Equatable {
 
     public init(_ episode: Episode, includingWorkingRange: Bool = false) {
         self.episode = episode.id
-        sources = episode.sources.map {
+        sources = episode.alignmentSources.map {
             Source(id: $0.id, observations: $0.observations, placement: $0.placement,
                    role: $0.role, confirmation: $0.roleConfirmation)
         }.sorted { $0.id.description < $1.id.description }

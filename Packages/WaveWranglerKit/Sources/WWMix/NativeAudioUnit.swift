@@ -24,7 +24,7 @@ public struct MixerComponentGroup: Sendable, Equatable, Identifiable {
 public enum MixerAudioUnits {
     /// Discovery loads no unit, reads no media, and includes only installed audio/music effects.
     @MainActor public static func installedEffects() -> [MixerComponent] {
-        [kAudioUnitType_Effect, kAudioUnitType_MusicEffect].flatMap { type in
+        [kAudioUnitType_Effect, kAudioUnitType_MusicEffect].flatMap { type -> [MixerComponent] in
             let description = AudioComponentDescription(componentType: type, componentSubType: 0,
                 componentManufacturer: 0, componentFlags: 0, componentFlagsMask: 0)
             return AVAudioUnitComponentManager.shared().components(matching: description).map { component in

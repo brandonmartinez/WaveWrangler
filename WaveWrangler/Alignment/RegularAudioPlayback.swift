@@ -28,6 +28,7 @@ final class RegularAudioPlayback: Sendable {
     private let applyingCuts: Bool
     private let revealingCut: UUID?
     private let timebase: AlignmentRuntime.AuditionTimebase
+    private let presentation: AudioTimelineProjection?
     private let initialSources: [SourceID]
     private let availableSources: [SourceID]
     private let state: Mutex<State>
@@ -36,7 +37,8 @@ final class RegularAudioPlayback: Sendable {
     init(runtime: AlignmentRuntime, model: ShowDocumentModel, episode: Episode,
          output: AlignmentAudioPlayback, sources: [SourceID], availableSources: [SourceID],
          applyingCuts: Bool, revealingCut: UUID?,
-         timebase: AlignmentRuntime.AuditionTimebase = .acceptedTimeline) {
+         timebase: AlignmentRuntime.AuditionTimebase = .acceptedTimeline,
+         presentation: AudioTimelineProjection? = nil) {
         self.runtime = runtime
         self.model = model
         self.episode = episode.id
@@ -48,6 +50,7 @@ final class RegularAudioPlayback: Sendable {
         self.applyingCuts = applyingCuts
         self.revealingCut = revealingCut
         self.timebase = timebase
+        self.presentation = presentation
         state = Mutex(State(enabled: Set(sources)))
     }
 
@@ -64,6 +67,11 @@ final class RegularAudioPlayback: Sendable {
             state.withLock { $0.failure = MixerFailure.staleDependencies }
             output.stop(ifCurrent: outputGeneration, preservingClock: true)
             return
+        }
+        if presentation != nil,
+           current.audioArrangement?.insertionRegions != model.episode(episode)?.audioArrangement?.insertionRegions {
+            state.withLock { $0.failure = MixerFailure.staleDependencies }
+            output.stop(ifCurrent: outputGeneration, preservingClock: true)
         }
     }
 
@@ -126,7 +134,7 @@ final class RegularAudioPlayback: Sendable {
                 do {
                     clips = try await runtime.sourceAuditions(model: model, episode: episode,
                         sources: requested, outputFrames: frames, applyingCuts: applyingCuts, revealingCut: revealingCut,
-                        timebase: timebase)
+                        timebase: timebase, presentation: presentation)
                     prepared = requested
                     break
                 } catch let error as AlignmentRuntime.AuditionSourceFailure {
@@ -161,7 +169,7 @@ final class RegularAudioPlayback: Sendable {
                         do {
                             _ = try await runtime.sourceAuditions(model: model, episode: episode,
                                 sources: [source], outputFrames: range, applyingCuts: applyingCuts, revealingCut: revealingCut,
-                                timebase: timebase)
+                                timebase: timebase, presentation: presentation)
                             try Task.checkCancellation()
                             state.withLock { $0.warm = Warm(source: source, frames: range); $0.warming = nil }
                         } catch {

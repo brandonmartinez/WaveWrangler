@@ -16,6 +16,9 @@
     {
       "parallelizable": false,
       "selectedTests": [
+        "AudioClipEditorUITests/testEmptyEpisodeAddAudioEditsUndoAndAllLayouts()",
+        "AudioFadeUITests/testFadeInLowFullSilenceNumericPointEditingRemovalUndoAndSave()",
+        "TimelineAudioFileDropUITests/testFinderDropsReachEmptyCanvasWaveformBlockAndBlankLaneAtCapturedFrames()",
         "VisualAlignmentUITests/testNormalImportThroughSavedManualPlayback()",
         "UnifiedWorkspaceUITests/testIntegratedWorkspaceManagementSelectionCycleAndReadableTranscript()",
         "MixerUITests/testReviewMixerResizeDetachReattachAndOriginClose()",

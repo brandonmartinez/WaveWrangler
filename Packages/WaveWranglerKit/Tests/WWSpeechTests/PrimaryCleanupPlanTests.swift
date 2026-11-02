@@ -40,6 +40,18 @@ struct PrimaryCleanupPlanTests {
         var plan: PrimaryCleanupPlan { PrimaryCleanupPlan.make(model: model, episode: model.episodes[0].id, map: map) }
     }
 
+    @Test func assetsDoNotEnterAutomaticTranscriptionOrMasqueradeAsSpeakerPrimaries() throws {
+        var f = try Fixture()
+        let original = f.plan
+        let asset = SourceRecord(displayNameHint: "Generated stereo asset", purpose: .supplementalAudio)
+        f.model.episodes[0].sources.append(asset)
+        #expect(f.plan.isReady)
+        #expect(f.plan.lanes.map(\.primary) == original.lanes.map(\.primary))
+        #expect(f.plan.alignedRange == original.alignedRange)
+        f.model.episodes[0].sources[0].purpose = .supplementalAudio
+        #expect(!f.plan.isReady && f.plan.lanes.isEmpty)
+    }
+
     @Test func referenceCountsAsAlignedAndExclusiveEndMapsWithoutExtrapolation() throws {
         let fixture = try Fixture()
         #expect(fixture.plan.isReady)

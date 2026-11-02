@@ -7,7 +7,12 @@ public enum SourceRole: String, Sendable, Codable, Equatable, CaseIterable {
     case backup
 }
 
-/// The portable, logical record of one referenced original recording.
+public enum SourcePurpose: String, Sendable, Codable, Equatable {
+    case recording
+    case supplementalAudio
+}
+
+/// The portable, logical record of one referenced original media file.
 ///
 /// This carries *no* path, filename-as-identity or bookmark: device-local access records keyed by `id`
 /// live outside canonical data (see `WWSources`). `displayNameHint` is only a human hint for relinking.
@@ -18,6 +23,10 @@ public struct SourceRecord: Sendable, Equatable, Codable, Identifiable {
     public var placement: SourcePlacement
     public var role: SourceRole
     public var roleConfirmation: Confirmation
+    /// Omitted before schema 10. Absence preserves recording behavior and canonical older bytes.
+    public var purpose: SourcePurpose?
+
+    public var isRecording: Bool { purpose != .supplementalAudio }
 
     public init(
         id: SourceID = SourceID(),
@@ -25,7 +34,8 @@ public struct SourceRecord: Sendable, Equatable, Codable, Identifiable {
         observations: SourceObservations = SourceObservations(),
         placement: SourcePlacement = SourcePlacement(),
         role: SourceRole = .unassigned,
-        roleConfirmation: Confirmation = .provisional
+        roleConfirmation: Confirmation = .provisional,
+        purpose: SourcePurpose? = nil
     ) {
         self.id = id
         self.displayNameHint = displayNameHint
@@ -33,6 +43,7 @@ public struct SourceRecord: Sendable, Equatable, Codable, Identifiable {
         self.placement = placement
         self.role = role
         self.roleConfirmation = roleConfirmation
+        self.purpose = purpose
     }
 }
 

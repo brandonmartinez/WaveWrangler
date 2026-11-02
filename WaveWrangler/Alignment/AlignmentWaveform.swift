@@ -84,13 +84,22 @@ struct AlignmentWaveformDrag {
     let initialMilliseconds: Double
     let group: RecorderGroupID
     let snapshot: UUID
+    var originalTime: Double? = nil
+    var displayTime: Double? = nil
 
-    func previewMilliseconds(at x: Double) -> Double? {
+    func previewMilliseconds(at x: Double, projection: AudioTimelineProjection? = nil) -> Double? {
         guard startX.isFinite, x.isFinite, width.isFinite, width > 0,
               durationSeconds.isFinite, durationSeconds > 0,
               initialMilliseconds.isFinite
         else { return nil }
-        let preview = initialMilliseconds + (x - startX) / width * durationSeconds * 1_000
+        let delta: Double
+        if let originalTime, let displayTime, let projection {
+            guard let target = projection.originalTime(forDisplayTime: displayTime + (x - startX) / width * durationSeconds) else {
+                return nil
+            }
+            delta = target - originalTime
+        } else { delta = (x - startX) / width * durationSeconds }
+        let preview = initialMilliseconds + delta * 1_000
         return preview.isFinite ? preview : nil
     }
 }
@@ -141,6 +150,7 @@ enum AlignmentWaveformProjection {
         let epoch: RecordingEpochID?
         let segment: AffineClockSegment?
         let cuts: ManualCutTimeline
+        var projection: AudioTimelineProjection? = nil
         let includeEstimated: Bool
 
         // Publication IDs cover immutable track/map snapshots without per-frame envelope comparisons.
@@ -148,21 +158,24 @@ enum AlignmentWaveformProjection {
             lhs.source == rhs.source && lhs.tilesVersion == rhs.tilesVersion
                 && lhs.overviewVersion == rhs.overviewVersion && lhs.modelGeneration == rhs.modelGeneration
                 && lhs.adaptive == rhs.adaptive && lhs.group == rhs.group && lhs.epoch == rhs.epoch
-                && lhs.segment == rhs.segment && lhs.cuts == rhs.cuts && lhs.includeEstimated == rhs.includeEstimated
+                && lhs.segment == rhs.segment && lhs.cuts == rhs.cuts && lhs.projection == rhs.projection
+                && lhs.includeEstimated == rhs.includeEstimated
         }
 
         func strokes() -> [AlignmentWaveformStroke] {
             if let adaptive {
-                return AlignmentWaveformProjection.applyingCuts(cuts, to: tracks.flatMap {
+                let original = tracks.flatMap {
                     AlignmentWaveformProjection.adaptiveStrokes(
                         track: $0, record: adaptive, includeEstimated: includeEstimated)
-                })
+                }
+                return projection?.project(original) ?? AlignmentWaveformProjection.applyingCuts(cuts, to: original)
             }
             guard let group, let epoch, let segment else { return [] }
-            return AlignmentWaveformProjection.applyingCuts(cuts, to: tracks.flatMap {
+            let original = tracks.flatMap {
                 AlignmentWaveformProjection.proposedStrokes(
                     track: $0, map: map, targetGroup: group, targetEpoch: epoch, segment: segment)
-            })
+            }
+            return projection?.project(original) ?? AlignmentWaveformProjection.applyingCuts(cuts, to: original)
         }
 
         @concurrent
@@ -183,21 +196,24 @@ enum AlignmentWaveformProjection {
     @concurrent
     static func prepare(load: AlignmentWaveformLoad, episode: Episode?,
                         cuts: ManualCutTimeline, mappedOnly: Bool = false,
-                        cache: AlignmentWaveformPreparationCache? = nil) async throws -> Prepared {
+                        cache: AlignmentWaveformPreparationCache? = nil,
+                        projection: AudioTimelineProjection? = nil) async throws -> Prepared {
         var result = Prepared()
         for track in load.tracks {
             try Task.checkCancellation()
             do {
                 let correction = episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id }
                 let index: AlignmentWaveformStrokeIndex
-                if let cache, let episode, let overviewKey = track.overviewCacheKey {
+                if let cache, let episode, let overviewKey = track.overviewCacheKey,
+                   projection?.hasInsertions != true, projection?.hasExpandedCut != true {
                     let prepared = try await cache.prepare(track: track, overviewKey: overviewKey,
                         episode: episode.id, map: load.map, correction: correction, cuts: cuts, mappedOnly: mappedOnly)
                     index = prepared.index
                     if prepared.reused { result.restoredTracks += 1 }
                     if prepared.repaired { result.repairedTracks += 1 }
                 } else {
-                    var projected = try strokes(track: track, map: load.map, correction: correction, cuts: cuts)
+                    var projected = try strokes(track: track, map: load.map, correction: correction, cuts: cuts,
+                                                projection: projection)
                     if mappedOnly { projected.removeAll { !$0.mapped } }
                     index = AlignmentWaveformStrokeIndex(strokes: projected)
                 }
@@ -725,7 +741,8 @@ enum AlignmentWaveformProjection {
 
     static func strokes(track: AlignmentWaveformTrack, map: AlignedTimelineMap?,
                         correction: SourceTimingCorrection? = nil,
-                        cuts: ManualCutTimeline = .unedited) throws -> [AlignmentWaveformStroke] {
+                        cuts: ManualCutTimeline = .unedited,
+                        projection: AudioTimelineProjection? = nil) throws -> [AlignmentWaveformStroke] {
         if let correction {
             guard correction.isValid, correction.source == track.id,
                   correction.group == track.group,
@@ -733,8 +750,8 @@ enum AlignmentWaveformProjection {
                   correction.sourceFrames == track.envelope.totalFrames else {
                 throw WaveformWindowError.mapDoesNotMatchSource
             }
-            return applyingCuts(cuts, to: fileTimingStrokes(
-                track: track, intervals: correction.segments, includeUnmapped: true))
+            let original = fileTimingStrokes(track: track, intervals: correction.segments, includeUnmapped: true)
+            return projection?.project(original) ?? applyingCuts(cuts, to: original)
         }
         let original = try track.envelope.bins.compactMap { bin -> AlignmentWaveformStroke? in
             guard let first = try position(frame: bin.firstFrame, track: track, map: map, correction: correction),
@@ -750,7 +767,7 @@ enum AlignmentWaveformProjection {
                 groupRange: first.groupSeconds...last.groupSeconds
             )
         }
-        return applyingCuts(cuts, to: original)
+        return projection?.project(original) ?? applyingCuts(cuts, to: original)
     }
 
     static func applyingCuts(_ cuts: ManualCutTimeline,

@@ -17,6 +17,8 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         case invalidCleanup
         case invalidWorkspace
         case invalidMix
+        case invalidAudio
+        case invalidSourcePurpose
     }
 
     public var code: Code
@@ -46,10 +48,19 @@ extension ShowDocumentModel {
         issues += duplicates(in: episodes.flatMap { $0.sources.map(\.id) }, kind: "source")
         issues += duplicates(in: episodes.flatMap { $0.recorderGroups.map(\.id) }, kind: "recorder group")
         issues += duplicates(in: episodes.flatMap { $0.recorderGroups.flatMap { $0.epochs.map(\.id) } }, kind: "epoch")
+        issues += duplicates(in: episodes.flatMap { $0.audioArrangement?.tracks.map(\.id) ?? [] }, kind: "audio track")
+        issues += duplicates(in: episodes.flatMap { $0.audioArrangement?.clips.map(\.id) ?? [] }, kind: "audio clip")
+        issues += duplicates(in: episodes.flatMap { $0.audioArrangement?.insertionRegions.map(\.id) ?? [] }, kind: "insertion region")
 
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if expectedSchemaVersion < 10,
+               episode.audioArrangement != nil || episode.sources.contains(where: { $0.purpose != nil })
+                || episode.mix?.audioTracks != nil {
+                issues.append(.init(.invalidAudio, "schemas before 10 cannot contain audio arrangement, purpose, or track mix fields"))
+            }
+            issues += episode.audioArrangement?.validationIssues(in: episode) ?? []
             if expectedSchemaVersion < 9, episode.mix != nil {
                 issues.append(.init(.invalidMix, "schemas before 9 cannot contain mix state"))
             }
@@ -74,6 +85,15 @@ extension ShowDocumentModel {
     private static func issues(in episode: Episode, speakerIDs: Set<SpeakerID>) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
         for source in episode.sources {
+            if !source.isRecording, !source.observations.isValid {
+                issues.append(.init(.invalidSourcePurpose, "asset \(source.id) has invalid observed media facts"))
+            }
+            if !source.isRecording,
+               source.placement.recorderGroupID != nil || source.placement.epochID != nil
+                || !source.placement.channelLabels.isEmpty || source.role != .unassigned
+                || source.roleConfirmation != .provisional {
+                issues.append(.init(.invalidSourcePurpose, "asset \(source.id) cannot have recorder placement or speaker roles"))
+            }
             if let groupID = source.placement.recorderGroupID {
                 if let group = episode.recorderGroup(groupID) {
                     if let epochID = source.placement.epochID, !group.epochs.contains(where: { $0.id == epochID }) {
@@ -116,6 +136,9 @@ extension ShowDocumentModel {
     private static func channelIssues(_ channel: ChannelReference, in episode: Episode) -> [ValidationIssue] {
         guard let source = episode.source(channel.sourceID) else {
             return [.init(.danglingReference, "episode \(episode.id) channel source \(channel.sourceID)")]
+        }
+        guard source.isRecording else {
+            return [.init(.invalidSourcePurpose, "asset \(source.id) cannot be assigned to a speaker")]
         }
         // An unknown channel is a valid "not yet stated" reference; only a known index is range-checked.
         guard let index = channel.channel.value else { return [] }

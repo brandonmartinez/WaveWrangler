@@ -12,7 +12,8 @@ actor AcceptedMapContextCache {
 
         init(episode: Episode, inputs: DerivedInputs) {
             media = EpisodeMediaInputs(episode)
-            sources = inputs.sources
+            let recordingIDs = Set(episode.alignmentSources.map(\.id))
+            sources = inputs.sources.filter { recordingIDs.contains($0.key) }
             format = inputs.format
             versions = episode.alignment?.maps ?? []
         }

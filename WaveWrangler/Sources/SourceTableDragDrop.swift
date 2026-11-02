@@ -128,14 +128,14 @@ extension EpisodeSetupModel {
             }
             group = id
         case let .source(id), let .channel(id, _):
-            guard let source = episode.source(id) else {
+            guard let source = episode.source(id), source.isRecording else {
                 message = "That target recording is no longer available."
                 return false
             }
             group = source.placement.recorderGroupID
         }
         let requested = Set(recordings.map(\.sourceID))
-        let sources = episode.sources.filter { requested.contains($0.id) }
+        let sources = episode.alignmentSources.filter { requested.contains($0.id) }
         guard sources.count == requested.count else {
             message = "One of the dragged recordings is no longer in this episode."
             return false

@@ -65,7 +65,7 @@ public struct FormatInterpretation: Sendable, Codable, Hashable {
 }
 
 public enum ContainerKind: String, Sendable, Codable, CaseIterable {
-    case wave, aiff, aifc, caf, m4a, flac
+    case wave, aiff, aifc, caf, m4a, flac, mp3
 
     /// AudioFile type code.
     public var typeCode: String {
@@ -76,6 +76,7 @@ public enum ContainerKind: String, Sendable, Codable, CaseIterable {
         case .caf: "caff"
         case .m4a: "m4af"
         case .flac: "flac"
+        case .mp3: "MPG3"
         }
     }
 
@@ -88,12 +89,13 @@ public enum ContainerKind: String, Sendable, Codable, CaseIterable {
         case .caf: ["caf"]
         case .m4a: ["m4a", "mp4", "m4b"]
         case .flac: ["flac"]
+        case .mp3: ["mp3"]
         }
     }
 }
 
 public enum CodecKind: String, Sendable, Codable, CaseIterable {
-    case linearPCM, aac, appleLossless, flac, opus
+    case linearPCM, aac, appleLossless, flac, opus, mp3
 
     /// AudioFormat ID.
     public var formatID: String {
@@ -103,10 +105,11 @@ public enum CodecKind: String, Sendable, Codable, CaseIterable {
         case .appleLossless: "alac"
         case .flac: "flac"
         case .opus: "opus"
+        case .mp3: ".mp3"
         }
     }
 
-    public var isLossy: Bool { self == .aac || self == .opus }
+    public var isLossy: Bool { self == .aac || self == .opus || self == .mp3 }
 }
 
 public struct ContainerFacts: Sendable, Codable, Hashable {

@@ -73,7 +73,7 @@ struct ManualCutsHostedTests {
         reopened.load()
         #expect(reopened.waveformStartSeconds == 10 && reopened.waveformPlayheadSeconds == 12,
                 "Reopening edited coordinates must not ripple them a second time")
-        #expect(reopened.cutTimeline == cleanup.cutTimeline)
+        #expect(reopened.cutTimeline == cleanup.cutTimeline.cuts)
         cleanup.restoreManualCut(cut.id)
         try #require(cleanup.error == nil && cleanup.activeManualCuts.isEmpty)
         let restored = try await f.runtime.sourceAuditions(model: f.document.store.model, episode: episode.id,
@@ -143,7 +143,7 @@ struct ManualCutsHostedTests {
         f.model.waveformPlayheadSeconds = 2.5
         cleanup.showManualCut(first.id, expanded: true)
         #expect(cleanup.cutTimeline.removals == [second.startFrame..<second.endFrame])
-        #expect(f.model.cutTimeline == cleanup.cutTimeline)
+        #expect(f.model.cutTimeline == cleanup.cutTimeline.cuts)
         #expect(f.model.waveformPlayheadSeconds == 3.5)
         #expect(cleanup.listening.selection == 1...2)
         #expect(f.document.store.model == saved && f.document.store.modelGeneration == generation && !undo.canUndo)
@@ -168,7 +168,7 @@ struct ManualCutsHostedTests {
         let reopened = EpisodeAlignmentModel(document: f.document, episodeID: episode.id,
             runtime: f.runtime, listening: listening)
         defer { reopened.suspend() }
-        #expect(reopened.cutTimeline == cleanup.cutTimeline && reopened.waveformPlayheadSeconds == 3.5)
+        #expect(reopened.cutTimeline == cleanup.cutTimeline.cuts && reopened.waveformPlayheadSeconds == 3.5)
         undo.beginUndoGrouping()
         let adjusted = cleanup.adjustManualCut(first, start: 1.01, end: 1.99)
         undo.endUndoGrouping()
@@ -183,7 +183,7 @@ struct ManualCutsHostedTests {
         let adjustedModel = f.document.store.model
         cleanup.showManualCut(first.id, expanded: false)
         #expect(f.document.store.model == adjustedModel && cleanup.expandedManualCut == nil)
-        #expect(cleanup.cutTimeline == (try adjustedModel.episodes[0].manualCutTimeline()))
+        #expect(cleanup.cutTimeline.cuts == (try adjustedModel.episodes[0].manualCutTimeline()))
         cleanup.showManualCut(first.id, expanded: true)
         undo.beginUndoGrouping()
         cleanup.restoreManualCut(first.id)

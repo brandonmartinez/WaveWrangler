@@ -116,6 +116,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
     }
 
     let interpretation: FormatInterpretation
+    let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
     let supportsRandomAccess: Bool
     private let queue: DispatchQueue
     private let url: URL
@@ -137,6 +138,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         self.io = io
         self.before = before
         self.interpretation = interpretation
+        legacyWavePCMChannelOrder = pump.reader.facts.legacyWavePCMChannelOrder
         supportsRandomAccess = pump.reader.supportsRandomAccess
         self.pump = pump
     }
@@ -305,6 +307,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
 /// enclosing call verifies every result derived from reads or seeks, even after an explicit check.
 public actor DecodingCursor {
     public nonisolated let interpretation: FormatInterpretation
+    package nonisolated let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
     public nonisolated let supportsRandomAccess: Bool
     private let worker: CursorWorker
     private var currentPosition: Int64 = 0
@@ -313,10 +316,12 @@ public actor DecodingCursor {
     private var closed = false
     private var failure: DecodeFailure?
     private var hasSought = false
+    private var hasVerified = false
 
     fileprivate init(worker: CursorWorker) {
         self.worker = worker
         interpretation = worker.interpretation
+        legacyWavePCMChannelOrder = worker.legacyWavePCMChannelOrder
         supportsRandomAccess = worker.supportsRandomAccess
     }
 
@@ -399,6 +404,7 @@ public actor DecodingCursor {
             try SourceDecoder.checkCancellation()
             try await worker.verifyUnchanged()
             try SourceDecoder.checkCancellation()
+            hasVerified = true
         } catch {
             failure = error
             throw error
@@ -407,7 +413,7 @@ public actor DecodingCursor {
 
     func verifyForReturn() async throws(DecodeFailure) {
         try checkUsable()
-        if currentReadCalls > 0 || hasSought { try await verifyUnchanged() }
+        if currentReadCalls > 0 || hasSought || hasVerified { try await verifyUnchanged() }
     }
 
     func close() async {

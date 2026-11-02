@@ -1,7 +1,7 @@
 import Foundation
 import WWCore
 
-/// Show schema migrations (C5): 1 through 8 to current.
+/// Show schema migrations (C5): 1 through 9 to current.
 ///
 /// Schema 4 adds source-local timing corrections; a schema 3 document cannot contain them.
 /// All previous schemas migrate directly to current, preserving the original bytes in a backup.
@@ -10,6 +10,7 @@ import WWCore
 /// Schema 7 adds optional portable workspace identity/preferences without inventing profiles or assignments.
 /// Schema 8 adds manual ripple cuts; migration never creates or applies a cut.
 /// Schema 9 adds optional mix state; migration retains a neutral, no-effects mix without touching analysis.
+/// Schema 10 adds source purpose and optional audio arrangement/track mix; migration invents no assets or clips.
 ///
 /// **2 → 3** (WW-020): schema 3 adds the optional `Episode.alignment` (versioned positive maps). A schema 2 show
 /// has none, so the upgrade sets `schemaVersion` to 3 and changes nothing else; a schema 2 file that already
@@ -35,9 +36,9 @@ import WWCore
 /// (retained checkpoints, unpublished edit checkpoints) offerable as whole values.
 public enum ShowSchemaMigration {
     /// Older show schemas this build can migrate.
-    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4, 5, 6, 7, 8]
+    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4, 5, 6, 7, 8, 9]
 
-    /// The registered migration steps (schemas 1 through 8 to current). Each goes straight to the
+    /// The registered migration steps (schemas 1 through 9 to current). Each goes straight to the
     /// current schema, so a schema 1 show is never published as an intermediate schema 2 revision.
     public static var steps: [MigrationStep<ShowDocumentModel>] {
         [
@@ -105,6 +106,14 @@ public enum ShowSchemaMigration {
                 },
                 expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
             ),
+            MigrationStep(
+                fromSchema: 9,
+                migrate: { data in
+                    let decoded = try decodeSchema9(data)
+                    return (decoded.payload, decoded.revision)
+                },
+                expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
+            ),
         ]
     }
 
@@ -129,7 +138,22 @@ public enum ShowSchemaMigration {
             return try decodeSchema7(data)
         } catch .unsupportedOlderSchema(found: 8, minimum: _) {
             return try decodeSchema8(data)
+        } catch .unsupportedOlderSchema(found: 9, minimum: _) {
+            return try decodeSchema9(data)
         }
+    }
+
+    static func decodeSchema9(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
+        let format = DocumentFormat(identifier: DocumentFormat.show.identifier,
+            filenameExtension: DocumentFormat.show.filenameExtension,
+            currentSchemaVersion: 9, minimumReadableSchemaVersion: 9)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>(format: format) { payload, schema in
+            payload.validationIssues(expectedSchemaVersion: schema) + payload.embeddedMapIssues()
+        }
+        let decoded = try coder.decode(data)
+        var upgraded = decoded.payload
+        upgraded.schemaVersion = SchemaVersion.show
+        return DecodedDocument(payload: upgraded, publication: decoded.publication)
     }
 
     static func decodeSchema8(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
@@ -241,6 +265,9 @@ public enum ShowSchemaMigration {
     static func decodeSchema1(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
         let v1 = JSONEnvelopeCoder<ShowDocumentModelV1>(format: schema1Format) { payload, schema in
             var issues = payload.schemaVersion == schema ? [] : [ValidationIssue(.schemaVersionMismatch, "payload \(payload.schemaVersion) != expected \(schema)")]
+            if payload.episodes.contains(where: { $0.sources.contains { $0.purpose != nil } }) {
+                issues.append(.init(.invalidSourcePurpose, "schema 1 cannot contain source purpose"))
+            }
             if payload.show.profile != nil || payload.speakers.contains(where: { $0.appearance != nil })
                 || payload.episodes.contains(where: { $0.recorderGroups.contains { $0.icon != nil || $0.definitionID != nil } }) {
                 issues.append(.init(.invalidWorkspace, "schema 1 cannot contain workspace profiles or preferences"))
@@ -356,6 +383,9 @@ public enum ShowSchemaMigration {
     static func decodeSchema2(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
         let v2 = JSONEnvelopeCoder<ShowDocumentModelV2>(format: schema2Format) { payload, schema in
             var issues = payload.schemaVersion == schema ? [] : [ValidationIssue(.schemaVersionMismatch, "payload \(payload.schemaVersion) != expected \(schema)")]
+            if payload.episodes.contains(where: { $0.sources.contains { $0.purpose != nil } }) {
+                issues.append(.init(.invalidSourcePurpose, "schema 2 cannot contain source purpose"))
+            }
             if payload.show.profile != nil || payload.speakers.contains(where: { $0.appearance != nil })
                 || payload.episodes.contains(where: { $0.recorderGroups.contains { $0.icon != nil || $0.definitionID != nil } }) {
                 issues.append(.init(.invalidWorkspace, "schema 2 cannot contain workspace profiles or preferences"))

@@ -277,7 +277,7 @@ final class AlignmentInspectionUITests: XCTestCase {
         app.launch()
         app.activate()
         app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["Add recordings to begin"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Add audio or recordings to begin"].waitForExistence(timeout: 10))
         let addRecordings = app.windows["ww.show.window"].buttons["Add recordings…"]
         XCTAssertTrue(addRecordings.exists)
         return addRecordings

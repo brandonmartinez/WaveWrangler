@@ -29,6 +29,18 @@ private struct Fixture {
 struct SetupPresentationTests {
     let ready = SourceStatusSnapshot(location: .known, access: .granted, residency: .local, transfer: .idle, identity: .notChecked)
 
+    @Test func supplementalAssetsRemainAvailableForSourceManagementWithoutRecorderMembership() throws {
+        let f = try Fixture()
+        let asset = SourceRecord(displayNameHint: "Generated stereo music", purpose: .supplementalAudio)
+        let model = try f.model.addingSource(asset, to: f.episodeID)
+        let p = SetupPresentation(model: model, episodeID: f.episodeID, statuses: [asset.id: ready])
+        let row = try #require(p.sourceRows.last?.children?.first { $0.id == .source(asset.id) })
+        #expect(row.speaker == .none && row.role == .none && row.epoch == .none)
+        #expect(row.status == ready.summary)
+        #expect(model.episodes[0].sources(inRecorderGroup: nil).map(\.id) == [f.intro.id])
+        #expect(p.sourceCount == 4)
+    }
+
     @Test func recordingSegmentTitlePreservesStoredKeys() {
         #expect(SourceSortOrder.epoch.title == "Recording Segment")
         #expect(SourceSortOrder.epoch.rawValue == "epoch")

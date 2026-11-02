@@ -54,8 +54,138 @@ scripts/demo/                     Manual demonstration helpers: synthetic fixtur
 ```
 
 `WWTimeMap` contains the exact source/group/aligned coordinate maps.
-`WWCommonEdit` contains the provisional common episode edit-map implementation;
-its presence does not mean export or protected-cut acceptance is complete.
+`WWCommonEdit` contains the provisional common episode edit map and the
+[program-time composition and supplemental production contract](program-timeline.md).
+The Audio Track/Audio Clip editor, Add Audio, timeline file-drop staging,
+Insert Intro / Insert & Ripple, and clip-local linear fade controls use that
+production contract. Export and protected-cut acceptance are separate work.
+
+### Audio Tracks and Add Audio
+
+**Add Audio...** is available in an empty episode as well as an aligned dialogue
+workspace. The native picker leads to a metadata-only review with an explicit
+audio-track destination and program start (captured from the playhead when the
+action begins). Multiple selected files overlay at that position; they are not
+silently sequenced or inserted. **Import** explicitly authorizes local-only
+qualification through the existing source gateway and runtime-owned bounded native
+PCM preparation. Unsupported formats, unqualified MP3 conventions, layouts,
+changed originals, unavailable grants, cloud placeholders, and storage limits
+refuse visibly. No cloud materialization, source-file mutation, or delivery file
+is part of this action.
+
+Finder/local file-location drops enter the same review. Audio lane drops retain
+that lane; empty/recording canvases and unused canvas space explicitly review a
+new generic Audio Track, never a recorder conversion. The canvas excludes row
+headers/padding, captures the whole program frame at the drop's current zoom/pan,
+and refuses Show cut's expanded review-only intervals. Hover feedback uses only
+presentation geometry and never loads providers, headers, previews, or duration.
+Only file-location data is requested, not file promises or file representations.
+Folder/symlink/non-audio/hidden/unreadable inputs are explicitly reported in review;
+timeline folders are never enumerated. Sources-area folder imports and recorder
+row regrouping retain their existing recording Import Review behavior.
+
+Timeline drops require fresh whole-session `DropSession.itemsCount`, identity,
+and active phase from the live macOS binding. Metadata and target entry may arrive
+in either order. Only exact file-URL providers are requested, and their count must
+match that full inventory; a filtered provider count never supplies a fallback.
+Exit, consumption, and disappearance clear usable counts. Ended/consumed IDs,
+missing metadata, and mixed or mismatched sessions refuse without reading content.
+
+Dropped batches default to **Sequential**, with visible order and Earlier/Later
+controls. Review can explicitly choose Overlay. Add Audio still defaults to
+Overlay. Sequential offsets use checked, actually qualified owned output durations
+and a current inverse anchor for every clip; no byte-count guesses or insertion
+are involved. All selected files qualify before one canonical Add Audio/Undo.
+
+An already verified supplemental original in this episode reuses its SourceID,
+qualified asset, and grant, adding only an independent clip. Another episode in
+the show explicitly reviews a new episode-owned logical source/access record for
+the immutable original. The engine considers every active physical match and the
+complete canonical source-purpose/asset roster; a recording/unknown-purpose match
+blocks either exception. Missing/inconsistent assets or missing/provisional/changed
+permissions require repair, not duplicate import or silent regrant. Inactive device
+remnants do not block an active roster. Existing grants are re-admitted through the
+gateway and checked against exact access mutation generations; metadata, matching
+names, canonical geometry, and cached PCM never grant access. Reused-only batches
+do not enter new-record adoption. Mixed batches conditionally adopt only their new
+or copied records and verify exact published source/asset/clip ownership.
+
+The active identity inventory requires recorded volume/file IDs, not every
+recording online. A known nonmatching recording can remain offline, provisional,
+or without a readable bookmark. Missing identity is a named repair-required
+refusal; classification does not open recording content.
+
+Generic Audio Tracks remain separate from all four recorder comparison layouts
+and from Primary/Backup, alignment, transcription, recording input gain, and
+diagnostic recorder Solo. A track can contain overlapping clips and repeated
+uses of the same source. Select a block for the Audio Clip inspector; move it
+horizontally or to another Audio Track, or enter its program start/destination.
+Edge handles and exact 48 kHz output-frame bounds crop nondestructively inside
+retained source support. Split at Playhead uses the current program projection
+and retains SRC/envelope phase even at 44.1 kHz. Duplicate reuses the same SourceID
+with a new clip ID. Delete removes only the placement. Pin/unpin preserves current
+resolved placement; unpinned placements follow dialogue edits. Track names/order
+and every completed edit use the existing document Undo/Redo. Drag previews and
+selection stay editor-local; canceled gestures do not edit the show. Extension
+of a crop with discarded envelope automation refuses rather than inventing a
+replacement curve.
+
+Select an Audio Clip and place the playhead inside its audible trimmed interval,
+then choose **Fade In...** or **Fade Out...** in the inspector. A fade **starts**
+at that production playhead, captures the evaluated current gain, and ends after
+the entered duration or at the entered program end time. The target is linear
+amplitude (1 full level, 0.25 low, 0 exact Silence); Fade In at the clip beginning
+can explicitly initialize Silence. Endpoints hold until the next ramp. Review
+lists overwritten knots, crossed ramps, and any changed next-ramp start level;
+applying a conflict requires explicit replacement approval. Later endpoints and
+outside-trim support are retained. **Edit Fade Point...** supports exact local
+frame/fraction and level editing or deliberate removal; removing the last point
+restores unity. Each apply is one Undo action. Selection/restore/generation and
+originating-window checks reject stale previews. Native Audio Unit state is
+captured before opening a preview; the normal document replacement barrier still
+rejects later uncaptured changes. Orange curves and points are viewport-bounded
+and cached separately from raw waveforms and the live playhead.
+
+The shared staged import coordinator qualifies all selected candidates before
+one canonical **Add Audio** transaction inserts sources, assets, track, and clips.
+The existing source engine owns opaque, live pending tokens; evidence outside a
+live token is not permission. Conditional device-record adoption follows the
+canonical action and never overwrites an occupied record. A post-publication
+adoption failure keeps clearly blocked references for relinking or Undo, not a
+success message or a canonical rollback. Exact window/controller/show/episode
+and store-generation checks include restore and Undo/Redo ABA; native effect
+capture occurs before binding the import snapshot.
+
+With an arrangement, shared timeline presentation uses final program geometry,
+including persisted insertion regions. Original source/aligned inspector values
+remain explicitly labeled. Words, markers, waveform hit testing, review navigation,
+and locators share the presentation projection; insertion-only positions cannot
+become recorder anchors or dialogue cuts. Show cut derives an expanded, immutable
+review projection without changing clips, pins, or collapsed production inputs.
+**Play Mix** deliberately selects production listening. Subsequent Play/Space,
+pause, and seek keep that choice; **Source Audition** explicitly returns to the
+diagnostic path. Selection, panes, and layouts never start playback or choose
+production implicitly. Audio-only programs and supplemental intros/outros use
+the existing audio-track strips and Master, not a second mixer.
+
+Recording-only loading, refusal, and empty-waveform presentation require actual
+recording sources; it never hides usable supplemental lanes behind an empty-recorder
+preparation. Import/cold clip preparation still uses the shared blocking operation.
+The fixed bottom-pane header retains Detach Mixer when a short docked body yields
+space to tracks; divider preferences are not replaced with the temporary minimum.
+
+The compact, icon-only **Inserted Time** menu holds explicit **Insert Intro...**,
+**Insert & Ripple...**, and region-edit commands in the fixed workspace action
+chrome; selected-clip shortcuts remain in its inspector. Keeping one native menu
+avoids another wrapping action row at the minimum window size with the inspector
+open, preserving the reachable bottom-pane Detach controls.
+The generation-bound sheet previews a whole `AudioInsertionEditing` value and
+publishes one `settingAudioArrangement` through the existing guarded editor/store.
+It does not capture/ignore native Audio Unit changes: the normal document
+replacement refusal remains authoritative. See
+[F7 insertion semantics](program-timeline.md#f7-explicit-insertion-and-safe-inserted-time-editing)
+for signed defaults, region-removed move coordinates, same-boundary order, and
+anchor repair on shortening/removal.
 
 ### Manual cuts and editing layouts
 
@@ -603,6 +733,142 @@ halo while seeking over skipped prefixes. PCM windows can therefore reach late e
 without decoding earlier hours. Other codecs retain the 600-second decoded-prefix budget until
 their priming and exact seek behavior are established.
 
+#### MP3 qualification and native supplemental-source preparation (F3)
+
+`DecodeEnvelope` v2 adds standalone MPEG-1 Layer III at 32,000, 44,100, and 48,000 Hz,
+mono or left/right stereo/joint stereo. Admission is byte-based, never extension-based.
+The qualified subset has an unprotected MPEG header and an Info (CBR) or Xing (VBR) frame
+with all four Xing fields and a CRC-valid LAME extension. LAME delay must be 576 frames,
+padding 576...1727 frames, and the declared frame/byte counts, native packet table,
+data offset, and reader length must agree. ID3v2.3/v2.4 leading metadata and an optional
+complete ID3v1 trailer are allowed; unaccounted trailing bytes refuse. Sequential decode
+checks every MPEG frame, the LAME music CRC, and the exact native codec-stream count.
+The CRC detects damage, not malicious tampering or content authenticity.
+
+Generated LAME CBR 128 kbps / VBR quality-2 evidence covers all three rates and both
+channel counts, asymmetric channel landmarks, one-frame through short packet-boundary
+lengths, and a 90-second-plus stereo source. Source frame 0 remains the first audible
+frame after declared priming; valid decoded counts exactly equal the generated input.
+Existing PCM/AAC/ALAC/FLAC/Opus semantics and the interpretation-v1 serialized field
+set are unchanged. MP3 in M4A, MPEG-2/2.5, free-format/protected/dual-channel streams,
+missing/unknown delay, non-LAME/unverified accounting, invalid checksums, truncation,
+and changing frame parameters refuse explicitly. This is not a claim that arbitrary
+MP3 files or other encoder conventions are qualified.
+
+`WWDerived.NativeSourcePreparation` is the reusable **unaligned** native-rate contract
+for F4, not recorder alignment, diagnostic Solo admission, a mixer, or an export path.
+`SourceReadAdmission` carries frozen evidence only. Its required throwing
+`validateCurrentAccess` closure must recheck the caller's current selection, consent,
+availability, and access record; F4 supplies that app adapter. Both preparation and
+every cache-hit read scope invoke it before and after work, open the original through
+the full-witness-bound gateway, compare the complete expected interpretation, and
+perform final unchanged checks. Saved review/remount equivalence never relaxes this
+live PCM identity.
+
+`prepare(_:expectedFormat:progress:)` decodes once into bounded planar little-endian
+Float32 source tiles. `PreparedSourceAudio` describes nominal rate, actual valid
+source-frame count, preserved channels, and an opaque complete preparation.
+`readWindow(_:from:admission:)` takes an exact half-open source-frame range; it returns
+exactly that count per channel and marks EOF only when the range ends at the actual
+source end. An empty EOF range is allowed. Invalid/oversized ranges, missing/damaged
+tiles, eviction, or unknown layouts fail rather than clamp, select channel 0, or
+fill scheduled media with silence. Production schedulers instead use
+`readWindow(_:expectedFormat:admission:)`: it copies warm verified tiles without
+entering the exclusive preparer, so an unrelated in-flight import does not block
+warm playback. Evicted linear PCM uses the existing witnessed cursor's exact seek
+and bounded source-frame reads, with no full-source decode or tile republication.
+Nonseekable playback acquires complete preparation plus bounded retention before
+a scheduler becomes ready. Competing imports or oversized compressed working sets
+refuse with `storageBudgetExceeded` at admission if they cannot coexist inside the
+same cap; they cannot evict an active MP3 or restart its decoder per window.
+Retention is shared by source identity but owned by independent active consumers,
+not the cached per-episode scheduling metadata. Playback and offline rendering
+hold one scoped consumer across their windows and await release on success,
+failure, or cancellation. Stopping production joins its canceled PCM producer
+before release; new playback and imports await only explicitly retired transports,
+never another still-active render. Retirement cancels before publishing a task
+and rechecks admission cancellation after snapshotting and before each join, so a
+stopped transport cannot await its own completion. Cached metadata reacquires receipts at consumer
+admission after eviction or an episode switch. The storage ceiling never increases.
+`prepare` remains the explicit
+whole-source preparation API. A retained recipe is not a PCM cache-lifetime guarantee;
+imports and other sources in the same runtime may evict its unretained PCM tiles.
+Missing/damaged admitted tiles still fail explicitly. Every window retains
+live admission, complete interpretation, and full gateway witness checks.
+Explicit mono `[42]` and stereo `[1,2]`
+channel-label evidence is admitted. F5 additionally admits exactly undeclared
+standard legacy RIFF/WAVE PCM through separate, opaque gateway-minted header
+provenance: mono/stereo PCM tag 1 with full-container 16/24/32-bit integers, or
+IEEE-float tag 3/32, with exact format/native/data accounting. Raw layout facts
+remain undeclared; labels are never invented or marked declared. The bounded
+header traversal skips audio data and refuses duplicate, ambiguous, custom-layout,
+extensible, overflowing, or malformed structures as legacy evidence. Known explicit
+extensible layouts continue to use their existing declared-label path. Unknown
+CAF, multichannel, and contradictory/reversed layouts still refuse.
+The disposable native-preparation recipe is revision 2 for this policy; serialized
+format/envelope versions, frame origin/counts, and accepted timing are unchanged.
+No resampling occurs: downstream resampling must
+use a stateful or absolute-source-phase recipe, not independently restart a converter
+for each requested window.
+
+Default tiles are 16,384 frames, windows at most 65,536 frames, with a configurable
+total storage ceiling capped at 1 GiB (including conservative tile/manifest overhead).
+Memory holds bounded decode/tile/window buffers and a storage-budget-bounded key index,
+never a whole-source PCM array. Source identity, the full format/channels/layout,
+decoder/envelope versions, source coverage, and the no-SRC conversion recipe bind keys.
+Tiles use `DerivedAssetStore`'s flushed staging and read-back verification. A fresh
+UUID isolates each preparation; all tiles remain unpublished until complete decode
+and final checks, then the usable manifest publishes last. Cancellation or any
+failure strictly cleans unpublished work and cannot reuse an earlier partial session.
+One preparation runs at a time; a competing call receives `preparationInProgress`.
+Verified entries may be LRU-evicted to stay within the shared storage budget.
+
+Keep exactly one preparation actor for each exclusively owned cache root. It owns
+`native-source-pcm-v1` beneath that root, reuses prepared sources across clips/windows,
+and clears that dedicated child store on construction: reuse across application
+launches is intentionally not implemented. Do not place unrelated derived entries
+in this child store. A generated 2,000,123-frame stereo lossless source verifies
+that a 200-frame late window touches one tile with **zero native decode calls**;
+opening its verification scope reads headers, not a decoded prefix.
+
+Run the installed-encoder evidence explicitly (no encoder installation or external
+media download): `WW_MP3_LAME="$(command -v lame)" SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=1 swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm --jobs 2 --filter 'MP3QualificationTests|NativeSourcePreparationTests'`.
+Source the configured shell environment first. Without `WW_MP3_LAME`, generated MP3
+cases are visibly skipped; pure refusal/parser and ordinary preparation tests still run.
+The maintained decoder/test tree pins are refreshed separately in
+`source-tree-baselines.json`. M3-DECODE-006 remains bound to its original envelope-1
+population, with every calibration draw compared to the unchanged archived records.
+Historical freeze bytes, measurements, seeds, gates, and changed-tree holdout refusal
+are untouched; those records confer no inherited MP3 qualification.
+
+Adding MP3 does not invalidate previously accepted recorder timing. Historical
+acceptance recipe revision 2 has one fixed dependency encoding: interpretation 1 /
+envelope 1. That **timing** contract remains valid only under its original runtime
+or the explicitly evidenced interpretation-1/envelope-2 additive expansion, after
+the entire original source-token/placement/correction-dependency digest matches.
+There is no current-digest/old-digest fallback. Experimental revision-2 recipes
+computed with envelope 2, unknown recipe/interpretation/envelope versions, changed
+source tokens, or changed placements still refuse.
+
+New acceptances and manual/adaptive revisions use recipe revision 3:
+`ww.alignment-acceptance;deps=<digest>;frames=ww.decode-audible-source/1;fiv=1;env=2`
+with the existing optional `;accepted=<proposal provenance>` suffix. The explicit
+creating format participates in the full digest; MP3 is not represented as an
+envelope-1 input. No persisted accepted version, correction, canonical map identity,
+or proposal provenance is rewritten to restore compatibility. Exact live accepted-map
+publication and source-admission checks remain mandatory. Unknown future envelope 3
+is not implicitly compatible. `FormatRevision.current`, source probes, analysis
+currency, and disposable PCM/cache keys remain exactly envelope 2, so old PCM must
+be prepared again even while accepted human timing remains usable.
+
+`EnvelopeCompatibilityTests` writes genuine envelope-1 accepted versions using a
+frozen independent legacy recipe encoder, activates them under runtime 1, opens the
+checksummed show through `DocumentOpener`, and then reopens under runtime 2. Plain
+timing and retained adaptive corrections keep identical bytes, canonical identities,
+and source/cleanup survey results; forward recipe-3 edits also persist and reopen.
+The cleanup survey retains its preexisting certification refusals rather than
+turning timing compatibility into permission to cut.
+
 File-local adaptive listening uses a separate pitch-preserving multichannel path, not `WWRender`'s
 affine SRC. Witnessed reads feed a memory-only nominal PCM converter inside `WWDecode`, then one
 direct native TimePitch unit with unchanged channel order. Region-anchored twelve-second processing
@@ -951,6 +1217,9 @@ telemetry, or audio/transcript upload. Inference remains local and offline.
 
 `WaveWranglerTests` is an **unhosted** bundle: it links the package products and reads the app's
 `Info.plist`/entitlements from the source tree, so running it never launches the app.
+Shared app sources are explicitly included through the target's synchronized-folder membership
+exceptions in `project.pbxproj`. Include their app-source dependencies there too; waveform sources,
+for example, require `Shared/AudioTimelineProjection.swift`.
 
 ### Live-provider (iCloud / two-device) tests are opt-in
 
@@ -1098,10 +1367,10 @@ UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPre
 `-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
 `-WWForceReduceMotion YES`.
 
-### Mixer model and persistence (schema 9)
+### Mixer model and persistence (schemas 9-10)
 
 `WWCore.Episode.mix` holds optional `EpisodeMixState`; absence is neutral:
-0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-8 shows
+0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-9 shows
 require the existing consented C5 migration with an exact-byte backup. Migration
 changes no timing, transcripts, cuts, assignments, or history. Older-schema
 payloads carrying mix state are refused, even when the state is neutral; newer
@@ -1143,6 +1412,111 @@ refused. Limits are 16 MiB per slot, 64 MiB per episode, 64 inserts per bus,
 numbers must be finite. No discovery result, live unit, editor, or observer is
 serialized.
 
+#### Supplemental audio domain and source purpose (schema 10)
+
+`SourceRecord.purpose` is independent of `SourceRole`: omitted means recording;
+`.supplementalAudio` is an immutable referenced asset, never a fake speaker or
+recorder. `SourceID` is the canonical asset identity in the existing episode
+source registry and device-local access ledger. Multiple clips in that episode
+reuse it. Source IDs remain unique across a show; this adds no cross-episode
+physical-file/relink bypass. Physical recorder duplicate and complete recording
+verification safeguards are unchanged.
+
+Use `Episode.alignmentSources` for **all** recording-only work, including
+ungrouped/unavailable recordings. Assets cannot acquire recorder groups/epochs,
+speaker Primary/Backup assignments, recording input gain, timing-reference,
+alignment, diagnostic recorder Solo, or ASR roles. Source management, availability,
+inspection and relinking still use `Episode.sources`. Existing Sources rows keep
+assets reachable, but recording-specific controls are disabled. `sources(inRecorderGroup:)`
+returns recordings only, including its `nil`/Ungrouped case.
+
+`Episode.audioArrangement` is optional `AudioArrangement`:
+
+- `assets: [AudioAsset]` holds qualified native decoded `frameCount`, integer
+  `sampleRate`, and `channelCount`, keyed by the existing `SourceID`. Qualification
+  is geometry, not an access grant. Known `SourceObservations` must agree;
+  contradictory later observations are refused without erasing prior facts.
+- `tracks: [AudioTrack]` is visual order with stable `AudioTrackID` and a name.
+  `clips: [AudioClip]` references `AudioClipID`, `track`, and `source`. Repeated
+  source use and same-track overlaps are valid; no speaker/recorder subtype exists.
+- `trim: AudioSourceTrim` is half-open decoded-source frames. `channels: nil`
+  preserves every native channel in order, including stereo; explicit ordered
+  channel indices must be unique and in range.
+- `anchor: AudioPlacementAnchor` uses synthesized tagged Codable cases:
+  `programOrigin(frame:)` is unpinned placement without an accepted dialogue map;
+  `dialogue(AudioDialogueAnchor)` follows the original-aligned grid before manual
+  cuts; `absolute(frame:)` pins to program time; `insertion(region:offsetFrames:)`
+  follows an `AudioInsertionRegionID`. Program-origin reconciliation must preserve
+  position when dialogue is later admitted. Split, duplicate, move, and edge-resize
+  never implicitly bind an existing program-origin clip to dialogue; only explicit
+  reconciliation does. Same-position edits retain the exact existing anchor.
+  Explicit movement into inserted time still uses that region's relative offset.
+  Insertion regions have an anchor and
+  positive `durationFrames`, cannot nest, and do not result from ordinary placement.
+- `AudioDialogueAnchor` persists `alignmentRevision`, `mapIdentity`, and `frame`.
+  `mapIdentity` is lowercase SHA-256 of sorted-key, non-slash-escaped canonical
+  `TimeMapVersion` JSON, including inputs and adaptive corrections. Construct it
+  with `init(map:frame:)` and recheck `isCurrent(in:)`; a same-number replacement
+  is not admission. Retained but noncurrent anchors require later placement review.
+- `envelope: AudioClipEnvelope` holds ordered `AudioEnvelopePoint(frame:amplitude:)`
+  values on the clip-local 48 kHz grid by default. Empty means unity; amplitudes are finite
+  0...1 with exact zero silence. Interpolation is piecewise linear amplitude;
+  endpoint values hold outside the points. Points may include the exclusive clip
+  endpoint to define a final ramp. F2 adds optional exact `fraction` coordinates and
+  an optional retained curve `window` for lossless native-rate trim/fade edits;
+  ordinary integer envelope bytes are unchanged.
+
+Program/clip-local coordinates use 48,000 frames per second, bounded to the
+existing signed 24-hour frame limits. Native assets are bounded to 24 hours,
+8-192 kHz and 1-64 channels; this is a model bound, **not decoder qualification**.
+Checked arithmetic rejects invalid trims, overflowing/extreme frames and dangling
+source/track/map/insertion references. F2 owns projection, cut ripple, extents and
+envelope evaluation; F1 does not shift clocks, alter accepted maps/transcripts or
+rewrite manual-cut provenance.
+
+The [pure program-time kernel contract](program-timeline.md) documents F2's
+`WWCommonEdit.ProgramTimeline`, exact cut/insertion boundaries, position-preserving
+anchor edits, source/program ownership, and shared envelope evaluator for F4/F5/F7/F8.
+Absolute clip pins are supported; absolute insertion-region anchors explicitly
+refuse. This kernel is not app playback/editor integration.
+
+`EpisodeMixState.audioTracks` is optional sparse `[AudioTrackMixState]`, keyed by
+`AudioTrackID`, beside existing speaker/Master keys. Each strip has finite
+-96...24 dB `gainDB`, -1...1 stereo `balance`, and ordered inserts. Neutral
+fallback is `mix.state(for: trackID)`. Insert IDs and state-byte budgets remain
+episode-wide across speaker, audio-track and Master buses.
+
+Pure `settingAudioState(_:mix:sources:in:)` validates a whole compound replacement;
+`settingAudioArrangement`, add/replace/remove track/clip, and `settingAudioTrackMix`
+provide focused edits. Apply the result through the normal shared store for one
+Undo/Redo transaction. Its optional source replacement cannot alter the recording
+partition or clock assignments. Track deletion removes its clips and strip, never its media.
+`removingSource` refuses a source still used by clips; explicitly remove the clips,
+qualified asset and source together with `settingAudioState` for a compound removal.
+
+`EpisodeMediaInputs` contains only the complete recording partition. Asset imports,
+clip edits and fades do not stale recording timing, waveforms or original-source
+transcripts. `EpisodeProcessingInputs` additionally freezes used asset observations,
+qualified geometry, clips/envelopes/anchors, insertion regions, track identities and
+normalized audio-track mix. Unused asset metadata and track names/order are not audio
+dependencies. `hasSameProgramInputs(as:)` supports live mix controls while refusing
+prepared program/source changes; `hasSameMixerTopology(as:)` additionally checks
+audio-track inserts beside speaker/Master inserts. The native-state replacement
+barrier uses that predicate, not live fader/balance targets.
+Runtime render recipes must still bind current
+source witnesses and decoder interpretation; canonical equality is not authorization.
+The accepted-map context cache retains its exact map-history snapshot identity and
+live coordinator-ready checks; unrelated asset revision tokens do not invalidate it.
+
+Schema 1-9 migrate directly to 10 through the existing verified publication path,
+with exact-byte backups and read-only recovery/edit-checkpoint upgrades. Migration
+preserves old maps, cleanup, mixer state and history; no purpose, arrangement, track
+mix, assets or clips are synthesized. Older payloads containing any new field are
+refused even if neutral. Newer schemas are refused before payload interpretation.
+`MixerRecipe` now accepts nonempty clip/insertion state only with its complete,
+validated `ProgramComposition` and witnessed clip source routes; callers omitting
+that composition still refuse instead of emitting a dialogue-only mix.
+
 The pure `ShowDocumentModel` operations `settingMix(_:in:)`,
 `settingInputGain(_:for:in:)`, `settingSpeakerMix(_:in:)`, and
 `settingMasterMix(_:in:)` return whole validated values or throw
@@ -1166,20 +1540,21 @@ separate layers; this foundation does not launch UI or read original media.
 
 ### Native mixer processing and PCM rendering
 
-`WWMix` is downstream of `WWRender`, which remains pure and unchanged.
+`WWMix` is downstream of pure `WWCommonEdit`/`WWRender` and F3 native preparation.
 `AlignmentRuntime.mixerRecipe` freezes `EpisodeProcessingInputs`, the confirmed
-Primary routes, actual gateway-witnessed `RawSourceIdentity` and
+Primary and typed audio-track routes, complete program composition, actual gateway-witnessed `RawSourceIdentity` and
 `FormatInterpretation`, explicit resolved channels, signed edited program frames,
 format, pan law, and seek/latency/tail policy. Neither a recipe nor a witness is
 an access grant. `productionPCM` reuses the accepted-map, witnessed
-`sourceAuditions` readers and the shared manual-cut timeline, always with cuts
+`sourceAuditions` readers and the shared program timeline, always with cuts
 collapsed, with input gain disabled at that boundary. It checks frozen identities,
 current access records, actual formats, accepted timing, and complete windows
-before returning. Effects never receive a source URL. Offline jobs also recheck
+before returning. Insertion/exterior intervals are explicit dialogue silence,
+not extrapolated accepted timing. Effects never receive a source URL. Offline jobs also recheck
 admission during their latency/tail drain, not just during source reads.
 
 The initial qualification is native arm64, 48 kHz planar Float32, mono speaker
-inserts and stereo Master inserts/output. Only `aufx` and `aumf` effects with a
+inserts, stereo audio-track inserts and stereo Master inserts/output. Only `aufx` and `aumf` effects with a
 main input and a single output bus supporting the exact requested format are
 admitted. Unused auxiliary/sidechain inputs are disabled after document-state
 recall and verified disabled before rendering; external sidechain routing is
@@ -1218,16 +1593,46 @@ One serial processor retains each unit across all producer windows:
 ```text
 authorized timed/cut mono PCM -> recording/channel input gain
   -> ordered speaker inserts -> explicit parallel-path delay alignment
-  -> speaker fader/equal-power pan -> stereo sum
+  -> speaker fader/equal-power pan ------------------------+
+                                                        |
+authorized native clip PCM -> absolute nominal SRC        |
+  -> local clip envelope -> mono upmix / ordered stereo    |
+  -> same-track clip sum -> stereo track inserts -> PDC    |
+  -> track fader/stereo balance -------------------------->+ -> common stereo sum
   -> ordered Master inserts -> Master gain/meters -> prepared stereo PCM
 ```
 
-The sum is not divided by the number of audible speakers. Center pan contributes
+The sum is not divided by route count. Center speaker pan/mono clip upmix contributes
 1/sqrt(2) to each output; hard left/right contributes unity to that side.
 Finite output above unity is retained, not clipped or normalized;
 `MixerMeter` exposes peak/RMS, clipping, and headroom. Live gain/pan targets use
 sample-clocked 480-frame (10 ms) linear-amplitude ramps, continuous across chunks.
+Stereo clips retain both unity channels at center; balance attenuates only the
+opposite side and never folds stereo into mono. Temporary production Solo spans
+both typed speaker and audio-track routes, independent of diagnostic source Solo.
+Track meters are separate L/R prepared-PCM meters. Recording input gain occurs
+once on dialogue only; supplemental assets cannot acquire such a gain entry.
 Mix edits never enter estimators, ASR, raw waveform cache keys, or original files.
+
+`SupplementalClipScheduler` is the separate asynchronous non-realtime adapter,
+not part of `MixerProcessor`'s effect graph. One `NativeSourcePreparation` actor
+owns an exclusively allocated runtime cache root. Repeated/overlapping clip IDs
+share only native preparation, never occurrence positions, envelopes or channels.
+Admission callbacks weakly reference their runtime; disposing it releases those
+callbacks and removes its exclusive native store on a utility worker, without
+blocking document/UI teardown. Cleanup failures are logged, not hidden.
+Native tiles contain no faders/effects. Each read is at most 4096 nominal output
+frames, using bounded native windows and the original trim's absolute phase.
+Every cache hit retains F3's witnessed gateway and final verification. The app
+callback checks current device-record snapshots, including their opaque mutation
+generation; revoke/regrant cannot reuse an old callback even with identical bytes.
+An access store without the snapshot contract cannot authorize supplemental PCM.
+The generation is frozen evidence, not a new permission ledger.
+Dialogue selection upper bounds use a separate preceding-dialogue inverse:
+`[4s,5s)` remains cuttable before an insertion at `[5s,15s)`, while insertion
+interiors and expanded cut-review audio remain ineligible for new dialogue cuts.
+Sample inverses, navigation anchors, and diagnostic review audio retain their
+existing following-sample semantics.
 Diagnostic source/comparison audition retains its routing/attenuation and applies
 the saved recording/channel gain without speaker/Master effects. A recording-gain
 change invalidates already-prepared diagnostic windows; restart that audition.
@@ -1319,8 +1724,9 @@ invalidates every previously delivered window. The app adapter is
 closure as well as the built-in source-access/identity rechecks.
 
 Reported, nonnegative integral-frame unit latencies are summed along serial
-chains. Shorter speaker paths receive the difference from the longest path;
-the common speaker latency plus Master latency is then removed exactly once.
+chains. Shorter speaker/audio-track paths receive the difference from the longest
+parallel path (both stereo sides have matching compensation); that parallel latency
+plus Master latency is then removed exactly once.
 No engine PDC is assumed or also applied. Generated unequal-latency paths and a
 Master delay verify impulse coincidence and exact program length. Fractional,
 changing, nonfinite or over-budget latency refuses. Vendor misreported latency
@@ -1331,7 +1737,7 @@ Seeking/restarting creates independent reset instances. `MixerRenderPolicy`
 defaults to zero preroll and exact-program tail truncation, a deliberate
 cold-start policy rather than transparent seek equivalence. Optional bounded
 preroll requires real authorized preceding PCM, never fabricated program data.
-`includeReported` drains the maximum serial speaker tail plus Master tails;
+`includeReported` drains the maximum serial speaker/audio-track tail plus Master tails;
 nonfinite, changing or over-budget declared tails refuse. Program output is
 exactly `programFrames.count`, plus the explicit reported tail when selected.
 Missing program frames do not become EOF. Native transient

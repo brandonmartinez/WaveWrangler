@@ -12,7 +12,8 @@ struct EnvelopeCase: Sendable, CustomTestStringConvertible {
 
     var testDescription: String { "\(entry.container.rawValue)/\(entry.codec.rawValue) \(sampleFormat)" }
 
-    static let all: [EnvelopeCase] = DecodeEnvelope.entries.flatMap { entry in
+    // MP3 uses the explicit installed-encoder matrix in MP3QualificationTests; AudioToolbox has no MP3 encoder.
+    static let all: [EnvelopeCase] = DecodeEnvelope.entries.filter { $0.codec != .mp3 }.flatMap { entry in
         entry.sampleFormats.map { EnvelopeCase(entry: entry, sampleFormat: $0) }
     }
 }
@@ -125,9 +126,9 @@ struct DecodeEnvelopeTests {
                 + ":\(entry.sampleRates.map(String.init).joined(separator: ","))"
                 + ":\(entry.channelCounts.map(String.init).joined(separator: ","))"
         }.joined(separator: "\n")
-        #expect(DecodeEnvelope.version == 1)
+        #expect(DecodeEnvelope.version == 2)
         let digest = SHA256.hash(data: Data(canonical.utf8)).map { String(format: "%02x", $0) }.joined()
-        #expect(digest == "0ad289ecae57d7a1d3e9a4779f556f63e3b3be6625f8f05995b800acd0ebb7fa", "envelope changed: bump DecodeEnvelope.version and update the pin\n\(canonical)")
+        #expect(digest == "9b75b6b9f24ec29321857825b04d021b3ab5baa53490cbdf67fe6361494bddc5", "envelope changed: bump DecodeEnvelope.version and update the pin\n\(canonical)")
         #expect(EnvelopeCase.all.count == 34)
     }
 

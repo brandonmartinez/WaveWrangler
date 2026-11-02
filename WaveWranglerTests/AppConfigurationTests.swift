@@ -117,10 +117,11 @@ struct AppConfigurationTests {
     @Test func applicationClassIsWaveWranglerApplication() throws {
         let project = try String(contentsOf: Self.appFolder.deletingLastPathComponent().appending(path: "WaveWrangler.xcodeproj/project.pbxproj"), encoding: .utf8)
         let principal = project.components(separatedBy: "\n").filter { $0.contains("INFOPLIST_KEY_NSPrincipalClass") }
-        // The app (Debug, Release) uses WaveWranglerApplication; the UI test bundle (Debug, Release) uses its
-        // per-class isolation observer, WWUITestIsolation. Nothing else sets a principal class.
-        #expect(principal.count == 4)
-        #expect(principal.filter { $0.contains("= WaveWranglerApplication;") }.count == 2)
+        // Both app configurations use the source plist; only the UI test bundle overrides its principal class.
+        let info = try Self.plist("Info.plist")
+        #expect(info["NSPrincipalClass"] as? String == "WaveWranglerApplication")
+        #expect(project.components(separatedBy: "INFOPLIST_FILE = WaveWrangler/Info.plist;").count - 1 == 2)
+        #expect(principal.count == 2)
         #expect(principal.filter { $0.contains("= WWUITestIsolation;") }.count == 2)
         let app = try String(contentsOf: Self.appFolder.appending(path: "App/WaveWranglerApplication.swift"), encoding: .utf8)
         #expect(app.contains("@objc(WaveWranglerApplication)\nfinal class WaveWranglerApplication: NSApplication"))

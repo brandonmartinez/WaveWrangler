@@ -374,7 +374,7 @@ final class EpisodeSetupModel {
               document.status.saveStatus.state.isVerifiedOnDisk,
               document.verifiedModel == store.model,
               let episode = store.model.episode(episodeID) else { return }
-        let confirmed = Set(episode.sources.compactMap { source in
+        let confirmed = Set(episode.alignmentSources.compactMap { source in
             statuses[source.id]?.allowsWaveformOverview == true ? source.id : nil
         })
         if !requestedOverviewSources.isSubset(of: confirmed) {
@@ -384,7 +384,8 @@ final class EpisodeSetupModel {
             requestedOverviewSources.formIntersection(confirmed)
         }
         guard !confirmed.isEmpty,
-              force || requestedOverviewEpisode != episode || !confirmed.isSubset(of: requestedOverviewSources)
+              force || requestedOverviewEpisode.map({ EpisodeMediaInputs($0) }) != EpisodeMediaInputs(episode)
+                || !confirmed.isSubset(of: requestedOverviewSources)
         else { return }
         overviewGeneration += 1
         overviewTask?.cancel()
@@ -763,6 +764,9 @@ final class EpisodeSetupModel {
 
     static func describe(_ error: DomainError) -> String {
         switch error {
+        case let .invalidAudio(reason), let .invalidMix(reason): reason
+        case .sourceIsNotRecording: "Audio assets cannot have recorder timing or speaker assignments."
+        case .sourceUsedByAudioClips: "Remove the clips that use this audio asset before removing its source."
         case let .invalidWorkspace(reason): reason
         case .emptyTitle: "A name can't be empty."
         case let .invalidEpochNumber(n): "Recording segment \(n) isn't valid. Enter a whole number of 1 or more."

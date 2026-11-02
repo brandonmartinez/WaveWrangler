@@ -31,7 +31,12 @@ private struct InspectorScrollContent: View {
                     VStack(alignment: .leading, spacing: 12) {
                         switch state.workspaceInspector {
                         case .recording:
-                            AlignmentInspectorView(model: model, manageRecordings: { state.recordingsPresented = true })
+                            if model.audioEditor.selectedTrack != nil {
+                                AudioClipInspector(editor: model.audioEditor,
+                                    playhead: model.presentationTimeline.programTime(forDisplayTime: model.waveformPlayheadSeconds))
+                            } else {
+                                AlignmentInspectorView(model: model, manageRecordings: { state.recordingsPresented = true })
+                            }
                         case .alignment:
                             Text("Preparing alignment inspection…")
                         case .transcript:

@@ -7,14 +7,14 @@ struct AudioTimelineWordIndex: Sendable {
     private let maximumEnds: [Double]
 
     init(words: [TranscriptWord], cuts: ManualCutTimeline = .unedited,
-         sourceBounds: ClosedRange<Double>? = nil) {
+         sourceBounds: ClosedRange<Double>? = nil, projection: AudioTimelineProjection? = nil) {
         let timed = words.enumerated().compactMap { offset, word -> (Int, TranscriptWord)? in
             guard let start = word.alignedStart, let end = word.alignedEnd,
                   start.isFinite, end.isFinite, end > start, (end - start).isFinite else { return nil }
             if let sourceBounds, end <= sourceBounds.lowerBound || start >= sourceBounds.upperBound { return nil }
             var projected = word
-            projected.alignedStart = cuts.editedTime(forAlignedTime: start)
-            projected.alignedEnd = cuts.editedTime(forAlignedTime: end)
+            projected.alignedStart = projection?.editedTime(forAlignedTime: start) ?? cuts.editedTime(forAlignedTime: start)
+            projected.alignedEnd = projection?.editedTime(forAlignedTime: end) ?? cuts.editedTime(forAlignedTime: end)
             guard let lo = projected.alignedStart, let hi = projected.alignedEnd, hi > lo else { return nil }
             return (offset, projected)
         }.sorted {
@@ -49,8 +49,8 @@ struct AudioTimelineWordIndex: Sendable {
 
     @concurrent
     static func prepare(words: [TranscriptWord], cuts: ManualCutTimeline,
-                        sourceBounds: ClosedRange<Double>? = nil) async -> Self {
-        Self(words: words, cuts: cuts, sourceBounds: sourceBounds)
+                        sourceBounds: ClosedRange<Double>? = nil, projection: AudioTimelineProjection? = nil) async -> Self {
+        Self(words: words, cuts: cuts, sourceBounds: sourceBounds, projection: projection)
     }
 }
 
@@ -227,18 +227,20 @@ struct AudioTimelineWords: View {
     let zoom: (Double) -> Void
     var uncertainWordIDs: Set<UUID> = []
     var cuts: ManualCutTimeline = .unedited
+    var projection: AudioTimelineProjection? = nil
     var sourceBounds: ClosedRange<Double>? = nil
     var selectUnit: (([TranscriptWord]) -> Void)? = nil
     @State private var availableWidth = 0.0
     private struct Input: Equatable {
         let words: [TranscriptWord]
         let cuts: ManualCutTimeline
+        let projection: AudioTimelineProjection?
         let sourceBounds: ClosedRange<Double>?
     }
     @State private var prepared: (input: Input, cache: AudioTimelineWordLayoutCache)?
 
     var body: some View {
-        let input = Input(words: words, cuts: cuts, sourceBounds: sourceBounds)
+        let input = Input(words: words, cuts: cuts, projection: projection, sourceBounds: sourceBounds)
         let layout = layout(for: input)
         GeometryReader { geometry in
             ZStack(alignment: .topLeading) {
@@ -254,7 +256,7 @@ struct AudioTimelineWords: View {
         .onGeometryChange(for: Double.self) { $0.size.width } action: { availableWidth = $0 }
         .task(id: input) {
             let index = await AudioTimelineWordIndex.prepare(
-                words: input.words, cuts: input.cuts, sourceBounds: input.sourceBounds)
+                words: input.words, cuts: input.cuts, sourceBounds: input.sourceBounds, projection: input.projection)
             guard !Task.isCancelled else { return }
             prepared = (input, AudioTimelineWordLayoutCache(index: index))
         }
@@ -269,7 +271,8 @@ struct AudioTimelineWords: View {
             return prepared.cache.layout(start: start, duration: duration, width: availableWidth,
                 uncertainWordIDs: uncertainWordIDs)
         }
-        let index = AudioTimelineWordIndex(words: words.count <= 512 ? words : [], cuts: cuts, sourceBounds: sourceBounds)
+        let index = AudioTimelineWordIndex(words: words.count <= 512 ? words : [], cuts: cuts,
+                                          sourceBounds: sourceBounds, projection: projection)
         return AudioTimelineWordLayout.make(index: index, start: start, duration: duration,
             width: availableWidth, uncertainWordIDs: uncertainWordIDs)
     }

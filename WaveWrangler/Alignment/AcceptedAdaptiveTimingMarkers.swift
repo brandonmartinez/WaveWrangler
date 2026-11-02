@@ -7,6 +7,7 @@ struct AcceptedAdaptiveTimingMarkers: View, Equatable {
     let start: Double
     let duration: Double
     let size: CGSize
+    var projection: AudioTimelineProjection? = nil
 
     var body: some View {
         ZStack(alignment: .topLeading) {
@@ -27,7 +28,8 @@ struct AcceptedAdaptiveTimingMarkers: View, Equatable {
     func position(for segment: SourceTimingSegment) -> Double? {
         guard segment.alignedStart.isFinite, start.isFinite, duration.isFinite, duration > 0,
               size.width.isFinite, size.width >= 0 else { return nil }
-        let position = (segment.alignedStart - start) / duration * size.width
+        let time = projection?.editedTime(forAlignedTime: segment.alignedStart) ?? segment.alignedStart
+        let position = (time - start) / duration * size.width
         return (0...size.width).contains(position) ? position : nil
     }
 }

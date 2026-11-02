@@ -3,6 +3,29 @@ import Darwin
 import Foundation
 import WWSources
 
+/// Nonserialized proof of the standard mono/stereo order defined by a qualified legacy WAVE header.
+/// Only this gateway can mint it; empty/custom layout labels alone never create this evidence.
+public struct LegacyWavePCMChannelOrderEvidence: Sendable, Equatable {
+    package let channelCount: Int
+    private let formatBytes: [UInt8]
+    private let riffBytes: Int64
+    private let formatOffset: Int64
+    private let dataOffset: Int64
+    private let dataBytes: Int64
+    private let factFrames: UInt32?
+
+    fileprivate init(channelCount: Int, formatBytes: [UInt8], riffBytes: Int64,
+                     formatOffset: Int64, dataOffset: Int64, dataBytes: Int64, factFrames: UInt32?) {
+        self.channelCount = channelCount
+        self.formatBytes = formatBytes
+        self.riffBytes = riffBytes
+        self.formatOffset = formatOffset
+        self.dataOffset = dataOffset
+        self.dataBytes = dataBytes
+        self.factFrames = factFrames
+    }
+}
+
 /// The production `SourceContentIO`. This is the only file in the codebase allowed to open source
 /// content, and it opens it read-only:
 ///
@@ -34,6 +57,8 @@ package struct SystemSourceContentIO: SourceContentIO {
     package var rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
     /// Test-only root descriptor for rejecting an invalid mount before any content read.
     package var volumeRootDescriptor: Int32?
+    /// Test-only measurement of actual native decode calls (header/cache probes do not count).
+    package var rawFrameReadObserver: (@Sendable () -> Void)?
     #endif
 
     package func openForDecoding(_ url: URL) throws(DecodeFailure) -> any DecodingContentReader {
@@ -251,8 +276,12 @@ private final class SystemDecodingReader: DecodingContentReader {
     private let expectedRaw: RawSourceIdentity?
     #if DEBUG
     private let rawIdentityChallenge: (@Sendable (RawSourceIdentity) -> RawSourceIdentity)?
+    private let rawFrameReadObserver: (@Sendable () -> Void)?
     #endif
     private var streamFramesRead: Int64 = 0
+    private var mp3ValidatedPackets: Int64 = 0
+    private var mp3BytePosition: Int64 = 0
+    private var mp3MusicCRC: UInt16 = 0
     private var isClosed = false
 
     private init(
@@ -265,6 +294,7 @@ private final class SystemDecodingReader: DecodingContentReader {
         gateway: SystemSourceContentIO
     ) {
         self.facts = facts
+        mp3BytePosition = facts.mp3Accounting?.firstAudioByte ?? 0
         self.file = file
         self.retainedFile = retainedFile
         self.audioFile = audioFile
@@ -272,6 +302,7 @@ private final class SystemDecodingReader: DecodingContentReader {
         self.expectedRaw = expectedRaw
         #if DEBUG
         rawIdentityChallenge = gateway.rawIdentityChallenge
+        rawFrameReadObserver = gateway.rawFrameReadObserver
         #endif
         bufferList = AudioBufferList.allocate(maximumBuffers: Int(facts.channelsPerFrame))
     }
@@ -370,6 +401,25 @@ private final class SystemDecodingReader: DecodingContentReader {
             dataOffset: hasDataOffset ? dataOffset : nil,
             file: file
         )
+        let mp3: MP3AccountingEvidence?
+        do {
+            mp3 = containerType == kAudioFileMP3Type ? try qualifyMP3(file) : nil
+        } catch {
+            discard(nil)
+            throw error
+        }
+        if let mp3 {
+            guard hasTable, hasPacketCount, hasByteCount, hasDataOffset,
+                  table.mNumberValidFrames == mp3.table.validFrames,
+                  Int64(table.mPrimingFrames) == mp3.table.primingFrames,
+                  Int64(table.mRemainderFrames) == mp3.table.remainderFrames,
+                  packetCount == mp3.packetCount,
+                  dataOffset == mp3.firstAudioByte,
+                  byteCount == mp3.audioEndByte - mp3.firstAudioByte else {
+                discard(nil)
+                throw .unsupported(.mp3Accounting("native packet/byte accounting disagrees with LAME"))
+            }
+        }
         if file.lastErrno != 0 {
             discard(nil)
             throw failure(forErrno: file.lastErrno)
@@ -445,10 +495,22 @@ private final class SystemDecodingReader: DecodingContentReader {
                 remainderFrames: Int64(table.mRemainderFrames)
             ) : nil,
             readerLengthFrames: readerLength,
-            channelLayout: layout,
-            containerLength: length,
-            openedFile: openedState(info)
+            channelLayout: mp3.map {
+                // MPEG's channel-mode bits establish mono or left/right, even without an AudioFile layout.
+                ChannelLayoutFacts(isDeclaredBySource: true, channelLabels: $0.channelCount == 1 ? [42] : [1, 2])
+            } ?? layout,
+            containerLength: mp3.map { .consistent(declaredBytes: $0.audioEndByte - $0.firstAudioByte) } ?? length,
+            openedFile: openedState(info),
+            mp3Accounting: mp3,
+            legacyWavePCMChannelOrder: legacyWavePCMChannelOrder(
+                file: file, containerType: containerType, format: format, layout: layout,
+                nativeDataOffset: hasDataOffset ? dataOffset : nil,
+                nativeDataBytes: hasByteCount ? Int64(exactly: byteCount) : nil, nativeFrames: readerLength)
         )
+        if file.lastErrno != 0 {
+            discard(extFile)
+            throw failure(forErrno: file.lastErrno)
+        }
         return SystemDecodingReader(
             facts: facts, file: file, retainedFile: retained, audioFile: audioFile, extFile: extFile,
             expectedRaw: expected, gateway: gateway
@@ -457,6 +519,9 @@ private final class SystemDecodingReader: DecodingContentReader {
 
     func readRawFrames(into buffer: RawDecodeBuffer) throws(DecodeFailure) -> Int {
         precondition(!isClosed, "read after close")
+        #if DEBUG
+        rawFrameReadObserver?()
+        #endif
         precondition(buffer.channelCount == Int(facts.channelsPerFrame), "buffer channel count must match the source")
         let capacity = buffer.capacityFrames
         for index in 0..<buffer.channelCount {
@@ -474,6 +539,32 @@ private final class SystemDecodingReader: DecodingContentReader {
         guard status == noErr else { throw .decodeFailed(status: status, atStreamFrame: streamFramesRead) }
         guard Int(frames) <= capacity else { throw .inconsistentStream(.readerOverran(requested: capacity, returned: Int(frames))) }
         streamFramesRead += Int64(frames)
+        if let mp3 = facts.mp3Accounting {
+            let expectedFrames = mp3.packetCount * 1152
+            guard streamFramesRead <= expectedFrames, frames != 0 || streamFramesRead == expectedFrames else {
+                throw .inconsistentStream(.mp3Integrity("native decoded codec-stream frame count"))
+            }
+            let target = frames == 0 ? mp3.packetCount : min(mp3.packetCount, (streamFramesRead + 1151) / 1152)
+            while mp3ValidatedPackets < target {
+                guard let first = file.bytes(at: mp3BytePosition, count: 4) else {
+                    throw .inconsistentStream(.mp3Integrity("short audio frame header"))
+                }
+                let header = try MP3FrameHeader(first[...])
+                guard header.sampleRate == mp3.sampleRate, header.channelCount == mp3.channelCount,
+                      mp3BytePosition + Int64(header.byteCount) <= mp3.audioEndByte,
+                      let bytes = file.bytes(at: mp3BytePosition, count: header.byteCount) else {
+                    throw .inconsistentStream(.mp3Integrity("short or changing audio frame"))
+                }
+                mp3MusicCRC = MP3Qualification.crc(bytes, starting: mp3MusicCRC)
+                mp3BytePosition += Int64(header.byteCount)
+                mp3ValidatedPackets += 1
+            }
+            if mp3ValidatedPackets == mp3.packetCount {
+                guard mp3BytePosition == mp3.audioEndByte, mp3MusicCRC == mp3.musicCRC else {
+                    throw .inconsistentStream(.mp3Integrity("audio frame count/bytes or LAME music CRC"))
+                }
+            }
+        }
         return Int(frames)
     }
 
@@ -529,6 +620,33 @@ private final class SystemDecodingReader: DecodingContentReader {
 
 // MARK: - Property helpers
 
+/// Header-only qualification. Complete audio-frame and music-CRC validation advances with decoding,
+/// so opening a prepared-cache read scope never scans or decodes an entire prefix.
+private func qualifyMP3(_ file: ReadOnlyDescriptor) throws(DecodeFailure) -> MP3AccountingEvidence {
+    var offset: Int64 = 0
+    if let id3 = file.bytes(at: 0, count: 10), Array(id3.prefix(3)) == Array("ID3".utf8) {
+        guard [3, 4].contains(id3[3]), id3[6..<10].allSatisfy({ $0 < 128 }) else {
+            throw .unsupported(.mp3Accounting("unsupported ID3 header"))
+        }
+        let size = id3[6..<10].reduce(Int64(0)) { $0 << 7 | Int64($1) }
+        offset = 10 + size + (id3[3] == 4 && id3[5] & 0x10 != 0 ? 10 : 0)
+    }
+    guard let first = file.bytes(at: offset, count: 4) else { throw .unsupported(.encoderDelayUnknown) }
+    let header = try MP3FrameHeader(first[...])
+    guard let frame = file.bytes(at: offset, count: header.byteCount) else {
+        throw .truncated(declaredBytes: Int64(header.byteCount), availableBytes: max(0, file.sizeBytes - offset))
+    }
+    let evidence = try MP3Qualification.firstFrame(frame, at: offset)
+    guard evidence.audioEndByte <= file.sizeBytes else {
+        throw .truncated(declaredBytes: evidence.audioEndByte, availableBytes: file.sizeBytes)
+    }
+    let trailing = file.sizeBytes - evidence.audioEndByte
+    guard trailing == 0 || (trailing == 128 && file.bytes(at: evidence.audioEndByte, count: 3) == Array("TAG".utf8)) else {
+        throw .unsupported(.mp3Accounting("unaccounted trailing bytes"))
+    }
+    return evidence
+}
+
 private func property<T: BitwiseCopyable>(_ file: AudioFileID, _ id: AudioFilePropertyID, _ value: inout T) -> OSStatus {
     var size = UInt32(MemoryLayout<T>.size)
     return withUnsafeMutableBytes(of: &value) { AudioFileGetProperty(file, id, &size, $0.baseAddress!) }
@@ -537,6 +655,73 @@ private func property<T: BitwiseCopyable>(_ file: AudioFileID, _ id: AudioFilePr
 private func extProperty<T: BitwiseCopyable>(_ file: ExtAudioFileRef, _ id: ExtAudioFilePropertyID, _ value: inout T) -> OSStatus {
     var size = UInt32(MemoryLayout<T>.size)
     return withUnsafeMutableBytes(of: &value) { ExtAudioFileGetProperty(file, id, &size, $0.baseAddress!) }
+}
+
+private func legacyWavePCMChannelOrder(
+    file: ReadOnlyDescriptor, containerType: UInt32, format: AudioStreamBasicDescription,
+    layout: ChannelLayoutFacts, nativeDataOffset: Int64?, nativeDataBytes: Int64?, nativeFrames: Int64
+) -> LegacyWavePCMChannelOrderEvidence? {
+    guard containerType == kAudioFileWAVEType, format.mFormatID == kAudioFormatLinearPCM,
+          layout == .undeclared, (1...2).contains(format.mChannelsPerFrame),
+          format.mFramesPerPacket == 1, format.mFormatFlags & kAudioFormatFlagIsBigEndian == 0,
+          let header = file.bytes(at: 0, count: 12), Array(header[0..<4]) == Array("RIFF".utf8),
+          Array(header[8..<12]) == Array("WAVE".utf8) else { return nil }
+    func little(_ bytes: ArraySlice<UInt8>) -> UInt32 {
+        bytes.enumerated().reduce(0) { $0 | UInt32($1.element) << UInt32(8 * $1.offset) }
+    }
+    let end = Int64(little(header[4..<8])) + 8
+    guard end == file.sizeBytes, end >= 44 else { return nil }
+    var cursor: Int64 = 12, chunks = 0
+    var fmt: (offset: Int64, bytes: [UInt8])?
+    var data: (offset: Int64, bytes: Int64)?
+    var factFrames: UInt32?
+    let ancillary = Set(["JUNK", "PAD ", "bext", "cue ", "smpl", "ID3 "])
+    while cursor < end {
+        guard chunks < 4096, end - cursor >= 8,
+              let chunk = file.bytes(at: cursor, count: 8) else { return nil }
+        chunks += 1
+        let tag = String(bytes: chunk[0..<4], encoding: .ascii) ?? ""
+        let count = Int64(little(chunk[4..<8])), body = cursor + 8
+        guard count <= end - body else { return nil }
+        switch tag {
+        case "fmt ":
+            guard fmt == nil, count == 16 || count == 18,
+                  let bytes = file.bytes(at: body, count: Int(count)) else { return nil }
+            fmt = (body, bytes)
+        case "data":
+            guard data == nil, body == nativeDataOffset, count == nativeDataBytes else { return nil }
+            data = (body, count)
+        case "fact":
+            guard factFrames == nil, count == 4, let bytes = file.bytes(at: body, count: 4) else { return nil }
+            factFrames = little(bytes[0..<4])
+        case "LIST":
+            guard count >= 4, let type = file.bytes(at: body, count: 4),
+                  type == Array("INFO".utf8) || type == Array("adtl".utf8) else { return nil }
+        default:
+            guard ancillary.contains(tag) else { return nil }
+        }
+        let padding = count % 2
+        guard padding <= end - body - count else { return nil }
+        cursor = body + count + padding
+    }
+    guard cursor == end, let fmt, let data else { return nil }
+    let bytes = fmt.bytes
+    let tag = little(bytes[0..<2]), channels = little(bytes[2..<4]), rate = little(bytes[4..<8])
+    let byteRate = little(bytes[8..<12]), alignment = little(bytes[12..<14]), bits = little(bytes[14..<16])
+    let floating = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
+    guard (tag == 1 && [16, 24, 32].contains(bits) && !floating
+            && format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0)
+            || (tag == 3 && bits == 32 && floating) else { return nil }
+    guard bytes.count == 16 || little(bytes[16..<18]) == 0,
+          channels == format.mChannelsPerFrame, rate > 0, Double(rate) == format.mSampleRate,
+          bits == format.mBitsPerChannel, alignment == channels * (bits / 8),
+          alignment == format.mBytesPerFrame, alignment == format.mBytesPerPacket,
+          UInt64(byteRate) == UInt64(rate) * UInt64(alignment), alignment > 0,
+          data.bytes > 0, data.bytes % Int64(alignment) == 0,
+          data.bytes / Int64(alignment) == nativeFrames,
+          factFrames.map({ Int64($0) == nativeFrames }) != false else { return nil }
+    return .init(channelCount: Int(channels), formatBytes: bytes, riffBytes: end,
+                 formatOffset: fmt.offset, dataOffset: data.offset, dataBytes: data.bytes, factFrames: factFrames)
 }
 
 /// The declared layout and its channel labels (expanded from a tag or bitmap by AudioFormat).

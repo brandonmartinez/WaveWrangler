@@ -181,6 +181,22 @@ public enum WWSourcesStatusMapping {
     }
 }
 
+/// Authority is scoped to one live engine/scan/candidate. No public initializer or serialized form.
+public struct PendingSourceImport: Hashable, Sendable {
+    fileprivate let id: UUID
+    fileprivate let owner: UUID
+    fileprivate let scan: UUID
+    fileprivate let candidate: UUID
+    public let source: SourceID
+}
+
+/// Frozen read evidence, usable only while `validatePendingImport` still admits its token.
+public struct PendingSourceImportRead: Sendable {
+    public let source: SourceRecord
+    public let location: URL
+    public let witness: RawSourceIdentity
+}
+
 /// `SourceSetupEngine` backed by WWSources for one show: device-local records keyed by
 /// `DeviceAccessKey(showID, sourceID)`, the metadata-only importer, availability monitor, transfer
 /// controller and relink evaluator. Only explicit import/legacy/relink approval captures a guarded
@@ -194,11 +210,21 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     public let monitor: SourceAvailabilityMonitor
     private let preference: (any SourceDownloadPreference)?
     /// Import plans keyed by scan token, so concurrent scans in different windows never mix.
-    private var plans: [UUID: ImportPlan] = [:]
+    var plans: [UUID: ImportPlan] = [:]
+    var audioScans: [UUID: AudioImportSession] = [:]
+    var pendingAudio: [UUID: PendingAudioState] = [:]
+    var preparingAudio: Set<UUID> = []
+    private let pendingOwner = UUID()
+    private struct PendingImport {
+        let token: PendingSourceImport
+        var record: DeviceAccessRecord?
+        var witness: RawSourceIdentity?
+    }
+    private var pendingImports: [UUID: PendingImport] = [:]
     private var isShutDown = false
     private var proposals: [SourceID: (url: URL, proposal: RelinkProposal, previous: DeviceAccessRecord?)] = [:]
     private var previousRecords: [UUID: DeviceAccessRecord?] = [:]
-    private let captureRawIdentity: (@Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity)?
+    let captureRawIdentity: (@Sendable (URL, FileSystemFingerprint) async throws -> RawSourceIdentity)?
     private var defaultsObserver: NSObjectProtocol?
     /// Engine-owned work that touches the monitor; shutdown cancels and awaits it before stopping.
     private var tasks: [UUID: Task<Void, Never>] = [:]
@@ -256,6 +282,10 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
         if let defaultsObserver { NotificationCenter.default.removeObserver(defaultsObserver) }
         defaultsObserver = nil
         plans.removeAll()
+        pendingImports.removeAll()
+        audioScans.removeAll()
+        pendingAudio.removeAll()
+        preparingAudio.removeAll()
         for observer in observers.values {
             observer.continuation.finish()
             observer.signal?.fire()
@@ -306,6 +336,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
     }
 
     public func scanForImport(_ urls: [URL], episodeSourceIDs: [SourceID]) async throws(SourceEngineError) -> ImportScan {
+        guard !isShutDown else { throw .unavailable(reason: "the show was closed") }
         let existing = activeRecords((try? await store.records(in: showID)) ?? [])
         let importer = SourceImporter(context: context)
         let showID = showID
@@ -314,6 +345,9 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
             plan = try await Task.detached { try await importer.plan(selection: urls, showID: showID, existingRecords: existing) }.value
         } catch {
             throw .failed(reason: error.localizedDescription)
+        }
+        guard !isShutDown, !Task.isCancelled else {
+            throw .failed(reason: "the import was canceled or the show was closed")
         }
         let token = UUID()
         plans[token] = plan
@@ -335,7 +369,7 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
                 id: item.sourceRecord.id.rawValue,
                 details: WWSourcesStatusMapping.details(item.accessRecord.recordedIdentity?.fingerprint, path: item.accessRecord.lastKnownPath),
                 kind: .recording(typeFromNameOnly: true),
-                alreadyInEpisode: item.possibleDuplicateOf.map(inEpisode.contains) ?? false,
+                alreadyInEpisode: item.possibleDuplicates.contains(where: inEpisode.contains),
                 residency: .unknown
             )
         }
@@ -431,6 +465,207 @@ public final class WWSourcesSetupEngine: SourceSetupEngine {
 
     public func discardScan(_ token: UUID) async {
         plans[token] = nil
+        pendingImports = pendingImports.filter { $0.value.token.scan != token }
+        audioScans[token] = nil
+        pendingAudio = pendingAudio.filter { $0.value.token.scan != token }
+    }
+
+    /// Called only by an explicit Import action, never by scan/review. Canonical and device-local
+    /// stores remain untouched while the caller qualifies the audio through the normal decoder.
+    public func preparePendingImport(
+        candidate: UUID, fromScan scan: UUID
+    ) async throws -> PendingSourceImport {
+        try Task.checkCancellation()
+        guard !isShutDown, let plan = plans[scan],
+              let item = plan.items.first(where: { $0.sourceRecord.id.rawValue == candidate }),
+              item.possibleDuplicateOf == nil,
+              !pendingImports.values.contains(where: { $0.token.candidate == candidate }),
+              let captureRawIdentity else {
+            throw SourceEngineError.failed(reason: "The chosen audio is already referenced, out of date, or cannot be authorized. Choose it again.")
+        }
+        let token = PendingSourceImport(id: UUID(), owner: pendingOwner, scan: scan,
+                                        candidate: candidate, source: item.sourceRecord.id)
+        pendingImports[token.id] = PendingImport(token: token)
+        do {
+            let record = item.accessRecord
+            let others = activeRecords(try await store.records(in: showID))
+                + pendingImports.values.compactMap(\.record)
+            try requirePending(token)
+            guard let bookmark = record.bookmark,
+                  case let .resolved(url, stale) = context.io.resolveBookmark(bookmark), !stale else {
+                throw SourceEngineError.failed(reason: "The audio permission changed. Choose the file again.")
+            }
+            guard case let .success(metadata) = context.withScopedAccess(to: url, { context.io.metadata(at: $0) }),
+                  metadata.residency.0 == .local, metadata.isDataless.value == false,
+                  metadata.volumeIsLocal.value == true else {
+                throw SourceEngineError.unavailable(reason: "Add Audio requires a fully local, accessible original. No cloud download or materialization was requested. Make the file available explicitly, then choose it again.")
+            }
+            let evaluator = RelinkEvaluator(context: context)
+            let proposal = evaluator.evaluate(candidate: url, for: record.key, record: record, otherRecords: others)
+            guard proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil else {
+                throw SourceEngineError.failed(reason: "The chosen audio changed or is already referenced. Choose the original again.")
+            }
+            let confirmed = try await evaluator.applyConfirmed(
+                proposal, to: record, captureRawIdentity: captureRawIdentity)
+            try requirePending(token)
+            // Adapters around SystemSourceIO may not retain the raw field; the live capture is still
+            // required and verified, rather than treating a metadata-only test adapter as permission.
+            guard let fingerprint = proposal.candidateFingerprint else {
+                throw SourceEngineError.failed(reason: "The chosen audio has no verifiable file identity.")
+            }
+            let witness: RawSourceIdentity
+            if let raw = confirmed.recordedIdentity?.rawWitness { witness = raw }
+            else { witness = try await captureRawIdentity(url, fingerprint) }
+            try requirePending(token)
+            pendingImports[token.id]?.record = confirmed
+            pendingImports[token.id]?.witness = witness
+            _ = try await validatePendingImport(token)
+            return token
+        } catch {
+            pendingImports[token.id] = nil
+            throw error
+        }
+    }
+
+    public func validatePendingImport(_ token: PendingSourceImport) async throws -> PendingSourceImportRead {
+        try requirePending(token)
+        guard let pending = pendingImports[token.id], let record = pending.record,
+              let witness = pending.witness, witness.isUsable,
+              let fingerprint = record.recordedIdentity?.fingerprint, let bookmark = record.bookmark,
+              case let .resolved(url, stale) = context.io.resolveBookmark(bookmark), !stale,
+              let captureRawIdentity else {
+            throw SourceEngineError.failed(reason: "The pending audio authorization is unavailable.")
+        }
+        let records = try await store.records(in: showID)
+        try requirePending(token)
+        guard !records.contains(where: { $0.key == record.key }) else {
+            throw SourceEngineError.failed(reason: "An access record changed during import. Relink the audio instead.")
+        }
+        let proposal = RelinkEvaluator(context: context).evaluate(
+            candidate: url, for: record.key, record: record,
+            otherRecords: activeRecords(records) + pendingImports.values.compactMap(\.record))
+        guard proposal.canApply, proposal.comparison.isExactMatch, proposal.alreadyLinkedTo == nil,
+              try await captureRawIdentity(url, fingerprint) == witness else {
+            throw SourceEngineError.failed(reason: "The original audio or its permission changed during import.")
+        }
+        try requirePending(token)
+        guard let item = plans[token.scan]?.items.first(where: { $0.sourceRecord.id == token.source }) else {
+            throw SourceEngineError.failed(reason: "The pending file list is no longer available.")
+        }
+        return PendingSourceImportRead(source: item.sourceRecord, location: url, witness: witness)
+    }
+
+    public func discardPendingImport(_ token: PendingSourceImport) {
+        guard token.owner == pendingOwner else { return }
+        pendingImports[token.id] = nil
+    }
+
+    /// Consumes the entire batch once, only after the caller's single canonical edit. The caller
+    /// checks its exact publication/controller identity after every suspension. No unconditional
+    /// save or canonical rollback is permitted on this path.
+    public func adoptPendingImports(
+        _ tokens: [PendingSourceImport],
+        validatingPublication: @MainActor () throws -> Void
+    ) async throws {
+        guard !tokens.isEmpty, Set(tokens).count == tokens.count else {
+            throw SourceEngineError.failed(reason: "The pending audio batch is empty or contains duplicate tokens.")
+        }
+        var records: [DeviceAccessRecord] = []
+        var reads: [PendingSourceImportRead] = []
+        for token in tokens {
+            try validatingPublication()
+            reads.append(try await validatePendingImport(token))
+            try validatingPublication()
+            guard activeSourceIDs?()?.contains(token.source) != false,
+                  let record = pendingImports[token.id]?.record else {
+                throw SourceEngineError.failed(reason: "The published audio source is no longer owned by this import.")
+            }
+            records.append(record)
+        }
+        try validatingPublication()
+        for token in tokens { pendingImports[token.id] = nil }
+        try await adoptAudioRecords(records, reads: reads, validatingPublication: validatingPublication)
+    }
+
+    func consumePendingImport(_ token: PendingSourceImport) throws -> DeviceAccessRecord {
+        try requirePending(token)
+        guard let record = pendingImports.removeValue(forKey: token.id)?.record else {
+            throw SourceEngineError.failed(reason: "The pending audio access was already consumed.")
+        }
+        return record
+    }
+
+    func adoptAudioRecords(
+        _ records: [DeviceAccessRecord], reads: [PendingSourceImportRead],
+        validatingPublication: @MainActor () throws -> Void,
+        validatingOrigins: @MainActor () async throws -> Void = {}
+    ) async throws {
+        guard let importStore = store as? any DeviceAccessImportStore else {
+            throw SourceEngineError.unavailable(reason: "This access store cannot safely adopt staged audio. Relink the blocked references.")
+        }
+        guard !records.isEmpty, records.count == reads.count else {
+            throw SourceEngineError.failed(reason: "The pending audio access batch is empty or incomplete.")
+        }
+        try validatingPublication()
+        try await validatingOrigins()
+        try validatingPublication()
+        let inserted = try await importStore.insertNew(records)
+        do {
+            try Task.checkCancellation()
+            try validatingPublication()
+            guard !isShutDown, let captureRawIdentity else {
+                throw SourceEngineError.failed(reason: "The show closed before audio access was adopted.")
+            }
+            for (record, read) in zip(records, reads) {
+                guard activeSourceIDs?()?.contains(read.source.id) != false,
+                      let fingerprint = record.recordedIdentity?.fingerprint,
+                      try await captureRawIdentity(read.location, fingerprint) == read.witness else {
+                    throw SourceEngineError.failed(reason: "The original audio changed while adopting access.")
+                }
+                try Task.checkCancellation()
+                try validatingPublication()
+            }
+            for snapshot in inserted {
+                guard let current = try await importStore.snapshot(for: snapshot.record.key),
+                      current == snapshot, current.storeIdentity == snapshot.storeIdentity else {
+                    throw SourceEngineError.failed(reason: "Audio access was changed or regranted during adoption.")
+                }
+                try Task.checkCancellation()
+                try validatingPublication()
+            }
+            try await validatingOrigins()
+            try validatingPublication()
+            for snapshot in inserted {
+                guard let current = try await importStore.snapshot(for: snapshot.record.key),
+                      current == snapshot, current.storeIdentity == snapshot.storeIdentity else {
+                    throw SourceEngineError.failed(reason: "Audio access changed while validating the reused originals.")
+                }
+                try Task.checkCancellation()
+                try validatingPublication()
+            }
+            guard !isShutDown else { throw SourceEngineError.failed(reason: "The show was closed.") }
+            spawn { [monitor] in await monitor.refresh(records.map(\.sourceID)) }
+        } catch {
+            do {
+                let refused = try await importStore.discardImported(inserted)
+                guard refused.isEmpty else {
+                    throw SourceEngineError.failed(reason: "Audio import is blocked: \(error.localizedDescription). Cleanup preserved \(refused.count) subsequently changed access records. Review or relink the references.")
+                }
+            } catch let cleanup as SourceEngineError {
+                throw cleanup
+            } catch let cleanup {
+                throw SourceEngineError.failed(reason: "Audio import is blocked: \(error.localizedDescription). Pending access cleanup also failed: \(cleanup.localizedDescription). Review or relink the references.")
+            }
+            throw error
+        }
+    }
+
+    private func requirePending(_ token: PendingSourceImport) throws {
+        try Task.checkCancellation()
+        guard !isShutDown, token.owner == pendingOwner, plans[token.scan] != nil,
+              pendingImports[token.id]?.token == token else {
+            throw SourceEngineError.failed(reason: "The audio import was canceled, discarded, or closed.")
+        }
     }
 
     public func forget(_ sourceIDs: [SourceID]) async {

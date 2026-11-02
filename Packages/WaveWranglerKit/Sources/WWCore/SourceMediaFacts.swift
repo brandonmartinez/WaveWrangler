@@ -36,6 +36,10 @@ extension ShowDocumentModel {
         if observations.channelCount.isKnown { recorded.channelCount = observations.channelCount }
         if observations.sampleRate.isKnown { recorded.sampleRate = observations.sampleRate }
         result.episodes[episodeIndex].sources[index].observations = recorded
+        if let issue = result.episodes[episodeIndex].audioArrangement?
+            .validationIssues(in: result.episodes[episodeIndex]).first {
+            throw .invalidAudio(issue.detail)
+        }
         return result
     }
 }

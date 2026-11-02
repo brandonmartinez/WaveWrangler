@@ -152,8 +152,8 @@ struct DecodingCursorTests {
         #expect(explicit == .sourceChangedDuringDecode)
     }
 
-    @Test("A final unchanged check still runs after an explicit check")
-    func finalCheckAfterExplicitCheck() async throws {
+    @Test("A final unchanged check still runs after an explicit check, including header-only cache scopes", arguments: [false, true])
+    func finalCheckAfterExplicitCheck(readContent: Bool) async throws {
         let source = try ScriptedSource()
         let io = AdjustableIO { result, call in
             if call == 2 {
@@ -164,7 +164,7 @@ struct DecodingCursorTests {
         let failure = await Self.failure {
             _ = try await makeDecoder(io: io, content: ScriptedContentIO(source.script()))
                 .withDecodingCursor(source.url, source: SourceID()) { cursor in
-                    _ = try await cursor.next()
+                    if readContent { _ = try await cursor.next() }
                     try await cursor.verifyUnchanged()
                     returned.increment()
                     return 0

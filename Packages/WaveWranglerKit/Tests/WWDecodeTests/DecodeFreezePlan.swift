@@ -40,6 +40,13 @@ enum DecodeGates {
 
 enum DecodeFixture {
     static let fixtureID = "M3-DECODE-006"
+    static let historicalEnvelopeVersion = 1
+    /// MP3 qualification is separate. Never add a new live format to this historical draw population.
+    static let historicalEnvelopeEntries = DecodeEnvelope.entries.filter {
+        Set(["wave/linearPCM", "aiff/linearPCM", "aifc/linearPCM", "caf/linearPCM",
+             "m4a/aac", "caf/aac", "m4a/appleLossless", "caf/appleLossless",
+             "flac/flac", "caf/opus"]).contains("\($0.container.rawValue)/\($0.codec.rawValue)")
+    }
     static let calibrationCases = 130
     static let holdoutCases = 520
     static let holdoutEnabled = ProcessInfo.processInfo.environment["WW_M3_DECODE_6_HOLDOUT"] == "1"
@@ -274,7 +281,7 @@ struct DecodeFreezeCase: Sendable {
         entry: (DecodeEnvelope.Entry) -> Bool,
         format: (SourceSampleFormat) -> Bool = { _ in true }
     ) -> FixtureSpec {
-        let entries = DecodeEnvelope.entries.filter { entry($0) && $0.sampleFormats.contains(where: format) }
+        let entries = DecodeFixture.historicalEnvelopeEntries.filter { entry($0) && $0.sampleFormats.contains(where: format) }
         let chosen = rng.pick(entries)
         return FixtureSpec(
             container: chosen.container, codec: chosen.codec,

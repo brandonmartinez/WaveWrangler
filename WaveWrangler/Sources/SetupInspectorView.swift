@@ -86,101 +86,107 @@ private struct SourceInspector: View {
         .accessibilityIdentifier("ww.inspector.source.name")
         .setupFont(.body)
 
-        Picker("Recorder group", selection: groupBinding) {
-            ForEach(episode?.recorderGroups ?? []) { group in
-                Text(group.name).tag(group.id.description)
+        if source.isRecording {
+            Picker("Recorder group", selection: groupBinding) {
+                ForEach(episode?.recorderGroups ?? []) { group in
+                    Text(group.name).tag(group.id.description)
+                }
+                Text("Ungrouped").tag(Self.ungroupedTag)
+                Divider()
+                Text("New Recorder Group…").tag(Self.newGroupTag)
             }
-            Text("Ungrouped").tag(Self.ungroupedTag)
-            Divider()
-            Text("New Recorder Group…").tag(Self.newGroupTag)
-        }
-        .setupFont(.body)
-        .focused($focus, equals: .group)
-        .accessibilityIdentifier("ww.inspector.source.group")
-
-        if let group = source.placement.recorderGroupID {
-            TimingReferenceControls(
-                selection: model.timingReferenceSelection, group: group,
-                identifier: "ww.inspector.source.timingReference"
-            ) {
-                model.useAsTimingReference(group)
-            }
-        }
-
-        numericRow(
-            title: "Recording Segment",
-            draft: $epochDraft,
-            error: epochError,
-            field: .epoch,
-            identifier: "ww.inspector.source.epoch",
-            disabledReason: source.placement.recorderGroupID == nil ? "Choose a recorder group first. Recording segments belong to a recorder group." : nil,
-            value: epoch,
-            commit: commitEpoch,
-            step: { delta in model.setEpoch(max(1, (epoch ?? 1) + delta), for: [source.id]) }
-        )
-        .help("A recording segment is one continuous-clock span of a recorder group. Start a new segment when that recorder stops and restarts.")
-
-        VStack(alignment: .leading, spacing: 4) {
-            numericRow(
-                title: "Channel",
-                draft: $channelDraft,
-                error: channelError,
-                field: .channel,
-                identifier: "ww.inspector.source.channel",
-                disabledReason: statedChannel == nil ? "Channel is Unknown. Turn off Unknown to enter one." : nil,
-                value: statedChannel.map { $0 + 1 },
-                commit: commitChannel,
-                step: { delta in model.setChannel(max(1, (statedChannel ?? 0) + 1 + delta), for: [source.id]) }
-            )
-            Toggle("Unknown", isOn: Binding(
-                get: { statedChannel == nil },
-                set: { model.setChannel($0 ? nil : 1, for: [source.id]) }
-            ))
-            .checkboxTint()
             .setupFont(.body)
-            .accessibilityLabel("Channel unknown")
-            .accessibilityIdentifier("ww.inspector.source.channelUnknown")
-            Text(source.observations.channelCount.value.map { "Observed \($0) audio channels" }
-                ?? "Channel count has not been observed").setupFont(.callout)
-        }
+            .focused($focus, equals: .group)
+            .accessibilityIdentifier("ww.inspector.source.group")
 
-        Picker("Speaker", selection: speakerBinding) {
-            ForEach(model.episodeSpeakers, id: \.id) { speaker in
-                Text(speaker.name).tag(speaker.id.description)
+            if let group = source.placement.recorderGroupID {
+                TimingReferenceControls(
+                    selection: model.timingReferenceSelection, group: group,
+                    identifier: "ww.inspector.source.timingReference"
+                ) {
+                    model.useAsTimingReference(group)
+                }
             }
-            Text("Unassigned").tag(Self.unassignedTag)
-            Divider()
-            Text("New Speaker…").tag(Self.newSpeakerTag)
-        }
-        .setupFont(.body)
-        .accessibilityIdentifier("ww.inspector.source.speaker")
 
-        if let episode,
-           let channel = ChannelReference(sourceID: source.id, statedChannel: statedChannel).resolvedChannel(in: episode) {
-            RecordingInputGainControl(store: model.store, episodeID: episode.id,
-                reference: ChannelReference(sourceID: source.id, statedChannel: channel),
-                enabled: model.store.canEdit,
-                identifier: "ww.inspector.source.inputGain")
-        } else {
-            Text("Choose an explicit channel before adjusting input gain.").font(.caption)
-        }
+            numericRow(
+                title: "Recording Segment",
+                draft: $epochDraft,
+                error: epochError,
+                field: .epoch,
+                identifier: "ww.inspector.source.epoch",
+                disabledReason: source.placement.recorderGroupID == nil ? "Choose a recorder group first. Recording segments belong to a recorder group." : nil,
+                value: epoch,
+                commit: commitEpoch,
+                step: { delta in model.setEpoch(max(1, (epoch ?? 1) + delta), for: [source.id]) }
+            )
+            .help("A recording segment is one continuous-clock span of a recorder group. Start a new segment when that recorder stops and restarts.")
 
-        roleRow
-        if let definitions = model.store.model.show.profile?.recorderDefinitions, !definitions.isEmpty {
-            Menu("Apply saved source definition") {
-                ForEach(definitions) { definition in
-                    Section(definition.name) {
-                        ForEach(definition.sources) { saved in
-                            Button(saved.name) {
-                                model.editWorkspace("Apply Source Definition") { document throws(DomainError) in
-                                    try document.applyingSourceDefinition(saved, to: source.id, in: model.episodeID)
+            VStack(alignment: .leading, spacing: 4) {
+                numericRow(
+                    title: "Channel",
+                    draft: $channelDraft,
+                    error: channelError,
+                    field: .channel,
+                    identifier: "ww.inspector.source.channel",
+                    disabledReason: statedChannel == nil ? "Channel is Unknown. Turn off Unknown to enter one." : nil,
+                    value: statedChannel.map { $0 + 1 },
+                    commit: commitChannel,
+                    step: { delta in model.setChannel(max(1, (statedChannel ?? 0) + 1 + delta), for: [source.id]) }
+                )
+                Toggle("Unknown", isOn: Binding(
+                    get: { statedChannel == nil },
+                    set: { model.setChannel($0 ? nil : 1, for: [source.id]) }
+                ))
+                .checkboxTint()
+                .setupFont(.body)
+                .accessibilityLabel("Channel unknown")
+                .accessibilityIdentifier("ww.inspector.source.channelUnknown")
+                Text(source.observations.channelCount.value.map { "Observed \($0) audio channels" }
+                    ?? "Channel count has not been observed").setupFont(.callout)
+            }
+
+            Picker("Speaker", selection: speakerBinding) {
+                ForEach(model.episodeSpeakers, id: \.id) { speaker in
+                    Text(speaker.name).tag(speaker.id.description)
+                }
+                Text("Unassigned").tag(Self.unassignedTag)
+                Divider()
+                Text("New Speaker…").tag(Self.newSpeakerTag)
+            }
+            .setupFont(.body)
+            .accessibilityIdentifier("ww.inspector.source.speaker")
+
+            if let episode,
+               let channel = ChannelReference(sourceID: source.id, statedChannel: statedChannel).resolvedChannel(in: episode) {
+                RecordingInputGainControl(store: model.store, episodeID: episode.id,
+                    reference: ChannelReference(sourceID: source.id, statedChannel: channel),
+                    enabled: model.store.canEdit,
+                    identifier: "ww.inspector.source.inputGain")
+            } else {
+                Text("Choose an explicit channel before adjusting input gain.").font(.caption)
+            }
+
+            roleRow
+            if let definitions = model.store.model.show.profile?.recorderDefinitions, !definitions.isEmpty {
+                Menu("Apply saved source definition") {
+                    ForEach(definitions) { definition in
+                        Section(definition.name) {
+                            ForEach(definition.sources) { saved in
+                                Button(saved.name) {
+                                    model.editWorkspace("Apply Source Definition") { document throws(DomainError) in
+                                        try document.applyingSourceDefinition(saved, to: source.id, in: model.episodeID)
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                .help("Applies provisional channel and speaker defaults to this recording. Does not copy audio or replace an existing Primary.")
             }
-            .help("Applies provisional channel and speaker defaults to this recording. Does not copy audio or replace an existing Primary.")
+        } else {
+            Label("Audio asset", systemImage: "waveform")
+            Text("This source is not a recorder or speaker. Edit its placements in Audio Tracks; source access and relinking remain shared here.")
+                .font(.caption).foregroundStyle(.secondary)
         }
 
         Divider()
@@ -215,6 +221,7 @@ private struct SourceInspector: View {
     /// Keyboard Access (AppKit's rule); otherwise the first enabled number field. Nil leaves focus in the
     /// table, where the Source menu still edits everything.
     private var firstFocusableField: InspectorField? {
+        guard source.isRecording else { return nil }
         if NSApp.isFullKeyboardAccessEnabled { return .group }
         if source.placement.recorderGroupID != nil { return .epoch }
         if statedChannel != nil { return .channel }

@@ -15,6 +15,7 @@ extension ShowDocumentModel {
                                  in episodeID: EpisodeID) throws(DomainError) -> Self {
         guard let episode = episode(episodeID) else { throw .episodeNotFound(episodeID) }
         guard let source = episode.source(channel.sourceID) else { throw .sourceNotFound(channel.sourceID) }
+        guard source.isRecording else { throw .sourceIsNotRecording(source.id) }
         guard let index = channel.channel.value, index >= 0 else { throw .invalidChannel(channel) }
         if let count = source.observations.channelCount.value, index >= count {
             throw .channelOutOfRange(channel, channelCount: count)

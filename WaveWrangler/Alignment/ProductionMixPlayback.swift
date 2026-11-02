@@ -3,6 +3,49 @@ import Synchronization
 import WWCore
 import WWMix
 
+/// Only explicitly stopped transports enter this barrier; independent active consumers are untouched.
+final class ProductionPlaybackRetirements: Sendable {
+    private let pending = Mutex<[UUID: Task<Void, Never>]>([:])
+    #if DEBUG
+    private let beforeSnapshotForTesting: (@Sendable () async -> Void)?
+    private let beforeJoiningForTesting: (@Sendable () throws -> Void)?
+
+    init(beforeSnapshotForTesting: (@Sendable () async -> Void)? = nil,
+         beforeJoiningForTesting: (@Sendable () throws -> Void)? = nil) {
+        self.beforeSnapshotForTesting = beforeSnapshotForTesting
+        self.beforeJoiningForTesting = beforeJoiningForTesting
+    }
+    #endif
+
+    func retire(_ task: Task<Void, Never>) {
+        task.cancel()
+        let id = UUID()
+        pending.withLock { $0[id] = task }
+        Task { [self] in
+            await task.value
+            pending.withLock { $0[id] = nil }
+        }
+    }
+
+    func wait() async throws {
+        try Task.checkCancellation()
+        #if DEBUG
+        await beforeSnapshotForTesting?()
+        #endif
+        let tasks = pending.withLock { Array($0.values) }
+        // A task can be retired between the first check and snapshotting itself.
+        try Task.checkCancellation()
+        for task in tasks {
+            try Task.checkCancellation()
+            #if DEBUG
+            try beforeJoiningForTesting?()
+            #endif
+            await task.value
+            try Task.checkCancellation()
+        }
+    }
+}
+
 /// One bounded raw-PCM producer. Prepared samples do not contain gains, effects, or faders.
 private actor ProductionPCMQueue {
     private let end: Int64
@@ -76,9 +119,11 @@ private actor ProductionPCMQueue {
         }
     }
 
-    func stop() {
-        producer?.cancel()
+    func stop() async {
+        let pending = producer
         producer = nil
+        pending?.cancel()
+        await pending?.value
         windows.removeAll()
         diagnostics.rawQueueChanged(count: 0)
         finished = true
@@ -127,11 +172,21 @@ final class ProductionMixPlayback: Sendable {
     @concurrent
     func play(output: AlignmentAudioPlayback,
               onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
+        try check()
+        try await runtime.withProductionConsumer(recipe: processor.recipe, model: model) { [self] consumer in
+            try check()
+            try await playPrepared(consumer: consumer, output: output, onBufferDeadline: onBufferDeadline)
+        }
+    }
+
+    private func playPrepared(consumer: SupplementalClipConsumer, output: AlignmentAudioPlayback,
+                              onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
         let recipe = processor.recipe
-        let queue = ProductionPCMQueue(frames: recipe.programFrames, diagnostics: diagnostics, prepare: { [self] frames in
+        let inputFrames = (recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames))..<recipe.programFrames.upperBound
+        let queue = ProductionPCMQueue(frames: inputFrames, diagnostics: diagnostics, prepare: { [self] frames in
             try check()
             guard output.generation == outputGeneration else { throw CancellationError() }
-            return try await runtime.productionPCM(recipe: recipe, model: model, frames: frames)
+            return try await runtime.productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
         }, failed: { [self] in invalidate($0) })
         await queue.start()
         var validation: Task<Void, Never>?
@@ -162,8 +217,11 @@ final class ProductionMixPlayback: Sendable {
                     let end = min(input.frames.upperBound, next + Int64(MixerLiveTiming.processingBlockFrames))
                     let lower = Int(next - input.frames.lowerBound)
                     let channels = input.channels.mapValues { Array($0[lower..<(lower + Int(end - next))]) }
+                    let tracks = input.audioTracks.mapValues {
+                        $0.map { Array($0[lower..<(lower + Int(end - next))]) }
+                    }
                     try await synchronizeControls()
-                    let block = MixerPCMWindow(frames: next..<end, channels: channels)
+                    let block = MixerPCMWindow(frames: next..<end, channels: channels, audioTracks: tracks)
                     let rendered = try await diagnostics.measureAsync(.dsp) { [processor] in try await processor.process(block) }
                     state.withLock { $0.output = rendered }
                     let final = end == recipe.programFrames.upperBound && processor.latencyFrames == 0 && processor.tailFrames == 0
@@ -193,10 +251,14 @@ final class ProductionMixPlayback: Sendable {
                 if let failure = output.failure { throw failure }
                 try await Task.sleep(for: .milliseconds(5))
             }
+            try await validate(recipe: recipe)
+            try check()
             validation?.cancel()
+            await validation?.value
             await queue.stop()
         } catch {
             validation?.cancel()
+            await validation?.value
             output.stop(ifCurrent: outputGeneration, preservingClock: true)
             await queue.stop()
             throw error

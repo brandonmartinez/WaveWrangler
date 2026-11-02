@@ -450,7 +450,7 @@ enum AlignmentRowsProjection {
         return episode.recorderGroups.flatMap { group in
             group.epochs.map { epoch in
                 let mapped = Set(mappedSources[epoch.id] ?? [])
-                let sources = episode.sources.filter {
+                let sources = episode.alignmentSources.filter {
                     mapped.contains($0.id)
                         || ($0.placement.recorderGroupID == group.id && $0.placement.epochID == epoch.id)
                 }
@@ -732,6 +732,7 @@ enum AlignmentPresentation {
         case .encoderDelayUnknown: "the encoder delay is unknown"
         case .unverifiableContainerLength: "can't verify this file's declared length"
         case .variableFramesPerPacket: "variable frames per packet are unsupported"
+        case .mp3Accounting: "this MP3's frame and encoder-delay accounting is unsupported"
         }
     }
 

@@ -63,7 +63,7 @@ let package = Package(
         // Clock-corrected source preparation must keep up with playback in a Debug host, too.
         .target(name: "WWRender", dependencies: ["WWCore", "WWTimeMap"],
             swiftSettings: [.unsafeFlags(["-O"], .when(configuration: .debug))]),
-        .target(name: "WWMix", dependencies: ["WWCore", "WWSources", "WWDecode"]),
+        .target(name: "WWMix", dependencies: ["WWCore", "WWSources", "WWDecode", "WWCommonEdit", "WWRender", "WWDerived"]),
         .target(name: "WWAlignSegment", dependencies: ["WWCore", "WWTimeMap", "WWAlignEstimate"]),
         .target(name: "WWAlignPipeline", dependencies: ["WWCore", "WWTimeMap", "WWSources", "WWDecode", "WWDerived", "WWPersistence", "WWAlignEstimate", "WWAutoAlign", "WWRender"]),
         .target(name: "WWWordEvaluation"),
@@ -102,7 +102,7 @@ let package = Package(
         .testTarget(name: "WWAlignEstimateTests", dependencies: ["WWAlignEstimate", "WWTimeMap", "WWCore", "WWTestSupport"]),
         .testTarget(name: "WWAutoAlignTests", dependencies: ["WWAutoAlign", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore", "WWTestSupport"]),
-        .testTarget(name: "WWMixTests", dependencies: ["WWMix", "WWCore", "WWSources"]),
+        .testTarget(name: "WWMixTests", dependencies: ["WWMix", "WWCore", "WWSources", "WWCommonEdit", "WWDerived", "WWRender"]),
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore", "WWTestSupport"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
         .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),

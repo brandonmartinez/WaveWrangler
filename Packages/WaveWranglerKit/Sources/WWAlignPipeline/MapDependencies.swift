@@ -25,6 +25,12 @@ public enum AlignmentDependencyChange: Sendable, Hashable {
 /// The revisions and placements a map revision was accepted against, persisted as a digest in the map
 /// revision's recipe name and re-verified before activation and before rendering.
 enum MapDependencies {
+    /// Revision 2 predates MP3 and implicitly used interpretation 1 / envelope 1. Revision 3 records
+    /// the audible source-frame contract and the actual creating format explicitly. This compatibility
+    /// table concerns accepted timing only; derived PCM and source probes still require exact versions.
+    private static let audibleFrameContract = "ww.decode-audible-source/1"
+    private static let legacyFormat = FormatRevision(interpretationVersion: 1, envelopeVersion: 1)
+
     /// Where each placed source sits in the map: its group and the epochs of its spans.
     static func placements(of map: AlignedTimelineMap, corrections: [SourceTimingCorrection] = []) -> [SourceID: (group: RecorderGroupID, epochs: [RecordingEpochID])] {
         var result: [SourceID: (group: RecorderGroupID, epochs: [RecordingEpochID])] = [:]
@@ -56,20 +62,46 @@ enum MapDependencies {
         return DerivedAssetKey(asset: AssetSpec(kind: "ww.alignment-dependencies", revision: 1), sources: entries).digest
     }
 
-    static func recipe(digest: String, acceptedProposals: [String: String] = [:]) -> RecipeReference {
+    static func recipe(digest: String, format: FormatRevision = .current,
+                       acceptedProposals: [String: String] = [:]) -> RecipeReference {
         let accepted = acceptedProposals.sorted { $0.key < $1.key }
             .map { "\($0.key):\($0.value)" }.joined(separator: ",")
         let suffix = accepted.isEmpty ? "" : ";accepted=\(accepted)"
-        return RecipeReference(name: AlignmentAssetKinds.acceptanceRecipePrefix + digest + suffix, revision: AlignmentAssetKinds.acceptanceRecipeRevision)
+        let frameContract = ";frames=\(audibleFrameContract);fiv=\(format.interpretationVersion);env=\(format.envelopeVersion)"
+        return RecipeReference(name: AlignmentAssetKinds.acceptanceRecipePrefix + digest + frameContract + suffix,
+                               revision: AlignmentAssetKinds.acceptanceRecipeRevision)
     }
 
     static func persistedDigest(_ version: TimeMapVersion) -> String? {
         guard let recipe = version.inputs.recipe,
-              recipe.revision == AlignmentAssetKinds.acceptanceRecipeRevision,
+              [2, AlignmentAssetKinds.acceptanceRecipeRevision].contains(recipe.revision),
               recipe.name.hasPrefix(AlignmentAssetKinds.acceptanceRecipePrefix)
         else { return nil }
         let digest = String(recipe.name.dropFirst(AlignmentAssetKinds.acceptanceRecipePrefix.count).prefix { $0 != ";" })
         return digest.isEmpty ? nil : digest
+    }
+
+    /// Selects one dependency encoding, never retries a mismatched digest with an older version.
+    /// The sole admitted upgrade is envelope 1 -> 2 with unchanged interpretation 1: the evidenced
+    /// change only adds MP3 admission and does not change an existing recording's source-frame grid.
+    private static func dependencyFormat(_ version: TimeMapVersion, current: FormatRevision) -> FormatRevision? {
+        guard current.interpretationVersion == 1, [1, 2].contains(current.envelopeVersion),
+              let recipe = version.inputs.recipe else { return nil }
+        let sections = recipe.name.split(separator: ";", omittingEmptySubsequences: false).map(String.init)
+        if recipe.revision == 2 {
+            guard sections.count == 2 || (sections.count == 3 && sections[2].hasPrefix("accepted=")) else {
+                return nil
+            }
+            return legacyFormat
+        }
+        guard recipe.revision == AlignmentAssetKinds.acceptanceRecipeRevision,
+              sections.count == 5 || (sections.count == 6 && sections[5].hasPrefix("accepted=")),
+              sections[2] == "frames=\(audibleFrameContract)",
+              sections[3] == "fiv=1",
+              let creatingEnvelope = Int(sections[4].dropFirst(4)),
+              sections[4] == "env=\(creatingEnvelope)",
+              [1, 2].contains(creatingEnvelope), creatingEnvelope <= current.envelopeVersion else { return nil }
+        return FormatRevision(interpretationVersion: 1, envelopeVersion: creatingEnvelope)
     }
 
     static func acceptedProposals(_ version: TimeMapVersion) -> [String: String] {
@@ -120,7 +152,10 @@ enum MapDependencies {
             changes.append(.sourceNotRegistered(source))
         }
         guard let persisted = persistedDigest(version) else { return changes + [.dependenciesMissing] }
-        if digest(map: map, tokens: registered, format: format, corrections: corrections) != persisted, changes.isEmpty {
+        guard let acceptedFormat = dependencyFormat(version, current: format) else {
+            return changes + [.dependenciesChanged]
+        }
+        if digest(map: map, tokens: registered, format: acceptedFormat, corrections: corrections) != persisted, changes.isEmpty {
             changes.append(.dependenciesChanged)
         }
         return changes
@@ -138,7 +173,7 @@ enum MapDependencies {
         var changes: [AlignmentDependencyChange] = []
         var current: [RecordingEpochID: Set<SourceID>] = [:]
         var placementOf: [SourceID: (RecorderGroupID, RecordingEpochID)] = [:]
-        for record in episode.sources {
+        for record in episode.alignmentSources {
             guard case let .success((group, epoch))? = episode.alignmentPlacement(of: record) else { continue }
             current[epoch, default: []].insert(record.id)
             placementOf[record.id] = (group, epoch)

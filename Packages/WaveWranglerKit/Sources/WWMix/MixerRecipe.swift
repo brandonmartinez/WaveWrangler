@@ -2,6 +2,14 @@ import Foundation
 import WWCore
 import WWDecode
 import WWSources
+import WWCommonEdit
+import WWRender
+
+public enum MixerBusAddress: Sendable, Hashable {
+    case speaker(SpeakerID)
+    case audioTrack(AudioTrackID)
+    case master
+}
 
 public enum MixerFailure: Error, Sendable, Equatable, LocalizedError {
     case invalidRecipe(String)
@@ -54,11 +62,14 @@ public struct MixerSourceSnapshot: Sendable, Equatable {
     public let source: SourceID
     public let witness: RawSourceIdentity
     public let interpretation: FormatInterpretation
+    public let accessGeneration: DeviceAccessGeneration?
 
-    public init(source: SourceID, witness: RawSourceIdentity, interpretation: FormatInterpretation) {
+    public init(source: SourceID, witness: RawSourceIdentity, interpretation: FormatInterpretation,
+                accessGeneration: DeviceAccessGeneration? = nil) {
         self.source = source
         self.witness = witness
         self.interpretation = interpretation
+        self.accessGeneration = accessGeneration
     }
 }
 
@@ -68,6 +79,18 @@ public struct MixerRoute: Sendable, Equatable {
     public let source: MixerSourceSnapshot
     public let inputGainDB: Double
     public let strip: SpeakerMixState
+}
+
+public struct MixerAudioTrackRoute: Sendable, Equatable {
+    public let track: AudioTrackID
+    public let strip: AudioTrackMixState
+}
+
+/// Balance attenuates only the opposite side; centered stereo remains two unity channels.
+public enum MixerStereoBalance {
+    public static func gains(balance: Double) -> (left: Float, right: Float) {
+        (Float(balance > 0 ? 1 - balance : 1), Float(balance < 0 ? 1 + balance : 1))
+    }
 }
 
 /// Processing is 48 kHz planar Float32. Speakers are mono, Master/output stereo.
@@ -118,19 +141,33 @@ public struct MixerRecipe: Sendable, Equatable {
     public let episode: EpisodeID
     public let dependencies: EpisodeProcessingInputs
     public let routes: [MixerRoute]
+    public let audioTracks: [MixerAudioTrackRoute]
+    public let audioSources: [MixerSourceSnapshot]
+    public let composition: ProgramComposition?
     public let master: MasterMixState
     public let programFrames: Range<Int64>
     public let panLaw: MixerPanLaw
     public let policy: MixerRenderPolicy
+    public let nominalRendererVersion = NominalPCMRenderer.version
 
     public init(episode: Episode, sources: [MixerSourceSnapshot], programFrames: Range<Int64>,
-                panLaw: MixerPanLaw = .equalPower, policy: MixerRenderPolicy = .init()) throws {
+                panLaw: MixerPanLaw = .equalPower, policy: MixerRenderPolicy = .init(),
+                composition: ProgramComposition? = nil) throws {
+        guard (episode.audioArrangement?.clips.isEmpty != false
+            && episode.audioArrangement?.insertionRegions.isEmpty != false) || composition != nil else {
+            throw MixerFailure.invalidRecipe("supplemental audio requires program projection and clip mixer routes")
+        }
+        if let composition {
+            guard try ProgramTimeline(episode: episode, dialogueFrames: composition.timeline.dialogueFrames)
+                .composition() == composition else { throw MixerFailure.staleDependencies }
+        }
         let mix = episode.mix ?? EpisodeMixState()
         guard policy.isValid, mix.validationIssues(in: episode).isEmpty,
               !programFrames.isEmpty, programFrames.lowerBound >= -ManualEpisodeCut.frameLimit,
               programFrames.lowerBound - Int64(policy.prerollFrames) >= -ManualEpisodeCut.frameLimit,
               programFrames.upperBound <= ManualEpisodeCut.frameLimit,
-              !episode.speakerAssignments.isEmpty,
+              !episode.speakerAssignments.isEmpty || composition?.programFrames != nil
+                || episode.audioArrangement?.tracks.isEmpty == false,
               episode.speakerAssignments.count <= Self.maximumSpeakers,
               Set(sources.map(\.source)).count == sources.count,
               Set(episode.speakerAssignments.map(\.speakerID)).count == episode.speakerAssignments.count
@@ -144,7 +181,7 @@ public struct MixerRecipe: Sendable, Equatable {
                   source.interpretation.source == primary.sourceID,
                   let channel = primary.resolvedChannel(channelCount: source.interpretation.channelCount),
                   (1...2).contains(source.interpretation.channelCount),
-                  episode.source(primary.sourceID) != nil else {
+                  episode.source(primary.sourceID)?.isRecording == true else {
                 throw MixerFailure.unresolvedChannel(primary.sourceID)
             }
             let reference = ChannelReference(sourceID: primary.sourceID, statedChannel: channel)
@@ -156,9 +193,34 @@ public struct MixerRecipe: Sendable, Equatable {
                 inputGainDB: mix.inputGainDB(for: primary.sourceID, channel: channel),
                 strip: mix.state(for: assignment.speakerID)))
         }
+        let tracks = episode.audioArrangement?.tracks ?? []
+        guard tracks.count <= Self.maximumSpeakers else {
+            throw MixerFailure.invalidRecipe("too many audio tracks")
+        }
+        let used = Set(composition?.clips.map(\.clip.source) ?? [])
+        var audioSources: [MixerSourceSnapshot] = []
+        for id in used.sorted(by: { $0.description < $1.description }) {
+            guard let asset = episode.audioArrangement?.assets.first(where: { $0.source == id }),
+                  episode.source(id)?.purpose == .supplementalAudio,
+                  let snapshot = sources.first(where: { $0.source == id }),
+                  snapshot.interpretation.source == id,
+                  snapshot.interpretation.sourceSampleRate == asset.sampleRate,
+                  snapshot.interpretation.channelCount == asset.channelCount,
+                  snapshot.interpretation.frames.validFrames == asset.frameCount,
+                  (1...2).contains(asset.channelCount),
+                  composition?.clips.filter({ $0.clip.source == id }).allSatisfy({
+                      (1...2).contains($0.sourceChannels.count)
+                  }) == true else {
+                throw MixerFailure.unresolvedChannel(id)
+            }
+            audioSources.append(snapshot)
+        }
         self.episode = episode.id
         dependencies = EpisodeProcessingInputs(episode)
         self.routes = routes
+        audioTracks = tracks.map { .init(track: $0.id, strip: mix.state(for: $0.id)) }
+        self.audioSources = audioSources
+        self.composition = composition
         master = mix.master
         self.programFrames = programFrames
         self.panLaw = panLaw
@@ -168,16 +230,21 @@ public struct MixerRecipe: Sendable, Equatable {
     public func isCurrent(in episode: Episode, sources: [MixerSourceSnapshot]) -> Bool {
         episode.id == self.episode && EpisodeProcessingInputs(episode) == dependencies
             && routes.allSatisfy { route in sources.contains(route.source) }
+            && audioSources.allSatisfy(sources.contains)
     }
 }
 
 public struct MixerPCMWindow: Sendable {
     public let frames: Range<Int64>
     public let channels: [ChannelReference: [Float]]
+    /// Independent stereo track sums; never keyed by an asset or clip identity.
+    public let audioTracks: [AudioTrackID: [[Float]]]
 
-    public init(frames: Range<Int64>, channels: [ChannelReference: [Float]]) {
+    public init(frames: Range<Int64>, channels: [ChannelReference: [Float]],
+                audioTracks: [AudioTrackID: [[Float]]] = [:]) {
         self.frames = frames
         self.channels = channels
+        self.audioTracks = audioTracks
     }
 }
 
@@ -211,13 +278,16 @@ public struct MixerPCMOutput: Sendable {
     public let firstFrame: Int64
     public let channels: [[Float]]
     public let speakerMeters: [SpeakerID: MixerMeter]
+    public let audioTrackMeters: [AudioTrackID: [MixerMeter]]
     public let masterMeters: [MixerMeter]
     public var frameCount: Int { channels.first?.count ?? 0 }
 
-    public init(firstFrame: Int64, channels: [[Float]], speakerMeters: [SpeakerID: MixerMeter] = [:]) {
+    public init(firstFrame: Int64, channels: [[Float]], speakerMeters: [SpeakerID: MixerMeter] = [:],
+                audioTrackMeters: [AudioTrackID: [MixerMeter]] = [:]) {
         self.firstFrame = firstFrame
         self.channels = channels
         self.speakerMeters = speakerMeters
+        self.audioTrackMeters = audioTrackMeters
         masterMeters = channels.map(MixerMeter.init)
     }
 }

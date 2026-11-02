@@ -19,6 +19,8 @@ final class EpisodeMixerController {
     private(set) var dependencyFailure: String?
     var mutedSpeakers: Set<SpeakerID> = [] { didSet { refreshPlaybackControls() } }
     var soloedSpeakers: Set<SpeakerID> = [] { didSet { refreshPlaybackControls() } }
+    var mutedAudioTracks: Set<AudioTrackID> = [] { didSet { refreshPlaybackControls() } }
+    var soloedAudioTracks: Set<AudioTrackID> = [] { didSet { refreshPlaybackControls() } }
     var masterMuted = false { didSet { refreshPlaybackControls() } }
     @ObservationIgnored private var playback: ProductionMixPlayback?
     @ObservationIgnored private(set) var processor: MixerProcessor?
@@ -94,6 +96,9 @@ final class EpisodeMixerController {
             let speakers = Set(recipe.routes.map(\.speaker))
             mutedSpeakers.formIntersection(speakers)
             soloedSpeakers.formIntersection(speakers)
+            let tracks = Set(recipe.audioTracks.map(\.track))
+            mutedAudioTracks.formIntersection(tracks)
+            soloedAudioTracks.formIntersection(tracks)
             unitStatuses = statuses
             state = .ready
             return recipe
@@ -170,9 +175,18 @@ final class EpisodeMixerController {
             live.pan = strip.pan
             controls.speakers[route.speaker] = live
         }
+        for route in processor.recipe.audioTracks {
+            let strip = mix.state(for: route.track)
+            var live = route.strip
+            live.gainDB = strip.gainDB
+            live.balance = strip.balance
+            controls.audioTracks[route.track] = live
+        }
         controls.masterGainDB = mix.master.gainDB
         controls.mutedSpeakers = mutedSpeakers
         controls.soloedSpeakers = soloedSpeakers
+        controls.mutedAudioTracks = mutedAudioTracks
+        controls.soloedAudioTracks = soloedAudioTracks
         controls.masterMuted = masterMuted
         return controls
     }
@@ -275,13 +289,20 @@ final class EpisodeMixerController {
         guard let episode = document.store.model.episode(episodeID) else { throw MixerFailure.staleDependencies }
         var mix = episode.mix ?? EpisodeMixState()
         let originalMix = mix
-        let expectedIDs = Set((mix.speakers.flatMap(\.inserts) + mix.master.inserts).map(\.id))
+        let expectedIDs = Set((mix.speakers.flatMap(\.inserts)
+            + (mix.audioTracks ?? []).flatMap(\.inserts) + mix.master.inserts).map(\.id))
         guard Set(slots.map(\.id)) == expectedIDs else { throw stale("captured slot IDs differ from the document") }
         let byID = Dictionary(uniqueKeysWithValues: try slots.filter {
             try !Self.sameNativeState(nativeStateBaseline?[$0.id]?.documentState, $0.documentState, slot: $0.id)
         }.map { ($0.id, $0) })
         for index in mix.speakers.indices {
             mix.speakers[index].inserts = mix.speakers[index].inserts.map { byID[$0.id] ?? $0 }
+        }
+        if var tracks = mix.audioTracks {
+            for index in tracks.indices {
+                tracks[index].inserts = tracks[index].inserts.map { byID[$0.id] ?? $0 }
+            }
+            mix.audioTracks = tracks
         }
         mix.master.inserts = mix.master.inserts.map { byID[$0.id] ?? $0 }
         let captured = mix
@@ -374,8 +395,7 @@ final class EpisodeMixerController {
               let episode = document.store.model.episode(episodeID) else {
             return "the originating document, episode, or prepared instance is unavailable"
         }
-        guard EpisodeProcessingInputs(episode).media == recipe.dependencies.media,
-              episode.activeManualCuts == recipe.dependencies.manualCuts else {
+        guard EpisodeProcessingInputs(episode).hasSameProgramInputs(as: recipe.dependencies) else {
             return "the source/timing/cut dependencies changed"
         }
         guard document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: episodeID) == true else {
@@ -385,6 +405,8 @@ final class EpisodeMixerController {
         guard mix.master.inserts == expectedMix.master.inserts,
               recipe.routes.allSatisfy({
                   mix.state(for: $0.speaker).inserts == expectedMix.state(for: $0.speaker).inserts
+              }), recipe.audioTracks.allSatisfy({
+                  mix.state(for: $0.track).inserts == expectedMix.state(for: $0.track).inserts
               }) else { return "document insert state changed outside the prepared instance" }
         return nil
     }

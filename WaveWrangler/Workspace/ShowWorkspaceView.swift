@@ -308,33 +308,8 @@ private struct ShowDetailContent: View {
             BlockedDestinationView(destination: state.destination, panel: panel) { state.select(.setup) }
         } else if let episode = state.selectedEpisode {
             if state.destination == .alignment {
-                VStack(spacing: 0) {
-                    if !episode.sources.isEmpty || !episode.recorderGroups.isEmpty {
-                        EpisodeAlignmentContent(state: state, episodeID: episode.id)
-                            .id(episode.id)
-                    } else {
-                        CenteredScrollView {
-                            VStack(spacing: 12) {
-                                Image(systemName: "waveform")
-                                    .wwFont(.largeTitle)
-                                    .accessibilityHidden(true)
-                                Text("Add recordings to begin")
-                                    .wwFont(.title2)
-                                    .accessibilityAddTraits(.isHeader)
-                                Text("Import recordings, then add them to recorder groups in the editor.")
-                                    .wwFont(.body)
-                                    .foregroundStyle(Color(nsColor: .textColor))
-                                    .multilineTextAlignment(.center)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .frame(maxWidth: 360)
-                                Button("Add recordings…", systemImage: "plus") {
-                                    state.recordingsPresented = true
-                                }
-                                .accessibilityIdentifier("ww.show.empty.addRecordings")
-                            }
-                        }
-                    }
-                }
+                EpisodeAlignmentContent(state: state, episodeID: episode.id)
+                    .id(episode.id)
             } else {
                 SetupContainerView(state: state, episode: episode)
             }

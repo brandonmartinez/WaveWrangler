@@ -12,7 +12,9 @@ struct ManualCutReviewFailure: LocalizedError {
 extension EpisodeCleanupModel {
     var manualCuts: [ManualEpisodeCut] { episode?.cleanup?.manualCuts ?? [] }
     var activeManualCuts: [ManualEpisodeCut] { episode?.activeManualCuts ?? [] }
-    var cutTimeline: ManualCutTimeline { workspaceCutTimeline }
+    var cutTimeline: AudioTimelineProjection {
+        workspaceAlignment?.presentationTimeline ?? AudioTimelineProjection(cuts: workspaceCutTimeline)
+    }
     var selectedManualCut: ManualEpisodeCut? {
         activeManualCuts.first { $0.id == selectedManualCutID }
     }
@@ -123,7 +125,12 @@ extension EpisodeCleanupModel {
         let start = selectedFiller?.bounds.alignedStart
             ?? cutTimeline.alignedTime(forEditedTime: selection.lowerBound)
         let end = selectedFiller?.bounds.alignedEnd
-            ?? cutTimeline.alignedTime(forEditedTime: selection.upperBound)
+            ?? cutTimeline.originalTime(forExclusiveDisplayEnd: selection.upperBound) ?? .nan
+        if selectedFiller == nil, let workspaceAlignment,
+           !workspaceAlignment.selectionHasDialogueOnly(selection) {
+            error = "A dialogue cut cannot include insertion-only or outside-dialogue program time."
+            return
+        }
         let regions = plan?.lanes.flatMap(\.regions) ?? []
         let alignedStart = workspaceAlignment?.manualCutBounds?.lowerBound ?? regions.map(\.alignedStart).min() ?? .infinity
         let alignedEnd = workspaceAlignment?.manualCutBounds?.upperBound ?? regions.map(\.alignedEnd).max() ?? -.infinity

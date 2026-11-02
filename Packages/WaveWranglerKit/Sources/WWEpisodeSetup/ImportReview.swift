@@ -53,12 +53,17 @@ public struct ImportScan: Hashable, Sendable {
         public var hidden: Int
         public var unreadable: Int
         public var duplicates: Int
+        public var folders: Int
+        public var symbolicLinks: Int
 
-        public init(notRecordings: Int = 0, hidden: Int = 0, unreadable: Int = 0, duplicates: Int = 0) {
+        public init(notRecordings: Int = 0, hidden: Int = 0, unreadable: Int = 0, duplicates: Int = 0,
+                    folders: Int = 0, symbolicLinks: Int = 0) {
             self.notRecordings = notRecordings
             self.hidden = hidden
             self.unreadable = unreadable
             self.duplicates = duplicates
+            self.folders = folders
+            self.symbolicLinks = symbolicLinks
         }
     }
 

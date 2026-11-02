@@ -41,7 +41,8 @@ struct FormatUpdateTests {
     @Test func onlyAWaitingOrFailedUpdateCanStartAnAttempt() {
         #expect(FormatUpdatePolicy.allowsUpdateAttempt(.needed))
         #expect(FormatUpdatePolicy.allowsUpdateAttempt(.failed(detail: "x")))
-        #expect(!FormatUpdatePolicy.allowsUpdateAttempt(.updating))
+        let allowsConcurrentUpdate = FormatUpdatePolicy.allowsUpdateAttempt(.updating)
+        #expect(!allowsConcurrentUpdate)
         #expect(!FormatUpdatePolicy.allowsUpdateAttempt(.interrupted(reason: "y")))
         #expect(!FormatUpdatePolicy.allowsUpdateAttempt(nil))
     }

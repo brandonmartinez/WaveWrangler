@@ -134,6 +134,7 @@ struct FixtureSpec: Sendable, CustomTestStringConvertible {
         case .caf: kAudioFileCAFType
         case .m4a: kAudioFileM4AType
         case .flac: kAudioFileFLACType
+        case .mp3: kAudioFileMP3Type
         }
     }
 
@@ -146,6 +147,7 @@ struct FixtureSpec: Sendable, CustomTestStringConvertible {
         case .caf: "caf"
         case .m4a: "m4a"
         case .flac: "flac"
+        case .mp3: "mp3"
         }
     }
 
@@ -177,6 +179,8 @@ struct FixtureSpec: Sendable, CustomTestStringConvertible {
             format.mFormatID = kAudioFormatMPEG4AAC
         case .opus:
             format.mFormatID = kAudioFormatOpus
+        case .mp3:
+            format.mFormatID = kAudioFormatMPEGLayer3
         }
         return format
     }
@@ -197,7 +201,7 @@ struct FixtureSpec: Sendable, CustomTestStringConvertible {
     }
 
     /// Whether the decode must reproduce the written samples bit for bit.
-    var isExact: Bool { codec != .aac && codec != .opus }
+    var isExact: Bool { !codec.isLossy }
 }
 
 enum FixtureError: Error, CustomStringConvertible {

@@ -491,7 +491,8 @@ struct EpisodeCleanupContent: View {
             zoom: { time in
                 model.seek(to: time)
                 model.zoomTimeline(duration: min(5, model.maximumDuration))
-            }, uncertainWordIDs: uncertainIDs, cuts: model.cutTimeline, sourceBounds: lane.start...lane.end,
+            }, uncertainWordIDs: uncertainIDs, cuts: model.cutTimeline.cuts, projection: model.cutTimeline,
+            sourceBounds: lane.start...lane.end,
             selectUnit: { model.select($0, speaker: lane.speaker) })
             .accessibilityIdentifier("ww.cleanup.words.\(lane.id)")
     }
@@ -516,7 +517,7 @@ private struct CleanupWaveform: View {
     let muted: Bool
     let displayScale: Double
     var color: Color = .accentColor
-    var cuts: ManualCutTimeline = .unedited
+    var cuts: AudioTimelineProjection = .unedited
     let seek: (Double) -> Void
 
     var body: some View {

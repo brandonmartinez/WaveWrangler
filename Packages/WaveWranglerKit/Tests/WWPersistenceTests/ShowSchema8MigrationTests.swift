@@ -53,11 +53,11 @@ struct ShowSchema8MigrationTests {
     @Test(arguments: 0..<8)
     func everySupportedOlderSchemaNeedsConsentAndExactByteBackup(_ index: Int) throws {
         let bytes = Self.olderGoldens[index], schema = index + 1
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: schema, minimum: 9)) {
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: schema, minimum: SchemaVersion.show)) {
             try coder.decode(bytes)
         }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(bytes)
-        #expect(upgraded.payload.schemaVersion == 9)
+        #expect(upgraded.payload.schemaVersion == SchemaVersion.show)
         #expect(upgraded.payload.episodes.allSatisfy { $0.mix == nil })
         let failures = schema == 1
             ? ShowSchemaMigration.expectationFailures(original: bytes, migrated: upgraded.payload)
@@ -94,7 +94,7 @@ struct ShowSchema8MigrationTests {
         let bytes = try unchecked(model, schema: 8)
         let upgraded = try ShowSchemaMigration.decodeSchema8(bytes).payload
         var expected = model
-        expected.schemaVersion = 9
+        expected.schemaVersion = SchemaVersion.show
         #expect(upgraded == expected)
         #expect(upgraded.episodes[0].mix == nil)
         #expect(upgraded.episodes[0].activeManualCuts == model.episodes[0].cleanup?.manualCuts)
@@ -146,11 +146,11 @@ struct ShowSchema8MigrationTests {
     }
 
     @Test func newerSchemaIsRefusedBeforeDecodingFutureOrCorruptState() {
-        let future = Data(#"{"format":"com.brandonmartinez.wavewrangler.show","schemaVersion":10,"payload":"future"}"#.utf8)
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 10, supported: 9)) {
+        let future = Data(#"{"format":"com.brandonmartinez.wavewrangler.show","schemaVersion":11,"payload":"future"}"#.utf8)
+        #expect(throws: PersistenceError.unknownNewerSchema(found: 11, supported: SchemaVersion.show)) {
             try coder.decode(future)
         }
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 10, supported: 9)) {
+        #expect(throws: PersistenceError.unknownNewerSchema(found: 11, supported: SchemaVersion.show)) {
             try ShowSchemaMigration.decodeUpgradingOlder(future)
         }
     }

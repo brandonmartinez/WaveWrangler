@@ -47,6 +47,16 @@ struct SpeechBoundaryTests {
         #expect(SpeechInference.nativeCPULinked)
     }
 
+    @Test func supplementalPurposeCannotBeSmuggledIntoAConfirmedPrimary() {
+        let f = fixture()
+        var invalid = f.model
+        invalid.episodes[0].sources[0].purpose = .supplementalAudio
+        #expect(throws: SpeechRefusal.unselectedPrimary) {
+            try SpeechInference().infer(model: invalid, episodeID: f.episodeID,
+                speakerID: f.speakerID, channel: f.primary)
+        }
+    }
+
     @Test func selectedPrimaryIsStillUnavailableInProductionPath() throws {
         let f = fixture()
         #expect(throws: SpeechRefusal.engineUnavailable) {
