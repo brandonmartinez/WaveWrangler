@@ -9,6 +9,94 @@ import WWTimeMap
 struct ProgramTimelineTests {
     private let rate: Int64 = 48_000
 
+    @Test func originSameClipEditsAfterDialogueAdmissionRemainCutIndependent() throws {
+        let f = try ProgramFixture()
+        let clip = f.clip(.programOrigin(frame: 10 * rate), duration: 10 * rate)
+        var episode = f.episode(clips: [clip])
+        episode.alignment = nil
+        let audioOnly = try ProgramTimeline(episode: episode)
+        #expect(try audioOnly.composition().clips[0].programFrames == (10 * rate)..<(20 * rate))
+        episode.alignment = .init(maps: [f.version], acceptedRevision: 1)
+        let timeline = try ProgramTimeline(episode: episode, dialogueFrames: f.coverage)
+        let projected = try timeline.composition().clips[0]
+        let split = try projected.split(atProgramFrame: 12 * rate, timeline: timeline)
+        let duplicate = try AudioClipEditing.duplicating(projected, timeline: timeline)
+        let unpinned = try AudioClipEditing.pinning(projected, pinned: false, timeline: timeline)
+        var crop = try AudioClipEditing.resizing(projected, localFrames: (2 * rate)..<(8 * rate), timeline: timeline)
+        var moved = try AudioClipEditing.moving(projected, to: 16 * rate, track: clip.track, timeline: timeline)
+        #expect(split.leading.anchor == .programOrigin(frame: 10 * rate))
+        #expect(split.trailing.anchor == .programOrigin(frame: 12 * rate))
+        #expect(duplicate.anchor == clip.anchor && duplicate.id != clip.id)
+        #expect(unpinned.anchor == clip.anchor)
+        #expect(crop.anchor == .programOrigin(frame: 12 * rate))
+        #expect(moved.anchor == .programOrigin(frame: 16 * rate))
+        #expect(split.leading.trim == clip.trim && split.trailing.trim == clip.trim && crop.trim == clip.trim)
+        #expect(split.trailing.outputWindow == .init(offsetFrames: 2 * rate, countFrames: 8 * rate))
+        let curve = try AudioEnvelopeEvaluator(envelope: split.trailing.envelope, durationFrames: 8 * rate)
+        #expect(try curve.amplitude(atLocalFrame: 0) == 0.2)
+        var reconciled = duplicate
+        reconciled.id = AudioClipID()
+        reconciled.anchor = try timeline.reconciledAnchor(for: reconciled.anchor)
+        crop.id = AudioClipID()
+        moved.id = AudioClipID()
+        episode.audioArrangement?.clips = [split.leading, split.trailing, duplicate, crop, moved, reconciled]
+        episode.cleanup?.manualCuts = [f.cut(2 * rate, 4 * rate)]
+        for _ in 0..<3 { episode = try JSONDecoder().decode(Episode.self, from: JSONEncoder().encode(episode)) }
+        let afterCut = try ProgramTimeline(episode: episode, dialogueFrames: f.coverage).composition()
+        #expect(afterCut.clips.map(\.programFrames.lowerBound) == [10, 12, 10, 12, 16, 8].map { $0 * rate })
+        #expect(afterCut.clips.prefix(2).map(\.programFrames) == [(10 * rate)..<(12 * rate), (12 * rate)..<(20 * rate)])
+    }
+
+    @Test func originSameClipEditsRemoveOnlyExistingInsertionOffsets() throws {
+        let f = try ProgramFixture()
+        let intro = AudioInsertionRegion(anchor: .programOrigin(frame: 0), durationFrames: 3 * rate)
+        let clip = f.clip(.programOrigin(frame: 10 * rate), duration: 10 * rate)
+        var episode = f.episode(clips: [clip], regions: [intro])
+        let timeline = try ProgramTimeline(episode: episode, dialogueFrames: f.coverage)
+        let projected = try timeline.composition().clips[0]
+        #expect(projected.programFrames.lowerBound == 13 * rate)
+        let split = try projected.split(atProgramFrame: 15 * rate, timeline: timeline)
+        var crop = try AudioClipEditing.resizing(projected, localFrames: (2 * rate)..<(8 * rate), timeline: timeline)
+        #expect(split.trailing.anchor == .programOrigin(frame: 12 * rate))
+        #expect(crop.anchor == .programOrigin(frame: 12 * rate))
+        crop.id = AudioClipID()
+        episode.audioArrangement?.clips = [split.leading, split.trailing, crop]
+        episode.cleanup?.manualCuts = [f.cut(rate, 2 * rate)]
+        episode.audioArrangement?.insertionRegions[0].durationFrames = 4 * rate
+        let result = try ProgramTimeline(episode: episode, dialogueFrames: f.coverage).composition()
+        #expect(result.clips.map(\.programFrames.lowerBound) == [14, 16, 16].map { $0 * rate })
+    }
+
+    @Test func sameClipEditsRetainPinnedStartsAndInsertionRelativeOverhang() throws {
+        let f = try ProgramFixture()
+        let region = try AudioInsertionRegion(anchor: .dialogue(f.anchor(5 * rate)), durationFrames: 5 * rate)
+        for anchor: AudioPlacementAnchor in [.absolute(frame: 6 * rate), .insertion(region: region.id, offsetFrames: rate)] {
+            let clip = f.clip(anchor, duration: 10 * rate)
+            var episode = f.episode(clips: [clip], regions: [region])
+            let timeline = try ProgramTimeline(episode: episode, dialogueFrames: f.coverage)
+            let projected = try timeline.composition().clips[0]
+            let duplicate = try AudioClipEditing.duplicating(projected, timeline: timeline)
+            let split = try projected.split(atProgramFrame: 8 * rate, timeline: timeline)
+            var crop = try AudioClipEditing.resizing(projected, localFrames: rate..<(9 * rate), timeline: timeline)
+            #expect(duplicate.anchor == anchor)
+            if case .absolute = anchor {
+                #expect(split.trailing.anchor == .absolute(frame: 8 * rate))
+                #expect(crop.anchor == .absolute(frame: 7 * rate))
+            } else {
+                #expect(split.trailing.anchor == .insertion(region: region.id, offsetFrames: 3 * rate))
+                #expect(crop.anchor == .insertion(region: region.id, offsetFrames: 2 * rate))
+            }
+            #expect(split.trailing.trim == clip.trim && split.trailing.durationFrames(asset: f.asset) == 8 * rate)
+            crop.id = AudioClipID()
+            episode.audioArrangement?.clips = [split.leading, split.trailing, duplicate, crop]
+            episode.cleanup?.manualCuts = [f.cut(rate, 2 * rate)]
+            let result = try ProgramTimeline(episode: episode, dialogueFrames: f.coverage).composition()
+            let shift: Int64 = if case .absolute = anchor { 0 } else { -rate }
+            #expect(result.clips.map(\.programFrames.lowerBound) == [6, 8, 6, 7].map { $0 * rate + shift })
+            #expect(result.clips[1].programFrames.upperBound == 16 * rate + shift)
+        }
+    }
+
     @Test func dialogueCutsRippleStartsOnlyAndNeverAlterClipAudio() throws {
         let f = try ProgramFixture()
         let removal = f.cut(20 * rate, 30 * rate)

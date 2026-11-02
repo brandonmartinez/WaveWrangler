@@ -217,6 +217,26 @@ public struct ProgramTimeline: Sendable, Equatable {
         try unpinnedAnchor(atProgramFrame: resolvedFrame(for: anchor))
     }
 
+    /// Same-clip edits retain an unchanged anchor and never implicitly reconcile program origin
+    /// onto the dialogue grid. Explicit moves into inserted time still acquire region affinity.
+    public func relocatedAnchor(for anchor: AudioPlacementAnchor, toProgramFrame frame: Int64)
+        throws(ProgramTimelineError) -> AudioPlacementAnchor
+    {
+        try Self.checkFrame(frame)
+        if try resolvedFrame(for: anchor) == frame { return anchor }
+        switch anchor {
+        case .absolute:
+            return .absolute(frame: frame)
+        case .programOrigin:
+            if case .insertion(let id, let offset) = try inverse(atProgramFrame: frame) {
+                return .insertion(region: id, offsetFrames: offset)
+            }
+            return .programOrigin(frame: try baseFrame(atProgramPosition: frame))
+        case .dialogue, .insertion:
+            return try unpinnedAnchor(atProgramFrame: frame)
+        }
+    }
+
     /// Preserve the resolved position when explicitly admitting a program-origin clip to dialogue.
     /// The caller applies the returned anchor through F1's normal model transaction/Undo path.
     public func reconciledAnchor(for anchor: AudioPlacementAnchor) throws(ProgramTimelineError) -> AudioPlacementAnchor

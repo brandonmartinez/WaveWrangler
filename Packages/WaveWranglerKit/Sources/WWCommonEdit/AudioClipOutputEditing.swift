@@ -42,11 +42,7 @@ extension ProgramAudioClip {
         let leading = try cropped(toLocalFrames: 0..<local)
         var trailing = try cropped(toLocalFrames: local..<Int64(programFrames.count))
         trailing.id = AudioClipID()
-        if case .absolute = clip.anchor {
-            trailing.anchor = .absolute(frame: frame)
-        } else {
-            trailing.anchor = try timeline.unpinnedAnchor(atProgramFrame: frame)
-        }
+        trailing.anchor = try timeline.relocatedAnchor(for: clip.anchor, toProgramFrame: frame)
         return .init(leading: leading, trailing: trailing)
     }
 }

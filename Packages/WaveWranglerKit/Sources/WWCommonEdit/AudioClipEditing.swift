@@ -19,11 +19,7 @@ public enum AudioClipEditing {
         }
         var result = projected.clip
         result.track = track
-        if case .absolute = result.anchor {
-            result.anchor = .absolute(frame: frame)
-        } else {
-            result.anchor = try timeline.unpinnedAnchor(atProgramFrame: frame)
-        }
+        result.anchor = try timeline.relocatedAnchor(for: result.anchor, toProgramFrame: frame)
         try requireBounds(start: frame, duration: Int64(projected.programFrames.count))
         return result
     }
@@ -33,9 +29,11 @@ public enum AudioClipEditing {
     ) throws -> AudioClip {
         try requireCurrent(projected, timeline: timeline)
         var result = projected.clip
-        result.anchor = try pinned
-            ? timeline.pinnedAnchor(for: result.anchor)
-            : timeline.unpinnedAnchor(for: result.anchor)
+        if pinned {
+            result.anchor = try timeline.pinnedAnchor(for: result.anchor)
+        } else if case .absolute = result.anchor {
+            result.anchor = try timeline.unpinnedAnchor(for: result.anchor)
+        }
         return result
     }
 
@@ -69,11 +67,7 @@ public enum AudioClipEditing {
         var result = try projected.clip.selectingOutputFrames(
             (owned.lowerBound + localFrames.lowerBound)..<(owned.lowerBound + localFrames.upperBound),
             asset: projected.asset, envelope: curve)
-        if case .absolute = result.anchor {
-            result.anchor = .absolute(frame: start)
-        } else {
-            result.anchor = try timeline.unpinnedAnchor(atProgramFrame: start)
-        }
+        result.anchor = try timeline.relocatedAnchor(for: result.anchor, toProgramFrame: start)
         return result
     }
 
