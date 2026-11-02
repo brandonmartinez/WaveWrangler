@@ -313,8 +313,11 @@ not its entire lane. Finder UI
 coverage uses those real bounds and refuses an occluded destination rather than
 substituting another drop point.
 Place clip buttons with leading/top layout padding inside the explicitly sized
-viewport stack, not a visual-only offset. Accessibility belongs to the fixed-size
-button before that positioning padding so its frame describes the actual control.
+viewport stack, not a visual-only offset. The same immutable block placements feed
+an AppKit accessibility canvas: its native button children own explicit clip frames,
+selection, values, and press actions. The canvas passes pointer events through to
+the unchanged SwiftUI controls and gestures; there is no duplicate accessibility
+element for the decorative waveform or visual button.
 
 The captured destination uses distinct `.defaultTrack`, `.existing(id)`, and
 `.newTrack` intents; review resolves the default before confirmation. Audio lanes

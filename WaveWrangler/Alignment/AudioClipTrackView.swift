@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WWCommonEdit
 import WWCore
@@ -55,9 +56,14 @@ struct AudioClipTrackView: View {
             }
             .frame(width: headerWidth, alignment: .leading)
             GeometryReader { geometry in
+                let blocks = clips.compactMap { placement($0, size: geometry.size) }
                 ZStack(alignment: .topLeading) {
                     RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.035))
-                    ForEach(clips, id: \.clip.id) { clip in block(clip, size: geometry.size) }
+                    ForEach(blocks) { item in block(item, size: geometry.size) }
+                    AudioClipAccessibilityCanvas(size: geometry.size, items: accessibilityItems(blocks, size: geometry.size)) { id in
+                        editor.select(id)
+                        showInspector()
+                    }
                     if duration > 0, playhead >= start, playhead <= start + duration {
                         Rectangle().fill(.red.opacity(0.8)).frame(width: 1)
                             .offset(x: (playhead - start) / duration * geometry.size.width)
@@ -91,7 +97,27 @@ struct AudioClipTrackView: View {
         .onDisappear { editor.trackFrames[track.id] = nil }
     }
 
-    @ViewBuilder private func block(_ projected: ProgramAudioClip, size: CGSize) -> some View {
+    private struct ClipBlock: Identifiable {
+        let projected: ProgramAudioClip
+        let renderedClip: AudioClip
+        let frame: CGRect
+        let first: Double
+        let displayEnd: Double
+        let programFirst: Double
+        let count: Double
+        let selected: Bool
+        let invalid: Bool
+        let dimmed: Bool
+        let name: String
+
+        var id: AudioClipID { projected.clip.id }
+        var accessibilityValue: String {
+            "Program start \(programFirst.formatted(.number.precision(.fractionLength(3)))) seconds; duration \(count.formatted(.number.precision(.fractionLength(3)))) seconds; \(renderedClip.envelope.points.count) fade points"
+        }
+    }
+
+    private func placement(_ projected: ProgramAudioClip, size: CGSize) -> ClipBlock? {
+        guard duration > 0, size.width > 0, size.height > 0 else { return nil }
         let preview = editor.gesture?.clip.clip.id == projected.clip.id ? editor.gesture : nil
         let programFirst = Double(preview?.startFrame ?? projected.programFrames.lowerBound) / 48_000
         let first = projection.displayTime(forProgramTime: programFirst)
@@ -99,11 +125,30 @@ struct AudioClipTrackView: View {
         let displayEnd = projection.displayTime(forProgramTime: programFirst + count)
         let left = max(0, (first - start) / duration * size.width)
         let right = min(size.width, (displayEnd - start) / duration * size.width)
-        if right >= left, displayEnd > start, first < start + duration {
-            let selected = editor.selectedClip == projected.clip.id
-            let renderedClip = preview?.previewClip ?? projected.clip
-            let blockWidth = max(6, right - left), blockHeight = max(40, size.height - 4)
-            Button {
+        guard right >= left, displayEnd > start, first < start + duration else { return nil }
+        return .init(projected: projected, renderedClip: preview?.previewClip ?? projected.clip,
+                     frame: CGRect(x: left, y: 2, width: max(6, right - left), height: max(40, size.height - 4)),
+                     first: first, displayEnd: displayEnd, programFirst: programFirst, count: count,
+                     selected: editor.selectedClip == projected.clip.id, invalid: preview?.previewError != nil,
+                     dimmed: preview != nil && projected.clip.track == track.id && preview?.track != track.id,
+                     name: name(projected))
+    }
+
+    private func accessibilityItems(_ blocks: [ClipBlock], size: CGSize) -> [AudioClipAccessibilityCanvas.Item] {
+        let bounds = CGRect(origin: .zero, size: size)
+        return blocks.compactMap { item in
+            let frame = item.frame.intersection(bounds)
+            guard !frame.isNull, !frame.isEmpty else { return nil }
+            return .init(id: item.id, frame: frame, label: "Audio Clip: \(item.name)",
+                         value: item.accessibilityValue, selected: item.selected)
+        }
+    }
+
+    @ViewBuilder private func block(_ item: ClipBlock, size: CGSize) -> some View {
+        let projected = item.projected, renderedClip = item.renderedClip
+        let selected = item.selected, programFirst = item.programFirst
+        let left = item.frame.minX, blockWidth = item.frame.width, blockHeight = item.frame.height
+        Button {
                 editor.select(projected.clip.id)
                 showInspector()
             } label: {
@@ -132,16 +177,16 @@ struct AudioClipTrackView: View {
                     .overlay(alignment: .topLeading) {
                         HStack(spacing: 4) {
                             if case .absolute = projected.clip.anchor { Image(systemName: "pin.fill") }
-                            Text(name(projected)).lineLimit(1)
+                            Text(item.name).lineLimit(1)
                         }.font(.caption2).padding(5).allowsHitTesting(false)
                     }
                     .overlay {
                         RoundedRectangle(cornerRadius: 4)
-                            .stroke(preview?.previewError != nil ? Color.red : selected ? Color.accentColor : Color.teal.opacity(0.6),
+                            .stroke(item.invalid ? Color.red : selected ? Color.accentColor : Color.teal.opacity(0.6),
                                     lineWidth: selected ? 2 : 1)
                     }
                     .overlay(alignment: .bottomLeading) {
-                        if preview?.previewError != nil {
+                        if item.invalid {
                             Text("Invalid edge or placement").font(.caption2).foregroundStyle(.red).padding(5)
                         }
                     }
@@ -151,21 +196,17 @@ struct AudioClipTrackView: View {
             .contentShape(Rectangle())
             .simultaneousGesture(moveGesture(projected, width: size.width))
             .overlay(alignment: .leading) {
-                if selected, editor.store.canEdit, first >= start { edge(projected, leading: true, width: size.width) }
+                if selected, editor.store.canEdit, item.first >= start { edge(projected, leading: true, width: size.width) }
             }
             .overlay(alignment: .trailing) {
-                if selected, editor.store.canEdit, displayEnd <= start + duration { edge(projected, leading: false, width: size.width) }
+                if selected, editor.store.canEdit, item.displayEnd <= start + duration { edge(projected, leading: false, width: size.width) }
             }
-            .accessibilityLabel("Audio Clip: \(name(projected))")
-            .accessibilityValue("Program start \(programFirst.formatted(.number.precision(.fractionLength(3)))) seconds; duration \(count.formatted(.number.precision(.fractionLength(3)))) seconds; \(renderedClip.envelope.points.count) fade points")
-            .accessibilityAddTraits(selected ? [.isSelected] : [])
-            .accessibilityIdentifier("ww.audioClip.\(projected.clip.id)")
             .padding(.leading, left)
             .padding(.top, 2)
             .zIndex(selected ? 1 : 0)
-            .opacity(preview != nil && projected.clip.track == track.id && preview?.track != track.id ? 0.35 : 1)
+            .opacity(item.dimmed ? 0.35 : 1)
             .allowsHitTesting(projected.clip.track == track.id)
-        }
+            .accessibilityHidden(true)
     }
 
     private func moveGesture(_ clip: ProgramAudioClip, width: Double) -> some Gesture {
@@ -228,6 +269,104 @@ struct AudioClipTrackView: View {
 
     private func name(_ clip: ProgramAudioClip) -> String {
         editor.episode?.source(clip.clip.source)?.displayNameHint ?? "Audio Clip"
+    }
+}
+
+@MainActor
+private struct AudioClipAccessibilityCanvas: NSViewRepresentable {
+    struct Item {
+        let id: AudioClipID
+        let frame: CGRect
+        let label: String
+        let value: String
+        let selected: Bool
+    }
+
+    let size: CGSize
+    let items: [Item]
+    let select: @MainActor (AudioClipID) -> Void
+
+    func makeNSView(context: Context) -> CanvasView {
+        let view = CanvasView(frame: .zero)
+        view.setAccessibilityElement(false)
+        return view
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView: CanvasView, context: Context) -> CGSize? { size }
+
+    func updateNSView(_ view: CanvasView, context: Context) {
+        view.update(items, enabled: context.environment.isEnabled, select: select)
+    }
+
+    final class CanvasView: NSView {
+        private var buttons: [AudioClipID: ClipButton] = [:]
+        private var orderedButtons: [ClipButton] = []
+
+        override var isFlipped: Bool { true }
+        // Pointer input stays with SwiftUI; these native children serve assistive controls.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+        override func accessibilityChildren() -> [Any]? { orderedButtons }
+
+        override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+            let candidates = orderedButtons.filter(\.selectedClip) + orderedButtons.filter { !$0.selectedClip }
+            return candidates.first { $0.accessibilityFrame().contains(point) }
+        }
+
+        func update(_ items: [Item], enabled: Bool, select: @escaping @MainActor (AudioClipID) -> Void) {
+            let live = Set(items.map(\.id))
+            for id in Array(buttons.keys) where !live.contains(id) {
+                buttons.removeValue(forKey: id)?.removeFromSuperview()
+            }
+            orderedButtons = items.map { item in
+                let button: ClipButton
+                if let existing = buttons[item.id] {
+                    button = existing
+                } else {
+                    button = ClipButton(select: { select(item.id) })
+                    buttons[item.id] = button
+                    addSubview(button)
+                }
+                let changed = button.programValue != item.value || button.selectedClip != item.selected
+                button.frame = item.frame
+                button.selectAction = { select(item.id) }
+                button.programValue = item.value
+                button.selectedClip = item.selected
+                button.isEnabled = enabled
+                button.setAccessibilityLabel(item.label)
+                button.setAccessibilityIdentifier("ww.audioClip.\(item.id)")
+                if changed { NSAccessibility.post(element: button, notification: .valueChanged) }
+                return button
+            }
+        }
+    }
+
+    final class ClipButton: NSButton {
+        var programValue = ""
+        var selectedClip = false
+        var selectAction: @MainActor () -> Void
+
+        init(select: @escaping @MainActor () -> Void) {
+            selectAction = select
+            super.init(frame: .zero)
+            title = ""
+            isBordered = false
+            isTransparent = true
+            setButtonType(.momentaryPushIn)
+            setAccessibilityElement(true)
+            target = self
+            action = #selector(performSelection(_:))
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        override func accessibilityValue() -> Any? { programValue }
+        override func isAccessibilitySelected() -> Bool { selectedClip }
+        override func accessibilityFrame() -> NSRect { NSAccessibilityFrameInView(self, bounds) }
+
+        @objc private func performSelection(_ sender: NSButton) {
+            guard isEnabled else { return }
+            selectAction()
+        }
     }
 }
 
