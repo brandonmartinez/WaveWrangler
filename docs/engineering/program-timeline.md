@@ -312,6 +312,8 @@ explicit rectangular accessibility content shape. Native accessibility bounds
 must describe the visible clip, not its entire lane. Finder UI
 coverage uses those real bounds and refuses an occluded destination rather than
 substituting another drop point.
+Each composite clip button has a fixed native size and one accessibility element;
+its decorative waveform, envelope, label, and trim handles are not separate controls.
 Keep the full-canvas drop hit shape on an accessibility-hidden background rather
 than the content hierarchy so it does not broaden descendant clip bounds.
 

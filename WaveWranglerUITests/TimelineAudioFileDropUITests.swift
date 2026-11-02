@@ -54,6 +54,10 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         geometryEvidence.name = "F6 visible block versus lane geometry before the exact midpoint drop"
         geometryEvidence.lifetime = .keepAlways
         add(geometryEvidence)
+        let accessibilityEvidence = XCTAttachment(string: app.debugDescription)
+        accessibilityEvidence.name = "F6 native accessibility hierarchy before the exact midpoint drop"
+        accessibilityEvidence.lifetime = .keepAlways
+        add(accessibilityEvidence)
         XCTAssertGreaterThan(blockFrame.width, 30)
         XCTAssertGreaterThan(blockFrame.minX, app.windows["ww.show.window"].frame.minX + 190)
         XCTAssertLessThan(blockFrame.width, laneFrame.width, "A clip's native AX frame must not cover the whole lane.")

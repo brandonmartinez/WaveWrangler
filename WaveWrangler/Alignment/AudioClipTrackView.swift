@@ -146,6 +146,7 @@ struct AudioClipTrackView: View {
                     }
             }
             .buttonStyle(.plain)
+            .fixedSize()
             .frame(width: blockWidth, height: blockHeight)
             .contentShape(Rectangle())
             .contentShape(.accessibility, Rectangle())
@@ -160,6 +161,7 @@ struct AudioClipTrackView: View {
             .zIndex(selected ? 1 : 0)
             .opacity(preview != nil && projected.clip.track == track.id && preview?.track != track.id ? 0.35 : 1)
             .allowsHitTesting(projected.clip.track == track.id)
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("Audio Clip: \(name(projected))")
             .accessibilityValue("Program start \(programFirst.formatted(.number.precision(.fractionLength(3)))) seconds; duration \(count.formatted(.number.precision(.fractionLength(3)))) seconds; \(renderedClip.envelope.points.count) fade points")
             .accessibilityAddTraits(selected ? [.isSelected] : [])
