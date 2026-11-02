@@ -33,7 +33,8 @@ private struct SupplementalFixture {
         return Float(value) / 32768
     }
 
-    init(rate: Int = 44_100, frames: Int = 441, channels: Int = 2) async throws {
+    init(rate: Int = 44_100, frames: Int = 441, channels: Int = 2,
+         storage: Int64 = 1 << 30) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("ww-f4-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let originals = root.appendingPathComponent("originals", isDirectory: true)
@@ -73,7 +74,7 @@ private struct SupplementalFixture {
             authorization: .explicitUserRequest(for: source.id), availability: .on,
             validateCurrentAccess: { [permission] in try permission.validate() })
         preparation = try NativeSourcePreparation(root: root.appendingPathComponent("cache"),
-            sourceLocations: [url], access: access)
+            sourceLocations: [url], access: access, configuration: .init(maximumStorageBytes: storage))
     }
 
     func clip(at frame: Int64 = 0, channels: [Int]? = nil) -> AudioClip {
@@ -101,6 +102,59 @@ private struct SupplementalFixture {
 
 @Suite("Supplemental clip production", .serialized)
 struct SupplementalClipTests {
+    @Test func schedulerSurvivesEvictionDuringConstructionAndRepeatedOverlappingReads() async throws {
+        let first = try await SupplementalFixture(rate: 48_000, storage: 30_000)
+        defer { try? first.remove() }
+        let second = try await SupplementalFixture(rate: 48_000)
+        defer { try? second.remove() }
+        let originals = try [first.url, second.url].map { try Data(contentsOf: $0) }
+        var episode = first.episode()
+        episode.sources.append(second.source)
+        episode.audioArrangement?.assets.append(second.asset)
+        var overlay = second.clip()
+        overlay.track = first.track.id
+        episode.audioArrangement?.clips.append(overlay)
+        let composition = try ProgramTimeline(episode: episode).composition()
+        let recipe = try MixerRecipe(episode: episode, sources: [first.snapshot, second.snapshot],
+            programFrames: 0..<441, composition: composition)
+        let scheduler = try await SupplementalClipScheduler(recipe: recipe, preparation: first.preparation,
+            admissions: [first.source.id: first.admission, second.source.id: second.admission])
+        for range: Range<Int64> in [0..<16, 200..<237, 0..<16, 431..<441] {
+            let actual = try #require(try await scheduler.read(range)[first.track.id])
+            for channel in 0..<2 {
+                #expect(actual[channel] == range.map { 2 * SupplementalFixture.sample(Int($0), channel) })
+            }
+            let assets = first.root.appendingPathComponent("cache/native-source-pcm-v1/assets")
+            let bytes = try FileManager.default.contentsOfDirectory(at: assets, includingPropertiesForKeys: [.fileSizeKey])
+                .reduce(0) { try $0 + ($1.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
+            #expect(bytes <= 30_000)
+        }
+        #expect(try [first.url, second.url].map { try Data(contentsOf: $0) } == originals)
+    }
+
+    @Test func unchangedSchedulerRecoversExternalEvictionButStillRefusesRevocationAndMutation() async throws {
+        let first = try await SupplementalFixture(rate: 48_000, storage: 30_000)
+        defer { try? first.remove() }
+        let other = try await SupplementalFixture(rate: 48_000)
+        defer { try? other.remove() }
+        let scheduler = try await first.scheduler(first.episode())
+        let expected = try await scheduler.read(0..<16)
+        _ = try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+        #expect(try await scheduler.read(0..<16) == expected)
+        _ = try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+        first.permission.revoke()
+        await #expect(throws: NativeSourcePreparationFailure.notAuthorized) { try await scheduler.read(0..<16) }
+
+        let mutable = try await SupplementalFixture(rate: 48_000, storage: 30_000)
+        defer { try? mutable.remove() }
+        let stale = try await mutable.scheduler(mutable.episode())
+        _ = try await mutable.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+        var bytes = try Data(contentsOf: mutable.url)
+        bytes[bytes.count - 1] ^= 1
+        try bytes.write(to: mutable.url)
+        await #expect(throws: (any Error).self) { try await stale.read(0..<16) }
+    }
+
     @Test func editedFadeSequenceUsesProductionEnvelopeAcrossSeekChunksSplitsAndReopen() async throws {
         let f = try await SupplementalFixture()
         defer { try? f.remove() }

@@ -277,6 +277,41 @@ public actor NativeSourcePreparation {
         return window
     }
 
+    /// Resolve a current preparation for each bounded window. Unlike a retained handle, eviction
+    /// between requests triggers witnessed preparation again; damaged entries still fail explicitly.
+    public func readWindow(
+        _ range: Range<Int64>, expectedFormat: FormatInterpretation, admission: SourceReadAdmission
+    ) async throws -> PreparedSourceWindow {
+        try await admission.validate()
+        guard admission.source == expectedFormat.source else {
+            throw NativeSourcePreparationFailure.sourceMismatch
+        }
+        guard range.lowerBound >= 0, range.upperBound <= expectedFormat.frames.validFrames,
+              range.count <= configuration.maximumWindowFrames else {
+            throw NativeSourcePreparationFailure.invalidRange
+        }
+        let window = try await decoder.withWitnessBoundDecodingCursor(
+            admission.location, source: admission.source, matching: admission.witness
+        ) { cursor in
+            try Self.requireFormat(cursor.interpretation, expected: expectedFormat, source: admission.source,
+                                   legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder)
+            let result = try await self.preparedWindow(range, expectedFormat: expectedFormat, admission: admission)
+            try await admission.validate()
+            try await cursor.verifyUnchanged()
+            return result
+        }
+        try Task.checkCancellation()
+        return window
+    }
+
+    private func preparedWindow(
+        _ range: Range<Int64>, expectedFormat: FormatInterpretation, admission: SourceReadAdmission
+    ) async throws -> PreparedSourceWindow {
+        let audio = try await prepare(admission, expectedFormat: expectedFormat)
+        // No suspension between publication/cache resolution and the bounded tile copy.
+        return try window(range, audio: audio)
+    }
+
     private func cached(_ identity: String) throws -> PreparedSourceAudio? {
         guard let entry = entries[identity] else { return nil }
         guard

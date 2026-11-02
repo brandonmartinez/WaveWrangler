@@ -6,7 +6,7 @@ import WWRender
 /// Non-realtime native preparation belongs outside MixerProcessor and its effect graph.
 public struct SupplementalClipScheduler: Sendable {
     private struct Source: Sendable {
-        let audio: PreparedSourceAudio
+        let snapshot: MixerSourceSnapshot
         let admission: SourceReadAdmission
     }
     public let recipe: MixerRecipe
@@ -21,8 +21,8 @@ public struct SupplementalClipScheduler: Sendable {
                   admission.source == snapshot.source, admission.witness == snapshot.witness else {
                 throw MixerFailure.staleDependencies
             }
-            let audio = try await preparation.prepare(admission, expectedFormat: snapshot.interpretation)
-            sources[snapshot.source] = .init(audio: audio, admission: admission)
+            _ = try await preparation.prepare(admission, expectedFormat: snapshot.interpretation)
+            sources[snapshot.source] = .init(snapshot: snapshot, admission: admission)
         }
         try Task.checkCancellation()
         self.recipe = recipe
@@ -60,7 +60,8 @@ public struct SupplementalClipScheduler: Sendable {
                     support: occurrence.clip.trim.startFrame..<occurrence.clip.trim.endFrame,
                     outputFrames: origin..<(origin + upper - next), channels: occurrence.sourceChannels
                 ) { [preparation] range, channels in
-                    let window = try await preparation.readWindow(range, from: source.audio, admission: source.admission)
+                    let window = try await preparation.readWindow(range,
+                        expectedFormat: source.snapshot.interpretation, admission: source.admission)
                     return channels.map { channel in
                         let start = channel * window.range.count
                         return Array(window.samples[start..<(start + window.range.count)])

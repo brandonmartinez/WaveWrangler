@@ -573,6 +573,73 @@ struct NativeSourcePreparationTests {
         .reduce(0) { try $0 + ($1.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
         #expect(bytes <= 260_000)
     }
+
+    @Test func resolvingWindowsReprepareEvictedSourcesButKeepWarmReadsDecodeFree() async throws {
+        let first = try await Fixture.make()
+        let second = try await Fixture.make()
+        let originals = try [first.url, second.url].map { try FileSnapshot($0) }
+        let decodeReads = Counter()
+        var gateway = SystemSourceContentIO()
+        gateway.rawFrameReadObserver = { decodeReads.increment() }
+        let store = try DerivedAssetStore(root: first.directory.file("cache/native-source-pcm-v1"),
+            sourceLocations: [first.url, second.url])
+        let preparation = try NativeSourcePreparation(store: store,
+            decoder: SourceDecoder(access: first.access, content: gateway, configuration: .init(chunkFrames: 4096)),
+            configuration: .init(tileFrames: 4096, maximumWindowFrames: 16_384, maximumStorageBytes: 260_000))
+        let validations = Counter()
+        let admission = first.admission { validations.increment() }
+        let expected = try await preparation.readWindow(23_400..<23_457,
+            expectedFormat: first.format, admission: admission)
+        let coldReads = decodeReads.value
+        #expect(coldReads > 0)
+        #expect(try await preparation.readWindow(23_400..<23_457,
+            expectedFormat: first.format, admission: admission) == expected)
+        #expect(decodeReads.value == coldReads)
+        _ = try await preparation.prepare(second.admission(), expectedFormat: second.format)
+        let beforeRecovery = decodeReads.value
+        #expect(try await preparation.readWindow(23_400..<23_457,
+            expectedFormat: first.format, admission: admission) == expected)
+        #expect(decodeReads.value > beforeRecovery)
+        #expect(validations.value >= 12)
+        let bytes = try FileManager.default.contentsOfDirectory(at: first.assets, includingPropertiesForKeys: [.fileSizeKey])
+            .reduce(0) { try $0 + ($1.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
+        #expect(bytes <= 260_000)
+        #expect(try [first.url, second.url].map { try FileSnapshot($0) } == originals)
+    }
+
+    @Test func resolvingWindowsKeepAdmissionRangeFormatBudgetAndDamageFailuresExplicit() async throws {
+        let f = try await Fixture.make()
+        let preparation = try f.preparation()
+        _ = try await preparation.readWindow(0..<10, expectedFormat: f.format, admission: f.admission())
+        await #expect(throws: NativeSourcePreparationFailure.notAuthorized) {
+            try await preparation.readWindow(0..<10, expectedFormat: f.format,
+                admission: f.admission { throw NativeSourcePreparationFailure.notAuthorized })
+        }
+        await #expect(throws: NativeSourcePreparationFailure.invalidRange) {
+            try await preparation.readWindow(0..<(f.format.frames.validFrames + 1),
+                expectedFormat: f.format, admission: f.admission())
+        }
+        var wrong = f.format
+        wrong.channelLayout.channelLabels = [2, 1]
+        await #expect(throws: NativeSourcePreparationFailure.formatMismatch) {
+            try await preparation.readWindow(0..<10, expectedFormat: wrong, admission: f.admission())
+        }
+        for tile in try FileManager.default.contentsOfDirectory(at: f.assets, includingPropertiesForKeys: nil) {
+            var bytes = try Data(contentsOf: tile)
+            if bytes.count > 10_000 {
+                bytes[bytes.count - 1] ^= 1
+                try bytes.write(to: tile)
+            }
+        }
+        await #expect(throws: NativeSourcePreparationFailure.cacheMissingOrDamaged) {
+            try await preparation.readWindow(0..<16_000, expectedFormat: f.format, admission: f.admission())
+        }
+        let budgetFixture = try await Fixture.make()
+        let bounded = try budgetFixture.preparation(storage: 1000)
+        await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+            try await bounded.readWindow(0..<10, expectedFormat: budgetFixture.format, admission: budgetFixture.admission())
+        }
+    }
 }
 
 private final class PublicationFaultFiles: FileOperations, @unchecked Sendable {
