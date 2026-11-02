@@ -84,6 +84,7 @@
 				Library/LibraryFailureMessage.swift,
 				Library/MoveStepRelay.swift,
 				Mixer/MixerOperationQueue.swift,
+				Shared/AudioTimelineProjection.swift,
 				Sources/SetupConfirmationKind.swift,
 				Workspace/ShowDocumentStatusMapping.swift,
 			);

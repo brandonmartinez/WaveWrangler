@@ -1217,6 +1217,9 @@ telemetry, or audio/transcript upload. Inference remains local and offline.
 
 `WaveWranglerTests` is an **unhosted** bundle: it links the package products and reads the app's
 `Info.plist`/entitlements from the source tree, so running it never launches the app.
+Shared app sources are explicitly included through the target's synchronized-folder membership
+exceptions in `project.pbxproj`. Include their app-source dependencies there too; waveform sources,
+for example, require `Shared/AudioTimelineProjection.swift`.
 
 ### Live-provider (iCloud / two-device) tests are opt-in
 
