@@ -104,6 +104,43 @@ struct SupplementalProductionHostedTests {
         return try first.document.store.model.addingEpisode(episode)
     }
 
+    @Test func retirementCancelsBeforePublicationAndRefusesSelfJoinWithoutWaitingForActiveWork() async throws {
+        let reached = SupplementalHostedConsumerGate(), resume = SupplementalHostedConsumerGate()
+        let activeGate = SupplementalHostedConsumerGate()
+        let attemptedJoin = Mutex(false), canceledAdmission = Mutex(false)
+        let retirements = ProductionPlaybackRetirements(beforeSnapshotForTesting: {
+            reached.open()
+            await resume.wait()
+        }, beforeJoiningForTesting: {
+            attemptedJoin.withLock { $0 = true }
+            // Trap a regression before it actually awaits its own task handle.
+            throw CancellationError()
+        })
+        let active = Task { await activeGate.wait() }
+        let retiring = Task {
+            do {
+                try await retirements.wait()
+                Issue.record("A self-retired admission returned successfully.")
+            } catch is CancellationError {
+                canceledAdmission.withLock { $0 = true }
+            } catch {
+                Issue.record("Unexpected retirement failure: \(error)")
+            }
+        }
+        await reached.wait()
+        retirements.retire(retiring)
+        let canceledBeforeResuming = retiring.isCancelled
+        resume.open()
+        await retiring.value
+        let joined = attemptedJoin.withLock { $0 }
+        let refused = canceledAdmission.withLock { $0 }
+        let activeCanceled = active.isCancelled
+        activeGate.open()
+        await active.value
+        #expect(canceledBeforeResuming && refused && !joined)
+        #expect(!activeCanceled)
+    }
+
     @Test func completedOfflineConsumerAllowsEpisodeSwitchAndCachedReadmission() async throws {
         let first = try await fixture(codec: kAudioFormatAppleLossless, storage: 80_000)
         let second = try await fixture(codec: kAudioFormatAppleLossless)

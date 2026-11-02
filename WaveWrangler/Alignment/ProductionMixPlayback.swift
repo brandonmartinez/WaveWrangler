@@ -6,8 +6,19 @@ import WWMix
 /// Only explicitly stopped transports enter this barrier; independent active consumers are untouched.
 final class ProductionPlaybackRetirements: Sendable {
     private let pending = Mutex<[UUID: Task<Void, Never>]>([:])
+    #if DEBUG
+    private let beforeSnapshotForTesting: (@Sendable () async -> Void)?
+    private let beforeJoiningForTesting: (@Sendable () throws -> Void)?
+
+    init(beforeSnapshotForTesting: (@Sendable () async -> Void)? = nil,
+         beforeJoiningForTesting: (@Sendable () throws -> Void)? = nil) {
+        self.beforeSnapshotForTesting = beforeSnapshotForTesting
+        self.beforeJoiningForTesting = beforeJoiningForTesting
+    }
+    #endif
 
     func retire(_ task: Task<Void, Never>) {
+        task.cancel()
         let id = UUID()
         pending.withLock { $0[id] = task }
         Task { [self] in
@@ -18,8 +29,17 @@ final class ProductionPlaybackRetirements: Sendable {
 
     func wait() async throws {
         try Task.checkCancellation()
+        #if DEBUG
+        await beforeSnapshotForTesting?()
+        #endif
         let tasks = pending.withLock { Array($0.values) }
+        // A task can be retired between the first check and snapshotting itself.
+        try Task.checkCancellation()
         for task in tasks {
+            try Task.checkCancellation()
+            #if DEBUG
+            try beforeJoiningForTesting?()
+            #endif
             await task.value
             try Task.checkCancellation()
         }

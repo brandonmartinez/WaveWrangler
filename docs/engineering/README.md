@@ -786,7 +786,9 @@ not the cached per-episode scheduling metadata. Playback and offline rendering
 hold one scoped consumer across their windows and await release on success,
 failure, or cancellation. Stopping production joins its canceled PCM producer
 before release; new playback and imports await only explicitly retired transports,
-never another still-active render. Cached metadata reacquires receipts at consumer
+never another still-active render. Retirement cancels before publishing a task
+and rechecks admission cancellation after snapshotting and before each join, so a
+stopped transport cannot await its own completion. Cached metadata reacquires receipts at consumer
 admission after eviction or an episode switch. The storage ceiling never increases.
 `prepare` remains the explicit
 whole-source preparation API. A retained recipe is not a PCM cache-lifetime guarantee;
