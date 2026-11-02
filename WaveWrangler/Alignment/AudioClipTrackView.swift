@@ -148,6 +148,7 @@ struct AudioClipTrackView: View {
             .buttonStyle(.plain)
             .frame(width: blockWidth, height: blockHeight)
             .contentShape(Rectangle())
+            .contentShape(.accessibility, Rectangle())
             .simultaneousGesture(moveGesture(projected, width: size.width))
             .overlay(alignment: .leading) {
                 if selected, editor.store.canEdit, first >= start { edge(projected, leading: true, width: size.width) }

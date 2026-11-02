@@ -50,15 +50,15 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         clip = clips(app).firstMatch
         let blockFrame = clip.frame
         let laneFrame = app.staticTexts["ww.audioDrop.newTrack"].frame
+        let geometryEvidence = XCTAttachment(string: "Native clip AX frame: \(blockFrame); lane canvas: \(laneFrame)")
+        geometryEvidence.name = "F6 visible block versus lane geometry before the exact midpoint drop"
+        geometryEvidence.lifetime = .keepAlways
+        add(geometryEvidence)
         XCTAssertGreaterThan(blockFrame.width, 30)
         XCTAssertGreaterThan(blockFrame.minX, app.windows["ww.show.window"].frame.minX + 190)
         XCTAssertLessThan(blockFrame.width, laneFrame.width, "A clip's native AX frame must not cover the whole lane.")
         XCTAssertGreaterThan(blockFrame.minX, laneFrame.minX)
         XCTAssertLessThan(blockFrame.maxX, laneFrame.maxX)
-        let geometryEvidence = XCTAttachment(string: "Native clip AX frame: \(blockFrame); lane canvas: \(laneFrame)")
-        geometryEvidence.name = "F6 visible block versus lane geometry before the exact midpoint drop"
-        geometryEvidence.lifetime = .keepAlways
-        add(geometryEvidence)
         drop(first.lastPathComponent, window: window, finder: finder, app: app,
              to: clip.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)))
         XCTAssertEqual(try reviewPosition(app), start + 1, accuracy: 1.0 / 48_000)
