@@ -152,7 +152,11 @@ struct AudioTimelineFileDropTarget: ViewModifier {
         let dropGeometry = AudioTimelineDropGeometry(size: canvasSize, start: start,
             duration: duration, projection: projection, track: track)
         content
-            .contentShape(Rectangle())
+            .background {
+                Rectangle().fill(.clear)
+                    .contentShape(Rectangle())
+                    .accessibilityHidden(true)
+            }
             .onGeometryChange(for: CGRect.self) { $0.frame(in: .global) } action: {
                 canvasSize = $0.size
                 measureCanvas?($0)

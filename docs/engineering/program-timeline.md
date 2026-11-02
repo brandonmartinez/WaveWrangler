@@ -312,6 +312,8 @@ explicit rectangular accessibility content shape. Native accessibility bounds
 must describe the visible clip, not its entire lane. Finder UI
 coverage uses those real bounds and refuses an occluded destination rather than
 substituting another drop point.
+Keep the full-canvas drop hit shape on an accessibility-hidden background rather
+than the content hierarchy so it does not broaden descendant clip bounds.
 
 The captured destination uses distinct `.defaultTrack`, `.existing(id)`, and
 `.newTrack` intents; review resolves the default before confirmation. Audio lanes
