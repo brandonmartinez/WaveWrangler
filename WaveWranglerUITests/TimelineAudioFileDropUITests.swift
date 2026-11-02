@@ -71,10 +71,10 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertEqual(try reviewPosition(app), start + 1, accuracy: 1.0 / 48_000)
         XCTAssertEqual(app.popUpButtons["ww.addAudio.track"].value as? String, "Drop Track")
         XCTAssertFalse(app.textFields["ww.addAudio.trackName"].exists)
-        let reuseChoice = app.checkBoxes.matching(NSPredicate(
-            format: "identifier BEGINSWITH 'ww.addAudio.candidate.' AND (value CONTAINS %@ OR label CONTAINS %@)",
-            "Reuse this episode", "Reuse this episode"))
+        let reuseChoice = app.descendants(matching: .checkBox).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "ww.addAudio.candidate."))
         XCTAssertTrue(wait { reuseChoice.count == 1 }, app.debugDescription)
+        XCTAssertTrue(reuseChoice.firstMatch.label.contains("Reuse this episode"), app.debugDescription)
         app.buttons["ww.addAudio.cancel"].click()
         XCTAssertTrue(wait { !app.buttons["ww.addAudio.import"].exists })
         XCTAssertEqual(clips(app).count, 1)
@@ -83,11 +83,22 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertEqual(try reviewPosition(app), start + 1, accuracy: 1.0 / 48_000)
         confirmImport(app, visibleClips: 2)
         let original = clips(app).matching(NSPredicate(format: "identifier == %@", clip.identifier)).firstMatch
-        let blankOffset = min(36, ruler.frame.maxX - original.frame.maxX - 10)
+        let visible = clips(app).allElementsBoundByIndex
+        let rightmost = try XCTUnwrap(visible.max { $0.frame.maxX < $1.frame.maxX })
+        XCTAssertEqual(rightmost.label, "Audio Clip: fresh.wav")
+        original.coordinate(withNormalizedOffset: .init(dx: 0.25, dy: 0.5)).click()
+        XCTAssertEqual(Double(app.textFields["ww.audioClip.start"].value as? String ?? "") ?? .nan,
+                       start, accuracy: 1.0 / 48_000)
+        rightmost.coordinate(withNormalizedOffset: .init(dx: 0.75, dy: 0.5)).click()
+        XCTAssertEqual(Double(app.textFields["ww.audioClip.start"].value as? String ?? "") ?? .nan,
+                       start + 1, accuracy: 1.0 / 48_000)
+        let blankOffset = min(36, ruler.frame.maxX - rightmost.frame.maxX - 10)
         XCTAssertGreaterThan(blankOffset, 2)
-        let blank = original.coordinate(withNormalizedOffset: .init(dx: 1, dy: 0.8))
+        let blank = rightmost.coordinate(withNormalizedOffset: .init(dx: 1, dy: 0.8))
             .withOffset(.init(dx: blankOffset, dy: 0))
-        let blankTime = start + 2 + blankOffset / original.frame.width * 2
+        XCTAssertTrue(visible.allSatisfy { !$0.frame.contains(blank.screenPoint) },
+                      "The blank-lane destination must be outside every visible clip.")
+        let blankTime = start + 3 + blankOffset / rightmost.frame.width * 2
         drop(first.lastPathComponent, window: window, finder: finder, app: app, to: blank)
         XCTAssertEqual(try reviewPosition(app), blankTime, accuracy: 1.0 / 48_000)
         XCTAssertEqual(app.popUpButtons["ww.addAudio.track"].value as? String, "Drop Track")
@@ -356,6 +367,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(wait {
             self.clips(app).count == visibleClips
                 && !app.descendants(matching: .any)["ww.trackProcessing.overlay"].exists
+                && app.buttons["ww.audioWorkspace.playMix"].isEnabled
                 && self.clips(app).firstMatch.isHittable
         }, app.debugDescription)
         XCTAssertFalse(app.descendants(matching: .any)["ww.addAudio.error"].exists, app.debugDescription)
