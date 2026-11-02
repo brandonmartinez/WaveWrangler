@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WWCommonEdit
 import WWCore
@@ -102,10 +103,11 @@ struct AudioClipTrackView: View {
             let selected = editor.selectedClip == projected.clip.id
             let renderedClip = preview?.previewClip ?? projected.clip
             let blockWidth = max(6, right - left), blockHeight = max(40, size.height - 4)
-            Button {
+            let select: @MainActor () -> Void = {
                 editor.select(projected.clip.id)
                 showInspector()
-            } label: {
+            }
+            Button(action: select) {
                 RoundedRectangle(cornerRadius: 4)
                     .fill(Color.teal.opacity(selected ? 0.28 : 0.13))
                     .frame(width: blockWidth, height: blockHeight)
@@ -146,10 +148,16 @@ struct AudioClipTrackView: View {
                     }
             }
             .buttonStyle(.plain)
-            .fixedSize()
             .frame(width: blockWidth, height: blockHeight)
             .contentShape(Rectangle())
-            .contentShape(.accessibility, Rectangle())
+            .accessibilityHidden(true)
+            .background {
+                AudioClipAccessibilityButton(
+                    label: "Audio Clip: \(name(projected))",
+                    value: "Program start \(programFirst.formatted(.number.precision(.fractionLength(3)))) seconds; duration \(count.formatted(.number.precision(.fractionLength(3)))) seconds; \(renderedClip.envelope.points.count) fade points",
+                    identifier: "ww.audioClip.\(projected.clip.id)", selected: selected, action: select)
+                    .frame(width: blockWidth, height: blockHeight)
+            }
             .simultaneousGesture(moveGesture(projected, width: size.width))
             .overlay(alignment: .leading) {
                 if selected, editor.store.canEdit, first >= start { edge(projected, leading: true, width: size.width) }
@@ -161,11 +169,6 @@ struct AudioClipTrackView: View {
             .zIndex(selected ? 1 : 0)
             .opacity(preview != nil && projected.clip.track == track.id && preview?.track != track.id ? 0.35 : 1)
             .allowsHitTesting(projected.clip.track == track.id)
-            .accessibilityElement(children: .ignore)
-            .accessibilityLabel("Audio Clip: \(name(projected))")
-            .accessibilityValue("Program start \(programFirst.formatted(.number.precision(.fractionLength(3)))) seconds; duration \(count.formatted(.number.precision(.fractionLength(3)))) seconds; \(renderedClip.envelope.points.count) fade points")
-            .accessibilityAddTraits(selected ? [.isSelected] : [])
-            .accessibilityIdentifier("ww.audioClip.\(projected.clip.id)")
         }
     }
 
@@ -229,6 +232,61 @@ struct AudioClipTrackView: View {
 
     private func name(_ clip: ProgramAudioClip) -> String {
         editor.episode?.source(clip.clip.source)?.displayNameHint ?? "Audio Clip"
+    }
+}
+
+@MainActor
+private struct AudioClipAccessibilityButton: NSViewRepresentable {
+    let label: String
+    let value: String
+    let identifier: String
+    let selected: Bool
+    let action: @MainActor () -> Void
+
+    func makeNSView(context: Context) -> ButtonView {
+        let view = ButtonView(action: action)
+        updateNSView(view, context: context)
+        return view
+    }
+
+    func updateNSView(_ view: ButtonView, context: Context) {
+        let changed = view.accessibilityValue() as? String != value
+            || view.isAccessibilitySelected() != selected
+        view.action = action
+        view.enabled = context.environment.isEnabled
+        view.setAccessibilityEnabled(view.enabled)
+        view.setAccessibilityLabel(label)
+        view.setAccessibilityValue(value)
+        view.setAccessibilityIdentifier(identifier)
+        view.setAccessibilitySelected(selected)
+        if changed { NSAccessibility.post(element: view, notification: .valueChanged) }
+    }
+
+    final class ButtonView: NSView {
+        var action: @MainActor () -> Void
+        var enabled = true
+
+        init(action: @escaping @MainActor () -> Void) {
+            self.action = action
+            super.init(frame: .zero)
+            setAccessibilityElement(true)
+            setAccessibilityRole(.button)
+        }
+
+        required init?(coder: NSCoder) { nil }
+
+        // Keep native accessibility bounds without intercepting timeline gestures.
+        override func hitTest(_ point: NSPoint) -> NSView? { nil }
+
+        override func accessibilityHitTest(_ point: NSPoint) -> Any? {
+            accessibilityFrame().contains(point) ? self : nil
+        }
+
+        override func accessibilityPerformPress() -> Bool {
+            guard enabled else { return false }
+            action()
+            return true
+        }
     }
 }
 
