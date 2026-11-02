@@ -94,12 +94,13 @@ private struct SupplementalFixture {
     }
 
     func scheduler(_ episode: Episode, frames: Range<Int64>? = nil,
-                   policy: MixerRenderPolicy = .init()) async throws -> SupplementalClipScheduler {
+                   policy: MixerRenderPolicy = .init(),
+                   preparation: NativeSourcePreparation? = nil) async throws -> SupplementalClipScheduler {
         let composition = try ProgramTimeline(episode: episode).composition()
         let range = try frames ?? #require(composition.programFrames)
         let recipe = try MixerRecipe(episode: episode, sources: [snapshot],
                                      programFrames: range, policy: policy, composition: composition)
-        return try await SupplementalClipScheduler(recipe: recipe, preparation: preparation,
+        return try await SupplementalClipScheduler(recipe: recipe, preparation: preparation ?? self.preparation,
                                                    admissions: [source.id: admission])
     }
 
@@ -135,15 +136,77 @@ struct SupplementalClipTests {
         let other = try await SupplementalFixture(rate: 48_000, codec: kAudioFormatAppleLossless)
         defer { try? other.remove() }
         let scheduler = try await first.scheduler(first.episode())
-        let expected = try await scheduler.read(0..<16)
+        let consumer = try await scheduler.makeConsumer()
+        let expected = try await consumer.read(0..<16)
         for _ in 0..<3 {
             await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
                 try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
             }
-            #expect(try await scheduler.read(0..<16) == expected)
+            #expect(try await consumer.read(0..<16) == expected)
         }
-        await scheduler.releasePreparations()
+        await consumer.release()
         _ = try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+    }
+
+    @Test func cachedSchedulersReleaseCompletedConsumersAndReadmitAcrossEpisodes() async throws {
+        let first = try await SupplementalFixture(rate: 48_000, storage: 30_000, codec: kAudioFormatAppleLossless)
+        defer { try? first.remove() }
+        let second = try await SupplementalFixture(rate: 48_000, codec: kAudioFormatAppleLossless)
+        defer { try? second.remove() }
+        let a = try await first.scheduler(first.episode())
+        let expected = try await a.read(0..<16)[first.track.id]
+        let b = try await second.scheduler(second.episode(), preparation: first.preparation)
+        for _ in 0..<3 {
+            #expect(try await b.read(0..<16)[second.track.id] == expected)
+            #expect(try await a.read(0..<16)[first.track.id] == expected)
+        }
+    }
+
+    @Test func cancelingOneConsumerPreservesAnotherOwnerAndPermitsLaterReadmission() async throws {
+        let first = try await SupplementalFixture(rate: 48_000, storage: 30_000, codec: kAudioFormatAppleLossless)
+        defer { try? first.remove() }
+        let other = try await SupplementalFixture(rate: 48_000, codec: kAudioFormatAppleLossless)
+        defer { try? other.remove() }
+        let scheduler = try await first.scheduler(first.episode())
+        let survivor = try await scheduler.makeConsumer()
+        let started = SupplementalConsumerGate(), finish = SupplementalConsumerGate()
+        let pending = Task {
+            do {
+                try await scheduler.withConsumer { consumer in
+                    _ = try await consumer.read(0..<16)
+                    await started.open()
+                    await finish.wait()
+                    try Task.checkCancellation()
+                }
+            } catch {
+                await started.open()
+                throw error
+            }
+        }
+        await started.wait()
+        pending.cancel()
+        await finish.open()
+        await #expect(throws: CancellationError.self) { try await pending.value }
+        await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+            try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+        }
+        #expect(try await survivor.read(0..<16)[first.track.id] != nil)
+        await survivor.release()
+        _ = try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+        #expect(try await scheduler.read(0..<16)[first.track.id] != nil)
+    }
+
+    @Test func failedConsumerReleasesClaimsWithoutDiscardingCachedMetadata() async throws {
+        let first = try await SupplementalFixture(rate: 48_000, storage: 30_000, codec: kAudioFormatAppleLossless)
+        defer { try? first.remove() }
+        let other = try await SupplementalFixture(rate: 48_000, codec: kAudioFormatAppleLossless)
+        defer { try? other.remove() }
+        let scheduler = try await first.scheduler(first.episode())
+        await #expect(throws: NativeSourcePreparationFailure.notAuthorized) {
+            try await scheduler.withConsumer { _ in throw NativeSourcePreparationFailure.notAuthorized }
+        }
+        _ = try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+        #expect(try await scheduler.read(0..<16)[first.track.id] != nil)
     }
 
     @Test func schedulerSurvivesEvictionDuringConstructionAndRepeatedOverlappingReads() async throws {
@@ -168,6 +231,7 @@ struct SupplementalClipTests {
             for channel in 0..<2 {
                 #expect(actual[channel] == range.map { 2 * SupplementalFixture.sample(Int($0), channel) })
             }
+
             let assets = first.root.appendingPathComponent("cache/native-source-pcm-v1/assets")
             let bytes = try FileManager.default.contentsOfDirectory(at: assets, includingPropertiesForKeys: [.fileSizeKey])
                 .reduce(0) { try $0 + ($1.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
@@ -416,5 +480,19 @@ struct SupplementalClipTests {
         #expect(solo.channels[1][511] != 0)
         #expect(MixerLiveTiming.maximumPreparedControlFrames == 4608)
         #expect(processor.recipe.audioTracks[0].strip.gainDB == 0)
+    }
+}
+
+private actor SupplementalConsumerGate {
+    private var opened = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    func wait() async {
+        if opened { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+    func open() {
+        opened = true
+        for waiter in waiters { waiter.resume() }
+        waiters = []
     }
 }

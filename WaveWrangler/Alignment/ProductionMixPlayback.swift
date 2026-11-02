@@ -3,6 +3,29 @@ import Synchronization
 import WWCore
 import WWMix
 
+/// Only explicitly stopped transports enter this barrier; independent active consumers are untouched.
+final class ProductionPlaybackRetirements: Sendable {
+    private let pending = Mutex<[UUID: Task<Void, Never>]>([:])
+
+    func retire(_ task: Task<Void, Never>) {
+        let id = UUID()
+        pending.withLock { $0[id] = task }
+        Task { [self] in
+            await task.value
+            pending.withLock { $0[id] = nil }
+        }
+    }
+
+    func wait() async throws {
+        try Task.checkCancellation()
+        let tasks = pending.withLock { Array($0.values) }
+        for task in tasks {
+            await task.value
+            try Task.checkCancellation()
+        }
+    }
+}
+
 /// One bounded raw-PCM producer. Prepared samples do not contain gains, effects, or faders.
 private actor ProductionPCMQueue {
     private let end: Int64
@@ -76,9 +99,11 @@ private actor ProductionPCMQueue {
         }
     }
 
-    func stop() {
-        producer?.cancel()
+    func stop() async {
+        let pending = producer
         producer = nil
+        pending?.cancel()
+        await pending?.value
         windows.removeAll()
         diagnostics.rawQueueChanged(count: 0)
         finished = true
@@ -127,12 +152,21 @@ final class ProductionMixPlayback: Sendable {
     @concurrent
     func play(output: AlignmentAudioPlayback,
               onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
+        try check()
+        try await runtime.withProductionConsumer(recipe: processor.recipe, model: model) { [self] consumer in
+            try check()
+            try await playPrepared(consumer: consumer, output: output, onBufferDeadline: onBufferDeadline)
+        }
+    }
+
+    private func playPrepared(consumer: SupplementalClipConsumer, output: AlignmentAudioPlayback,
+                              onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
         let recipe = processor.recipe
         let inputFrames = (recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames))..<recipe.programFrames.upperBound
         let queue = ProductionPCMQueue(frames: inputFrames, diagnostics: diagnostics, prepare: { [self] frames in
             try check()
             guard output.generation == outputGeneration else { throw CancellationError() }
-            return try await runtime.productionPCM(recipe: recipe, model: model, frames: frames)
+            return try await runtime.productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
         }, failed: { [self] in invalidate($0) })
         await queue.start()
         var validation: Task<Void, Never>?
@@ -200,9 +234,11 @@ final class ProductionMixPlayback: Sendable {
             try await validate(recipe: recipe)
             try check()
             validation?.cancel()
+            await validation?.value
             await queue.stop()
         } catch {
             validation?.cancel()
+            await validation?.value
             output.stop(ifCurrent: outputGeneration, preservingClock: true)
             await queue.stop()
             throw error

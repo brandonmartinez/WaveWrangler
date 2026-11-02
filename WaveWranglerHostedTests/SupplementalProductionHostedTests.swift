@@ -1,9 +1,11 @@
 import AppKit
 import AudioToolbox
 import Foundation
+import Synchronization
 import Testing
 import WWCore
 import WWDecode
+import WWDerived
 import WWPersistence
 import WWSources
 import WWMix
@@ -30,13 +32,13 @@ struct SupplementalProductionHostedTests {
         }
     }
 
-    private func fixture() async throws -> Fixture {
+    private func fixture(codec: UInt32 = kAudioFormatLinearPCM, storage: Int64 = 1 << 30) async throws -> Fixture {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("ww-f4-hosted-\(UUID())")
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let media = folder.appendingPathComponent("originals")
         try FileManager.default.createDirectory(at: media, withIntermediateDirectories: true)
         let url = media.appendingPathComponent("generated.caf")
-        try Self.writeAudio(url)
+        try Self.writeAudio(url, codec: codec)
         let source = SourceRecord(displayNameHint: "Generated stereo", purpose: .supplementalAudio)
         let track = AudioTrack(name: "Supplemental")
         let clip = AudioClip(track: track.id, source: source.id,
@@ -58,16 +60,20 @@ struct SupplementalProductionHostedTests {
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: showURL, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
-        let runtime = try await AlignmentRuntime.make(showID: model.show.id, accessStore: access, access: context)
+        let runtime = try await AlignmentRuntime.make(showID: model.show.id, accessStore: access, access: context,
+            nativeConfiguration: .init(maximumStorageBytes: storage))
         return .init(folder: folder, url: url, document: document, runtime: runtime, access: access,
                      source: source, track: track, episode: episode.id)
     }
 
-    private static func writeAudio(_ url: URL) throws {
-        var format = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
+    private static func writeAudio(_ url: URL, codec: UInt32 = kAudioFormatLinearPCM) throws {
+        var client = AudioStreamBasicDescription(mSampleRate: 48_000, mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
             mBytesPerPacket: 4, mFramesPerPacket: 1, mBytesPerFrame: 4,
             mChannelsPerFrame: 2, mBitsPerChannel: 16, mReserved: 0)
+        var format = codec == kAudioFormatLinearPCM ? client : AudioStreamBasicDescription(
+            mSampleRate: 48_000, mFormatID: codec, mFormatFlags: 1, mBytesPerPacket: 0,
+            mFramesPerPacket: 0, mBytesPerFrame: 0, mChannelsPerFrame: 2, mBitsPerChannel: 0, mReserved: 0)
         var created: ExtAudioFileRef?
         try #require(ExtAudioFileCreateWithURL(url as CFURL, kAudioFileCAFType, &format, nil, 0, &created) == noErr)
         let file = try #require(created)
@@ -75,6 +81,8 @@ struct SupplementalProductionHostedTests {
         layout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo
         try #require(ExtAudioFileSetProperty(file, kExtAudioFileProperty_FileChannelLayout,
             UInt32(MemoryLayout.size(ofValue: layout)), &layout) == noErr)
+        try #require(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat,
+            UInt32(MemoryLayout.size(ofValue: client)), &client) == noErr)
         var samples = (0..<4800).flatMap { frame -> [Int16] in [Int16(frame % 1000), -Int16(frame % 2000)] }
         let result = samples.withUnsafeMutableBytes { bytes in
             var buffer = AudioBufferList(mNumberBuffers: 1, mBuffers: .init(
@@ -83,6 +91,104 @@ struct SupplementalProductionHostedTests {
         }
         let closed = ExtAudioFileDispose(file)
         try #require(result == noErr && closed == noErr)
+    }
+
+    private func joining(_ first: Fixture, _ second: Fixture) async throws -> ShowDocumentModel {
+        let secondModel = second.document.store.model
+        let candidate = await second.access.record(for: .init(showID: secondModel.show.id, sourceID: second.source.id))
+        var record = try #require(candidate)
+        record.showID = first.document.store.model.show.id
+        await first.access.save(record)
+        let candidateEpisode = secondModel.episode(second.episode)
+        let episode = try #require(candidateEpisode)
+        return try first.document.store.model.addingEpisode(episode)
+    }
+
+    @Test func completedOfflineConsumerAllowsEpisodeSwitchAndCachedReadmission() async throws {
+        let first = try await fixture(codec: kAudioFormatAppleLossless, storage: 80_000)
+        let second = try await fixture(codec: kAudioFormatAppleLossless)
+        defer { first.close(); second.close() }
+        let model = try await joining(first, second)
+        let a = try await first.runtime.mixerRecipe(model: model, episode: first.episode, programFrames: 0..<4800)
+        let b = try await first.runtime.mixerRecipe(model: model, episode: second.episode, programFrames: 0..<4800)
+        try await first.runtime.renderProductionOffline(recipe: a, model: model, isCurrent: { true }, sink: { _ in })
+        let other = try await first.runtime.productionPCM(recipe: b, model: model, frames: 0..<16)
+        let readmitted = try await first.runtime.productionPCM(recipe: a, model: model, frames: 0..<16)
+        let otherFrames = other.audioTracks[second.track.id]?.first?.count
+        let readmittedFrames = readmitted.audioTracks[first.track.id]?.first?.count
+        #expect(otherFrames == 16 && readmittedFrames == 16)
+    }
+
+    @Test func canceledConsumerPreservesIndependentOwnerUntilItsOwnCompletion() async throws {
+        let first = try await fixture(codec: kAudioFormatAppleLossless, storage: 80_000)
+        let second = try await fixture(codec: kAudioFormatAppleLossless)
+        defer { first.close(); second.close() }
+        let model = try await joining(first, second)
+        let runtime = first.runtime, track = first.track.id
+        let a = try await runtime.mixerRecipe(model: model, episode: first.episode, programFrames: 0..<4800)
+        let b = try await runtime.mixerRecipe(model: model, episode: second.episode, programFrames: 0..<4800)
+        try await runtime.withProductionConsumer(recipe: a, model: model) { survivor in
+            let started = SupplementalHostedConsumerGate(), finish = SupplementalHostedConsumerGate()
+            let pending = Task {
+                do {
+                    try await runtime.withProductionConsumer(recipe: a, model: model) { consumer in
+                        _ = try await runtime.productionPCM(recipe: a, model: model, frames: 0..<16, consumer: consumer)
+                        started.open()
+                        await finish.wait()
+                        try Task.checkCancellation()
+                    }
+                } catch {
+                    started.open()
+                    throw error
+                }
+            }
+            await started.wait()
+            pending.cancel()
+            finish.open()
+            await #expect(throws: CancellationError.self) { try await pending.value }
+            await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+                try await runtime.productionPCM(recipe: b, model: model, frames: 0..<16)
+            }
+            let live = try await runtime.productionPCM(recipe: a, model: model, frames: 0..<16, consumer: survivor)
+            let count = live.audioTracks[track]?.first?.count
+            #expect(count == 16)
+        }
+        let other = try await runtime.productionPCM(recipe: b, model: model, frames: 0..<16)
+        let count = other.audioTracks[second.track.id]?.first?.count
+        #expect(count == 16)
+    }
+
+    @Test func stoppedProductionReleasesBeforeEpisodeAndImportReadmission() async throws {
+        let first = try await fixture(codec: kAudioFormatAppleLossless, storage: 80_000)
+        let second = try await fixture(codec: kAudioFormatAppleLossless)
+        defer { first.close(); second.close() }
+        let snapshot = try await joining(first, second)
+        let b = try await first.runtime.mixerRecipe(model: snapshot, episode: second.episode, programFrames: 0..<4800)
+        let gate = SupplementalHostedConsumerGate()
+        let model = EpisodeAlignmentModel(document: first.document, episodeID: first.episode, runtime: first.runtime)
+        defer { model.suspend(); gate.open() }
+        model.load()
+        try await MixerHostedTests().wait {
+            model.audioEditor.composition != nil && !model.audioEditor.isPreparingWaveforms
+        }
+        await first.runtime.setProductionValidationHookForTesting { await gate.wait() }
+        model.playProductionMix(interval: 0...0.1)
+        try await MixerHostedTests().wait { gate.isEntered || model.lastError != nil }
+        let entered = gate.isEntered
+        try #require(entered)
+        model.stopAudition()
+        gate.open()
+        let other = try await first.runtime.productionPCM(recipe: b, model: snapshot, frames: 0..<16)
+        let count = other.audioTracks[second.track.id]?.first?.count
+        #expect(count == 16)
+        let candidateAsset = snapshot.episode(first.episode)?.audioArrangement?.assets.first
+        let asset = try #require(candidateAsset)
+        _ = try await first.runtime.audioAssetWaveform(asset, model: snapshot, episode: first.episode) { _ in }
+        await first.runtime.setProductionValidationHookForTesting(nil)
+        model.playProductionMix(interval: 0...0.1)
+        try await MixerHostedTests().wait { !model.canStopAudition }
+        let label = model.auditionLabel
+        #expect(label == "Production mix reached the end of the selected program.")
     }
 
     @Test func audioOnlyPreparationAndOfflineUseIdenticalPlanPCMAndDSPWithoutAcceptedTiming() async throws {
@@ -255,5 +361,31 @@ private actor SupplementalOutputCollector {
     var channels = [[Float](), [Float]()]
     func append(_ output: MixerPCMOutput) {
         for channel in 0..<2 { channels[channel] += output.channels[channel] }
+    }
+}
+
+private final class SupplementalHostedConsumerGate: Sendable {
+    private struct State {
+        var entered = false
+        var opened = false
+        var waiters: [CheckedContinuation<Void, Never>] = []
+    }
+    private let state = Mutex(State())
+    var isEntered: Bool { state.withLock { $0.entered } }
+    func wait() async {
+        await withCheckedContinuation { continuation in
+            state.withLock {
+                $0.entered = true
+                if $0.opened { continuation.resume() }
+                else { $0.waiters.append(continuation) }
+            }
+        }
+    }
+    func open() {
+        state.withLock {
+            $0.opened = true
+            for waiter in $0.waiters { waiter.resume() }
+            $0.waiters = []
+        }
     }
 }

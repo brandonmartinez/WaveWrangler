@@ -64,6 +64,7 @@ actor AlignmentRuntime {
     private var audioAssetWaveforms: [SourceID: AudioAssetWaveform] = [:]
     private let nativeCacheRoot: URL
     private var supplementalSchedulers: [EpisodeID: SupplementalClipScheduler] = [:]
+    nonisolated let productionRetirements = ProductionPlaybackRetirements()
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
     private var productionValidationHook: (@Sendable () async throws -> Void)?
@@ -107,7 +108,8 @@ actor AlignmentRuntime {
     nonisolated static func make(
         showID: ShowID,
         accessStore: any DeviceAccessStore,
-        access: SourceAccessContext
+        access: SourceAccessContext,
+        nativeConfiguration: NativeSourcePreparation.Configuration = .init()
     ) async throws -> AlignmentRuntime {
         let root = PersistenceEnvironment.caches("Derived/\(showID)")
         let stores = try await Task.detached(priority: .userInitiated) {
@@ -115,7 +117,7 @@ actor AlignmentRuntime {
             let nativeRoot = root.appendingPathComponent("production-\(UUID().uuidString)", isDirectory: true)
             let native = try NativeSourcePreparation(
                 root: nativeRoot,
-                sourceLocations: [], access: access)
+                sourceLocations: [], access: access, configuration: nativeConfiguration)
             return (derived, native, nativeRoot)
         }.value
         return AlignmentRuntime(
@@ -1126,6 +1128,7 @@ actor AlignmentRuntime {
         progress: @escaping @Sendable (Double) async throws -> Void
     ) async throws -> QualifiedAudioImport {
         try await admission.validateCurrentAccess()
+        try await productionRetirements.wait()
         try Task.checkCancellation()
         let format = try await AlignedAuditionWindowReader.inspectFormat(sourceURL: admission.location,
             source: admission.source, matching: admission.witness, decoder: pipeline.decoder)
@@ -1248,7 +1251,8 @@ actor AlignmentRuntime {
         }
     }
 
-    func productionPCM(recipe: MixerRecipe, model: ShowDocumentModel, frames: Range<Int64>) async throws -> MixerPCMWindow {
+    func productionPCM(recipe: MixerRecipe, model: ShowDocumentModel, frames: Range<Int64>,
+                       consumer: SupplementalClipConsumer? = nil) async throws -> MixerPCMWindow {
         guard !frames.isEmpty, frames.count <= MixerRecipe.maximumWindowFrames,
               frames.lowerBound >= recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames),
               frames.upperBound <= recipe.programFrames.upperBound else { throw MixerFailure.incompletePCM }
@@ -1290,10 +1294,27 @@ actor AlignmentRuntime {
                 }
             }
         }
+        let tracks: [AudioTrackID: [[Float]]]
+        if let consumer {
+            guard consumer.recipe == recipe else { throw MixerFailure.staleDependencies }
+            tracks = try await consumer.read(frames)
+        } else {
+            let scheduler = try await productionScheduler(recipe: recipe, model: model)
+            tracks = try await scheduler.read(frames)
+        }
+        // Source access, identity and timing are checked again across the complete multi-source window.
+        let current = try await mixerRecipe(model: model, episode: recipe.episode,
+            programFrames: recipe.programFrames, policy: recipe.policy)
+        guard current == recipe else { throw MixerFailure.staleDependencies }
+        return MixerPCMWindow(frames: frames, channels: channels, audioTracks: tracks)
+    }
+
+    private func productionScheduler(recipe: MixerRecipe, model: ShowDocumentModel) async throws -> SupplementalClipScheduler {
+        try await productionRetirements.wait()
+        guard let episode = model.episode(recipe.episode), EpisodeProcessingInputs(episode) == recipe.dependencies else {
+            throw MixerFailure.staleDependencies
+        }
         if supplementalSchedulers[recipe.episode]?.recipe != recipe {
-            if let previous = supplementalSchedulers.removeValue(forKey: recipe.episode) {
-                await previous.releasePreparations()
-            }
             var admissions: [SourceID: SourceReadAdmission] = [:]
             for snapshot in recipe.audioSources {
                 let admission = try await supplementalAdmission(snapshot.source, episode: episode)
@@ -1308,12 +1329,15 @@ actor AlignmentRuntime {
         guard let scheduler = supplementalSchedulers[recipe.episode], scheduler.recipe == recipe else {
             throw MixerFailure.staleDependencies
         }
-        let tracks = try await scheduler.read(frames)
-        // Source access, identity and timing are checked again across the complete multi-source window.
-        let current = try await mixerRecipe(model: model, episode: recipe.episode,
-            programFrames: recipe.programFrames, policy: recipe.policy)
-        guard current == recipe else { throw MixerFailure.staleDependencies }
-        return MixerPCMWindow(frames: frames, channels: channels, audioTracks: tracks)
+        return scheduler
+    }
+
+    func withProductionConsumer<Value: Sendable>(
+        recipe: MixerRecipe, model: ShowDocumentModel,
+        operation: @Sendable (SupplementalClipConsumer) async throws -> Value
+    ) async throws -> Value {
+        let scheduler = try await productionScheduler(recipe: recipe, model: model)
+        return try await scheduler.withConsumer(operation)
     }
 
     func validateProduction(recipe: MixerRecipe, model: ShowDocumentModel) async throws {
@@ -1330,14 +1354,18 @@ actor AlignmentRuntime {
         isCurrent: @escaping @Sendable () async throws -> Bool,
         sink: @escaping @Sendable (MixerPCMOutput) async throws -> Void
     ) async throws {
-        try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { [self] in
-            guard try await isCurrent() else { return false }
-            let current = try await mixerRecipe(model: model, episode: recipe.episode,
-                programFrames: recipe.programFrames, policy: recipe.policy)
-            return current == recipe
-        },
-            input: { [self] frames in try await productionPCM(recipe: recipe, model: model, frames: frames) },
-            sink: sink)
+        try await withProductionConsumer(recipe: recipe, model: model) { [self] consumer in
+            try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { [self] in
+                guard try await isCurrent() else { return false }
+                let current = try await mixerRecipe(model: model, episode: recipe.episode,
+                    programFrames: recipe.programFrames, policy: recipe.policy)
+                return current == recipe
+            },
+                input: { [self] frames in
+                    try await productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
+                },
+                sink: sink)
+        }
     }
 
     func dependentCounts(episode episodeID: EpisodeID) async -> DependentCounts {

@@ -781,8 +781,14 @@ Nonseekable playback acquires complete preparation plus bounded retention before
 a scheduler becomes ready. Competing imports or oversized compressed working sets
 refuse with `storageBudgetExceeded` at admission if they cannot coexist inside the
 same cap; they cannot evict an active MP3 or restart its decoder per window.
-Retention is shared by source identity, released on scheduler replacement or
-disposal, and never increases the storage ceiling. `prepare` remains the explicit
+Retention is shared by source identity but owned by independent active consumers,
+not the cached per-episode scheduling metadata. Playback and offline rendering
+hold one scoped consumer across their windows and await release on success,
+failure, or cancellation. Stopping production joins its canceled PCM producer
+before release; new playback and imports await only explicitly retired transports,
+never another still-active render. Cached metadata reacquires receipts at consumer
+admission after eviction or an episode switch. The storage ceiling never increases.
+`prepare` remains the explicit
 whole-source preparation API. A retained recipe is not a PCM cache-lifetime guarantee;
 imports and other sources in the same runtime may evict its unretained PCM tiles.
 Missing/damaged admitted tiles still fail explicitly. Every window retains

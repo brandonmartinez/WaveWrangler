@@ -3161,6 +3161,9 @@ final class EpisodeAlignmentModel {
 
     func stopAudition() {
         auditionGeneration += 1
+        if listeningMode == .productionMix, let transportTask {
+            runtime.productionRetirements.retire(transportTask)
+        }
         transportTask?.cancel()
         transportTask = nil
         transportProgressTask?.cancel()
