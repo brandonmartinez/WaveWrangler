@@ -71,8 +71,10 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertEqual(try reviewPosition(app), start + 1, accuracy: 1.0 / 48_000)
         XCTAssertEqual(app.popUpButtons["ww.addAudio.track"].value as? String, "Drop Track")
         XCTAssertFalse(app.textFields["ww.addAudio.trackName"].exists)
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
-            format: "value CONTAINS %@ OR label CONTAINS %@", "Reuse this episode", "Reuse this episode")).firstMatch.exists)
+        let reuseChoice = app.checkBoxes.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.addAudio.candidate.' AND (value CONTAINS %@ OR label CONTAINS %@)",
+            "Reuse this episode", "Reuse this episode"))
+        XCTAssertTrue(wait { reuseChoice.count == 1 }, app.debugDescription)
         app.buttons["ww.addAudio.cancel"].click()
         XCTAssertTrue(wait { !app.buttons["ww.addAudio.import"].exists })
         XCTAssertEqual(clips(app).count, 1)
