@@ -151,6 +151,7 @@ struct AlignmentWaveformView: View {
                         start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
                         playhead: model.waveformPlayheadSeconds, height: laneHeight, headerWidth: headerWidth,
                         normalized: normalizeView, projection: model.presentationTimeline,
+                        listening: model.listening,
                         workspaceState: workspaceState, showInspector: showInspector)
                 }
                 if hasRecordings, model.waveformTracks.isEmpty, model.audioEditor.tracks.isEmpty,
@@ -294,6 +295,7 @@ struct AlignmentWaveformView: View {
         }
         .onChange(of: model.listening.effectiveTool) { _, _ in
             if dragSession != nil { cancelGroupDrag() }
+            model.audioEditor.cancelAutomationGesture()
             clearHandCursor()
         }
         .onDisappear { clearHandCursor() }
@@ -776,7 +778,8 @@ struct AlignmentWaveformView: View {
                 }
                 .contentShape(Rectangle())
                 .onTapGesture { point in
-                    guard model.listening.effectiveTool.reviewDecision == nil else { return }
+                    guard model.listening.effectiveTool.reviewDecision == nil,
+                          model.listening.effectiveTool != .automation else { return }
                     waveformFocused = true
                     let time = model.waveformStartSeconds
                         + Double(point.x / geometry.size.width) * model.waveformDurationSeconds
@@ -968,7 +971,8 @@ struct AlignmentWaveformView: View {
                     }
                     .contentShape(Rectangle())
                     .onTapGesture { point in
-                        guard model.listening.effectiveTool.reviewDecision == nil else { return }
+                        guard model.listening.effectiveTool.reviewDecision == nil,
+                              model.listening.effectiveTool != .automation else { return }
                         waveformFocused = true
                         pick(track, strokes: model.waveformInteractionStrokes(for: track.id), time: model.waveformStartSeconds
                              + Double(point.x / geometry.size.width) * model.waveformDurationSeconds)

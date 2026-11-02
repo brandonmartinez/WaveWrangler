@@ -121,6 +121,54 @@ struct AudioEnvelopeEditingTests {
         #expect(try editing(removal.envelope).evaluator.amplitude(atLocalFrame: 0) == 1)
     }
 
+    @Test func graphicalTimingKeepsAmplitudeAndFractionalPhaseAndStopsBeforeNeighbors() throws {
+        let fraction = try AudioEnvelopeCoordinate(numerator: 1, denominator: 2)
+        let curve = AudioClipEnvelope(points: [
+            .init(frame: 0, amplitude: 1), .init(frame: 100, amplitude: 0.25, fraction: fraction),
+            .init(frame: 200, amplitude: 0.25), .init(frame: 480, amplitude: 0),
+        ], window: .init(offset: try .init(numerator: 1, denominator: 3)))
+        let helper = try editing(curve, duration: 400)
+        let moved = try helper.movingPointTime(at: 1, byFrames: 10)
+        #expect(moved.points[1].frame == 110 && moved.points[1].fraction == fraction)
+        #expect(moved.points[1].amplitude == 0.25 && moved.window == curve.window)
+        #expect(moved.points[0] == curve.points[0] && moved.points.suffix(2) == curve.points.suffix(2))
+        let right = try helper.movingPointTime(at: 1, byFrames: .max)
+        #expect(right.points[1].frame == 199 && right.points[1].fraction == fraction)
+        let left = try helper.movingPointTime(at: 1, byFrames: .min)
+        #expect(left.points[1].frame == 0 && left.points[1].fraction == fraction)
+        #expect(try helper.movingPointTime(at: 1, byFrames: 0) == curve)
+        #expect(throws: AudioEnvelopeEditError.retainedSupportIsReadOnly) {
+            try helper.movingPointTime(at: 0, byFrames: 10)
+        }
+    }
+
+    @Test func graphicalFlatLevelsMoveBothEndpointsButNeverTheirTimesOrOtherKnots() throws {
+        let curve = AudioClipEnvelope(points: [
+            .init(frame: 0, amplitude: 1), .init(frame: 100, amplitude: 0.25),
+            .init(frame: 200, amplitude: 0.25), .init(frame: 400, amplitude: 0),
+        ])
+        let helper = try editing(curve)
+        let moved = try helper.settingFlatLevel(first: 1, last: 2, amplitude: 0.5)
+        #expect(moved.points.map(\.frame) == curve.points.map(\.frame))
+        #expect(moved.points.map(\.amplitude) == [1, 0.5, 0.5, 0])
+        #expect(try helper.settingFlatLevel(first: 3, last: 3, amplitude: 0.1).points.map(\.amplitude)
+            == [1, 0.25, 0.25, 0.1])
+        #expect(throws: AudioEnvelopeEditError.invalidInterval) {
+            try helper.settingFlatLevel(first: 0, last: 1, amplitude: 0.5)
+        }
+        #expect(throws: AudioEnvelopeEditError.invalidInterval) {
+            try helper.settingFlatLevel(first: 1, last: 1, amplitude: 0.5)
+        }
+        #expect(throws: AudioEnvelopeEditError.invalidInterval) {
+            try editing(curve, duration: 400).settingFlatLevel(first: 3, last: 3, amplitude: 0.5)
+        }
+        for value in [Double.nan, .infinity, -0.1, 1.1] {
+            #expect(throws: AudioEnvelopeError.invalidAmplitude) {
+                try helper.settingFlatLevel(first: 1, last: 2, amplitude: value)
+            }
+        }
+    }
+
     @Test func invalidFiniteBoundsDirectionsAndInputsRefuseWithoutChangingTheCurve() throws {
         let helper = try editing()
         for (start, end): (Int64, Int64) in [(-1, 100), (0, 0), (100, 99), (0, 481), (.min, .max), (480, 481)] {

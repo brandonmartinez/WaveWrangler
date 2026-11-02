@@ -22,7 +22,12 @@ final class AudioClipEditorModel {
     private var compositionEpisode: Episode?
     private var compositionGeneration: UInt64?
     var selectedClip: AudioClipID? {
-        didSet { if selectedClip != oldValue { selectionVersion = UUID() } }
+        didSet {
+            if selectedClip != oldValue {
+                selectionVersion = UUID()
+                cancelAutomationGesture()
+            }
+        }
     }
     var selectedTrack: AudioTrackID?
     private(set) var insertionSession: AudioInsertionSession?
@@ -31,6 +36,14 @@ final class AudioClipEditorModel {
     private var selectionVersion = UUID()
     private var fadeLifetime = UUID()
     private var fadeRequestID = UUID()
+    private var automationRequestID: UUID?
+    struct AutomationGesture {
+        let session: AudioFadeSession
+        let target: AudioAutomationTarget
+        var previewClip: AudioClip
+        var previewError: String?
+    }
+    private(set) var automationGesture: AutomationGesture?
     @ObservationIgnored let envelopeGeometryCache = AudioEnvelopeGeometryCache()
     private(set) var error: String?
     private(set) var waveforms: [SourceID: AudioAssetWaveform] = [:]
@@ -89,6 +102,9 @@ final class AudioClipEditorModel {
         }
         if let selectedTrack, !tracks.contains(where: { $0.id == selectedTrack }) { self.selectedTrack = nil }
         if gesture?.generation != store.modelGeneration { gesture = nil }
+        if let automationGesture, automationGesture.session.generation != store.modelGeneration {
+            cancelAutomationGesture()
+        }
         if compositionEpisode != episode || compositionGeneration != store.modelGeneration {
             projectionTask?.cancel()
             projectionGeneration = UUID()
@@ -358,6 +374,7 @@ final class AudioClipEditorModel {
         waveformTask?.cancel()
         isPreparingWaveforms = false
         gesture = nil
+        cancelAutomationGesture()
     }
 
     private func performSelected(_ action: String, edit: (ProgramAudioClip, ProgramTimeline) throws -> AudioClip) {
@@ -483,11 +500,24 @@ final class AudioClipEditorModel {
     }
 
     private func openFade(purpose: (ProgramAudioClip) throws -> AudioFadeSession.Purpose) async {
+        _ = await prepareFade(automation: nil, purpose: purpose)
+    }
+
+    private func prepareFade(
+        automation: AudioAutomationTarget?,
+        purpose: (ProgramAudioClip) throws -> AudioFadeSession.Purpose
+    ) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        cancelAutomationGesture()
         let request = UUID(), selection = selectionVersion, lifetime = fadeLifetime
         fadeRequestID = request
+        automationRequestID = automation == nil ? nil : request
         fadeSession = nil
         isPreparingFade = true
-        defer { if fadeRequestID == request { isPreparingFade = false } }
+        defer {
+            if fadeRequestID == request { isPreparingFade = false }
+            if automationRequestID == request { automationRequestID = nil }
+        }
         do {
             guard !insertionProcessing, store.canEdit, compositionGeneration == store.modelGeneration,
                   let selected, let episode else {
@@ -517,11 +547,121 @@ final class AudioClipEditorModel {
                   current.clip == selected.clip, let currentEpisode = self.episode else {
                 throw AudioFadeInput.Refusal("Wait for the current clip projection, then reopen fade editing.")
             }
-            fadeSession = try .init(purpose: requestedPurpose, generation: store.modelGeneration,
+            let session = try AudioFadeSession(purpose: requestedPurpose, generation: store.modelGeneration,
                 selectionVersion: selection, lifetime: lifetime, episode: currentEpisode, projected: current, owner: owner)
+            if let automation {
+                automationGesture = .init(session: session, target: automation, previewClip: current.clip)
+            } else {
+                fadeSession = session
+            }
             error = nil
+            return true
         } catch {
             if request == fadeRequestID { self.error = AudioFadeInput.describe(error) }
+            return false
+        }
+    }
+
+    func beginAutomationGesture(
+        clip id: AudioClipID, target: AudioAutomationTarget, expected: ProgramAudioClip? = nil
+    ) async -> Bool {
+        guard !Task.isCancelled else { return false }
+        select(id)
+        return await prepareFade(automation: target) { projected in
+            guard expected == nil || projected == expected else {
+                throw AudioFadeInput.Refusal("The clip changed before the drag began. Wait for the current curve and try again.")
+            }
+            let editing = try AudioEnvelopeEditing(envelope: projected.clip.envelope,
+                                                   durationFrames: Int64(projected.programFrames.count))
+            let index: Int
+            switch target {
+            case .point(let point):
+                _ = try editing.movingPointTime(at: point, byFrames: 0)
+                index = point
+            case .level(let first, let last):
+                guard projected.clip.envelope.points.indices.contains(first) else {
+                    throw AudioEnvelopeEditError.unknownPoint
+                }
+                _ = try editing.settingFlatLevel(first: first, last: last,
+                    amplitude: projected.clip.envelope.points[first].amplitude)
+                index = first
+            }
+            return .point(index)
+        }
+    }
+
+    @discardableResult
+    func previewAutomationGesture(frames: Int64 = 0, levelDelta: Double = 0) -> Bool {
+        guard var gesture = automationGesture else {
+            error = "The automation gesture was canceled or changed. Nothing was applied."
+            return false
+        }
+        do {
+            try validateAutomationGesture(gesture)
+            var clip = gesture.session.projected.clip
+            switch gesture.target {
+            case .point(let index):
+                clip.envelope = try gesture.session.editing.movingPointTime(at: index, byFrames: frames)
+            case .level(let first, let last):
+                guard levelDelta.isFinite else { throw AudioEnvelopeError.invalidAmplitude }
+                let amplitude = min(1, max(0, clip.envelope.points[first].amplitude + levelDelta))
+                clip.envelope = try gesture.session.editing.settingFlatLevel(
+                    first: first, last: last, amplitude: amplitude)
+            }
+            gesture.previewClip = clip
+            gesture.previewError = nil
+            automationGesture = gesture
+            error = nil
+            return true
+        } catch {
+            refuseAutomationGesture(AudioFadeInput.describe(error))
+            return false
+        }
+    }
+
+    func refuseAutomationGesture(_ reason: String) {
+        automationGesture?.previewError = reason
+        error = reason
+    }
+
+    @discardableResult
+    func completeAutomationGesture() -> Bool {
+        guard let gesture = automationGesture else {
+            error = "The automation gesture was canceled or changed. Nothing was applied."
+            return false
+        }
+        defer { automationGesture = nil }
+        do {
+            try validateAutomationGesture(gesture)
+            if let reason = gesture.previewError { throw AudioFadeInput.Refusal(reason) }
+            guard gesture.previewClip != gesture.session.projected.clip else { return true }
+            let action: String
+            switch gesture.target {
+            case .point: action = "Move Fade Point"
+            case .level: action = "Adjust Fade Level"
+            }
+            return apply(action) { model throws(DomainError) in
+                try model.replacingAudioClip(gesture.previewClip, in: self.episodeID)
+            }
+        } catch {
+            self.error = AudioFadeInput.describe(error)
+            return false
+        }
+    }
+
+    func cancelAutomationGesture() {
+        if let request = automationRequestID, fadeRequestID == request {
+            fadeRequestID = UUID()
+            isPreparingFade = false
+        }
+        automationRequestID = nil
+        automationGesture = nil
+    }
+
+    private func validateAutomationGesture(_ gesture: AutomationGesture) throws {
+        try validateFadeSession(gesture.session, activeID: automationGesture?.session.id)
+        guard store.document?.mixerTransactions.needsBarrier != true else {
+            throw AudioFadeInput.Refusal("Native mixer controls changed. Restart the automation drag to capture their state.")
         }
     }
 
@@ -552,18 +692,7 @@ final class AudioClipEditorModel {
     }
 
     func fadePreview(_ session: AudioFadeSession, draft: AudioFadeDraft) throws -> AudioEnvelopeEditPreview {
-        guard fadeSession?.id == session.id, session.generation == store.modelGeneration,
-              compositionGeneration == store.modelGeneration, session.selectionVersion == selectionVersion,
-              session.lifetime == fadeLifetime, selected == session.projected, episode == session.episode,
-              store.canEdit, !insertionProcessing, store.document?.mixerTransactions.isClosed != true,
-              store.document?.mixerTransactions.isBusy != true,
-              !session.requiresOwner || session.owner.map({
-                  $0.alignmentModel?.audioEditor === self && $0.selectedEpisodeID == episodeID
-                      && $0.destination == .alignment && $0.canEdit && $0.window != nil
-                      && $0.window === session.originWindow
-              }) == true else {
-            throw AudioFadeInput.Refusal("The selection, document, or program changed or is processing. Cancel and reopen this preview; nothing was applied.")
-        }
+        try validateFadeSession(session, activeID: fadeSession?.id)
         switch session.purpose {
         case .fade(let direction, let start):
             let value = try Self.programFrame(draft.length)
@@ -578,6 +707,21 @@ final class AudioClipEditorModel {
             if draft.removing { return try session.editing.removingPoint(at: index) }
             return try session.editing.editingPoint(at: index, to: AudioFadeInput.coordinate(draft.localFrame),
                 amplitude: AudioFadeInput.amplitude(draft.level, silence: draft.silence))
+        }
+    }
+
+    private func validateFadeSession(_ session: AudioFadeSession, activeID: UUID?) throws {
+        guard activeID == session.id, session.generation == store.modelGeneration,
+              compositionGeneration == store.modelGeneration, session.selectionVersion == selectionVersion,
+              session.lifetime == fadeLifetime, selected == session.projected, episode == session.episode,
+              store.canEdit, !insertionProcessing, store.document?.mixerTransactions.isClosed != true,
+              store.document?.mixerTransactions.isBusy != true,
+              !session.requiresOwner || session.owner.map({
+                  $0.alignmentModel?.audioEditor === self && $0.selectedEpisodeID == episodeID
+                      && $0.destination == .alignment && $0.canEdit && $0.window != nil
+                      && $0.window === session.originWindow
+              }) == true else {
+            throw AudioFadeInput.Refusal("The selection, document, or program changed or is processing. Cancel and reopen this preview; nothing was applied.")
         }
     }
 

@@ -31,7 +31,7 @@ struct TimelineToolControls: View {
                     in: RoundedRectangle(cornerRadius: 5))
         .help(command
               ? "Hold Command to use \(selection.wrappedValue.rawValue); release to restore the primary tool."
-              : "Pointer selects intervals. Move recorder respects position locks. Reviewed and Reject act only on existing filler regions.")
+              : "Automation moves fade points horizontally and flat levels vertically. Pointer selects intervals; Move recorder respects locks. Reviewed and Reject act on filler regions.")
     }
 }
 

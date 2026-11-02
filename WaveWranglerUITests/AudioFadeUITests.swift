@@ -3,6 +3,84 @@ import XCTest
 
 @MainActor
 final class AudioFadeUITests: XCTestCase {
+    func testAutomationToolDragsPointsInTimeAndFlatSegmentsInLevelWithUndo() throws {
+        let root = try mediaFolder()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let file = root.appendingPathComponent("synthetic-automation.wav")
+        try wave().write(to: file)
+        let original = try Data(contentsOf: file)
+        let app = launch()
+        defer { app.terminate() }
+        try importAudio(file, in: app)
+        fade(app, direction: "out", start: "1", duration: "1", level: "0.25")
+        fade(app, direction: "out", start: "4", duration: "1", level: "0")
+        app.buttons["alignment.waveforms.fitTimeline"].click()
+        let clip = clips(app).firstMatch, clipFrame = clip.frame, clipValue = clip.value as? String
+        let tools = app.menuButtons["alignment.waveforms.tool"]
+        XCTAssertTrue(tools.isHittable, app.debugDescription)
+        tools.click()
+        app.menuItems["Automation"].click()
+        let first = automationPoint(1, in: app), second = automationPoint(2, in: app)
+        XCTAssertTrue(first.waitForExistence(timeout: 10) && first.isHittable, app.debugDescription)
+        let before = try automationValue(first)
+        XCTAssertEqual(first.frame.midX, clip.frame.minX + clip.frame.width / 3, accuracy: 1)
+        XCTAssertEqual(first.frame.midY, clip.frame.minY + 6 + (clip.frame.height - 12) * 0.75, accuracy: 1)
+        screenshot(app, name: "Automation handles before pointer drag")
+        let origin = first.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+        origin.click(forDuration: 0.2, thenDragTo: origin.withOffset(.init(dx: 40, dy: -20)))
+        XCTAssertTrue(wait { automationSnapshot(first).map { $0.frame != before.frame } == true },
+                      "Point timing did not change; current value: \(text(first))")
+        let moved = try automationValue(first)
+        XCTAssertGreaterThan(moved.frame, before.frame)
+        XCTAssertEqual(moved.level, before.level, accuracy: 1e-12, "Point drags ignore vertical movement.")
+        XCTAssertEqual(clip.frame, clipFrame)
+        XCTAssertEqual(clip.value as? String, clipValue)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { automationSnapshot(first)?.frame == before.frame })
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(wait { automationSnapshot(first)?.frame == moved.frame })
+        let held = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.audioAutomation.level.' AND identifier CONTAINS '.1.2.'")).firstMatch
+        XCTAssertTrue(held.waitForExistence(timeout: 5) && held.isHittable, app.debugDescription)
+        let time1 = try automationValue(first).frame, time2 = try automationValue(second).frame
+        let levelOrigin = held.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5))
+        levelOrigin.click(forDuration: 0.2, thenDragTo: levelOrigin.withOffset(.init(dx: 30, dy: -18)))
+        XCTAssertTrue(wait { automationSnapshot(first).map { $0.level > moved.level } == true })
+        let raised1 = try automationValue(first), raised2 = try automationValue(second)
+        XCTAssertEqual(raised1.frame, time1, "Level drags ignore horizontal movement.")
+        XCTAssertEqual(raised2.frame, time2)
+        XCTAssertEqual(raised1.level, raised2.level, accuracy: 1e-12)
+        XCTAssertEqual(clip.frame, clipFrame)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { automationSnapshot(first)?.level == moved.level })
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(wait { automationSnapshot(first)?.level == raised1.level })
+        screenshot(app, name: "Graphical automation point timing and flat-level handles")
+        tools.click()
+        app.menuItems["Pointer"].click()
+        XCTAssertTrue(wait { !first.exists })
+        app.typeKey("s", modifierFlags: .command)
+        XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true })
+        XCTAssertEqual(try Data(contentsOf: file), original)
+    }
+
+    private func automationPoint(_ index: Int, in app: XCUIApplication) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format:
+            "identifier BEGINSWITH 'ww.audioAutomation.point.' AND identifier ENDSWITH %@", ".\(index)")).firstMatch
+    }
+
+    private func automationValue(_ element: XCUIElement) throws -> (frame: Double, level: Double) {
+        try XCTUnwrap(automationSnapshot(element))
+    }
+
+    private func automationSnapshot(_ element: XCUIElement) -> (frame: Double, level: Double)? {
+        guard element.exists else { return nil }
+        let parts = text(element).components(separatedBy: "; amplitude ")
+        guard parts.count == 2, let frame = Double(parts[0].replacingOccurrences(of: "Local frame ", with: "")),
+              let level = Double(parts[1]) else { return nil }
+        return (frame, level)
+    }
+
     func testFadeInLowFullSilenceNumericPointEditingRemovalUndoAndSave() throws {
         let root = try mediaFolder()
         defer { try? FileManager.default.removeItem(at: root) }

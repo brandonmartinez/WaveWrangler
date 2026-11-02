@@ -91,6 +91,7 @@ struct ControlsSidebarHostedTests {
         #expect(EpisodeListeningState.Tool.reviewed.reviewDecision == .reviewed)
         #expect(EpisodeListeningState.Tool.reject.reviewDecision == .rejected)
         #expect(EpisodeListeningState.Tool.move.reviewDecision == nil)
+        #expect(EpisodeListeningState.Tool.automation.reviewDecision == nil)
     }
 
     @Test func immediatePresetsKeepSavedPolicyEditingOptInAndExplicitMuteChoices() throws {

@@ -133,6 +133,139 @@ struct AudioFadeHostedTests {
         #expect(try (f.files + [bed.file]).map { try Data(contentsOf: $0) } == bytes)
     }
 
+    @Test func graphicalAutomationLocksAxesPreviewsWithoutSavingAndCommitsOneUndo() async throws {
+        let f = try await helper.ready()
+        defer { f.close() }
+        let bed = try await importBed(f)
+        defer { Task { await bed.engine.shutdown() } }
+        let editor = f.model.audioEditor, undo = try undoManager(f)
+        defer { undo.groupsByEvent = true }
+        try await fade(editor, start: 2.25, duration: "0.5", level: "0.25")
+        try await fade(editor, start: 3.5, duration: "0.25", level: "0")
+        let before = f.document.store.model, original = try #require(editor.selected?.clip)
+        let samples = try Data(contentsOf: bed.file)
+        let bins = editor.waveforms.mapValues(\.id)
+        let action = undo.undoActionName
+        let began = await editor.beginAutomationGesture(clip: original.id, target: .point(1))
+        let refusal = editor.error
+        try #require(began, Comment(rawValue: refusal ?? "Automation did not begin."))
+        let openedSheet = editor.fadeSession != nil
+        #expect(!openedSheet)
+        for frames: Int64 in [480, 1200, 2400] {
+            let previewed = editor.previewAutomationGesture(frames: frames, levelDelta: 0.5)
+            let live = f.document.store.model
+            #expect(previewed && live == before && undo.undoActionName == action)
+            let levels = editor.automationGesture?.previewClip.envelope.points.map(\.amplitude)
+            #expect(levels == original.envelope.points.map(\.amplitude))
+        }
+        let committed = editor.completeAutomationGesture()
+        try #require(committed)
+        let afterTime = f.document.store.model, moved = try #require(editor.selected?.clip)
+        #expect(undo.undoActionName == "Move Fade Point")
+        #expect(moved.envelope.points[1].frame == original.envelope.points[1].frame + 2400)
+        #expect(moved.anchor == original.anchor && moved.trim == original.trim && moved.outputWindow == original.outputWindow)
+        undo.undo()
+        let undone = f.document.store.model
+        #expect(undone == before)
+        undo.redo()
+        editor.refresh()
+        let redone = f.document.store.model
+        #expect(redone == afterTime)
+        let levelBegan = await editor.beginAutomationGesture(clip: original.id, target: .level(first: 1, last: 2))
+        try #require(levelBegan)
+        let levelPreviewed = editor.previewAutomationGesture(frames: 50_000, levelDelta: 0.25)
+        #expect(levelPreviewed)
+        let levelCommitted = editor.completeAutomationGesture()
+        try #require(levelCommitted)
+        let adjusted = try #require(editor.selected?.clip)
+        #expect(adjusted.envelope.points.map(\.frame) == moved.envelope.points.map(\.frame))
+        #expect(adjusted.envelope.points.map(\.amplitude) == [1, 0.5, 0.5, 0])
+        #expect(undo.undoActionName == "Adjust Fade Level")
+        #expect(editor.waveforms.mapValues(\.id) == bins)
+        try await helper.save(f.document)
+        let savedURL = f.document.fileURL, savedModel = f.document.store.model
+        let saved = try Data(contentsOf: #require(savedURL))
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(saved).payload == savedModel)
+        #expect(try Data(contentsOf: bed.file) == samples)
+    }
+
+    @Test func graphicalAutomationCancelNoOpAndReplacedContextNeverPublish() async throws {
+        let f = try await helper.ready()
+        defer { f.close() }
+        let bed = try await importBed(f)
+        defer { Task { await bed.engine.shutdown() } }
+        let editor = f.model.audioEditor, undo = try undoManager(f)
+        defer { undo.groupsByEvent = true }
+        try await fade(editor, start: 2.25, duration: "0.5", level: "0.25")
+        let before = f.document.store.model, action = undo.undoActionName
+        let began = await editor.beginAutomationGesture(clip: bed.clip.clip.id, target: .point(1))
+        try #require(began)
+        let previewed = editor.previewAutomationGesture(frames: 2400)
+        #expect(previewed)
+        editor.cancelAutomationGesture()
+        let canceled = f.document.store.model
+        let hasGesture = editor.automationGesture != nil
+        #expect(canceled == before && undo.undoActionName == action && !hasGesture)
+        let noOp = await editor.beginAutomationGesture(clip: bed.clip.clip.id, target: .point(1))
+        try #require(noOp)
+        let noOpCommitted = editor.completeAutomationGesture()
+        #expect(noOpCommitted)
+        let unchanged = f.document.store.model
+        #expect(unchanged == before && undo.undoActionName == action)
+        for ownerChanged in [false, true] {
+            try await helper.wait {
+                editor.canPlaceDroppedAudio && f.document.store.canEdit
+                    && TrackProcessingOperation.current(alignment: f.model, cleanup: bed.owner.state.cleanupModel) == nil
+            }
+            let active = await editor.beginAutomationGesture(clip: bed.clip.clip.id, target: .point(1))
+            try #require(active)
+            let previewed = editor.previewAutomationGesture(frames: 2400)
+            #expect(previewed)
+            if ownerChanged { bed.owner.state.alignmentModel = nil }
+            else { f.document.store.replaceLoadedModel(before) }
+            let committed = editor.completeAutomationGesture()
+            let current = f.document.store.model, refusal = editor.error
+            #expect(!committed && current == before && refusal?.contains("changed") == true)
+            bed.owner.state.alignmentModel = f.model
+            editor.refresh()
+        }
+    }
+
+    @Test func automationInputCancellationDiscardsAnInFlightPointDrag() async throws {
+        let f = try await helper.ready()
+        defer { f.close() }
+        let bed = try await importBed(f)
+        defer { Task { await bed.engine.shutdown() } }
+        let editor = f.model.audioEditor
+        try await fade(editor, start: 2.25, duration: "0.5", level: "0.25")
+        let clip = try #require(editor.selected)
+        let key = AudioEnvelopeGeometryKey(envelope: clip.clip.envelope, durationFrames: 96_000,
+            programStart: 2, viewportStart: 2, viewportDuration: 2, viewportWidth: 640,
+            left: 0, width: 640, height: 100, projection: .unedited)
+        let geometry = try AudioEnvelopeGeometry.make(key)
+        let item = AudioAutomationCanvas.Item(projected: clip,
+            frame: .init(x: 0, y: 0, width: 640, height: 100), key: key, geometry: geometry)
+        let input = AudioAutomationInput(editor: editor)
+        let before = f.document.store.model
+        input.begin(item, target: .point(1))
+        try await helper.wait { editor.automationGesture != nil }
+        input.change(.init(x: 40, y: 20))
+        try await helper.wait { editor.automationGesture.map { $0.previewClip != clip.clip } == true }
+        let during = f.document.store.model
+        let preview = editor.automationGesture?.previewClip
+        #expect(during == before && preview != clip.clip)
+        input.cancel()
+        input.end(.zero)
+        let after = f.document.store.model
+        let stillDragging = editor.automationGesture != nil
+        #expect(after == before && !stillDragging)
+        input.begin(item, target: .point(1))
+        input.end(.init(x: 40, y: 20))
+        try await helper.wait { f.document.store.model != before }
+        let finished = f.document.store.model
+        #expect(finished != before && !input.tracking)
+    }
+
     @Test func invalidInputsConflictReviewAndStaleSelectionDocumentAndOwnerNeverPublish() async throws {
         let f = try await helper.ready()
         defer { f.close() }

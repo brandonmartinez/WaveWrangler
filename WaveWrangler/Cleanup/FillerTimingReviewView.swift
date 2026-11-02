@@ -103,7 +103,7 @@ struct FillerTimingOverlay: View {
             }
         }
         .accessibilityIdentifier("ww.cleanup.fillers.density")
-        .allowsHitTesting(model.listening.effectiveTool != .move)
+        .allowsHitTesting(model.listening.effectiveTool != .move && model.listening.effectiveTool != .automation)
     }
 
     private func denseHitArea(size: CGSize) -> Path {
@@ -191,7 +191,7 @@ private struct FillerTimingRegionView: View {
         }
         .frame(width: size.width, height: size.height, alignment: .topLeading)
         .coordinateSpace(name: review.id)
-        .allowsHitTesting(model.listening.effectiveTool != .move)
+        .allowsHitTesting(model.listening.effectiveTool != .move && model.listening.effectiveTool != .automation)
         .accessibilityElement(children: .contain)
     }
 

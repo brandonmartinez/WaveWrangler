@@ -110,6 +110,21 @@ struct AudioFadeGeometryTests {
         #expect(geometry.lines[1].allSatisfy { $0.x >= 192 })
     }
 
+    @Test func automationHitTargetsPreferPointsAndOnlyExposeFlatEditableSegments() throws {
+        let curve = AudioClipEnvelope(points: [
+            .init(frame: 48_000, amplitude: 1), .init(frame: 96_000, amplitude: 0.25),
+            .init(frame: 192_000, amplitude: 0.25), .init(frame: 240_000, amplitude: 0),
+        ])
+        let shape = try AudioEnvelopeGeometry.make(key(envelope: curve))
+        #expect(shape.segments.map { [$0.first, $0.last] } == [[0, 0], [1, 2], [3, 3]])
+        #expect(shape.target(at: shape.points[1].position) == .point(1))
+        let flat = try #require(shape.segments.first { $0.first == 1 })
+        #expect(shape.target(at: .init(x: flat.frame.midX, y: flat.frame.midY)) == .level(first: 1, last: 2))
+        #expect(shape.target(at: .init(x: 96, y: 40)) == nil, "A sloping ramp is not a level-drag target.")
+        let empty = try AudioEnvelopeGeometry.make(key(envelope: .init()))
+        #expect(empty.points.isEmpty && empty.segments.isEmpty)
+    }
+
     @Test func exactLocalFrameAndAmplitudeInputsRejectMalformedNonfiniteAndOverflowValues() throws {
         #expect(try AudioFadeInput.coordinate("14540/147") == AudioEnvelopeCoordinate(numerator: 14_540, denominator: 147))
         #expect(try AudioFadeInput.coordinate(" 10 ") == AudioEnvelopeCoordinate(numerator: 10))

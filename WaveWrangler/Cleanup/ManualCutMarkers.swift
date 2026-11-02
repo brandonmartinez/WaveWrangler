@@ -163,7 +163,7 @@ private struct ManualCutInterval: View {
             handle(.end, time: end)
         }
         .coordinateSpace(name: cut.id)
-        .allowsHitTesting(model.listening.effectiveTool != .move)
+        .allowsHitTesting(model.listening.effectiveTool != .move && model.listening.effectiveTool != .automation)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.timeline.cut.expanded.\(cut.id)")
     }

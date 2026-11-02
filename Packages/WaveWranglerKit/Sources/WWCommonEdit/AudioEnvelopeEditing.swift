@@ -130,6 +130,56 @@ public struct AudioEnvelopeEditing: Sendable {
                      overlapsRamp: false, heldUntil: nil)
     }
 
+    /// Integer deltas retain a knot's exact fractional phase and never cross a neighboring knot.
+    public func movingPointTime(at index: Int, byFrames delta: Int64) throws -> AudioClipEnvelope {
+        try requireEditablePoint(index)
+        let points = evaluator.envelope.points
+        let local = try localCoordinate(of: points[index])
+        func floorDifference(_ a: AudioEnvelopeCoordinate, _ b: AudioEnvelopeCoordinate) -> Int64 {
+            let n = Int128(a.numerator) * Int128(b.denominator) - Int128(b.numerator) * Int128(a.denominator)
+            let d = Int128(a.denominator) * Int128(b.denominator)
+            return Int64(n / d - (n % d < 0 ? 1 : 0))
+        }
+        var minimum = -local.floorFrame
+        var maximum = evaluator.durationFrames - local.floorFrame - (local.fractionalPart == nil ? 0 : 1)
+        if index > 0 {
+            minimum = max(minimum, floorDifference(try localCoordinate(of: points[index - 1]), local) + 1)
+        }
+        if index + 1 < points.count {
+            maximum = min(maximum, -floorDifference(local, try localCoordinate(of: points[index + 1])) - 1)
+        }
+        let bounded = min(max(delta, minimum), maximum)
+        guard bounded != 0 else { return evaluator.envelope }
+        let coordinate = try points[index].coordinate().adding(.init(numerator: bounded))
+        var result = evaluator.envelope
+        result.points[index].frame = coordinate.floorFrame
+        result.points[index].fraction = coordinate.fractionalPart
+        _ = try AudioEnvelopeEvaluator(envelope: result, durationFrames: evaluator.durationFrames)
+        return result
+    }
+
+    /// A flat interior segment moves both bounding levels; a held tail moves its endpoint only.
+    public func settingFlatLevel(first: Int, last: Int, amplitude: Double) throws -> AudioClipEnvelope {
+        try requireEditablePoint(first)
+        try requireEditablePoint(last)
+        let points = evaluator.envelope.points
+        let held: Bool
+        if first == last {
+            let local = try localCoordinate(of: points[first])
+            let end = try AudioEnvelopeCoordinate(numerator: evaluator.durationFrames)
+            held = first == 0 && local > .zero || first == points.count - 1 && local < end
+        } else { held = false }
+        guard first == last ? held : last == first + 1 && points[first].amplitude == points[last].amplitude else {
+            throw AudioEnvelopeEditError.invalidInterval
+        }
+        guard amplitude.isFinite, (0...1).contains(amplitude) else { throw AudioEnvelopeError.invalidAmplitude }
+        var result = evaluator.envelope
+        result.points[first].amplitude = amplitude
+        result.points[last].amplitude = amplitude
+        _ = try AudioEnvelopeEvaluator(envelope: result, durationFrames: evaluator.durationFrames)
+        return result
+    }
+
     public func removingPoint(at index: Int) throws -> AudioEnvelopeEditPreview {
         try requireEditablePoint(index)
         var result = evaluator.envelope

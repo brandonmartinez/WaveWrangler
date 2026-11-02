@@ -20,6 +20,7 @@ final class EpisodeListeningState {
     enum Tool: String, CaseIterable {
         case select = "Pointer"
         case move = "Move recorder"
+        case automation = "Automation"
         case reviewed = "Reviewed"
         case reject = "Reject"
 
@@ -27,6 +28,7 @@ final class EpisodeListeningState {
             switch self {
             case .select: "cursorarrow"
             case .move: "hand.draw"
+            case .automation: "point.3.connected.trianglepath.dotted"
             case .reviewed: "checkmark.circle"
             case .reject: "xmark.circle"
             }
@@ -36,7 +38,7 @@ final class EpisodeListeningState {
             switch self {
             case .reviewed: .reviewed
             case .reject: .rejected
-            case .select, .move: nil
+            case .select, .move, .automation: nil
             }
         }
     }
