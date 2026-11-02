@@ -318,6 +318,10 @@ an AppKit accessibility canvas: its native button children own explicit clip fra
 selection, values, and press actions. The canvas passes pointer events through to
 the unchanged SwiftUI controls and gestures; there is no duplicate accessibility
 element for the decorative waveform or visual button.
+Finder fixtures reset pre-existing Finder window state only after verifying a
+virtual-machine hardware model, then close their own source window on success or
+failure. No files are removed by that window reset. Unexpected occlusion after
+fixture creation remains an explicit failure, not a substituted drop coordinate.
 
 The captured destination uses distinct `.defaultTrack`, `.existing(id)`, and
 `.newTrack` intents; review resolves the default before confirmation. Audio lanes

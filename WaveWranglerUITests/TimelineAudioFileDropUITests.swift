@@ -1,4 +1,5 @@
 import AppKit
+import Darwin
 import XCTest
 
 @MainActor
@@ -11,7 +12,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         let first = root.appendingPathComponent("first.wav"), fresh = root.appendingPathComponent("fresh.wav")
         let bytes = Self.wave()
         try bytes.write(to: first); try bytes.write(to: fresh)
-        let app = launch()
+        let app = try launch()
         defer { app.terminate() }
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         XCTAssertTrue(NSWorkspace.shared.open(root))
@@ -139,7 +140,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         try FileManager.default.createDirectory(at: nested, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
         try Self.wave().write(to: nested.appendingPathComponent("not-selected.wav"))
-        let app = launch()
+        let app = try launch()
         defer { app.terminate() }
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         XCTAssertTrue(NSWorkspace.shared.open(root))
@@ -166,7 +167,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let long = root.appendingPathComponent("long.wav"), short = root.appendingPathComponent("short.wav")
         try Self.wave().write(to: long); try Self.wave(frames: 24_000).write(to: short)
-        let app = launch()
+        let app = try launch()
         defer { app.terminate() }
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         XCTAssertTrue(NSWorkspace.shared.open(root))
@@ -231,7 +232,8 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: short), Self.wave(frames: 24_000))
     }
 
-    private func launch() -> XCUIApplication {
+    private func launch() throws -> XCUIApplication {
+        try isolateFinderWorkspace()
         let app = XCUIApplication()
         app.launchEnvironment.removeValue(forKey: "WW_SETUP_ENGINE")
         app.launchArguments = [
@@ -244,6 +246,37 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         app.menuBars.menuBarItems["Window"].click()
         app.menuBars.menuItems["Zoom"].click()
         return app
+    }
+
+    private func isolateFinderWorkspace() throws {
+        var size = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        var bytes = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &bytes, &size, nil, 0) == 0 else {
+            throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno))
+        }
+        let model = String(decoding: bytes.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }, as: UTF8.self)
+        guard model.hasPrefix("VirtualMac") else {
+            throw NSError(domain: "WaveWranglerUITestFixture", code: 1,
+                          userInfo: [NSLocalizedDescriptionKey: "Finder fixture isolation requires a dedicated test VM, not \(model)."])
+        }
+        let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
+        finder.activate()
+        let windows = finder.windows.allElementsBoundByIndex
+        let evidence = XCTAttachment(string: windows.map { "\($0.title): \($0.frame)" }.joined(separator: "\n"))
+        evidence.name = "Finder windows retired before creating the dedicated VM fixture"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        for _ in windows {
+            let window = finder.windows.firstMatch
+            if !window.exists { break }
+            let close = window.buttons[XCUIIdentifierCloseWindow]
+            XCTAssertTrue(close.exists, "The existing Finder window cannot be closed safely: \(window.title)")
+            close.click()
+        }
+        XCTAssertEqual(finder.windows.count, 0, "Finder fixture isolation must finish before the source window is created.")
     }
 
     private func registerFinderWindowCleanup(_ window: XCUIElement) {
