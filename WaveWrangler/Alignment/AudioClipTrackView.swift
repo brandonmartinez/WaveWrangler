@@ -305,11 +305,17 @@ private struct AudioClipAccessibilityCanvas: NSViewRepresentable {
         override var isFlipped: Bool { true }
         // Pointer input stays with SwiftUI; these native children serve assistive controls.
         override func hitTest(_ point: NSPoint) -> NSView? { nil }
-        override func accessibilityChildren() -> [Any]? { orderedButtons }
+        override func accessibilityChildren() -> [Any]? {
+            let children: [ClipButton] = MainActor.assumeIsolated { orderedButtons }
+            return children
+        }
 
         override func accessibilityHitTest(_ point: NSPoint) -> Any? {
-            let candidates = orderedButtons.filter(\.selectedClip) + orderedButtons.filter { !$0.selectedClip }
-            return candidates.first { $0.accessibilityFrame().contains(point) }
+            let button: ClipButton? = MainActor.assumeIsolated {
+                let candidates = orderedButtons.filter { $0.selectedClip } + orderedButtons.filter { !$0.selectedClip }
+                return candidates.first { $0.accessibilityFrame().contains(point) }
+            }
+            return button
         }
 
         func update(_ items: [Item], enabled: Bool, select: @escaping @MainActor (AudioClipID) -> Void) {
@@ -359,9 +365,16 @@ private struct AudioClipAccessibilityCanvas: NSViewRepresentable {
 
         required init?(coder: NSCoder) { nil }
 
-        override func accessibilityValue() -> Any? { programValue }
-        override func isAccessibilitySelected() -> Bool { selectedClip }
-        override func accessibilityFrame() -> NSRect { NSAccessibilityFrameInView(self, bounds) }
+        override func accessibilityValue() -> Any? {
+            let value: String = MainActor.assumeIsolated { programValue }
+            return value
+        }
+        override func isAccessibilitySelected() -> Bool {
+            MainActor.assumeIsolated { selectedClip }
+        }
+        override func accessibilityFrame() -> NSRect {
+            MainActor.assumeIsolated { NSAccessibility.screenRect(fromView: self, rect: bounds) }
+        }
 
         @objc private func performSelection(_ sender: NSButton) {
             guard isEnabled else { return }
