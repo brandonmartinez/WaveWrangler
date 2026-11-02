@@ -3230,7 +3230,7 @@ final class EpisodeAlignmentModel {
         guard audioEditor.hasArrangement else { return true }
         guard let lo = try? AudioClipEditorModel.programFrame(range.lowerBound),
               let hi = try? AudioClipEditorModel.programFrame(range.upperBound), lo < hi else { return false }
-        let segments = presentationTimeline.alignedSegments(forDisplayFrames: lo..<hi)
+        let segments = presentationTimeline.alignedSegments(forDisplayFrames: lo..<hi, includingExpandedCuts: false)
         return segments.reduce(0) { $0 + $1.displayed.count } == Int(hi - lo)
     }
 

@@ -125,7 +125,7 @@ extension EpisodeCleanupModel {
         let start = selectedFiller?.bounds.alignedStart
             ?? cutTimeline.alignedTime(forEditedTime: selection.lowerBound)
         let end = selectedFiller?.bounds.alignedEnd
-            ?? cutTimeline.alignedTime(forEditedTime: selection.upperBound)
+            ?? cutTimeline.originalTime(forExclusiveDisplayEnd: selection.upperBound) ?? .nan
         if selectedFiller == nil, let workspaceAlignment,
            !workspaceAlignment.selectionHasDialogueOnly(selection) {
             error = "A dialogue cut cannot include insertion-only or outside-dialogue program time."

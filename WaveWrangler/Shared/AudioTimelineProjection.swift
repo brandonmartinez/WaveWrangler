@@ -151,6 +151,33 @@ struct AudioTimelineProjection: Sendable, Equatable {
             + program - Double(span.programFrames.lowerBound) / 48_000
     }
 
+    /// The upper bound of a half-open dialogue selection belongs to the preceding dialogue,
+    /// not the insertion or removed interval that starts there. This is not a sample inverse.
+    func originalTime(forExclusiveDisplayEnd time: Double) -> Double? {
+        guard time.isFinite, abs(time) <= 172_800 else { return nil }
+        guard usesProgram else {
+            var removed = 0.0
+            for removal in cuts.removals {
+                if time <= Double(removal.lowerBound) / 48_000 - removed { break }
+                removed += Double(removal.count) / 48_000
+            }
+            return time + removed
+        }
+        var program = time
+        for opening in openings {
+            let start = Double(opening.displayStart) / 48_000
+            let end = start + Double(opening.original.count) / 48_000
+            if time > start, time <= end { return nil }
+            if time > end { program -= Double(opening.original.count) / 48_000 }
+        }
+        let frame = program * 48_000
+        guard let span = dialogue.last(where: {
+            frame > Double($0.programFrames.lowerBound) && frame <= Double($0.programFrames.upperBound)
+        }) else { return nil }
+        return Double(span.originalFrames.lowerBound) / 48_000
+            + program - Double(span.programFrames.lowerBound) / 48_000
+    }
+
     func alignedTime(forEditedTime time: Double) -> Double {
         originalTime(forDisplayTime: time) ?? .nan
     }
@@ -164,7 +191,7 @@ struct AudioTimelineProjection: Sendable, Equatable {
         let displayed: Range<Int64>
     }
 
-    func alignedSegments(forDisplayFrames frames: Range<Int64>) -> [Segment] {
+    func alignedSegments(forDisplayFrames frames: Range<Int64>, includingExpandedCuts: Bool = true) -> [Segment] {
         guard usesProgram else {
             var cursor = frames.lowerBound
             return cuts.alignedRanges(forEditedFrames: frames).map {
@@ -183,7 +210,7 @@ struct AudioTimelineProjection: Sendable, Equatable {
                 result.append(.init(aligned: original..<(original + hi - lo), displayed: lo..<hi))
             }
         }
-        for opening in openings {
+        for opening in openings where includingExpandedCuts {
             let seam = opening.displayStart
             let lo = max(seam, frames.lowerBound), hi = min(seam + Int64(opening.original.count), frames.upperBound)
             if lo < hi {

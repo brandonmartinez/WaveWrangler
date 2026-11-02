@@ -772,7 +772,14 @@ source-frame count, preserved channels, and an opaque complete preparation.
 exactly that count per channel and marks EOF only when the range ends at the actual
 source end. An empty EOF range is allowed. Invalid/oversized ranges, missing/damaged
 tiles, eviction, or unknown layouts fail rather than clamp, select channel 0, or
-fill scheduled media with silence. Explicit mono `[42]` and stereo `[1,2]`
+fill scheduled media with silence. Production schedulers instead use
+`readWindow(_:expectedFormat:admission:)`: it resolves or re-prepares evicted
+sources within the same bounded store and copies each window without suspending
+between preparation and tile access. A retained recipe is not a cache-lifetime
+guarantee; imports and other sources in the same runtime may evict its tiles.
+No source is pinned. Missing/damaged admitted tiles still fail explicitly, and
+warm or re-prepared reads retain live admission and full gateway witness checks.
+Explicit mono `[42]` and stereo `[1,2]`
 channel-label evidence is admitted. F5 additionally admits exactly undeclared
 standard legacy RIFF/WAVE PCM through separate, opaque gateway-minted header
 provenance: mono/stereo PCM tag 1 with full-container 16/24/32-bit integers, or
@@ -1421,7 +1428,11 @@ returns recordings only, including its `nil`/Ungrouped case.
   `dialogue(AudioDialogueAnchor)` follows the original-aligned grid before manual
   cuts; `absolute(frame:)` pins to program time; `insertion(region:offsetFrames:)`
   follows an `AudioInsertionRegionID`. Program-origin reconciliation must preserve
-  position when dialogue is later admitted. Insertion regions have an anchor and
+  position when dialogue is later admitted. Split, duplicate, move, and edge-resize
+  never implicitly bind an existing program-origin clip to dialogue; only explicit
+  reconciliation does. Same-position edits retain the exact existing anchor.
+  Explicit movement into inserted time still uses that region's relative offset.
+  Insertion regions have an anchor and
   positive `durationFrames`, cannot nest, and do not result from ordinary placement.
 - `AudioDialogueAnchor` persists `alignmentRevision`, `mapIdentity`, and `frame`.
   `mapIdentity` is lowercase SHA-256 of sorted-key, non-slash-escaped canonical
@@ -1598,6 +1609,11 @@ callback checks current device-record snapshots, including their opaque mutation
 generation; revoke/regrant cannot reuse an old callback even with identical bytes.
 An access store without the snapshot contract cannot authorize supplemental PCM.
 The generation is frozen evidence, not a new permission ledger.
+Dialogue selection upper bounds use a separate preceding-dialogue inverse:
+`[4s,5s)` remains cuttable before an insertion at `[5s,15s)`, while insertion
+interiors and expanded cut-review audio remain ineligible for new dialogue cuts.
+Sample inverses, navigation anchors, and diagnostic review audio retain their
+existing following-sample semantics.
 Diagnostic source/comparison audition retains its routing/attenuation and applies
 the saved recording/channel gain without speaker/Master effects. A recording-gain
 change invalidates already-prepared diagnostic windows; restart that audition.

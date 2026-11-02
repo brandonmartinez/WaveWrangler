@@ -11,6 +11,122 @@ import WWSources
 
 @MainActor @Suite("Audio editor program and review coordinates", .serialized)
 struct AudioProgramProjectionHostedTests {
+    @Test func exclusiveDialogueEndpointsDistinguishContiguousInsertionsCutSeamsAndExpandedReview() async throws {
+        let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 20)
+        defer { f.close() }
+        var episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let map = try #require(episode.alignment?.acceptedMap)
+        let first = try AudioInsertionRegion(anchor: .dialogue(.init(map: map, frame: 240_000)),
+                                            durationFrames: 192_000)
+        let second = AudioInsertionRegion(anchor: first.anchor, durationFrames: 288_000)
+        episode.audioArrangement = .init(insertionRegions: [first, second])
+        let timeline = try ProgramTimeline(episode: episode, dialogueFrames: 0..<960_000)
+        let projection = AudioTimelineProjection(program: timeline)
+        #expect(projection.originalTime(forDisplayTime: 5) == nil)
+        #expect(projection.originalTime(forExclusiveDisplayEnd: 5) == 5)
+        #expect(projection.originalTime(forDisplayTime: 15) == 5)
+        #expect(projection.originalTime(forExclusiveDisplayEnd: 16) == 6)
+        for time in [5.5, 9, 14.5, 15] {
+            #expect(projection.originalTime(forExclusiveDisplayEnd: time) == nil)
+        }
+        #expect(projection.originalTime(forExclusiveDisplayEnd: 25) == 15)
+        #expect(projection.originalTime(forExclusiveDisplayEnd: 30) == 20)
+        #expect(projection.originalTime(forExclusiveDisplayEnd: 30.5) == nil)
+
+        let cut = ManualEpisodeCut(alignmentRevision: map.revision, startFrame: 96_000, endFrame: 144_000)
+        episode.cleanup = .init(manualCuts: [cut])
+        let edited = try ProgramTimeline(episode: episode, dialogueFrames: 0..<960_000)
+        let collapsed = AudioTimelineProjection(cuts: edited.cuts, program: edited)
+        #expect(collapsed.originalTime(forDisplayTime: 2) == 3)
+        #expect(collapsed.originalTime(forExclusiveDisplayEnd: 2) == 2)
+        #expect(collapsed.originalTime(forExclusiveDisplayEnd: 4) == 5)
+        let review = AudioTimelineProjection(cuts: .unedited, program: edited, expanded: cut)
+        #expect(review.originalTime(forDisplayTime: 2.5) == 2.5)
+        #expect(review.originalTime(forExclusiveDisplayEnd: 2) == 2)
+        #expect(review.originalTime(forExclusiveDisplayEnd: 2.5) == nil)
+        #expect(review.originalTime(forExclusiveDisplayEnd: 3) == nil)
+        #expect(review.originalTime(forExclusiveDisplayEnd: 5) == 5)
+        #expect(review.programTime(forDisplayTime: 2.5) == nil)
+
+        try #require(f.document.store.apply("Synthetic expanded-cut boundary fixture") { model throws(DomainError) in
+            try model.settingAudioArrangement(episode.audioArrangement, in: episode.id)
+                .settingCleanup(episode.cleanup, in: episode.id)
+        })
+        f.model.audioEditor.refresh()
+        f.model.load()
+        try await helper.wait { f.model.audioEditor.composition?.timeline.cuts.removals == [96_000..<144_000] }
+        f.model.listening.expandedManualCutID = cut.id
+        f.model.synchronizeCuts()
+        let reviewInterior = f.model.selectionHasDialogueOnly(2.1...2.9)
+        let crossingReview = f.model.selectionHasDialogueOnly(1.5...3.5)
+        let beforeReview = f.model.selectionHasDialogueOnly(1...2)
+        let afterReview = f.model.selectionHasDialogueOnly(3...4)
+        let crossingInsertion = f.model.selectionHasDialogueOnly(4...5.5)
+        #expect(!reviewInterior && !crossingReview && !crossingInsertion)
+        #expect(beforeReview && afterReview)
+    }
+
+    @Test func manualCutsBeforeInsertionRetainExclusiveDialogueEndpoints() async throws {
+        try await verifyInsertionEdgeCut(beforeInsertion: true)
+    }
+
+    @Test func manualCutsAfterInsertionRetainExclusiveDialogueEndpoints() async throws {
+        try await verifyInsertionEdgeCut(beforeInsertion: false)
+    }
+
+    private func verifyInsertionEdgeCut(beforeInsertion: Bool) async throws {
+        let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 20)
+        defer { f.close() }
+        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let map = try #require(episode.alignment?.acceptedMap)
+        let region = try AudioInsertionRegion(anchor: .dialogue(.init(map: map, frame: 240_000)),
+                                             durationFrames: 480_000)
+        try #require(f.document.store.apply("Synthetic insertion-edge cut fixture") { model throws(DomainError) in
+            try model.settingAudioArrangement(.init(insertionRegions: [region]), in: episode.id)
+        })
+        f.model.audioEditor.refresh()
+        f.model.load()
+        try await helper.wait { f.model.canApplyManualCuts && f.model.audioEditor.composition?.timeline.insertions.count == 1 }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: episode.id, runtime: f.runtime)
+        cleanup.connectWorkspace(to: f.model)
+        defer { cleanup.cancel() }
+        let range = beforeInsertion ? 4.0...5.0 : 15.0...16.0
+        let dialogueOnly = f.model.selectionHasDialogueOnly(range)
+        #expect(dialogueOnly)
+        cleanup.listening.select(from: range.lowerBound, to: range.upperBound, within: 0...30)
+        let canApply = cleanup.canApplyManualCut
+        try #require(canApply)
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        let before = f.document.store.model
+        undo.beginUndoGrouping()
+        cleanup.applyManualCut()
+        undo.endUndoGrouping()
+        let error = cleanup.error
+        try #require(error == nil, Comment(rawValue: error ?? ""))
+        let cuts = cleanup.activeManualCuts
+        let cut = try #require(cuts.last)
+        #expect(cut.startFrame == (beforeInsertion ? 192_000 : 240_000))
+        #expect(cut.endFrame == (beforeInsertion ? 240_000 : 288_000))
+        let after = f.document.store.model
+        let unchangedAlignment = after.episode(episode.id)?.alignment == episode.alignment
+        #expect(unchangedAlignment)
+        undo.undo()
+        let restored = f.document.store.model == before
+        #expect(restored)
+        undo.redo()
+        let redone = f.document.store.model == after
+        #expect(redone)
+        try await helper.save(f.document)
+        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+            Data(contentsOf: #require(f.document.fileURL))).payload
+        let saved = reopened == after
+        #expect(saved)
+    }
+
     @Test func exteriorAddAudioMoveAndUnpinFollowCutsWithoutInventingDialogue() async throws {
         let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 10)
         defer { f.close() }
