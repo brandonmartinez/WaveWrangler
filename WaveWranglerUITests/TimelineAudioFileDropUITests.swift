@@ -51,6 +51,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(wait { (try? self.viewport(app).start) != beforePan.start })
         XCTAssertEqual(playhead.value as? String, beforePanPlayhead, "Panning must not scrub the playhead.")
         clip = clips(app).firstMatch
+        let originalClipID = clip.identifier
         let blockFrame = clip.frame
         let laneFrame = app.staticTexts["ww.audioDrop.newTrack"].frame
         let geometryEvidence = XCTAttachment(string: "Native clip AX frame: \(blockFrame); lane canvas: \(laneFrame)")
@@ -82,7 +83,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
              to: clip.coordinate(withNormalizedOffset: .init(dx: 0.5, dy: 0.5)))
         XCTAssertEqual(try reviewPosition(app), start + 1, accuracy: 1.0 / 48_000)
         confirmImport(app, visibleClips: 2)
-        let original = clips(app).matching(NSPredicate(format: "identifier == %@", clip.identifier)).firstMatch
+        let original = clips(app).matching(NSPredicate(format: "identifier == %@", originalClipID)).firstMatch
         let visible = clips(app).allElementsBoundByIndex
         let rightmost = try XCTUnwrap(visible.max { $0.frame.maxX < $1.frame.maxX })
         XCTAssertEqual(rightmost.label, "Audio Clip: fresh.wav")
@@ -116,6 +117,9 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         placementEvidence.name = "F6 Finder placements after control, Undo, save, and source-byte assertions"
         placementEvidence.lifetime = .keepAlways
         add(placementEvidence)
+        let capturedClipMidX = app.buttons[originalClipID].frame.midX
+        let capturedRulerFrame = ruler.frame
+        let capturedViewport = try viewport(app)
         for _ in 0..<7 {
             app.descendants(matching: .any)["ww.audioWorkspace.audioTracks"].click()
             app.menuItems["New Audio Track"].click()
@@ -125,10 +129,14 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         let workspace = app.scrollViews["ww.alignment.workspace"]
         for _ in 0..<10 where !lastTrack.isHittable { workspace.scroll(byDeltaX: 0, deltaY: -200) }
         XCTAssertTrue(lastTrack.isHittable)
-        let currentOriginal = app.buttons[clip.identifier].frame
+        XCTAssertEqual(ruler.frame.minX, capturedRulerFrame.minX)
+        XCTAssertEqual(ruler.frame.width, capturedRulerFrame.width)
+        let scrolledViewport = try viewport(app)
+        XCTAssertEqual(scrolledViewport.start, capturedViewport.start)
+        XCTAssertEqual(scrolledViewport.duration, capturedViewport.duration)
         let windowFrame = app.windows["ww.show.window"].frame
         let scrolledDrop = app.windows["ww.show.window"].coordinate(withNormalizedOffset: .zero)
-            .withOffset(.init(dx: currentOriginal.midX - windowFrame.minX,
+            .withOffset(.init(dx: capturedClipMidX - windowFrame.minX,
                               dy: lastTrack.frame.midY - windowFrame.minY))
         drop(first.lastPathComponent, window: window, finder: finder, app: app, to: scrolledDrop)
         XCTAssertEqual(app.popUpButtons["ww.addAudio.track"].value as? String, "Audio 8")
