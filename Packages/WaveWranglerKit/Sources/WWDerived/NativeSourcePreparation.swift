@@ -58,6 +58,7 @@ public struct PreparedSourceAudio: Sendable {
     fileprivate let session: String
     fileprivate let manifestKey: DerivedAssetKey
     fileprivate let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
+    fileprivate let supportsRandomAccess: Bool
 
     public var sourceFrameCount: Int64 { interpretation.frames.validFrames }
     public var sampleRate: Int { interpretation.sourceSampleRate }
@@ -88,6 +89,30 @@ public struct PreparedSourceWindow: Sendable, Equatable {
     public let isAtEndOfSource: Bool
     /// Useful for measuring late seeks: independent of the number of frames preceding the window.
     public let tilesRead: Int
+}
+
+/// Bounded cache lifetime only, never source authorization. Nonseekable playback retains its complete
+/// preparation inside the existing storage cap; release is idempotent and deinit also releases it.
+public final class PreparedSourceRetention: Sendable {
+    private let preparation: NativeSourcePreparation
+    private let identity: String
+    private let token: UUID
+
+    fileprivate init(preparation: NativeSourcePreparation, identity: String, token: UUID) {
+        self.preparation = preparation
+        self.identity = identity
+        self.token = token
+    }
+
+    public func release() async {
+        await preparation.release(identity: identity, token: token)
+    }
+
+    deinit {
+        Task { [preparation, identity, token] in
+            await preparation.release(identity: identity, token: token)
+        }
+    }
 }
 
 /// Fixed native-rate tiles reuse DerivedAssetStore's flushed staging, read-back verification and
@@ -121,6 +146,7 @@ public actor NativeSourcePreparation {
     private let decoder: SourceDecoder
     public nonisolated let configuration: Configuration
     private var entries: [String: Entry] = [:]
+    private var retentions: [String: Set<UUID>] = [:]
     private var clock: UInt64 = 0
     private var preparing = false
     private var reservation: Int64 = 0
@@ -162,10 +188,7 @@ public actor NativeSourcePreparation {
             reservation = 0
         }
 
-        let identity = CanonicalDigest.hex(
-            of: PreparationIdentity(
-                witness: admission.witness, format: expectedFormat, tileFrames: configuration.tileFrames
-            ))
+        let identity = preparationIdentity(admission: admission, expectedFormat: expectedFormat)
         let key = DerivedAssetKey(
             asset: AssetSpec(kind: "native-source-pcm-manifest", revision: 1),
             sources: [SourceRevision(source: admission.source, token: identity)], format: .current
@@ -181,7 +204,8 @@ public actor NativeSourcePreparation {
                 try Self.requireFormat(cursor.interpretation, expected: expectedFormat, source: admission.source,
                                        legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder)
                 if let cached = try await self.cached(identity) {
-                    guard cached.legacyWavePCMChannelOrder == cursor.legacyWavePCMChannelOrder else {
+                    guard cached.legacyWavePCMChannelOrder == cursor.legacyWavePCMChannelOrder,
+                          cached.supportsRandomAccess == cursor.supportsRandomAccess else {
                         throw NativeSourcePreparationFailure.formatMismatch
                     }
                     try await admission.validate()
@@ -196,7 +220,8 @@ public actor NativeSourcePreparation {
                     try await progress(
                         chunk.firstSourceFrame + Int64(chunk.frameCount), expectedFormat.frames.validFrames)
                 }
-                let audio = try await session.complete(legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder)
+                let audio = try await session.complete(legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder,
+                    supportsRandomAccess: cursor.supportsRandomAccess)
                 let staged = await session.stagedAssets()
                 try await admission.validate()
                 try await cursor.verifyUnchanged()
@@ -244,6 +269,24 @@ public actor NativeSourcePreparation {
         }
     }
 
+    /// Admit nonseekable playback before publishing a ready scheduler. Retention and preparation
+    /// share this actor turn; competing work must fit alongside retained entries or refuse.
+    public func prepareForPlayback(
+        _ admission: SourceReadAdmission, expectedFormat: FormatInterpretation
+    ) async throws -> PreparedSourceRetention? {
+        let audio = try await prepare(admission, expectedFormat: expectedFormat)
+        guard !audio.supportsRandomAccess else { return nil }
+        let token = UUID()
+        retentions[audio.identity, default: []].insert(token)
+        return PreparedSourceRetention(preparation: self, identity: audio.identity, token: token)
+    }
+
+    fileprivate func release(identity: String, token: UUID) {
+        guard var tokens = retentions[identity], tokens.contains(token) else { return }
+        tokens.subtract([token])
+        retentions[identity] = tokens.isEmpty ? nil : tokens
+    }
+
     public func readWindow(
         _ range: Range<Int64>, from audio: PreparedSourceAudio, admission: SourceReadAdmission
     ) async throws -> PreparedSourceWindow {
@@ -277,12 +320,13 @@ public actor NativeSourcePreparation {
         return window
     }
 
-    /// Resolve a current preparation for each bounded window. Unlike a retained handle, eviction
-    /// between requests triggers witnessed preparation again; damaged entries still fail explicitly.
+    /// Read verified tiles without entering the exclusive preparer. Evicted PCM is read with a
+    /// bounded witnessed seek, never full-source republication. Nonseekable misses refuse explicitly.
     public func readWindow(
         _ range: Range<Int64>, expectedFormat: FormatInterpretation, admission: SourceReadAdmission
     ) async throws -> PreparedSourceWindow {
         try await admission.validate()
+        try store.checkOutside(sourceLocations: [admission.location])
         guard admission.source == expectedFormat.source else {
             throw NativeSourcePreparationFailure.sourceMismatch
         }
@@ -295,7 +339,13 @@ public actor NativeSourcePreparation {
         ) { cursor in
             try Self.requireFormat(cursor.interpretation, expected: expectedFormat, source: admission.source,
                                    legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder)
-            let result = try await self.preparedWindow(range, expectedFormat: expectedFormat, admission: admission)
+            let result: PreparedSourceWindow
+            if let cached = try await self.cachedWindow(range, expectedFormat: expectedFormat, admission: admission,
+                legacyWavePCMChannelOrder: cursor.legacyWavePCMChannelOrder) {
+                result = cached
+            } else {
+                result = try await Self.uncachedWindow(range, cursor: cursor)
+            }
             try await admission.validate()
             try await cursor.verifyUnchanged()
             return result
@@ -304,12 +354,59 @@ public actor NativeSourcePreparation {
         return window
     }
 
-    private func preparedWindow(
-        _ range: Range<Int64>, expectedFormat: FormatInterpretation, admission: SourceReadAdmission
-    ) async throws -> PreparedSourceWindow {
-        let audio = try await prepare(admission, expectedFormat: expectedFormat)
-        // No suspension between publication/cache resolution and the bounded tile copy.
+    private func cachedWindow(
+        _ range: Range<Int64>, expectedFormat: FormatInterpretation, admission: SourceReadAdmission,
+        legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
+    ) throws -> PreparedSourceWindow? {
+        let identity = preparationIdentity(admission: admission, expectedFormat: expectedFormat)
+        guard let audio = try cached(identity) else { return nil }
+        guard audio.legacyWavePCMChannelOrder == legacyWavePCMChannelOrder else {
+            throw NativeSourcePreparationFailure.formatMismatch
+        }
+        touch(identity)
+        // No suspension between cache resolution and the bounded tile copy.
         return try window(range, audio: audio)
+    }
+
+    private static func uncachedWindow(
+        _ range: Range<Int64>, cursor: DecodingCursor
+    ) async throws -> PreparedSourceWindow {
+        // Compressed streams require their complete preparation: restarting their decode here would
+        // turn a bounded request into unbounded work under alternating-source cache pressure.
+        guard cursor.supportsRandomAccess else { throw NativeSourcePreparationFailure.storageBudgetExceeded }
+        let format = cursor.interpretation
+        let count = range.count
+        var samples = [Float](repeating: 0, count: count * format.channelCount)
+        if !range.isEmpty {
+            try await cursor.seek(toSourceFrame: range.lowerBound)
+            var next = range.lowerBound
+            while next < range.upperBound {
+                try Task.checkCancellation()
+                guard let chunk = try await cursor.next(upToSourceFrame: range.upperBound),
+                      chunk.firstSourceFrame == next, chunk.frameCount > 0,
+                      chunk.channelCount == format.channelCount,
+                      Int64(chunk.frameCount) <= range.upperBound - next,
+                      chunk.samples.allSatisfy(\.isFinite) else {
+                    throw NativeSourcePreparationFailure.incompleteOrInvalidPCM
+                }
+                let offset = Int(next - range.lowerBound)
+                for channel in 0..<format.channelCount {
+                    let start = channel * count + offset
+                    samples.replaceSubrange(start..<(start + chunk.frameCount), with: chunk.channel(channel))
+                }
+                next += Int64(chunk.frameCount)
+            }
+        }
+        return PreparedSourceWindow(source: format.source, range: range,
+            sampleRate: format.sourceSampleRate, channelCount: format.channelCount, samples: samples,
+            isAtEndOfSource: range.upperBound == format.frames.validFrames, tilesRead: 0)
+    }
+
+    private func preparationIdentity(
+        admission: SourceReadAdmission, expectedFormat: FormatInterpretation
+    ) -> String {
+        CanonicalDigest.hex(of: PreparationIdentity(
+            witness: admission.witness, format: expectedFormat, tileFrames: configuration.tileFrames))
     }
 
     private func cached(_ identity: String) throws -> PreparedSourceAudio? {
@@ -329,12 +426,15 @@ public actor NativeSourcePreparation {
     }
 
     private func reserve(_ bytes: Int64) throws {
-        guard bytes <= configuration.maximumStorageBytes else {
+        let retainedBytes = entries.reduce(Int64(0)) {
+            $0 + (retentions[$1.key] == nil ? 0 : $1.value.reservedBytes)
+        }
+        guard bytes <= configuration.maximumStorageBytes - retainedBytes else {
             throw NativeSourcePreparationFailure.storageBudgetExceeded
         }
         var used = entries.values.reduce(Int64(0)) { $0 + $1.reservedBytes }
         for (identity, entry) in entries.sorted(by: { $0.value.lastUse < $1.value.lastUse })
-        where used + bytes > configuration.maximumStorageBytes {
+        where retentions[identity] == nil && used + bytes > configuration.maximumStorageBytes {
             for key in entry.keys { try store.removePreparedEntry(key) }
             entries[identity] = nil
             used -= entry.reservedBytes
@@ -443,7 +543,7 @@ private actor PCMPreparationSession {
         audio = PreparedSourceAudio(
             interpretation: format, tileFrames: tileFrames, witness: witness,
             identity: identity, session: UUID().uuidString, manifestKey: manifestKey,
-            legacyWavePCMChannelOrder: nil)
+            legacyWavePCMChannelOrder: nil, supportsRandomAccess: false)
         channels = []
     }
 
@@ -485,12 +585,13 @@ private actor PCMPreparationSession {
         channels = Array(repeating: [], count: audio.channelCount)
     }
 
-    func complete(legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?) throws -> PreparedSourceAudio {
+    func complete(legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?,
+                  supportsRandomAccess: Bool) throws -> PreparedSourceAudio {
         guard received == audio.sourceFrameCount else { throw NativeSourcePreparationFailure.incompleteOrInvalidPCM }
         try flush()
         return PreparedSourceAudio(interpretation: audio.interpretation, tileFrames: audio.tileFrames,
             witness: audio.witness, identity: audio.identity, session: audio.session, manifestKey: audio.manifestKey,
-            legacyWavePCMChannelOrder: legacyWavePCMChannelOrder)
+            legacyWavePCMChannelOrder: legacyWavePCMChannelOrder, supportsRandomAccess: supportsRandomAccess)
     }
 
     func stagedAssets() -> [StagedDerivedAsset] { tiles }

@@ -8,6 +8,7 @@ public struct SupplementalClipScheduler: Sendable {
     private struct Source: Sendable {
         let snapshot: MixerSourceSnapshot
         let admission: SourceReadAdmission
+        let retention: PreparedSourceRetention?
     }
     public let recipe: MixerRecipe
     private let preparation: NativeSourcePreparation
@@ -16,18 +17,28 @@ public struct SupplementalClipScheduler: Sendable {
     public init(recipe: MixerRecipe, preparation: NativeSourcePreparation,
                 admissions: [SourceID: SourceReadAdmission]) async throws {
         var sources: [SourceID: Source] = [:]
-        for snapshot in recipe.audioSources {
-            guard let admission = admissions[snapshot.source],
-                  admission.source == snapshot.source, admission.witness == snapshot.witness else {
-                throw MixerFailure.staleDependencies
+        do {
+            for snapshot in recipe.audioSources {
+                guard let admission = admissions[snapshot.source],
+                      admission.source == snapshot.source, admission.witness == snapshot.witness else {
+                    throw MixerFailure.staleDependencies
+                }
+                let retention = try await preparation.prepareForPlayback(admission, expectedFormat: snapshot.interpretation)
+                sources[snapshot.source] = .init(snapshot: snapshot, admission: admission, retention: retention)
             }
-            _ = try await preparation.prepare(admission, expectedFormat: snapshot.interpretation)
-            sources[snapshot.source] = .init(snapshot: snapshot, admission: admission)
+            try Task.checkCancellation()
+        } catch {
+            for source in sources.values { await source.retention?.release() }
+            throw error
         }
-        try Task.checkCancellation()
         self.recipe = recipe
         self.preparation = preparation
         self.sources = sources
+    }
+
+    /// Stop using this scheduler before releasing its bounded nonseekable preparation lifetime.
+    public func releasePreparations() async {
+        for source in sources.values { await source.retention?.release() }
     }
 
     /// Ordered occurrences are rendered independently, then summed before stereo track inserts.
@@ -38,6 +49,7 @@ public struct SupplementalClipScheduler: Sendable {
               frames.upperBound <= recipe.programFrames.upperBound else {
             throw MixerFailure.incompletePCM
         }
+        defer { withExtendedLifetime(sources) {} }
         var tracks = Dictionary(uniqueKeysWithValues: recipe.audioTracks.map {
             ($0.track, Array(repeating: [Float](repeating: 0, count: frames.count), count: 2))
         })

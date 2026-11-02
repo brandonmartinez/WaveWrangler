@@ -773,12 +773,20 @@ exactly that count per channel and marks EOF only when the range ends at the act
 source end. An empty EOF range is allowed. Invalid/oversized ranges, missing/damaged
 tiles, eviction, or unknown layouts fail rather than clamp, select channel 0, or
 fill scheduled media with silence. Production schedulers instead use
-`readWindow(_:expectedFormat:admission:)`: it resolves or re-prepares evicted
-sources within the same bounded store and copies each window without suspending
-between preparation and tile access. A retained recipe is not a cache-lifetime
-guarantee; imports and other sources in the same runtime may evict its tiles.
-No source is pinned. Missing/damaged admitted tiles still fail explicitly, and
-warm or re-prepared reads retain live admission and full gateway witness checks.
+`readWindow(_:expectedFormat:admission:)`: it copies warm verified tiles without
+entering the exclusive preparer, so an unrelated in-flight import does not block
+warm playback. Evicted linear PCM uses the existing witnessed cursor's exact seek
+and bounded source-frame reads, with no full-source decode or tile republication.
+Nonseekable playback acquires complete preparation plus bounded retention before
+a scheduler becomes ready. Competing imports or oversized compressed working sets
+refuse with `storageBudgetExceeded` at admission if they cannot coexist inside the
+same cap; they cannot evict an active MP3 or restart its decoder per window.
+Retention is shared by source identity, released on scheduler replacement or
+disposal, and never increases the storage ceiling. `prepare` remains the explicit
+whole-source preparation API. A retained recipe is not a PCM cache-lifetime guarantee;
+imports and other sources in the same runtime may evict its unretained PCM tiles.
+Missing/damaged admitted tiles still fail explicitly. Every window retains
+live admission, complete interpretation, and full gateway witness checks.
 Explicit mono `[42]` and stereo `[1,2]`
 channel-label evidence is admitted. F5 additionally admits exactly undeclared
 standard legacy RIFF/WAVE PCM through separate, opaque gateway-minted header

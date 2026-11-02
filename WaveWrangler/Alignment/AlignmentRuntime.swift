@@ -1291,6 +1291,9 @@ actor AlignmentRuntime {
             }
         }
         if supplementalSchedulers[recipe.episode]?.recipe != recipe {
+            if let previous = supplementalSchedulers.removeValue(forKey: recipe.episode) {
+                await previous.releasePreparations()
+            }
             var admissions: [SourceID: SourceReadAdmission] = [:]
             for snapshot in recipe.audioSources {
                 let admission = try await supplementalAdmission(snapshot.source, episode: episode)

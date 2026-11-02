@@ -34,16 +34,20 @@ private struct SupplementalFixture {
     }
 
     init(rate: Int = 44_100, frames: Int = 441, channels: Int = 2,
-         storage: Int64 = 1 << 30) async throws {
+         storage: Int64 = 1 << 30, codec: UInt32 = kAudioFormatLinearPCM) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("ww-f4-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let originals = root.appendingPathComponent("originals", isDirectory: true)
         try FileManager.default.createDirectory(at: originals, withIntermediateDirectories: true)
         url = originals.appendingPathComponent("generated.caf")
-        var format = AudioStreamBasicDescription(mSampleRate: Double(rate), mFormatID: kAudioFormatLinearPCM,
+        var client = AudioStreamBasicDescription(mSampleRate: Double(rate), mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
             mBytesPerPacket: UInt32(channels * 2), mFramesPerPacket: 1, mBytesPerFrame: UInt32(channels * 2),
             mChannelsPerFrame: UInt32(channels), mBitsPerChannel: 16, mReserved: 0)
+        var format = codec == kAudioFormatLinearPCM ? client : AudioStreamBasicDescription(
+            mSampleRate: Double(rate), mFormatID: codec, mFormatFlags: 1,
+            mBytesPerPacket: 0, mFramesPerPacket: 0, mBytesPerFrame: 0,
+            mChannelsPerFrame: UInt32(channels), mBitsPerChannel: 0, mReserved: 0)
         var created: ExtAudioFileRef?
         try #require(ExtAudioFileCreateWithURL(url as CFURL, kAudioFileCAFType, &format, nil, 0, &created) == noErr)
         let file = try #require(created)
@@ -51,6 +55,8 @@ private struct SupplementalFixture {
         layout.mChannelLayoutTag = channels == 1 ? kAudioChannelLayoutTag_Mono : kAudioChannelLayoutTag_Stereo
         try #require(ExtAudioFileSetProperty(file, kExtAudioFileProperty_FileChannelLayout,
             UInt32(MemoryLayout.size(ofValue: layout)), &layout) == noErr)
+        try #require(ExtAudioFileSetProperty(file, kExtAudioFileProperty_ClientDataFormat,
+            UInt32(MemoryLayout.size(ofValue: client)), &client) == noErr)
         var pcm: [Int16] = []
         for frame in 0..<frames {
             for channel in 0..<channels { pcm.append(Int16(Self.sample(frame, channel) * 32768)) }
@@ -102,6 +108,44 @@ private struct SupplementalFixture {
 
 @Suite("Supplemental clip production", .serialized)
 struct SupplementalClipTests {
+    @Test func nonseekableOverBudgetWorkingSetRefusesBeforeSchedulerBecomesReady() async throws {
+        let first = try await SupplementalFixture(rate: 48_000, storage: 30_000, codec: kAudioFormatAppleLossless)
+        defer { try? first.remove() }
+        let second = try await SupplementalFixture(rate: 48_000, codec: kAudioFormatAppleLossless)
+        defer { try? second.remove() }
+        var episode = first.episode()
+        episode.sources.append(second.source)
+        episode.audioArrangement?.assets.append(second.asset)
+        var overlay = second.clip()
+        overlay.track = first.track.id
+        episode.audioArrangement?.clips.append(overlay)
+        let composition = try ProgramTimeline(episode: episode).composition()
+        let recipe = try MixerRecipe(episode: episode, sources: [first.snapshot, second.snapshot],
+            programFrames: 0..<441, composition: composition)
+        await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+            try await SupplementalClipScheduler(recipe: recipe, preparation: first.preparation,
+                admissions: [first.source.id: first.admission, second.source.id: second.admission])
+        }
+        _ = try await first.preparation.prepare(second.admission, expectedFormat: second.snapshot.interpretation)
+    }
+
+    @Test func nonseekableSchedulerRemainsPlayableWhenCompetingPreparationCannotFit() async throws {
+        let first = try await SupplementalFixture(rate: 48_000, storage: 30_000, codec: kAudioFormatAppleLossless)
+        defer { try? first.remove() }
+        let other = try await SupplementalFixture(rate: 48_000, codec: kAudioFormatAppleLossless)
+        defer { try? other.remove() }
+        let scheduler = try await first.scheduler(first.episode())
+        let expected = try await scheduler.read(0..<16)
+        for _ in 0..<3 {
+            await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+                try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+            }
+            #expect(try await scheduler.read(0..<16) == expected)
+        }
+        await scheduler.releasePreparations()
+        _ = try await first.preparation.prepare(other.admission, expectedFormat: other.snapshot.interpretation)
+    }
+
     @Test func schedulerSurvivesEvictionDuringConstructionAndRepeatedOverlappingReads() async throws {
         let first = try await SupplementalFixture(rate: 48_000, storage: 30_000)
         defer { try? first.remove() }

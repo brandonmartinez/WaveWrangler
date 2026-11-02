@@ -588,6 +588,7 @@ struct NativeSourcePreparationTests {
             configuration: .init(tileFrames: 4096, maximumWindowFrames: 16_384, maximumStorageBytes: 260_000))
         let validations = Counter()
         let admission = first.admission { validations.increment() }
+        _ = try await preparation.prepare(admission, expectedFormat: first.format)
         let expected = try await preparation.readWindow(23_400..<23_457,
             expectedFormat: first.format, admission: admission)
         let coldReads = decodeReads.value
@@ -597,10 +598,11 @@ struct NativeSourcePreparationTests {
         #expect(decodeReads.value == coldReads)
         _ = try await preparation.prepare(second.admission(), expectedFormat: second.format)
         let beforeRecovery = decodeReads.value
+        _ = try await preparation.prepare(admission, expectedFormat: first.format)
         #expect(try await preparation.readWindow(23_400..<23_457,
             expectedFormat: first.format, admission: admission) == expected)
         #expect(decodeReads.value > beforeRecovery)
-        #expect(validations.value >= 12)
+        #expect(validations.value >= 10)
         let bytes = try FileManager.default.contentsOfDirectory(at: first.assets, includingPropertiesForKeys: [.fileSizeKey])
             .reduce(0) { try $0 + ($1.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) }
         #expect(bytes <= 260_000)
@@ -610,6 +612,7 @@ struct NativeSourcePreparationTests {
     @Test func resolvingWindowsKeepAdmissionRangeFormatBudgetAndDamageFailuresExplicit() async throws {
         let f = try await Fixture.make()
         let preparation = try f.preparation()
+        _ = try await preparation.prepare(f.admission(), expectedFormat: f.format)
         _ = try await preparation.readWindow(0..<10, expectedFormat: f.format, admission: f.admission())
         await #expect(throws: NativeSourcePreparationFailure.notAuthorized) {
             try await preparation.readWindow(0..<10, expectedFormat: f.format,
@@ -640,6 +643,183 @@ struct NativeSourcePreparationTests {
             try await bounded.readWindow(0..<10, expectedFormat: budgetFixture.format, admission: budgetFixture.admission())
         }
     }
+
+    @Test func overlappingEvictedPCMWindowsBoundDecodeReadsAndPublishNoTiles() async throws {
+        let first = try await Fixture.make(frames: 65_537, codec: kAudioFormatLinearPCM)
+        let second = try await Fixture.make(frames: 65_537, codec: kAudioFormatLinearPCM)
+        let reads = Counter(), files = PublicationFaultFiles()
+        var gateway = SystemSourceContentIO()
+        gateway.rawFrameReadObserver = { reads.increment() }
+        let store = try DerivedAssetStore(root: first.directory.file("cache/native-source-pcm-v1"),
+            sourceLocations: [first.url, second.url], files: files)
+        let preparation = try NativeSourcePreparation(store: store,
+            decoder: SourceDecoder(access: first.access, content: gateway, configuration: .init(chunkFrames: 4096)),
+            configuration: .init(tileFrames: 4096, maximumWindowFrames: 16_384, maximumStorageBytes: 650_000))
+        _ = try await preparation.prepare(first.admission(), expectedFormat: first.format)
+        _ = try await preparation.prepare(second.admission(), expectedFormat: second.format)
+        let beforeReads = reads.value, beforePublication = files.publishedBytes
+        let originals = try [first.url, second.url].map { try FileSnapshot($0) }
+        for range: Range<Int64> in [65_500..<65_532, 0..<32, 4090..<4122] {
+            for f in [first, second] {
+                let before = reads.value
+                let window = try await preparation.readWindow(range, expectedFormat: f.format, admission: f.admission())
+                #expect(reads.value - before <= 1, "A 32-frame window must not decode a whole source or its prefix.")
+                for channel in 0..<2 {
+                    #expect(Array(window.samples[(channel * 32)..<((channel + 1) * 32)])
+                        == range.map { Fixture.sample(Int($0), channel) })
+                }
+            }
+        }
+        #expect(reads.value - beforeReads <= 6)
+        #expect(files.publishedBytes == beforePublication, "Pressure reads must not republish alternating full sources.")
+        #expect(try [first.url, second.url].map { try FileSnapshot($0) } == originals)
+        print("CACHE pressure: six 32-frame windows, \(reads.value - beforeReads) decode calls, \(files.publishedBytes - beforePublication) bytes published")
+    }
+
+    @Test func warmResolvedWindowSucceedsWhileUnrelatedPreparationIsSuspended() async throws {
+        let first = try await Fixture.make(), second = try await Fixture.make()
+        let reads = Counter(), files = PublicationFaultFiles()
+        var gateway = SystemSourceContentIO()
+        gateway.rawFrameReadObserver = { reads.increment() }
+        let store = try DerivedAssetStore(root: first.directory.file("cache/native-source-pcm-v1"),
+            sourceLocations: [first.url, second.url], files: files)
+        let preparation = try NativeSourcePreparation(store: store,
+            decoder: SourceDecoder(access: first.access, content: gateway, configuration: .init(chunkFrames: 4096)),
+            configuration: .init(tileFrames: 4096))
+        _ = try await preparation.prepare(first.admission(), expectedFormat: first.format)
+        let started = Latch(), release = Latch()
+        let pending = Task {
+            do {
+                let audio = try await preparation.prepare(second.admission(), expectedFormat: second.format) { _, _ in
+                    await started.open()
+                    await release.wait()
+                }
+                await started.open()
+                return audio
+            } catch {
+                await started.open()
+                throw error
+            }
+        }
+        await started.wait()
+        let beforeReads = reads.value, beforePublication = files.publishedBytes
+        let validations = Counter()
+        let result: Result<PreparedSourceWindow, any Error>
+        do {
+            result = .success(try await preparation.readWindow(23_400..<23_457,
+                expectedFormat: first.format, admission: first.admission { validations.increment() }))
+        } catch {
+            result = .failure(error)
+        }
+        let warmReads = reads.value - beforeReads
+        let warmPublication = files.publishedBytes - beforePublication
+        await release.open()
+        _ = try await pending.value
+        let window = try result.get()
+        #expect(warmReads == 0 && warmPublication == 0 && validations.value == 2)
+        #expect(Array(window.samples.prefix(57)) == (23_400..<23_457).map { Fixture.sample($0, 0) })
+        print("CACHE suspended preparation: warm read \(warmReads) decode calls, \(warmPublication) bytes published, \(validations.value) live validations")
+    }
+
+    @Test func evictedNonseekableWindowRefusesWithoutDecodeOrPublication() async throws {
+        let first = try await Fixture.make(), second = try await Fixture.make()
+        let reads = Counter(), files = PublicationFaultFiles()
+        var gateway = SystemSourceContentIO()
+        gateway.rawFrameReadObserver = { reads.increment() }
+        let store = try DerivedAssetStore(root: first.directory.file("cache/native-source-pcm-v1"),
+            sourceLocations: [first.url, second.url], files: files)
+        let preparation = try NativeSourcePreparation(store: store,
+            decoder: SourceDecoder(access: first.access, content: gateway, configuration: .init(chunkFrames: 4096)),
+            configuration: .init(tileFrames: 4096, maximumStorageBytes: 260_000))
+        _ = try await preparation.prepare(first.admission(), expectedFormat: first.format)
+        _ = try await preparation.prepare(second.admission(), expectedFormat: second.format)
+        let beforeReads = reads.value, beforePublication = files.publishedBytes
+        for _ in 0..<3 {
+            await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+                try await preparation.readWindow(23_400..<23_457, expectedFormat: first.format, admission: first.admission())
+            }
+        }
+        #expect(reads.value == beforeReads)
+        #expect(files.publishedBytes == beforePublication)
+    }
+
+    @Test func playbackRetentionsShareBudgetAndReleaseWithoutInvalidatingOtherOwners() async throws {
+        let first = try await Fixture.make(), second = try await Fixture.make()
+        let preparation = try first.preparation(storage: 260_000)
+        let candidate = try await preparation.prepareForPlayback(first.admission(), expectedFormat: first.format)
+        let lease = try #require(candidate)
+        let another = try await preparation.prepareForPlayback(first.admission(), expectedFormat: first.format)
+        let otherOwner = try #require(another)
+        await lease.release()
+        await lease.release()
+        await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+            try await preparation.prepare(second.admission(), expectedFormat: second.format)
+        }
+        let window = try await preparation.readWindow(0..<10, expectedFormat: first.format, admission: first.admission())
+        #expect(Array(window.samples.prefix(10)) == (0..<10).map { Fixture.sample($0, 0) })
+        await otherOwner.release()
+        _ = try await preparation.prepare(second.admission(), expectedFormat: second.format)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_MP3_LAME"] != nil,
+        "set WW_MP3_LAME to an installed LAME encoder"))
+    func qualifiedMP3PlaybackRetentionProtectsWarmReadsAndAllowsReadmissionAfterRelease() async throws {
+        let first = try await Fixture.make(frames: 441_123, mp3: true), second = try await Fixture.make()
+        let reads = Counter(), files = PublicationFaultFiles()
+        var gateway = SystemSourceContentIO()
+        gateway.rawFrameReadObserver = { reads.increment() }
+        let store = try DerivedAssetStore(root: first.directory.file("cache/native-source-pcm-v1"),
+            sourceLocations: [first.url, second.url], files: files)
+        let preparation = try NativeSourcePreparation(store: store,
+            decoder: SourceDecoder(access: first.access, content: gateway, configuration: .init(chunkFrames: 4096)),
+            configuration: .init(tileFrames: 4096, maximumStorageBytes: 4_100_000))
+        let candidate = try await preparation.prepareForPlayback(first.admission(), expectedFormat: first.format)
+        let lease = try #require(candidate)
+        let beforeReads = reads.value, beforePublication = files.publishedBytes
+        let expected = try await preparation.readWindow(430_000..<430_032,
+            expectedFormat: first.format, admission: first.admission())
+        for _ in 0..<3 {
+            await #expect(throws: NativeSourcePreparationFailure.storageBudgetExceeded) {
+                try await preparation.prepare(second.admission(), expectedFormat: second.format)
+            }
+            #expect(try await preparation.readWindow(430_000..<430_032,
+                expectedFormat: first.format, admission: first.admission()) == expected)
+        }
+        #expect(reads.value == beforeReads && files.publishedBytes == beforePublication)
+        print("CACHE retained MP3: three refused competing admissions, \(reads.value - beforeReads) warm decode calls, \(files.publishedBytes - beforePublication) bytes published")
+        await lease.release()
+        _ = try await preparation.prepare(second.admission(), expectedFormat: second.format)
+        let renewed = try await preparation.prepareForPlayback(first.admission(), expectedFormat: first.format)
+        let readmitted = try #require(renewed)
+        let afterReadmission = reads.value
+        #expect(try await preparation.readWindow(430_000..<430_032,
+            expectedFormat: first.format, admission: first.admission()) == expected)
+        #expect(reads.value == afterReadmission)
+        await readmitted.release()
+    }
+
+    @Test func warmAndUncachedResolvedWindowsRefuseFinalCancellation() async throws {
+        for warm in [false, true] {
+            let f = try await Fixture.make(codec: kAudioFormatLinearPCM)
+            let preparation = try f.preparation()
+            if warm { _ = try await preparation.prepare(f.admission(), expectedFormat: f.format) }
+            let validations = Counter()
+            let task = Task {
+                try await preparation.readWindow(23_400..<23_457, expectedFormat: f.format,
+                    admission: f.admission {
+                        validations.increment()
+                        if validations.value == 2 { withUnsafeCurrentTask { $0?.cancel() } }
+                    })
+            }
+            do {
+                _ = try await task.value
+                Issue.record("Canceled resolved window was published.")
+            } catch {
+                #expect(error is CancellationError || error as? DecodeFailure == .canceled)
+            }
+            #expect(validations.value == 2)
+        }
+    }
 }
 
 private final class PublicationFaultFiles: FileOperations, @unchecked Sendable {
@@ -647,6 +827,9 @@ private final class PublicationFaultFiles: FileOperations, @unchecked Sendable {
     private let lock = NSLock()
     private var movesBeforeFailure: Int?
     private var cancelManifest = false
+    private var publicationBytes = 0
+
+    var publishedBytes: Int { lock.withLock { publicationBytes } }
 
     func failAfterSuccessfulMoves(_ count: Int) { lock.withLock { movesBeforeFailure = count } }
     func cancelOnManifestStage() { lock.withLock { cancelManifest = true } }
@@ -675,7 +858,9 @@ private final class PublicationFaultFiles: FileOperations, @unchecked Sendable {
             return false
         }
         if fail { throw CocoaError(.fileWriteUnknown) }
+        let bytes = try base.read(source).count
         try base.moveNew(source, to: destination)
+        lock.withLock { publicationBytes += bytes }
     }
     func remove(_ url: URL) throws { try base.remove(url) }
     func contentsOfDirectory(_ url: URL) throws -> [URL] { try base.contentsOfDirectory(url) }
