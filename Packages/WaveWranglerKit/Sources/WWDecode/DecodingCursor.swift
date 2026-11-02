@@ -117,6 +117,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
 
     let interpretation: FormatInterpretation
     let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
+    let m4aCodecChannelOrder: M4ACodecChannelOrderEvidence?
     let supportsRandomAccess: Bool
     private let queue: DispatchQueue
     private let url: URL
@@ -139,6 +140,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
         self.before = before
         self.interpretation = interpretation
         legacyWavePCMChannelOrder = pump.reader.facts.legacyWavePCMChannelOrder
+        m4aCodecChannelOrder = pump.reader.facts.m4aCodecChannelOrder
         supportsRandomAccess = pump.reader.supportsRandomAccess
         self.pump = pump
     }
@@ -308,6 +310,7 @@ fileprivate final class CursorWorker: @unchecked Sendable {
 public actor DecodingCursor {
     public nonisolated let interpretation: FormatInterpretation
     package nonisolated let legacyWavePCMChannelOrder: LegacyWavePCMChannelOrderEvidence?
+    package nonisolated let m4aCodecChannelOrder: M4ACodecChannelOrderEvidence?
     public nonisolated let supportsRandomAccess: Bool
     private let worker: CursorWorker
     private var currentPosition: Int64 = 0
@@ -322,6 +325,7 @@ public actor DecodingCursor {
         self.worker = worker
         interpretation = worker.interpretation
         legacyWavePCMChannelOrder = worker.legacyWavePCMChannelOrder
+        m4aCodecChannelOrder = worker.m4aCodecChannelOrder
         supportsRandomAccess = worker.supportsRandomAccess
     }
 

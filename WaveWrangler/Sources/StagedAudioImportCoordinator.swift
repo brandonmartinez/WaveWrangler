@@ -401,7 +401,7 @@ final class StagedAudioImportCoordinator {
         let reason = (failure as? SourceEngineError)?.reason
             ?? (failure as? LocalizedError)?.errorDescription ?? String(describing: failure)
         let detail = failure as? NativeSourcePreparationFailure == .unsupportedChannelLayout
-            ? "Unsupported custom or ambiguous channel layout. Add Audio requires declared mono/left-right stereo or verified standard legacy PCM WAV order; no channels were guessed."
+            ? "Unsupported custom or ambiguous channel layout. Add Audio requires verified mono/left-right stereo order from a declared layout, supported M4A codec metadata, or standard legacy PCM WAV headers; no channels were guessed."
             : reason
         error = published
             ? "Audio references were added, but access is blocked: \(detail) Open Recordings & Speakers to relink the originals. Undo removes the entire Add Audio action."

@@ -2,7 +2,7 @@
   "version": 1,
   "date": "2026-10-20",
   "basedOn": "792aa6687ab0b7a196d41fe13e54f7dd9e048392",
-  "reason": "American English source maintenance, shared source-integrity checks, and sample-preserving listening kernel reuse; not new DSP qualification. Historical holdouts refuse changed historical trees.",
+  "reason": "American English source maintenance, shared source-integrity checks, sample-preserving listening kernel reuse, and nonserialized M4A codec channel-order provenance (2026-11-02); not new DSP qualification. Historical holdouts refuse changed historical trees.",
   "records": {
     "m2-freeze-estimator-2": {
       "historicalRecord": "docs/m2/fixtures/m2-freeze-estimator-2.json",
@@ -40,7 +40,7 @@
       "historicalRecord": "docs/m2/fixtures/m3-freeze-decode-6.json",
       "historicalRecordSHA256": "dcf87786e907e949d64e105acca352e6ef6c28bf24cce773eaa3be7ff181b9c3",
       "currentTrees": {
-        "Sources/WWDecode": "438c6d8e349bfd947c3bd0f4863ac5ebe9cd3862",
+        "Sources/WWDecode": "4468a5033349f0cf10d4604d0b69b3272d4298e9",
         "Tests/WWDecodeTests": "11b94f78c79eae7a1c9f45793bee8eb91958732b"
       }
     }
