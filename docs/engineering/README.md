@@ -1121,6 +1121,7 @@ without checking the CI image.
 ```sh
 scripts/build.sh            # xcodebuild build, Debug, ad-hoc signed, -jobs 4, DerivedData in .build/
 scripts/build.sh Release
+bash scripts/install-local.sh # verified ad-hoc signed install to /Applications; quit the app first
 scripts/test.sh             # swift test (package, --jobs 4), serialized estimator, segment, pipeline memory, timing and render calibration passes, then xcodebuild test -only-testing:WaveWranglerTests
 scripts/test.sh --package-only
 scripts/test.sh --ui        # XCUITests only on the current host; use the VM lease pipeline instead on the development Mac
@@ -1223,6 +1224,13 @@ See the [plan selection and VM pipeline](gui-testing.md) for focused selectors a
 audit admission. Manual-only CI triggers are unchanged.
 
 Environment overrides: `WW_JOBS` (default 4) and `WW_DERIVED_DATA` (default `.build/DerivedData`).
+The local installer defaults to `.build/LocalInstallDerivedData` instead and accepts `WW_INSTALL_DIR`
+(default `/Applications`). It serializes installs with an installation-directory lock, verifies signatures
+and copied bytes before completing replacement, and rolls back a failed replacement. It never quits
+the app, elevates permissions, or launches it automatically. After an uncatchable interruption, inspect
+any `.WaveWrangler.install.*` backup before manually recovering it and removing the empty
+`.WaveWrangler.install.lock` directory. Run its isolated regression checks with
+`PYTHONDONTWRITEBYTECODE=1 python3 scripts/test-install-local.py`.
 `WW_SEGMENT_SWEEPS` selects the WW-017 segment pass. `1` runs calibration, the floor sweep and edge silence; `0` runs
 calibration only. It defaults to `1` locally and to `0` when `CI=true`; the CI workflow also sets `0` explicitly, to
 keep the job well inside its timeout. With the sweeps off, the always-on cheap test
