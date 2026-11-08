@@ -2522,6 +2522,9 @@ final class EpisodeAlignmentModel {
                         isLoadingWaveforms = false
                         projectingCutView = false
                         waveformTask = nil
+                        if loadedWaveformEpisode == nil {
+                            loadWaveforms()
+                        }
                         ensureWaveformOverview()
                     }
                 }
@@ -2542,8 +2545,11 @@ final class EpisodeAlignmentModel {
                     waveformOverviewIndices = projectedOverview.indices
                     waveformOverviewDisplayGains = projectedOverview.gains
                     waveformOverviewSnapshotID = UUID()
-                    loadedWaveformEpisode = episode
-                    loadedWaveformGeneration = modelGeneration
+                    // An empty startup reprojection is not a published source snapshot.
+                    if loadedWaveformEpisode != nil {
+                        loadedWaveformEpisode = episode
+                        loadedWaveformGeneration = modelGeneration
+                    }
                     if !overview.tracks.isEmpty { loadedOverviewEpisode = episode }
                     waveformMessage = "Manual cuts ripple every aligned track. Original recordings and alignment are unchanged."
                     if waveformDurationSeconds <= 30 { scheduleScrubTile() }
