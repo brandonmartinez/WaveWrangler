@@ -45,6 +45,7 @@ struct AlignmentPlaybackClock: Sendable {
 enum AlignmentTransportFailure: LocalizedError, Sendable {
     case bufferDeadline
     case discontinuousWindow
+    case unverifiedProductionTiming
 
     var errorDescription: String? {
         switch self {
@@ -52,6 +53,8 @@ enum AlignmentTransportFailure: LocalizedError, Sendable {
             "Verified audio could not be prepared before the scheduled buffer ran out"
         case .discontinuousWindow:
             "The next audio window does not continue the shared transport clock"
+        case .unverifiedProductionTiming:
+            "Apply or discard pending timing edits, then save and verify accepted timing before playing the production mix."
         }
     }
 }

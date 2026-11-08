@@ -1642,6 +1642,11 @@ both typed speaker and audio-track routes, independent of diagnostic source Solo
 Track meters are separate L/R prepared-PCM meters. Recording input gain occurs
 once on dialogue only; supplemental assets cannot acquire such a gain entry.
 Mix edits never enter estimators, ASR, raw waveform cache keys, or original files.
+Production playback uses the runtime's verified accepted map and authorized source
+admission, not decoded waveform presentation tiles. A cold or cleared waveform
+cache must not block Play Mix. Pending timing edits and unverified media inputs
+(including reset/Redo in another window) still block playback; the mixer displays
+that failure, and a valid retry clears the prior playback error.
 
 `SupplementalClipScheduler` is the separate asynchronous non-realtime adapter,
 not part of `MixerProcessor`'s effect graph. One `NativeSourcePreparation` actor
