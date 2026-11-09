@@ -20,7 +20,8 @@ public enum SchemaVersion {
     /// 8: manual cross-track ripple cuts on the original aligned frame grid.
     /// 9: recording/channel input gain, speaker/Master controls, and ordered Audio Unit document state.
     /// 10: source-purpose partition, supplemental assets/tracks/clips/arrangement and audio-track mix.
-    public static let show = 10
+    /// 11: independent finished-episode boundaries and optional spoken-track playback restriction.
+    public static let show = 11
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.

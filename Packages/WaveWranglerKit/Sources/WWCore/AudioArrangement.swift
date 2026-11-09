@@ -267,19 +267,7 @@ public struct AudioArrangement: Sendable, Equatable, Codable {
             invalid("audio track names cannot be empty")
         }
         func anchorValid(_ anchor: AudioPlacementAnchor, allowsInsertion: Bool) -> Bool {
-            switch anchor {
-            case .absolute(let frame), .programOrigin(let frame):
-                return (-Self.frameLimit...Self.frameLimit).contains(frame)
-            case .dialogue(let anchor):
-                return anchor.alignmentRevision > 0
-                    && episode.alignment?.map(revision: anchor.alignmentRevision) != nil
-                    && anchor.mapIdentity.utf8.count == 64
-                    && anchor.mapIdentity.utf8.allSatisfy { (48...57).contains($0) || (97...102).contains($0) }
-                    && (-Self.frameLimit...Self.frameLimit).contains(anchor.frame)
-            case .insertion(let id, let offset):
-                return allowsInsertion && offset >= 0
-                    && insertionRegions.contains { $0.id == id && offset < $0.durationFrames }
-            }
+            anchor.isValid(in: episode, allowsInsertion: allowsInsertion, insertionRegions: insertionRegions)
         }
         func startFrame(_ anchor: AudioPlacementAnchor) -> Int64? {
             switch anchor {

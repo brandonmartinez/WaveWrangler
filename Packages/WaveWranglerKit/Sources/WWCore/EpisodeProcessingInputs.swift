@@ -8,6 +8,7 @@ public struct EpisodeProcessingInputs: Sendable, Equatable {
     public let mix: EpisodeMixState
     public let manualCuts: [ManualEpisodeCut]
     public let audioArrangement: AudioArrangement?
+    public let productionRange: EpisodeProductionRange?
     private let audioSources: [SourceRecord]
 
     public init(_ episode: Episode) {
@@ -24,6 +25,7 @@ public struct EpisodeProcessingInputs: Sendable, Equatable {
         mix.audioTracks = tracks.isEmpty ? nil : tracks
         self.mix = mix
         manualCuts = episode.activeManualCuts
+        productionRange = episode.productionRange == EpisodeProductionRange() ? nil : episode.productionRange
         let used = Set(episode.audioArrangement?.clips.map(\.source) ?? [])
         var arrangement = episode.audioArrangement ?? AudioArrangement()
         arrangement.assets = arrangement.assets.filter { used.contains($0.source) }
@@ -41,6 +43,7 @@ public struct EpisodeProcessingInputs: Sendable, Equatable {
     /// Live fader updates may change mix controls, never the prepared program or source geometry.
     public func hasSameProgramInputs(as other: Self) -> Bool {
         media == other.media && manualCuts == other.manualCuts
+            && productionRange == other.productionRange
             && audioArrangement == other.audioArrangement && audioSources == other.audioSources
     }
 

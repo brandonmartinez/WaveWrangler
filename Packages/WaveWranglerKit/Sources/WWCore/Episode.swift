@@ -29,6 +29,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
     /// Absent means unity input/output gain, centered speakers, and no effects.
     public var mix: EpisodeMixState?
     public var audioArrangement: AudioArrangement?
+    public var productionRange: EpisodeProductionRange?
 
     public init(
         id: EpisodeID = EpisodeID(),
@@ -46,7 +47,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         speakerAppearanceOverrides: [SpeakerAppearanceOverride]? = nil,
         workspace: EpisodeWorkspacePreferences? = nil,
         mix: EpisodeMixState? = nil,
-        audioArrangement: AudioArrangement? = nil
+        audioArrangement: AudioArrangement? = nil,
+        productionRange: EpisodeProductionRange? = nil
     ) {
         self.id = id
         self.title = title
@@ -64,6 +66,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         self.workspace = workspace
         self.mix = mix
         self.audioArrangement = audioArrangement
+        self.productionRange = productionRange
     }
 
     /// The complete recording partition, including ungrouped/unavailable recordings.

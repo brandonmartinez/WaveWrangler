@@ -889,7 +889,7 @@ struct ProgramTimelineTests {
     }
 }
 
-private struct ProgramFixture {
+struct ProgramFixture {
     let recording = SourceRecord(displayNameHint: "Generated recording")
     let supplemental = SourceRecord(displayNameHint: "Generated stereo asset", purpose: .supplementalAudio)
     let track = AudioTrack(name: "Music")

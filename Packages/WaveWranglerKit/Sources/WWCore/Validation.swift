@@ -55,6 +55,10 @@ extension ShowDocumentModel {
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if expectedSchemaVersion < 11, episode.productionRange != nil {
+                issues.append(.init(.invalidAudio, "schemas before 11 cannot contain production boundaries"))
+            }
+            issues += episode.productionRange?.validationIssues(in: episode) ?? []
             if expectedSchemaVersion < 10,
                episode.audioArrangement != nil || episode.sources.contains(where: { $0.purpose != nil })
                 || episode.mix?.audioTracks != nil {

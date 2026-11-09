@@ -12,10 +12,10 @@ struct ShowSchema9MigrationTests {
     @Test(arguments: 0..<9)
     func schemas1Through9MigrateDirectlyWithExactBackupsAndNeutralAbsence(_ index: Int) throws {
         let bytes = Self.goldens[index], schema = index + 1
-        #expect(ShowSchemaMigration.migratableSchemas == Set(1...9))
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: schema, minimum: 10)) { try coder.decode(bytes) }
+        #expect(ShowSchemaMigration.migratableSchemas == Set(1...10))
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: schema, minimum: SchemaVersion.show)) { try coder.decode(bytes) }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(bytes)
-        #expect(upgraded.payload.schemaVersion == 10)
+        #expect(upgraded.payload.schemaVersion == SchemaVersion.show)
         #expect(upgraded.payload.episodes.allSatisfy {
             $0.audioArrangement == nil && $0.mix?.audioTracks == nil
                 && $0.sources.allSatisfy { $0.purpose == nil && $0.isRecording }
@@ -79,7 +79,7 @@ struct ShowSchema9MigrationTests {
         let bytes = try helper.unchecked(old, schema: 9)
         let upgraded = try ShowSchemaMigration.decodeSchema9(bytes).payload
         var expected = old
-        expected.schemaVersion = 10
+        expected.schemaVersion = SchemaVersion.show
         #expect(upgraded == expected)
         #expect(upgraded.hasSameMediaInputs(as: old, in: fixture.episodeID, includingWorkingRange: true))
         #expect(upgraded.hasSameProcessingInputs(as: old, in: fixture.episodeID))
@@ -186,7 +186,7 @@ struct ShowSchema9MigrationTests {
         invalid.episodes[0].audioArrangement?.clips[0].envelope.points[1].fraction = try .init(numerator: 4, denominator: 3)
         #expect(throws: PersistenceError.self) { try coder.encode(invalid, revision: 1) }
         #expect(throws: PersistenceError.self) {
-            try coder.decode(ShowSchema8MigrationTests().unchecked(invalid, schema: 10))
+            try coder.decode(ShowSchema8MigrationTests().unchecked(invalid, schema: SchemaVersion.show))
         }
     }
 
@@ -203,10 +203,10 @@ struct ShowSchema9MigrationTests {
             default: Issue.record("Unknown synthetic damage")
             }
             #expect(throws: PersistenceError.self) { try coder.encode(changed, revision: 1) }
-            #expect(throws: PersistenceError.self) { try coder.decode(helper.unchecked(changed, schema: 10)) }
+            #expect(throws: PersistenceError.self) { try coder.decode(helper.unchecked(changed, schema: SchemaVersion.show)) }
         }
-        let future = Data(#"{"format":"com.brandonmartinez.wavewrangler.show","schemaVersion":11,"payload":"future"}"#.utf8)
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 11, supported: 10)) {
+        let future = Data(#"{"format":"com.brandonmartinez.wavewrangler.show","schemaVersion":12,"payload":"future"}"#.utf8)
+        #expect(throws: PersistenceError.unknownNewerSchema(found: 12, supported: SchemaVersion.show)) {
             try ShowSchemaMigration.decodeUpgradingOlder(future)
         }
 
@@ -233,7 +233,7 @@ struct ShowSchema9MigrationTests {
             invalid.episodes[0].audioArrangement?.clips[0].outputWindow = window
             #expect(throws: PersistenceError.self) { try coder.encode(invalid, revision: 1) }
             #expect(throws: PersistenceError.self) {
-                try coder.decode(ShowSchema8MigrationTests().unchecked(invalid, schema: 10))
+                try coder.decode(ShowSchema8MigrationTests().unchecked(invalid, schema: SchemaVersion.show))
             }
         }
     }
