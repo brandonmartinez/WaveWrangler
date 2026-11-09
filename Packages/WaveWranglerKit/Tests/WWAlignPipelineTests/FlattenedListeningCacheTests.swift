@@ -28,6 +28,16 @@ struct FlattenedListeningCacheTests {
         let first = try await AlignedAuditionWindowReader.readWindow(sourceURL: url, source: source,
             matching: witness, decoder: f.decoder, groupMap: map, decodedChannel: 0,
             outputFrames: 0..<48_000, cache: cache, revision: revision)
+        #expect(await cache.contextEncodingCount == 1)
+        for index in 1..<5 {
+            let frames = Int64(index * 48_000)..<Int64((index + 1) * 48_000)
+            let warm = try await AlignedAuditionWindowReader.readWindow(sourceURL: url, source: source,
+                matching: witness, decoder: f.decoder, groupMap: map, decodedChannel: 0,
+                outputFrames: frames, cache: cache, revision: revision)
+            #expect(warm.count == 48_000)
+        }
+        #expect(await cache.contextEncodingCount == 1,
+                "Resident slices must not encode the complete group map again")
         let replay = AlignedAuditionPCMCache(coordinator: f.coordinator)
         #expect(try await AlignedAuditionWindowReader.readWindow(sourceURL: url, source: source,
             matching: witness, decoder: f.decoder, groupMap: map, decodedChannel: 0,

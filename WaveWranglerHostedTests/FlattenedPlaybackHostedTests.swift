@@ -167,6 +167,40 @@ struct FlattenedPlaybackHostedTests {
         #expect(try f.model.displayClockSeconds(at: 18.1, clock: .episode) == 19.1)
     }
 
+    @Test func sourceRevalidationDoesNotRebuildTheFrozenProductionRecipe() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let model = f.document.store.model
+        let episode = f.model.episodeID
+        let recipe = try await f.runtime.mixerRecipe(model: model, episode: episode, programFrames: 0..<192_000)
+        let constructions = await f.runtime.productionRecipeConstructionCount
+        let start = ContinuousClock.now
+        for window in 0..<4 {
+            let first = Int64(window * 48_000)
+            let pcm = try await f.runtime.productionPCM(recipe: recipe, model: model,
+                frames: first..<(first + 48_000))
+            #expect(pcm.channels.count == recipe.routes.count)
+            #expect(pcm.channels.values.allSatisfy { $0.count == 48_000 })
+            try await f.runtime.validateProduction(recipe: recipe, model: model)
+        }
+        #expect(await f.runtime.productionRecipeConstructionCount == constructions,
+                "Per-window and periodic checks must verify live sources without rebuilding program geometry")
+        print("PRODUCTION_REVALIDATION windows=4 elapsed=\(start.duration(to: .now)) recipeReconstructions=0")
+        var changed = model
+        changed.episodes[0].mix = EpisodeMixState()
+        changed.episodes[0].mix?.master.gainDB = -6
+        await #expect(throws: MixerFailure.staleDependencies) {
+            try await f.runtime.validateProduction(recipe: recipe, model: changed)
+        }
+        let handle = try FileHandle(forWritingTo: f.files[1])
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data([0]))
+        try handle.close()
+        await #expect(throws: (any Error).self) {
+            try await f.runtime.validateProduction(recipe: recipe, model: model)
+        }
+    }
+
     @Test func prefetchedMixAudioStillRefusesAnExternallyChangedOriginal() async throws {
         let f = try await fixture()
         defer { f.close() }

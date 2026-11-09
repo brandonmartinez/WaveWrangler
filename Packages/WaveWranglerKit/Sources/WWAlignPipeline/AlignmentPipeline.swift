@@ -1618,7 +1618,7 @@ public final class AlignmentPipeline: Sendable {
         try await admittedMap(model: model, episode: episodeID).map
     }
 
-    private func admittedMap(
+    func admittedMap(
         model: ShowDocumentModel,
         episode episodeID: EpisodeID
     ) async throws(AlignedAssetRefusal) -> (
@@ -1803,6 +1803,9 @@ public final class AlignmentPipeline: Sendable {
     // MARK: Helpers
 
     func mapIdentity(revision: MapRevisionReference, version: TimeMapVersion, map: AlignedTimelineMap, registered: [SourceID: String]) throws -> AcceptedMapIdentity {
+        #if DEBUG
+        hooks.didCalculateMapIdentity?()
+        #endif
         let identity = try AcceptedMapIdentity(revision: revision, version: version, map: map, registered: registered)
         #if DEBUG
         if !hooks.mapIdentityKeysSources { return identity.withoutSources }

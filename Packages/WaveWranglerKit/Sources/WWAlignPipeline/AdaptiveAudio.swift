@@ -91,11 +91,12 @@ extension AlignmentPipeline {
         model: ShowDocumentModel, episode episodeID: EpisodeID, correction: SourceTimingCorrection,
         sourceURL: URL, witness: RawSourceIdentity, index: Int64, outputRate: Int
     ) async throws -> AdaptivePCM {
-        let map = try await verifiedAcceptedMap(model: model, episode: episodeID)
-        guard let version = model.episode(episodeID)?.alignment?.acceptedMap else { throw AlignmentAcceptanceError.noReference }
-        let revision = MapRevisionReference(episode: episodeID, revision: version.revision)
-        let identity = try mapIdentity(revision: revision, version: version, map: map,
-                                      registered: await coordinator.inputs.sources)
+        // Admission still checks live publication and dependencies. Its exact immutable context
+        // already owns the canonical identity; serializing the complete map again scales with
+        // recording duration even when the requested PCM is resident.
+        let admitted = try await admittedMap(model: model, episode: episodeID)
+        let revision = admitted.revision
+        let identity = admitted.identity
         guard let token = identity.sources.first(where: { $0.source == correction.source })?.token else {
             throw AlignmentWorkFailure.sourceFactsMismatch
         }

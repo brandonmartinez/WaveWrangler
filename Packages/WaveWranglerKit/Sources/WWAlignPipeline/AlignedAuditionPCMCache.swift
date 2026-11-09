@@ -50,6 +50,9 @@ public actor AlignedAuditionPCMCache {
     private var sampleBytes = 0
     private var hits = 0
     private var misses = 0
+    #if DEBUG
+    private(set) var contextEncodingCount = 0
+    #endif
 
     public init(maximumSampleBytes: Int = 16 << 20, maximumEntries: Int = 64,
                 coordinator: DerivedJobCoordinator? = nil) {
@@ -83,13 +86,7 @@ public actor AlignedAuditionPCMCache {
         if let revision, inputs.acceptedMaps[revision.episode] != revision.revision {
             throw AlignmentWorkFailure.acceptedMapChanged
         }
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
-        let context = Context(sourceRate: interpretation.sourceSampleRate,
-            sourceFrames: interpretation.frames.validFrames, channelCount: interpretation.channelCount,
-            map: map, recipe: .m2Candidate)
-        // The coordinator owns canonical key hashing; this is timing/format metadata, never media bytes.
-        let contextKey = try encoder.encode(context).base64EncodedString()
+        var contextKey: String?
         let tileLength: Int64 = 5 * Int64(AlignedAuditionWindowReader.outputRate)
         let asset = AssetSpec(kind: "ww.aligned-listening-pcm", revision: 1)
         await coordinator.setAssetRevision(asset)
@@ -104,6 +101,19 @@ public actor AlignedAuditionPCMCache {
             if let cached = self.samples(for: memoryKey) {
                 samples = cached
             } else {
+                if contextKey == nil {
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.sortedKeys, .withoutEscapingSlashes]
+                    let context = Context(sourceRate: interpretation.sourceSampleRate,
+                        sourceFrames: interpretation.frames.validFrames, channelCount: interpretation.channelCount,
+                        map: map, recipe: .m2Candidate)
+                    // Persistent keys need canonical metadata; memory hits do not.
+                    contextKey = try encoder.encode(context).base64EncodedString()
+                    #if DEBUG
+                    contextEncodingCount += 1
+                    #endif
+                }
+                guard let contextKey else { throw ListeningPCM.Failure.invalidPayload }
                 let recipe = RecipeReference(name: "ww.aligned-listening-pcm;\(contextKey);tile=\(index)",
                     revision: RenderVersions.renderer)
                 let key = DerivedAssetKey(asset: asset, sources: [SourceRevision(source: source, token: token)],

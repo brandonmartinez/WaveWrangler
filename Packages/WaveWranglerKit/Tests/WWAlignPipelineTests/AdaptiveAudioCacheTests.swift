@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import Testing
 import WWCore
 import WWDecode
@@ -8,7 +9,7 @@ import WWTimeMap
 
 @Suite("Adaptive listening PCM reuse", .serialized)
 struct AdaptiveAudioCacheTests {
-    static func fixture() async throws -> (PipelineFixture, SourceTimingCorrection) {
+    static func fixture(hooks: AlignmentPipelineTestHooks = .init()) async throws -> (PipelineFixture, SourceTimingCorrection) {
         let fixture = try await PipelineFixture([
             .init(name: "Reference", sources: [
                 .init(name: "reference", seconds: 16, signal: .scene(seed: 132), sampleRate: 8000),
@@ -16,7 +17,7 @@ struct AdaptiveAudioCacheTests {
             .init(name: "Adaptive", sources: [
                 .init(name: "target", channels: 2, seconds: 16, signal: .scene(seed: 132), sampleRate: 8000),
             ]),
-        ], nativeAudio: true)
+        ], hooks: hooks, nativeAudio: true)
         let preparation = try await fixture.pipeline.prepareManual(model: fixture.model, episode: fixture.episodeID,
             sources: fixture.sources, authorizations: fixture.authorizations)
         _ = try await fixture.acceptAndActivate(preparation, [
@@ -39,6 +40,53 @@ struct AdaptiveAudioCacheTests {
         fixture.model.episodes[0].alignment?.maps[0].sourceCorrections = [correction]
         try await fixture.pipeline.activate(model: fixture.model, episode: fixture.episodeID)
         return (fixture, correction)
+    }
+
+    @Test func warmWindowsDoNotReserializeARecordingSizedAcceptedMap() async throws {
+        let calculations = Atomic<Int>(0)
+        var hooks = AlignmentPipelineTestHooks()
+        hooks.didCalculateMapIdentity = { _ = calculations.wrappingAdd(1, ordering: .relaxed) }
+        let (f, initial) = try await Self.fixture(hooks: hooks)
+        var correction = initial
+        // Dense timing outside the requested tile models long-recording metadata without a large
+        // media fixture or making the test measure thousands of cold stretch operations.
+        correction.segments = [.init(sourceStart: 0, sourceEnd: 8, alignedStart: 0,
+                                     rateRatio: 1.001, kind: .estimated)]
+        var aligned = correction.segments[0].alignedEnd
+        for index in 0..<4096 {
+            let segment = SourceTimingSegment(sourceStart: 8 + Double(index) / 512,
+                sourceEnd: 8 + Double(index + 1) / 512, alignedStart: aligned,
+                rateRatio: index.isMultiple(of: 2) ? 0.999 : 1.001, kind: .estimated)
+            correction.segments.append(segment)
+            aligned = segment.alignedEnd
+        }
+        try #require(correction.isValid)
+        f.model.episodes[0].alignment?.maps[0].sourceCorrections = [correction]
+        try await f.pipeline.activate(model: f.model, episode: f.episodeID)
+        let version = try #require(f.model.episodes[0].alignment?.acceptedMap)
+        let serializedBytes = try JSONEncoder().encode(version).count
+        let url = f.url("target")
+        let format = try await f.decoder.withDecodingCursor(url, source: correction.source) { $0.interpretation }
+        let witness = try await f.decoder.captureRawIdentity(url, matching: format.sourceFingerprint)
+        let prepared = calculations.load(ordering: .relaxed)
+        let first = try await f.pipeline.adaptiveAudioWindow(model: f.model, episode: f.episodeID,
+            source: correction.source, sourceURL: url, matching: witness, outputFrames: 0..<48_000)
+        let start = ContinuousClock.now
+        for _ in 0..<12 {
+            #expect(try await f.pipeline.adaptiveAudioWindow(model: f.model, episode: f.episodeID,
+                source: correction.source, sourceURL: url, matching: witness, outputFrames: 0..<48_000) == first)
+        }
+        let elapsed = start.duration(to: .now)
+        #expect(calculations.load(ordering: .relaxed) == prepared,
+                "Cold and resident tiles must use the exact identity from live map admission, not reserialize it")
+        print("ADAPTIVE_MAP_SCALING segments=\(correction.segments.count) mapBytes=\(serializedBytes) warmWindows=12 elapsed=\(elapsed) identityCalculations=0")
+        let admitted = try await f.pipeline.admittedMap(model: f.model, episode: f.episodeID)
+        await f.coordinator.invalidate(admitted.identity.slot)
+        await #expect(throws: AlignedAssetRefusal.acceptedMapContentNotActive) {
+            try await f.pipeline.adaptiveAudioWindow(model: f.model, episode: f.episodeID,
+                source: correction.source, sourceURL: url, matching: witness, outputFrames: 0..<48_000)
+        }
+        await f.pipeline.shutdown()
     }
 
     @Test func repeatedPlaybackWindowsRetainExactAudioAcrossDenseTimingTransitions() async throws {

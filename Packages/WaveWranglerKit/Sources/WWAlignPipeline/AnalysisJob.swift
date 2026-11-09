@@ -20,6 +20,8 @@ struct PipelineEnvironment: Sendable {
 #if DEBUG
 /// Test-only seams (DEBUG builds only).
 struct AlignmentPipelineTestHooks: Sendable {
+    /// Counts canonical map serialization separately from live accepted-map admission.
+    var didCalculateMapIdentity: (@Sendable () -> Void)?
     /// Called in a group render after a segment is rendered and verified, before its currency re-check and
     /// publication, while every gateway cursor of the group is still open.
     var beforeSegmentPublish: (@Sendable (RecorderGroupID, Int64) async -> Void)?

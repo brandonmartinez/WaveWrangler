@@ -1593,6 +1593,18 @@ before returning. Insertion/exterior intervals are explicit dialogue silence,
 not extrapolated accepted timing. Effects never receive a source URL. Offline jobs also recheck
 admission during their latency/tail drain, not just during source reads.
 
+Repeated production admission verifies the frozen processing inputs and reopens
+each used source through the witnessed format gateway, including supplemental
+access generations; it does not reconstruct the unchanged program composition
+and mixer routes. Adaptive tile lookup reuses the canonical identity held by the
+exact accepted-map context, while retaining the live coordinator-publication,
+source-witness, and stale-key checks. Resident affine tiles likewise avoid
+serializing the complete group map just to return a slice. Neither optimization
+caches permission or permits reuse across changed map content. The synthetic
+`warmWindowsDoNotReserializeARecordingSizedAcceptedMap` regression puts 4,097
+timing segments in a small generated recording and counts identity calculations,
+separating metadata scaling from cold audio stretching and wall-clock noise.
+
 The initial qualification is native arm64, 48 kHz planar Float32, mono speaker
 inserts, stereo audio-track inserts and stereo Master inserts/output. Only `aufx` and `aumf` effects with a
 main input and a single output bus supporting the exact requested format are

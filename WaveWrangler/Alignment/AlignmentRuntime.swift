@@ -68,6 +68,7 @@ actor AlignmentRuntime {
     #if DEBUG
     private var seededFixtureDependents: Set<EpisodeID> = []
     private var productionValidationHook: (@Sendable () async throws -> Void)?
+    private(set) var productionRecipeConstructionCount = 0
 
     func setProductionValidationHookForTesting(_ hook: (@Sendable () async throws -> Void)?) {
         productionValidationHook = hook
@@ -1112,8 +1113,12 @@ actor AlignmentRuntime {
         if episode.alignment?.acceptedMap != nil {
             _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         }
-        return try MixerRecipe(episode: episode, sources: snapshots, programFrames: programFrames,
-                               policy: policy, composition: composition)
+        let recipe = try MixerRecipe(episode: episode, sources: snapshots, programFrames: programFrames,
+                                     policy: policy, composition: composition)
+        #if DEBUG
+        productionRecipeConstructionCount += 1
+        #endif
+        return recipe
     }
 
     private struct SupplementalAdmission: Sendable {
@@ -1303,9 +1308,7 @@ actor AlignmentRuntime {
             tracks = try await scheduler.read(frames)
         }
         // Source access, identity and timing are checked again across the complete multi-source window.
-        let current = try await mixerRecipe(model: model, episode: recipe.episode,
-            programFrames: recipe.programFrames, policy: recipe.policy)
-        guard current == recipe else { throw MixerFailure.staleDependencies }
+        try await verifyProductionSources(recipe: recipe, model: model)
         return MixerPCMWindow(frames: frames, channels: channels, audioTracks: tracks)
     }
 
@@ -1344,9 +1347,50 @@ actor AlignmentRuntime {
         #if DEBUG
         if let productionValidationHook { try await productionValidationHook() }
         #endif
-        let current = try await mixerRecipe(model: model, episode: recipe.episode,
-            programFrames: recipe.programFrames, policy: recipe.policy)
-        guard current == recipe else { throw MixerFailure.staleDependencies }
+        try await verifyProductionSources(recipe: recipe, model: model)
+    }
+
+    /// Revalidate the frozen recipe without reconstructing program geometry and routes. Those pure
+    /// values are already bound to the exact processing inputs; access and source format are not.
+    private func verifyProductionSources(recipe: MixerRecipe, model: ShowDocumentModel) async throws {
+        guard let episode = model.episode(recipe.episode),
+              EpisodeProcessingInputs(episode) == recipe.dependencies else {
+            throw MixerFailure.staleDependencies
+        }
+        let sources = try await resolveSources(episode.sources)
+        if episode.alignment?.acceptedMap != nil {
+            try await pipeline.activate(model: model, episode: recipe.episode)
+            _ = try await pipeline.verifiedAcceptedMap(model: model, episode: recipe.episode)
+        }
+        var seen: Set<SourceID> = []
+        for route in recipe.routes where seen.insert(route.source.source).inserted {
+            let snapshot = route.source
+            let admission = try await waveformSource(snapshot.source, sources: sources)
+            let format = try await AlignedAuditionWindowReader.inspectFormat(
+                sourceURL: admission.url, source: snapshot.source,
+                matching: admission.witness, decoder: pipeline.decoder)
+            try await reverify(admission)
+            guard snapshot == MixerSourceSnapshot(source: snapshot.source,
+                witness: admission.witness, interpretation: format) else {
+                throw MixerFailure.staleDependencies
+            }
+        }
+        for snapshot in recipe.audioSources {
+            let admission = try await supplementalAdmission(snapshot.source, episode: episode)
+            let format = try await AlignedAuditionWindowReader.inspectFormat(
+                sourceURL: admission.read.location, source: snapshot.source,
+                matching: admission.read.witness, decoder: pipeline.decoder)
+            try await admission.read.validateCurrentAccess()
+            guard snapshot == MixerSourceSnapshot(source: snapshot.source,
+                witness: admission.read.witness, interpretation: format,
+                accessGeneration: admission.generation) else {
+                throw MixerFailure.staleDependencies
+            }
+        }
+        if episode.alignment?.acceptedMap != nil {
+            _ = try await pipeline.verifiedAcceptedMap(model: model, episode: recipe.episode)
+        }
+        try Task.checkCancellation()
     }
 
     func renderProductionOffline(
@@ -1357,9 +1401,8 @@ actor AlignmentRuntime {
         try await withProductionConsumer(recipe: recipe, model: model) { [self] consumer in
             try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { [self] in
                 guard try await isCurrent() else { return false }
-                let current = try await mixerRecipe(model: model, episode: recipe.episode,
-                    programFrames: recipe.programFrames, policy: recipe.policy)
-                return current == recipe
+                try await verifyProductionSources(recipe: recipe, model: model)
+                return true
             },
                 input: { [self] frames in
                     try await productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
