@@ -47,7 +47,14 @@ final class ProductionPlaybackRetirements: Sendable {
 }
 
 /// One bounded raw-PCM producer. Prepared samples do not contain gains, effects, or faders.
-private actor ProductionPCMQueue {
+actor ProductionPCMQueue {
+    enum WaitKind: Sendable, Equatable { case capacity, input, ready }
+
+    private struct Waiter {
+        let kind: WaitKind
+        let continuation: CheckedContinuation<Void, any Error>
+    }
+
     private let end: Int64
     private let prepare: @Sendable (Range<Int64>) async throws -> MixerPCMWindow
     private let failed: @Sendable (any Error) -> Void
@@ -56,7 +63,19 @@ private actor ProductionPCMQueue {
     private var windows: [MixerPCMWindow] = []
     private var producer: Task<Void, Never>?
     private var finished = false
+    private var stopped = false
     private var failure: (any Error)?
+    private var waiters: [UUID: Waiter] = [:]
+
+    #if DEBUG
+    enum Event: Sendable, Equatable { case waiting(WaitKind), stopping }
+    private var onEventForTesting: (@Sendable (Event) -> Void)?
+    var pendingWaiterCountForTesting: Int { waiters.count }
+    var hasProducerForTesting: Bool { producer != nil }
+    func setObserverForTesting(_ observer: @escaping @Sendable (Event) -> Void) {
+        onEventForTesting = observer
+    }
+    #endif
 
     init(frames: Range<Int64>, diagnostics: ProductionPlaybackDiagnostics,
          prepare: @escaping @Sendable (Range<Int64>) async throws -> MixerPCMWindow,
@@ -69,17 +88,20 @@ private actor ProductionPCMQueue {
     }
 
     func start() {
-        guard producer == nil else { return }
+        guard producer == nil, !finished, !stopped else { return }
         producer = Task { await fill() }
     }
 
     private func fill() async {
-        defer { finished = true }
+        defer {
+            finished = true
+            signal()
+        }
         do {
             while nextFrame < end {
                 try Task.checkCancellation()
                 if windows.count >= MixerLiveTiming.sourcePrefetchWindows {
-                    try await Task.sleep(for: .milliseconds(5))
+                    try await wait(for: .capacity)
                     continue
                 }
                 let frames = nextFrame..<min(end, nextFrame + Int64(MixerLiveTiming.sourceWindowFrames))
@@ -89,43 +111,98 @@ private actor ProductionPCMQueue {
                 windows.append(window)
                 diagnostics.preparedRawWindow(queued: windows.count)
                 nextFrame = frames.upperBound
+                signal(.input)
+                if windows.count >= MixerLiveTiming.sourcePrefetchWindows { signal(.ready) }
             }
         } catch {
-            failure = error
-            failed(error)
+            // Explicit stop cancels the producer; it is not a source failure.
+            if !stopped {
+                failure = error
+                failed(error)
+            }
         }
     }
 
     func take() async throws -> MixerPCMWindow? {
         while true {
             try Task.checkCancellation()
+            if stopped { throw CancellationError() }
             if let failure { throw failure }
             if !windows.isEmpty {
                 let window = windows.removeFirst()
                 diagnostics.rawQueueChanged(count: windows.count)
+                signal(.capacity)
                 return window
             }
             if finished { return nil }
-            try await Task.sleep(for: .milliseconds(2))
+            try await wait(for: .input)
         }
     }
 
     func waitUntilReady() async throws {
         while true {
             try Task.checkCancellation()
+            if stopped { throw CancellationError() }
             if let failure { throw failure }
             if finished || windows.count >= MixerLiveTiming.sourcePrefetchWindows { return }
-            try await Task.sleep(for: .milliseconds(5))
+            try await wait(for: .ready)
+        }
+    }
+
+    private func needsWait(_ kind: WaitKind) -> Bool {
+        guard !stopped, !finished, failure == nil else { return false }
+        switch kind {
+        case .capacity: return windows.count >= MixerLiveTiming.sourcePrefetchWindows
+        case .input: return windows.isEmpty
+        case .ready: return windows.count < MixerLiveTiming.sourcePrefetchWindows
+        }
+    }
+
+    private func wait(for kind: WaitKind) async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, any Error>) in
+                // Predicate and registration share this actor turn, including cancellation-before-registration.
+                if Task.isCancelled {
+                    continuation.resume(throwing: CancellationError())
+                } else if !needsWait(kind) {
+                    continuation.resume()
+                } else {
+                    waiters[id] = Waiter(kind: kind, continuation: continuation)
+                    #if DEBUG
+                    onEventForTesting?(.waiting(kind))
+                    #endif
+                }
+            }
+        } onCancel: {
+            Task { await self.cancelWaiter(id) }
+        }
+    }
+
+    private func cancelWaiter(_ id: UUID) {
+        waiters.removeValue(forKey: id)?.continuation.resume(throwing: CancellationError())
+    }
+
+    private func signal(_ kind: WaitKind? = nil) {
+        let ids = waiters.compactMap { id, waiter in kind == nil || waiter.kind == kind ? id : nil }
+        for id in ids {
+            waiters.removeValue(forKey: id)?.continuation.resume()
         }
     }
 
     func stop() async {
+        stopped = true
         let pending = producer
-        producer = nil
         pending?.cancel()
-        await pending?.value
         windows.removeAll()
         diagnostics.rawQueueChanged(count: 0)
+        signal()
+        #if DEBUG
+        onEventForTesting?(.stopping)
+        #endif
+        // Keep the handle published while joining: concurrent stops must join the same preparation.
+        await pending?.value
+        producer = nil
         finished = true
     }
 }

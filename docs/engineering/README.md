@@ -1723,7 +1723,16 @@ and does not skip the read gateway or ongoing source surveillance.
 `ProductionMixPlayback` reads a value snapshot of live controls on **every**
 512-frame block, including latency drain; no gains or effects are baked into the
 raw cache. Document edits synchronously update controls or invalidate incompatible
-workers. The processed scheduling horizon is 4096 frames
+workers. The single raw-PCM producer retains at most five 48,000-frame windows
+and starts no additional preparation while that queue is full. Actor-owned,
+cancellation-aware continuations wake the producer when a consumer frees capacity,
+consumers when input arrives, and startup when the queue is full or the final short
+program is complete. End, source failure, and stop release blocked waiters; stop
+joins in-flight preparation before retirement and never restarts that queue.
+This removes raw-refill polling without weakening source authorization or
+verification. Output pacing still uses bounded 2 ms checks of the device-owned
+buffered horizon; it has no safe queue-owned consumption notification.
+The processed scheduling horizon is 4096 frames
 plus at most one in-flight block: at most 4608 frames / 96 ms of prepared audio,
 not seconds of producer buffering. Before starting the device clock, production
 queues at least 2048 verified output frames (or the complete final short program).
