@@ -77,6 +77,27 @@ struct FlattenedPlaybackHostedTests {
             "The output queue must record the real underrun before invoking its UI handler.")
     }
 
+    @Test func stopInvalidatesQueuedProductionAndCannotRestartFromAStaleProducer() async throws {
+        let output = AlignmentAudioPlayback()
+        defer { output.stop() }
+        let generation = output.generation
+        var deadlines = 0
+        let block = MixerPCMOutput(firstFrame: 0,
+            channels: Array(repeating: Array(repeating: 0.25, count: MixerLiveTiming.processingBlockFrames), count: 2))
+        try output.enqueueProduction(block, final: false, generation: generation) { deadlines += 1 }
+        output.stop()
+        #expect(output.generation != generation)
+        let clockCleared = output.clock == nil
+        #expect(clockCleared)
+        #expect(throws: CancellationError.self) {
+            try output.enqueueProduction(block, final: true, generation: generation) { deadlines += 1 }
+        }
+        try await Task.sleep(for: .milliseconds(150))
+        let stillStopped = output.clock == nil
+        #expect(stillStopped)
+        #expect(deadlines == 0)
+    }
+
     @Test(arguments: [false, true])
     func adaptivePlaybackContinuesWhileTheMainActorLaysOutDenseTranscripts(production: Bool) async throws {
         let f = try await fixture()
@@ -86,6 +107,7 @@ struct FlattenedPlaybackHostedTests {
         let words = (0..<40_000).map { index in
             TranscriptWord(text: "synthetic", alignedStart: Double(index) / 10, alignedEnd: Double(index) / 10 + 0.08)
         }
+
         let index = AudioTimelineWordIndex(words: words)
         let end = production ? 4.0 : 8.0
         if production { f.model.playProductionMix(interval: 0...end) }
@@ -108,6 +130,41 @@ struct FlattenedPlaybackHostedTests {
         #expect(f.model.waveformPlayheadSeconds == end)
         #expect(f.document.store.model == original)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
+    }
+
+    @Test func manualEpisodeSilenceRetainsItsClockAndProductionSeeksWithoutAnArrangement() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        let editor = f.model.audioEditor
+        editor.refresh()
+        try await wait(editor.error ?? "Waiting for current production placement") { editor.production != nil }
+        let composition = try #require(editor.composition)
+        #expect(!editor.hasArrangement)
+        let range = EpisodeProductionRange(
+            start: try composition.timeline.unpinnedAnchor(atProgramFrame: -48_000),
+            end: try composition.timeline.unpinnedAnchor(atProgramFrame: 960_000))
+        let changed = editor.setBoundaryTimes(range: range, speakerIn: 0.5, speakerOut: 4)
+        try #require(changed, "\(editor.error ?? "")")
+        editor.refresh()
+        let saved = f.document.store.model
+        f.document.undoManager?.undo()
+        editor.refresh()
+        #expect(editor.episode?.productionRange == nil)
+        f.document.undoManager?.redo()
+        editor.refresh()
+        #expect(f.document.store.model == saved)
+        try await MixerHostedTests().save(f.document)
+        f.model.selectProductionMix()
+        f.model.seekDisplayClock("19", clock: .episode)
+        #expect(f.model.waveformPlayheadSeconds == 18)
+        #expect(try f.model.displayClockSeconds(at: 18, clock: .episode) == 19)
+        f.model.playProductionMix(interval: 18...18.1, repeating: false)
+        try await wait(f.model.lastError ?? f.model.auditionLabel) {
+            !f.model.canStopAudition || f.model.lastError != nil
+        }
+        #expect(f.model.lastError == nil, "\(f.model.lastError ?? "")")
+        #expect(f.model.waveformPlayheadSeconds == 18.1)
+        #expect(try f.model.displayClockSeconds(at: 18.1, clock: .episode) == 19.1)
     }
 
     @Test func prefetchedMixAudioStillRefusesAnExternallyChangedOriginal() async throws {

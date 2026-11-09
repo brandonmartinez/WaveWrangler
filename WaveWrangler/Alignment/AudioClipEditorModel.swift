@@ -19,6 +19,7 @@ final class AudioClipEditorModel {
         }
     }
     private(set) var geometryVersion = UUID()
+    private(set) var production: EpisodeProductionProjection?
     private var compositionEpisode: Episode?
     private var compositionGeneration: UInt64?
     var selectedClip: AudioClipID? {
@@ -132,9 +133,11 @@ final class AudioClipEditorModel {
                             compositionEpisode = episode
                             compositionGeneration = generation
                             error = nil
+                            refreshProduction()
                         } catch is CancellationError {} catch {
                             guard projectionGeneration == projectionID, store.modelGeneration == generation else { return }
                             composition = nil
+                            production = nil
                             self.error = "Audio placement needs review: \(error)"
                         }
                     }
@@ -144,8 +147,77 @@ final class AudioClipEditorModel {
                 self.error = "Audio placement needs review: \(error)"
             }
         }
+        refreshProduction()
         if let selected { selectedTrack = selected.clip.track }
         prepareWaveformsIfNeeded(episode)
+    }
+
+    private func refreshProduction() {
+        guard let episode, let composition, compositionGeneration == store.modelGeneration else {
+            production = nil
+            return
+        }
+        do {
+            production = try .init(episode: episode, composition: composition)
+        } catch {
+            production = nil
+            self.error = error.localizedDescription
+        }
+    }
+
+    @discardableResult
+    func setProductionRange(_ range: EpisodeProductionRange?) -> Bool {
+        do {
+            guard var candidate = episode, let composition, compositionGeneration == store.modelGeneration else {
+                throw EpisodeProductionError.staleComposition
+            }
+            candidate.productionRange = range
+            _ = try EpisodeProductionProjection(episode: candidate, composition: composition)
+            return apply("Set Episode Boundaries") { model throws(DomainError) in
+                try model.settingProductionRange(range, in: self.episodeID)
+            }
+        } catch { report(error); return false }
+    }
+
+    func setEpisodeBoundary(start: Bool, programSeconds: Double?) {
+        do {
+            var range = episode?.productionRange ?? .init()
+            guard let composition else { throw EpisodeProductionError.staleComposition }
+            let anchor = try programSeconds.map {
+                try composition.timeline.unpinnedAnchor(atProgramFrame: Self.programFrame($0))
+            }
+            if start { range.start = anchor } else { range.end = anchor }
+            _ = setProductionRange(range)
+        } catch { report(error) }
+    }
+
+    @discardableResult
+    func setBoundaryTimes(range: EpisodeProductionRange, speakerIn: Double?, speakerOut: Double?) -> Bool {
+        do {
+            guard var candidate = episode, let composition, compositionGeneration == store.modelGeneration else {
+                throw EpisodeProductionError.staleComposition
+            }
+            let old = candidate.cleanup?.workingRange
+            let changed = speakerIn != old?.tracksIn || speakerOut != old?.tracksOut
+            if changed {
+                guard let revision = candidate.alignment?.acceptedRevision else {
+                    throw EpisodeProductionError.staleSpeakerRange
+                }
+                var cleanup = candidate.cleanup ?? .init()
+                let working = EpisodeWorkingRange(alignmentRevision: revision, tracksIn: speakerIn, tracksOut: speakerOut)
+                guard working.isValid else { throw EpisodeProductionError.invalidSpeakerRange }
+                cleanup.workingRange = speakerIn == nil && speakerOut == nil ? nil : working
+                candidate.cleanup = cleanup
+            }
+            candidate.productionRange = range
+            _ = try EpisodeProductionProjection(episode: candidate, composition: composition)
+            let cleanup = candidate.cleanup
+            return apply("Set Episode and Speaker Boundaries") { model throws(DomainError) in
+                let updated = try model.settingProductionRange(range, in: self.episodeID)
+                if changed, let cleanup { return try updated.settingCleanup(cleanup, in: self.episodeID) }
+                return updated
+            }
+        } catch { report(error); return false }
     }
 
     private func prepareWaveformsIfNeeded(_ episode: Episode) {

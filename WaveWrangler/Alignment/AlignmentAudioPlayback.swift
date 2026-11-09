@@ -259,6 +259,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         }
         engine.pause()
         if let productionPlayer {
+            productionPlayer.volume = 0
             productionPlayer.stop()
             engine.detach(productionPlayer)
             self.productionPlayer = nil

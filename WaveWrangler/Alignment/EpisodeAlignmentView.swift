@@ -161,7 +161,7 @@ struct AlignmentWorkspace: View {
         waveforms
         .safeAreaInset(edge: .top, spacing: 0) {
             AudioWorkspaceActions(state: state, alignment: model)
-                .padding(10).background(.bar)
+                .background(.bar)
                 .overlay(alignment: .bottom) { Divider() }
         }
         .onAppear { AlignmentKeyHandler.install() }

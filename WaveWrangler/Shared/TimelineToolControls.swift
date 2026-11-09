@@ -9,7 +9,6 @@ struct TimelineToolControls: View {
             selector("Primary tool", selection: $listening.tool, command: false)
             selector("Command-click tool", selection: $listening.commandTool, command: true)
         }
-        .background(TimelineToolModifierMonitor(listening: listening).frame(width: 0, height: 0))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Timeline tools")
         .accessibilityValue(listening.effectiveTool.rawValue)

@@ -231,12 +231,15 @@ final class EpisodeAlignmentModel {
         max(presentationTimeline.editedTime(forAlignedTime: alignedNavigationEndSeconds),
             audioEditor.composition?.programFrames.map {
                 presentationTimeline.displayTime(forProgramTime: Double($0.upperBound) / 48_000)
+            } ?? 0,
+            audioEditor.production?.episodeFrames.map {
+                presentationTimeline.displayTime(forProgramTime: Double($0.upperBound) / 48_000)
             } ?? 0)
     }
     private(set) var cutTimeline = ManualCutTimeline.unedited
     var presentationTimeline: AudioTimelineProjection {
         AudioTimelineProjection(cuts: cutTimeline,
-            program: audioEditor.hasArrangement ? audioEditor.composition?.timeline : nil,
+            program: audioEditor.composition?.timeline,
             expanded: document?.store.model.episode(episodeID)?.activeManualCuts.first { $0.id == listening.expandedManualCutID })
     }
     private var appliedPresentation = AudioTimelineProjection()
@@ -717,15 +720,21 @@ final class EpisodeAlignmentModel {
     }
     var waveformFitRange: ClosedRange<Double>? {
         let recording = AlignmentWaveformProjection.overviewExtent(indices: waveformOverviewIndices.values)
+        let productionStart = audioEditor.production?.episodeFrames.map {
+            presentationTimeline.displayTime(forProgramTime: Double($0.lowerBound) / 48_000)
+        }
+        let productionEnd = audioEditor.production?.episodeFrames.map {
+            presentationTimeline.displayTime(forProgramTime: Double($0.upperBound) / 48_000)
+        }
         if audioEditor.hasArrangement, let frames = audioEditor.composition?.programFrames {
             let first = presentationTimeline.displayTime(forProgramTime: Double(frames.lowerBound) / 48_000)
             let last = presentationTimeline.displayTime(forProgramTime: Double(frames.upperBound) / 48_000)
-            let lower = min(0, first, recording?.lowerBound ?? first)
-            return lower...max(lower + 0.5, last, recording?.upperBound ?? last)
+            let lower = min(0, first, recording?.lowerBound ?? first, productionStart ?? first)
+            return lower...max(lower + 0.5, last, recording?.upperBound ?? last, productionEnd ?? last)
         }
         guard let extent = recording else { return nil }
-        let lower = min(-300, extent.lowerBound)
-        let upper = max(0, extent.upperBound)
+        let lower = min(-300, extent.lowerBound, productionStart ?? extent.lowerBound)
+        let upper = max(0, extent.upperBound, productionEnd ?? extent.upperBound)
         return lower...max(lower + 0.5, upper)
     }
     var waveformViewingBounds: ClosedRange<Double> {
@@ -1756,7 +1765,7 @@ final class EpisodeAlignmentModel {
             auditionLabel = "Select an interval that overlaps available media."
             return
         }
-        if listening.usesProductionMix { playProductionMix(interval: interval) }
+        if listening.usesProductionMix { playProductionMix(interval: interval, repeating: false) }
         else { playEnabledTracks(interval: interval, repeatInterval: false) }
     }
 
@@ -1771,8 +1780,37 @@ final class EpisodeAlignmentModel {
         listeningMode = .sourceAudition
     }
 
+    func selectProductionMix() {
+        stopAudition()
+        listening.usesProductionMix = true
+        listeningMode = .productionMix
+    }
+
+    func displayClockSeconds(at displayTime: Double, clock: EpisodeClock) throws -> Double? {
+        if !listening.usesProductionMix { return displayTime }
+        guard let program = presentationTimeline.programTime(forDisplayTime: displayTime),
+              let production = audioEditor.production else { return nil }
+        let frame = try AudioClipEditorModel.programFrame(program)
+        return try production.clockFrame(atProgramFrame: frame, clock: clock).map { Double($0) / 48_000 }
+    }
+
+    func seekDisplayClock(_ text: String, clock: EpisodeClock) {
+        do {
+            let seconds = try EpisodeTimeDisplay.parse(text)
+            if !listening.usesProductionMix { seekEnabledTracks(to: seconds); return }
+            guard let production = audioEditor.production else { throw EpisodeProductionError.staleComposition }
+            let frame = Int64((seconds * 48_000).rounded())
+            guard let program = try production.programFrame(atClockFrame: frame, clock: clock) else {
+                throw ManualCutReviewFailure(reason: "This clock has no dialogue position here. Choose Episode Time or Timeline Time.")
+            }
+            seekEnabledTracks(to: presentationTimeline.displayTime(forProgramTime: Double(program) / 48_000))
+        } catch {
+            lastError = "Cannot seek: \(error.localizedDescription)"
+        }
+    }
+
     var waveformAuditionBounds: ClosedRange<Double> {
-        if listening.usesProductionMix, let frames = audioEditor.composition?.programFrames {
+        if listening.usesProductionMix, let frames = audioEditor.production?.episodeFrames {
             let first = presentationTimeline.displayTime(forProgramTime: Double(frames.lowerBound) / 48_000)
             let end = presentationTimeline.displayTime(forProgramTime: Double(frames.upperBound) / 48_000)
             return first...end
@@ -1792,12 +1830,13 @@ final class EpisodeAlignmentModel {
     }
 
     var isSourceTimePreview: Bool {
-        canStopAudition ? listeningMode == .sourceTimePreview : sourceTimeSoloTrack != nil
+        canStopAudition ? listeningMode == .sourceTimePreview
+            : !listening.usesProductionMix && sourceTimeSoloTrack != nil
     }
 
-    /// Explicit production listening. Panel visibility, source Solo/Mute, and comparison layouts
-    /// never select this mode implicitly. Intervals use the collapsed shared-edit timeline.
-    func playProductionMix(interval: ClosedRange<Double>? = nil) {
+    /// Production is the default transport mode. Source Solo/Mute and comparison layouts never
+    /// change its recipe. Source Audition explicitly opts into diagnostic original listening.
+    func playProductionMix(interval: ClosedRange<Double>? = nil, repeating: Bool? = nil) {
         listening.usesProductionMix = true
         adoptCachedPresentation()
         stopAudition()
@@ -1816,38 +1855,30 @@ final class EpisodeAlignmentModel {
         listeningMode = .productionMix
         isPreparingAudition = true
         auditionLabel = "Preparing the production mix."
+        let requestedRange = interval ?? (listening.cycleEnabled ? listening.cycleRange : nil)
+        let loops = repeating ?? (listening.cycleEnabled && requestedRange != nil)
         transportTask = Task { [weak self] in
             guard let self else { return }
             do {
                 let composition = try await runtime.programComposition(model: document.store.model, episode: episodeID)
-                guard let extent = composition.programFrames else { throw MixerFailure.invalidRecipe("the program is empty") }
+                let production = try EpisodeProductionProjection(episode: episode, composition: composition)
+                guard let extent = production.episodeFrames else { throw MixerFailure.invalidRecipe("the episode is empty") }
                 let timeline = composition.timeline
                 let rate = Double(AudioArrangement.frameRate)
-                var position = Double(extent.lowerBound) / rate
-                if audioEditor.hasArrangement {
-                    guard let program = presentationTimeline.programTime(forDisplayTime: waveformPlayheadSeconds) else {
-                        throw ManualCutReviewFailure(reason: "Removed dialogue in Show cut is review-only. Hide the cut or choose a production position before playing the mix.")
-                    }
-                    position = program
-                } else if let dialogue = timeline.dialogueFrames {
-                    let original = Int64(floor(cutTimeline.alignedTime(forEditedTime: waveformPlayheadSeconds) * rate))
-                    if original > dialogue.lowerBound {
-                        switch try timeline.dialoguePosition(atAlignedFrame: original) {
-                        case .mapped(let frame), .removed(_, let frame): position = Double(frame) / rate
-                        case .outsideCoverage: position = Double(extent.lowerBound) / rate
-                        }
-                    }
+                guard let position = presentationTimeline.programTime(forDisplayTime: waveformPlayheadSeconds) else {
+                    throw ManualCutReviewFailure(reason: "Removed dialogue in Show cut is review-only. Hide the cut or choose a production position before playing the mix.")
                 }
                 let end = Double(extent.upperBound) / rate
-                var interval = interval
-                if audioEditor.hasArrangement, let requested = interval {
+                var interval = requestedRange
+                if let requested = interval {
                     guard let lo = presentationTimeline.programTime(forDisplayTime: requested.lowerBound),
                           let hi = presentationTimeline.programTime(forDisplayTime: requested.upperBound) else {
                         throw ManualCutReviewFailure(reason: "The production selection includes review-only removed audio.")
                     }
                     interval = lo...hi
                 }
-                let start = max(Double(extent.lowerBound) / rate, interval?.lowerBound ?? position)
+                let first = Double(extent.lowerBound) / rate
+                let start = max(first, interval?.lowerBound ?? (position >= end ? first : position))
                 let last = min(end, interval?.upperBound ?? end)
                 let schedule = try AlignedAuditionSchedule(startSeconds: start, endSeconds: last)
                 let frames = schedule.firstFrame..<schedule.endFrame
@@ -1863,13 +1894,7 @@ final class EpisodeAlignmentModel {
                             mixer.publishPlaybackMeters()
                             auditionLabel = "Playing the production mix; source audition choices are unchanged."
                             productionPlayheadSeconds = clock.playhead()
-                            do {
-                                waveformPlayheadSeconds = try waveformTime(atProgramTime: clock.playhead(), timeline: timeline)
-                            } catch {
-                                mixer.fail(error)
-                                stopAudition()
-                                return
-                            }
+                            waveformPlayheadSeconds = waveformTime(atProgramTime: clock.playhead())
                             followPlayheadIfNeeded()
                         }
                         do { try await Task.sleep(for: .milliseconds(50)) }
@@ -1887,10 +1912,13 @@ final class EpisodeAlignmentModel {
                 guard generation == auditionGeneration else { return }
                 stopPlayback(updatePlayhead: false)
                 productionPlayheadSeconds = last
-                waveformPlayheadSeconds = try waveformTime(atProgramTime: last, timeline: timeline)
+                waveformPlayheadSeconds = waveformTime(atProgramTime: last)
                 auditionPlayheadSeconds = waveformPlayheadSeconds
                 auditionLabel = "Production mix reached the end of the selected program."
                 transportTask = nil
+                if loops, listening.cycleEnabled, listening.cycleRange == requestedRange {
+                    playProductionMix(interval: requestedRange, repeating: true)
+                }
             } catch {
                 guard generation == auditionGeneration else { return }
                 stopPlayback(updatePlayhead: true)
@@ -2482,7 +2510,7 @@ final class EpisodeAlignmentModel {
             }
             let timeline = try episode.manualCutTimeline(revealing: listening.expandedManualCutID)
             let presentation = AudioTimelineProjection(cuts: timeline,
-                program: audioEditor.hasArrangement ? audioEditor.composition?.timeline : nil,
+                program: audioEditor.composition?.timeline,
                 expanded: episode.activeManualCuts.first { $0.id == listening.expandedManualCutID })
             guard timeline != cutTimeline || presentation != appliedPresentation else { return }
             stopAudition()
@@ -3188,13 +3216,9 @@ final class EpisodeAlignmentModel {
     private func stopPlayback(updatePlayhead: Bool) {
         if updatePlayhead, let clock = audioPlayback.clock {
             let time = clock.playhead()
-            if listeningMode == .productionMix, let productionTimeline {
+            if listeningMode == .productionMix, productionTimeline != nil {
                 productionPlayheadSeconds = time
-                do {
-                    auditionPlayheadSeconds = try waveformTime(atProgramTime: time, timeline: productionTimeline)
-                } catch {
-                    lastError = error.localizedDescription
-                }
+                auditionPlayheadSeconds = waveformTime(atProgramTime: time)
             } else {
                 auditionPlayheadSeconds = auditionUsesOriginalTime ? cutTimeline.editedTime(forAlignedTime: time) : time
             }
@@ -3213,21 +3237,8 @@ final class EpisodeAlignmentModel {
         auditionLabel = "Audition stopped at \(AlignmentPresentation.formatTime(auditionPlayheadSeconds))."
     }
 
-    /// Existing recording waveforms remain on their review grid. Insertion-only time holds the
-    /// following dialogue seam; the separate production clock always retains actual program time.
-    private func waveformTime(atProgramTime time: Double, timeline: ProgramTimeline) throws -> Double {
-        if audioEditor.hasArrangement { return presentationTimeline.displayTime(forProgramTime: time) }
-        let frame = Int64(floor(time * 48_000))
-        switch try timeline.inverse(atProgramFrame: frame) {
-        case .dialogue(let original):
-            return cutTimeline.editedTime(forAlignedTime: Double(original) / 48_000)
-        case .insertion, .outsideCoverage:
-            guard let span = timeline.dialogueSpans.first(where: { $0.programFrames.upperBound > frame })
-                ?? timeline.dialogueSpans.last else { return time }
-            let original = frame < span.programFrames.lowerBound ? span.originalFrames.lowerBound : span.originalFrames.upperBound
-            return cutTimeline.editedTime(forAlignedTime: Double(original) / 48_000)
-        }
-
+    private func waveformTime(atProgramTime time: Double) -> Double {
+        presentationTimeline.displayTime(forProgramTime: time)
     }
 
     func dialogueTime(atDisplayTime time: Double) -> Double? {
@@ -3236,6 +3247,23 @@ final class EpisodeAlignmentModel {
             return nil
         }
         return aligned
+    }
+
+    func speakerBoundaryTime(atDisplayTime time: Double, start: Bool) -> Double? {
+        let aligned = start ? presentationTimeline.originalTime(forDisplayTime: time)
+            : presentationTimeline.originalTime(forExclusiveDisplayEnd: time)
+        if aligned == nil {
+            lastError = "Choose a dialogue boundary outside insertion-only or review-only time."
+        }
+        return aligned
+    }
+
+    func productionProgramTime(atDisplayTime time: Double) -> Double? {
+        guard let program = presentationTimeline.programTime(forDisplayTime: time) else {
+            lastError = "Removed audio in Show Cut is review-only. Choose a production position before setting an episode boundary."
+            return nil
+        }
+        return program
     }
 
     func selectionHasDialogueOnly(_ range: ClosedRange<Double>) -> Bool {

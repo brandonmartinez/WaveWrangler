@@ -88,6 +88,7 @@ enum LaunchFixtures {
             }
         }
         if defaults.bool(forKey: "WWUITestResetPreferences") {
+            AppSettings.shared.restoreControlBar()
             defaults.removeObject(forKey: "NSWindow Frame WaveWranglerLibraryWindow")
             // Persistence's isolated UI-test preferences (autosave policy) also start from the defaults, so
             // results don't depend on test order.

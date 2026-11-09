@@ -164,6 +164,7 @@ enum MainMenu {
         let menu = NSMenu(title: "View")
         menu.addItem(standard("Show Toolbar", #selector(NSWindow.toggleToolbarShown(_:)), .toggleToolbar))
         menu.addItem(standard("Customize Toolbar…", #selector(NSWindow.runToolbarCustomizationPalette(_:))))
+        menu.addItem(routed("Customize Control Bar and Display…", #selector(CommandRouter.customizeControlBar(_:))))
         menu.addItem(.separator())
         menu.addItem(routed("Hide Sidebar", #selector(CommandRouter.toggleWWSidebar(_:)), .toggleSidebar))
         menu.addItem(routed("Hide Inspector", #selector(CommandRouter.toggleInspector(_:)), .toggleInspector))

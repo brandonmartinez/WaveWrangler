@@ -44,7 +44,7 @@ final class EpisodeListeningState {
     }
 
     var playback = EpisodePlaybackState()
-    var usesProductionMix = false
+    var usesProductionMix = true
     var tool = Tool.select
     var commandTool = Tool.move
     private(set) var commandHeld = false

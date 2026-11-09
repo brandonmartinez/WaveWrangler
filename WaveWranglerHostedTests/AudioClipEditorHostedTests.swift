@@ -86,6 +86,92 @@ struct AudioClipEditorHostedTests {
         try #require(condition(), "The bounded editor workflow did not finish.")
     }
 
+    @Test func productionBoundariesAreAtomicUndoableAndPersistWithoutChangingOriginals() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        _ = try await imported(f)
+        let original = try Data(contentsOf: f.file)
+        let before = f.document.store.model
+        let composition = try #require(f.editor.composition)
+        let range = EpisodeProductionRange(
+            start: try composition.timeline.unpinnedAnchor(atProgramFrame: -24_000),
+            end: try composition.timeline.unpinnedAnchor(atProgramFrame: 72_000),
+            restrictSpeech: true)
+        #expect(f.editor.setBoundaryTimes(range: range, speakerIn: nil, speakerOut: nil))
+        f.editor.refresh()
+        let after = f.document.store.model
+        let frames = f.editor.production?.episodeFrames
+        #expect(frames == -24_000..<72_000)
+        f.document.undoManager?.undo()
+        #expect(f.document.store.model == before)
+        f.document.undoManager?.redo()
+        #expect(f.document.store.model == after)
+        f.editor.refresh()
+        var invalid = range
+        invalid.end = range.start
+        #expect(!f.editor.setProductionRange(invalid))
+        #expect(f.document.store.model == after)
+        #expect(f.editor.error != nil)
+        #expect(!f.editor.setBoundaryTimes(range: range, speakerIn: 0.1, speakerOut: 0.9),
+                "Audio-only episodes must not acquire fabricated speaker timing.")
+        #expect(f.document.store.model == after)
+        try await MixerHostedTests().save(f.document)
+        let bytes = try Data(contentsOf: #require(f.document.fileURL))
+        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
+        #expect(reopened.payload == after)
+        #expect(try Data(contentsOf: f.file) == original)
+        f.model.selectSourceAudition()
+        #expect(!f.model.listening.usesProductionMix)
+        f.model.selectProductionMix()
+        #expect(f.model.listening.usesProductionMix)
+        #expect(!f.model.isSourceTimePreview)
+        #expect(try f.model.displayClockSeconds(at: -0.5, clock: .episode) == 0)
+        #expect(try f.model.displayClockSeconds(at: -0.5, clock: .timeline) == -0.5)
+        f.model.seekDisplayClock("0.750", clock: .episode)
+        #expect(f.model.waveformPlayheadSeconds == 0.25)
+    }
+
+    @Test func changingEpisodeBoundariesOrSpeechRestrictionStopsActiveProduction() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        _ = try await imported(f)
+        try await wait { f.editor.production != nil }
+        let composition = try #require(f.editor.composition)
+        var range = EpisodeProductionRange(
+            start: try composition.timeline.unpinnedAnchor(atProgramFrame: 0),
+            end: try composition.timeline.unpinnedAnchor(atProgramFrame: 192_000))
+        try #require(f.editor.setProductionRange(range))
+        try await MixerHostedTests().save(f.document)
+
+        for restrictionChange in [false, true] {
+            f.editor.refresh()
+            try await wait { f.editor.production != nil }
+            f.model.playProductionMix(interval: 0...4, repeating: false)
+            try await wait { f.model.isAuditioning || f.model.lastError != nil }
+            let error = f.model.lastError
+            try #require(error == nil, Comment(rawValue: error ?? ""))
+            if restrictionChange { range.restrictSpeech = true }
+            else { range.end = try composition.timeline.unpinnedAnchor(atProgramFrame: 216_000) }
+            try #require(f.editor.setProductionRange(range))
+            let stopped = !f.model.canStopAudition
+            let clockCleared = f.model.playbackClockForTesting == nil
+            #expect(stopped, "A production edit synchronously stops the old mix in the episode window.")
+            #expect(clockCleared)
+            f.document.undoManager?.undo()
+            f.document.undoManager?.redo()
+            let remainsStopped = !f.model.canStopAudition
+            #expect(remainsStopped, "Undo/Redo must not restart a stale producer.")
+            try await MixerHostedTests().save(f.document)
+        }
+        f.model.playProductionMix(interval: 0...4, repeating: false)
+        try await wait { f.model.isAuditioning || f.model.lastError != nil }
+        let finalError = f.model.lastError
+        #expect(finalError == nil, Comment(rawValue: finalError ?? ""))
+        f.model.stopAudition()
+        let stopped = !f.model.canStopAudition
+        #expect(stopped)
+    }
+
     @Test func addAudioIntoEmptyEpisodeIsOneUndoAndReopensWithImmutableSources() async throws {
         let f = try await fixture()
         defer { f.close() }

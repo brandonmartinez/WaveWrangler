@@ -21,6 +21,10 @@ struct AudioTimelineTransport: View {
     var toggleFollowPlayhead: () -> Void = {}
     var jumpSeconds = 5
     var coordinateLabel: String? = nil
+    var showsDisplay = true
+    var showsStatus = true
+    var compact = false
+    var showsJumps = true
 
     @State private var timeDraft = ""
     @FocusState private var editingTime: Bool
@@ -29,10 +33,14 @@ struct AudioTimelineTransport: View {
     var body: some View {
         HStack(spacing: 12) {
             HStack(spacing: 8) {
-                Button(action: back) { Label("Back \(jumpDescription)", systemImage: jumpSeconds == 5 ? "gobackward.5" : "gobackward") }
+                if showsJumps {
+                    Button(action: back) {
+                        Label("Back \(jumpDescription)", systemImage: jumpSeconds == 5 ? "gobackward.5" : "gobackward")
+                    }
                     .disabled(!canNavigate)
                     .help("Jump backward \(jumpDescription). Configure in Settings > General.")
                     .accessibilityIdentifier("\(prefix).transport.back")
+                }
                 Button(action: playPause) {
                     Label(
                         isPlaying || isPreparing ? "Pause" : "Play",
@@ -40,13 +48,18 @@ struct AudioTimelineTransport: View {
                 }
                 .disabled(!canPlay && !isPlaying && !isPreparing)
                 .accessibilityIdentifier("\(prefix).transport.play")
+                .accessibilityValue(status)
                 Button(action: stop) { Label("Stop", systemImage: "stop.fill") }
                     .disabled(!canNavigate && !isPlaying && !isPreparing)
                     .accessibilityIdentifier("\(prefix).transport.stop")
-                Button(action: forward) { Label("Forward \(jumpDescription)", systemImage: jumpSeconds == 5 ? "goforward.5" : "goforward") }
+                if showsJumps {
+                    Button(action: forward) {
+                        Label("Forward \(jumpDescription)", systemImage: jumpSeconds == 5 ? "goforward.5" : "goforward")
+                    }
                     .disabled(!canNavigate)
                     .help("Jump forward \(jumpDescription). Configure in Settings > General.")
                     .accessibilityIdentifier("\(prefix).transport.forward")
+                }
                 if let cycleEnabled {
                     Button("Cycle", systemImage: "repeat", action: toggleCycle)
                         .tint(cycleEnabled ? .yellow : .secondary)
@@ -57,20 +70,29 @@ struct AudioTimelineTransport: View {
                         .help("Repeat the cycle range. Use the cycle strip or Cycle selection to set its bounds.")
                 }
                 if let followPlayhead {
-                    Button("Follow Playhead", systemImage: "play.rectangle.on.rectangle",
-                           action: toggleFollowPlayhead)
-                        .tint(followPlayhead ? .accentColor : .secondary)
-                        .disabled(!canNavigate)
-                        .accessibilityValue(followPlayhead ? "On" : "Off")
-                        .accessibilityAddTraits(followPlayhead ? [.isSelected] : [])
-                        .accessibilityIdentifier("\(prefix).followPlayhead")
-                        .help("Page at the right edge without interrupting audio. Panning turns Follow Playhead off; enable it to return to the current playhead.")
+                    Button(
+                        "Follow Playhead", systemImage: "play.rectangle.on.rectangle",
+                        action: toggleFollowPlayhead
+                    )
+                    .tint(followPlayhead ? .accentColor : .secondary)
+                    .disabled(!canNavigate)
+                    .accessibilityValue(followPlayhead ? "On" : "Off")
+                    .accessibilityAddTraits(followPlayhead ? [.isSelected] : [])
+                    .accessibilityIdentifier("\(prefix).followPlayhead")
+                    .help(
+                        "Page at the right edge without interrupting audio. Panning turns Follow Playhead off; enable it to return to the current playhead."
+                    )
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(spacing: 1) {
-                Text(coordinateLabel ?? (isEdited ? "EDITED TIME" : "ALIGNED TIME")).font(.caption2).foregroundStyle(.secondary)
-                TextField(coordinateLabel != nil ? "Program seconds" : isEdited ? "Edited seconds" : "Aligned seconds", text: $timeDraft)
+            .frame(maxWidth: compact ? nil : .infinity, alignment: .leading)
+            if showsDisplay {
+                VStack(spacing: 1) {
+                    Text(coordinateLabel ?? (isEdited ? "EDITED TIME" : "ALIGNED TIME")).font(.caption2)
+                        .foregroundStyle(.secondary)
+                    TextField(
+                        coordinateLabel != nil ? "Program seconds" : isEdited ? "Edited seconds" : "Aligned seconds",
+                        text: $timeDraft
+                    )
                     .textFieldStyle(.roundedBorder).monospacedDigit()
                     .frame(width: 104)
                     .focused($editingTime)
@@ -80,13 +102,17 @@ struct AudioTimelineTransport: View {
                         if !focused { commitTime() }
                     }
                     .accessibilityIdentifier("\(prefix).playhead")
-                    .accessibilityLabel(coordinateLabel.map { "\($0.capitalized) in seconds" }
-                        ?? (isEdited ? "Edited playhead time in seconds" : "Aligned playhead time in seconds"))
+                    .accessibilityLabel(
+                        coordinateLabel.map { "\($0.capitalized) in seconds" }
+                            ?? (isEdited ? "Edited playhead time in seconds" : "Aligned playhead time in seconds"))
+                }
             }
-            Text(status)
-                .font(.caption).foregroundStyle(.secondary)
-                .lineLimit(2).frame(maxWidth: .infinity, alignment: .trailing)
-                .accessibilityIdentifier("\(prefix).transport.status")
+            if showsStatus {
+                Text(status)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(2).frame(maxWidth: .infinity, alignment: .trailing)
+                    .accessibilityIdentifier("\(prefix).transport.status")
+            }
         }
         .labelStyle(.iconOnly)
         .buttonStyle(.bordered)
@@ -334,6 +360,8 @@ struct AudioTimelineMarker: Identifiable {
     let time: Double
     let title: String
     let color: Color
+    var lane = 0
+    var isEnd = false
 }
 
 struct AudioTimelineRuler: View {
@@ -360,6 +388,7 @@ struct AudioTimelineRuler: View {
     let commitWindow: () -> Void
     var isEdited = false
     var coordinateLabel: String? = nil
+    var tickLabel: ((Double) -> String)? = nil
 
     private struct Pan {
         let start: Double
@@ -463,7 +492,7 @@ struct AudioTimelineRuler: View {
                 .accessibilityLabel(
                     String(
                         format: "Visible %@ time ruler: %.3f to %.3f seconds",
-                        coordinateLabel != nil ? "program" : isEdited ? "edited" : "aligned", start,
+                        coordinateLabel ?? (isEdited ? "edited" : "aligned"), start,
                         start + duration)
                 )
                 .accessibilityIdentifier("\(prefix).ruler")
@@ -490,7 +519,7 @@ struct AudioTimelineRuler: View {
                             .frame(width: 1, height: tick.major ? 14 : 7)
                             .offset(x: x, y: 24)
                         if tick.major {
-                            Text(AlignmentPresentation.formatTime(tick.time))
+                            Text(tickLabel?(tick.time) ?? AlignmentPresentation.formatTime(tick.time))
                                 .font(.caption2).monospacedDigit()
                                 .fixedSize()
                                 .position(x: min(max(x, 36), max(36, width - 36)), y: 10)
@@ -501,7 +530,11 @@ struct AudioTimelineRuler: View {
                         if x >= 0, x <= width {
                             Text(marker.title).font(.caption2.bold())
                                 .foregroundStyle(marker.color)
-                                .position(x: min(max(x, 14), max(14, width - 14)), y: 20)
+                                .fixedSize()
+                                .frame(width: 100, alignment: marker.isEnd ? .trailing : .leading)
+                                .position(x: min(max(x + (marker.isEnd ? -52 : 52), 52), max(52, width - 52)),
+                                          y: CGFloat(20 + marker.lane * 14))
+                                .accessibilityIdentifier("\(prefix).marker.\(marker.id)")
                             Rectangle().fill(marker.color).frame(width: 2, height: 18)
                                 .offset(x: x, y: 26)
                         }

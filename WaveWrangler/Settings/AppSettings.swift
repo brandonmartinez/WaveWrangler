@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import OSLog
 import SwiftUI
 import WWCore
 import WWOrganizer
@@ -14,6 +15,19 @@ final class AppSettings {
 
     @ObservationIgnored private let preferences: AppPreferences
     @ObservationIgnored private var observer: NSObjectProtocol?
+    @ObservationIgnored private let defaults: UserDefaults
+    static let controlBarKey = "WWEpisodeControlBar"
+    private(set) var controlBarError: String?
+    var controlBar = ControlBarConfiguration() {
+        didSet {
+            guard controlBar != oldValue else { return }
+            do {
+                guard controlBar.isValid else { throw CocoaError(.coderInvalidValue) }
+                defaults.set(try JSONEncoder().encode(controlBar), forKey: Self.controlBarKey)
+                controlBarError = nil
+            } catch { reportControlBarError(error) }
+        }
+    }
 
     var autosaveEnabled: Bool {
         didSet { if preferences.autosaveEnabled != autosaveEnabled { preferences.autosaveEnabled = autosaveEnabled } }
@@ -48,12 +62,14 @@ final class AppSettings {
     }
 
     init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
         preferences = AppPreferences(defaults: defaults)
         autosaveEnabled = preferences.autosaveEnabled
         downloadSourcesAutomatically = preferences.downloadSourcesAutomatically
         textSize = preferences.textSize
         editingPlaybackPolicy = preferences.editingPlaybackPolicy
         timelineJumpInterval = preferences.timelineJumpInterval
+        reloadControlBar()
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: defaults, queue: .main
         ) { [weak self] _ in
@@ -62,6 +78,7 @@ final class AppSettings {
     }
 
     private func reload() {
+        reloadControlBar()
         if autosaveEnabled != preferences.autosaveEnabled { autosaveEnabled = preferences.autosaveEnabled }
         if downloadSourcesAutomatically != preferences.downloadSourcesAutomatically {
             downloadSourcesAutomatically = preferences.downloadSourcesAutomatically
@@ -73,6 +90,31 @@ final class AppSettings {
         if timelineJumpInterval != preferences.timelineJumpInterval {
             timelineJumpInterval = preferences.timelineJumpInterval
         }
+    }
+
+    private func reloadControlBar() {
+        guard let data = defaults.data(forKey: Self.controlBarKey) else {
+            controlBar = .init()
+            return
+        }
+        do {
+            let value = try JSONDecoder().decode(ControlBarConfiguration.self, from: data)
+            guard value.isValid else { throw CocoaError(.coderReadCorrupt) }
+            if controlBar != value { controlBar = value }
+            controlBarError = nil
+        } catch { reportControlBarError(error) }
+    }
+
+    private func reportControlBarError(_ error: Error) {
+        let message = "Control bar preferences could not be loaded or saved: \(error.localizedDescription). Restore Defaults to replace them."
+        controlBarError = message
+        Logger(subsystem: "com.brandonmartinez.WaveWrangler", category: "Preferences").error("\(message, privacy: .public)")
+    }
+
+    func restoreControlBar() {
+        defaults.removeObject(forKey: Self.controlBarKey)
+        controlBar = .init()
+        controlBarError = nil
     }
 
     func makeTextBigger() { if let next = textSize.bigger { textSize = next } }

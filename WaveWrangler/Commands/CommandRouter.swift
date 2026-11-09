@@ -56,6 +56,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     // MARK: - App and window
 
     @objc func showSettings(_ sender: Any?) { SettingsWindowController.show() }
+    @objc func customizeControlBar(_ sender: Any?) { ControlBarCustomizationController.show() }
     @objc func showLibrary(_ sender: Any?) { LibraryWindowController.show() }
 
     // MARK: - File
@@ -290,7 +291,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         let selection = library?.selectedRows ?? []
         let documentState = activeDocumentState
         switch item.action {
-        case #selector(showSettings(_:)), #selector(showLibrary(_:)), #selector(newShow(_:)), #selector(openDocument(_:)),
+        case #selector(showSettings(_:)), #selector(customizeControlBar(_:)), #selector(showLibrary(_:)), #selector(newShow(_:)), #selector(openDocument(_:)),
              #selector(textActualSize(_:)), #selector(rebuildLibraryIndex(_:)):
             if item.action == #selector(textActualSize(_:)) { return AppSettings.shared.textSize != .actual }
             return true
