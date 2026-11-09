@@ -44,6 +44,8 @@ public actor MixerProcessor {
     private var rightGains: [GainRamp]
     private var masterGain: GainRamp
     private var nextInput: Int64
+    private var renderFrame: Int64
+    private let parallelLatency: Int
     private var discarded: Int
     private var emitted: Int64 = 0
     private var flushRemaining: Int?
@@ -90,6 +92,7 @@ public actor MixerProcessor {
         self.masterUnits = masterUnits
         let latencies = (speakerUnits + audioTrackUnits).map { $0.reduce(0) { $0 + $1.latencyFrames } }
         let parallelLatency = latencies.max() ?? 0
+        self.parallelLatency = parallelLatency
         latencyFrames = parallelLatency + masterUnits.reduce(0) { $0 + $1.latencyFrames }
         let reportedTail = ((speakerUnits + audioTrackUnits).map { $0.reduce(0) { $0 + $1.tailFrames } }.max() ?? 0)
             + masterUnits.reduce(0) { $0 + $1.tailFrames }
@@ -116,6 +119,7 @@ public actor MixerProcessor {
         }
         masterGain = GainRamp(Self.amplitude(recipe.master.gainDB))
         nextInput = recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames)
+        renderFrame = nextInput
         discarded = recipe.policy.prerollFrames + latencyFrames
     }
 
@@ -289,12 +293,20 @@ public actor MixerProcessor {
             for (index, route) in recipe.routes.enumerated() {
                 guard let source = channels[route.reference] else { throw MixerFailure.incompletePCM }
                 var mono = [Float](repeating: 0, count: blockCount)
-                for frame in 0..<blockCount { mono[frame] = source[offset + frame] * inputGains[index].next() }
+                for frame in 0..<blockCount {
+                    let position = renderFrame + Int64(offset + frame)
+                    let allowed = recipe.production.map {
+                        !$0.restrictSpeech || $0.speakerProgramFrames?.contains(position) == true
+                    } ?? true
+                    mono[frame] = (allowed ? source[offset + frame] : 0) * inputGains[index].next()
+                }
                 for unit in speakerUnits[index] { mono = try unit.render([mono])[0] }
                 mono = delays[index].process(mono)
                 for frame in 0..<blockCount {
-                    let left = mono[frame] * leftGains[index].next()
-                    let right = mono[frame] * rightGains[index].next()
+                    let position = renderFrame + Int64(offset + frame - parallelLatency)
+                    let speech = mono[frame] * (recipe.production?.speechGain(atProgramFrame: position) ?? 1)
+                    let left = speech * leftGains[index].next()
+                    let right = speech * rightGains[index].next()
                     sum[0][frame] += left
                     sum[1][frame] += right
                     metered[index].append(max(abs(left), abs(right)))
@@ -324,6 +336,7 @@ public actor MixerProcessor {
                 if frame >= skip { output[0].append(left); output[1].append(right) }
             }
         }
+        renderFrame += Int64(count)
         emitted += Int64(output[0].count)
         return MixerPCMOutput(firstFrame: firstFrame, channels: output,
             speakerMeters: Dictionary(uniqueKeysWithValues: zip(recipe.routes, metered).map {

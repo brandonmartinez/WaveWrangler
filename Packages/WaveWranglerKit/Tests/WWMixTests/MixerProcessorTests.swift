@@ -6,6 +6,8 @@ import Testing
 import WWCore
 import WWDecode
 import WWSources
+import WWCommonEdit
+import WWTimeMap
 @testable import WWMix
 
 struct MixFixture {
@@ -49,6 +51,75 @@ struct MixFixture {
 
 @Suite("Shared mixer processing", .serialized)
 struct MixerProcessorTests {
+    @Test(arguments: [false, true], [false, true])
+    func speechGateIsSampleClockedThroughLatencySeekPrerollAndFlush(seeking: Bool, restricted: Bool) async throws {
+        let f = MixFixture(), track = AudioTrack(name: "Unaffected music")
+        var episode = f.episode
+        let occurrence = try SourceOccurrence(source: f.source.id, nominalRate: NominalRate(48_000), frameCount: 48_000)
+        let group = RecorderGroupID(), epoch = RecordingEpochID()
+        let reference = TimelineReference(group: group, epoch: epoch, occurrence: occurrence.id)
+        let map = try AlignedTimelineMap(reference: reference, groups: [
+            .init(group: group, reference: reference, epochs: [
+                .init(epoch: epoch, mapping: .mapped(segments: [
+                    .init(groupClockStart: .zero, groupClockEnd: ExactRational(1), rateRatio: .one, alignedOffset: .zero)
+                ], provenance: .timelineReference))
+            ], placements: [.init(occurrence: occurrence, spans: [
+                .init(startFrame: 0, endFrame: 48_000, epoch: epoch, groupClockOffset: .zero)
+            ])])
+        ])
+        episode.alignment = .init(maps: [.init(revision: 1, inputs: .init(sources: [.init(sourceID: f.source.id)]),
+            map: try JSONDecoder().decode(EmbeddedJSON.self, from: JSONEncoder().encode(map)))], acceptedRevision: 1)
+        episode.cleanup = .init(workingRange: .init(alignmentRevision: 1, tracksIn: 0.02, tracksOut: 0.06))
+        episode.productionRange = .init(start: .absolute(frame: 0), end: .absolute(frame: 4096), restrictSpeech: restricted)
+        episode.audioArrangement = .init(tracks: [track])
+        episode.mix = .init(speakers: [.init(speaker: f.speaker, pan: -1)])
+        let composition = try ProgramTimeline(episode: episode, dialogueFrames: 0..<48_000).composition()
+        let first: Int64 = seeking ? 1703 : 0
+        let recipe = try MixerRecipe(episode: episode, sources: [f.snapshot(f.source)],
+            programFrames: first..<4096, policy: .init(prerollFrames: 37, tail: .includeReported),
+            composition: composition)
+        let processor = try MixerProcessor(recipe: recipe,
+            speakerUnits: [[generated(.decay, channels: 1, latency: 23, tail: 31)]],
+            masterUnits: [generated(.decay, channels: 2, latency: 13, tail: 19)],
+            audioTrackUnits: [[generated(.identity, channels: 2, latency: 7)]])
+        var output = [[Float](), [Float]()]
+        var cursor = first - 37
+        while cursor < 4096 {
+            let end = min(cursor + 173, 4096), count = Int(end - cursor)
+            let value = try await processor.process(.init(frames: cursor..<end,
+                channels: [recipe.routes[0].reference: .init(repeating: 0.5, count: count)],
+                audioTracks: [track.id: [.init(repeating: 0.25, count: count), .init(repeating: -0.25, count: count)]]))
+            output[0] += value.channels[0]; output[1] += value.channels[1]
+            cursor = end
+        }
+        while let value = try await processor.finishNext(maximumFrames: 17) {
+            output[0] += value.channels[0]; output[1] += value.channels[1]
+        }
+        #expect(output[0].count == Int(4096 - first) + 50)
+        let production = try #require(recipe.production)
+        var speaker: Float = 0, left: Float = 0, right: Float = 0
+        for frame in (first - 37)..<4096 {
+            let input: Float = !restricted || (960..<2880).contains(frame) ? 0.5 : 0
+            speaker = input + speaker * 0.5
+            left = 0.25 + speaker * production.speechGain(atProgramFrame: frame) + left * 0.5
+            right = -0.25 + right * 0.5
+            if frame >= first {
+                let index = Int(frame - first)
+                #expect(abs(output[0][index] - left) < 0.000_001)
+                #expect(abs(output[1][index] - right) < 0.000_001, "Speaker restriction must never gate music.")
+            }
+        }
+        if restricted {
+            #expect(output[0][Int(2880 - first)] > 0.5, "The common master's decay continues after Speaker Out.")
+        }
+        #expect(output[0].suffix(50).contains { $0 > 0 }, "Reported master tails may drain on natural completion, never on Stop.")
+        #expect(throws: MixerFailure.self) {
+            try MixerRecipe(episode: episode, sources: [f.snapshot(f.source)], programFrames: 0..<4097,
+                composition: composition)
+        }
+        #expect(throws: MixerFailure.self) { try f.recipe(episode) }
+    }
+
     @Test func supplementalProgramStateRefusesRatherThanSilentlyOmittingProductionInputs() throws {
         let f = MixFixture()
         var episode = f.episode
@@ -487,13 +558,14 @@ actor PCMCollector {
 
 /// Generated DSP exercises the native pull path with independently known timing/nonlinear behavior.
 private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
-    enum Operation { case identity, square, add, unwritten }
+    enum Operation { case identity, square, add, decay, unwritten }
     private var inputs: AUAudioUnitBusArray!
     private var outputs: AUAudioUnitBusArray!
     private let delay: Int
     private let tail: Int
     private let operation: Operation
     private var rings: [[Float]]
+    private var decay: [Float]
     private var cursor = 0
     private var failures: Int
     private var documentState: [String: Any]? = ["generated": true]
@@ -507,6 +579,7 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
         self.operation = operation
         self.failures = failures
         rings = Array(repeating: [Float](repeating: 0, count: latency), count: channels)
+        decay = .init(repeating: 0, count: channels)
         try super.init(componentDescription: .init(componentType: kAudioUnitType_Effect,
             componentSubType: 0x57575453, componentManufacturer: kAudioUnitManufacturer_Apple,
             componentFlags: 0, componentFlagsMask: 0), options: [])
@@ -554,6 +627,9 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
                     case .identity, .unwritten: break
                     case .square: value *= value
                     case .add: value += 0.1
+                    case .decay:
+                        value += decay[channel] * 0.5
+                        decay[channel] = value
                     }
                     if delay > 0 {
                         let prior = rings[channel][cursor]

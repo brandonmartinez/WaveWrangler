@@ -144,6 +144,7 @@ public struct MixerRecipe: Sendable, Equatable {
     public let audioTracks: [MixerAudioTrackRoute]
     public let audioSources: [MixerSourceSnapshot]
     public let composition: ProgramComposition?
+    public let production: EpisodeProductionProjection?
     public let master: MasterMixState
     public let programFrames: Range<Int64>
     public let panLaw: MixerPanLaw
@@ -160,6 +161,17 @@ public struct MixerRecipe: Sendable, Equatable {
         if let composition {
             guard try ProgramTimeline(episode: episode, dialogueFrames: composition.timeline.dialogueFrames)
                 .composition() == composition else { throw MixerFailure.staleDependencies }
+        }
+        let production = try composition.map { try EpisodeProductionProjection(episode: episode, composition: $0) }
+        guard production != nil || episode.productionRange == nil else {
+            throw MixerFailure.invalidRecipe("episode boundaries require a verified program projection")
+        }
+        if let production {
+            guard let bounds = production.episodeFrames,
+                  programFrames.lowerBound >= bounds.lowerBound,
+                  programFrames.upperBound <= bounds.upperBound else {
+                throw MixerFailure.invalidRecipe("playback must remain inside Episode Start/End")
+            }
         }
         let mix = episode.mix ?? EpisodeMixState()
         guard policy.isValid, mix.validationIssues(in: episode).isEmpty,
@@ -221,6 +233,7 @@ public struct MixerRecipe: Sendable, Equatable {
         audioTracks = tracks.map { .init(track: $0.id, strip: mix.state(for: $0.id)) }
         self.audioSources = audioSources
         self.composition = composition
+        self.production = production
         master = mix.master
         self.programFrames = programFrames
         self.panLaw = panLaw
