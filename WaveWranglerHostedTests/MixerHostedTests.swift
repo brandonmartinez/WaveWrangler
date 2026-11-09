@@ -10,6 +10,84 @@ import WWPersistence
 @MainActor
 @Suite("Document-bound mixer integration (synthetic and Apple units)", .serialized)
 struct MixerHostedTests {
+    @Test func nativeEditorFitsAspectAndResizesWithoutPluginWindowConstraints() throws {
+        let editor = NSViewController()
+        editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 740, height: 870))
+        editor.preferredContentSize = editor.view.frame.size
+        editor.view.widthAnchor.constraint(equalToConstant: 740).isActive = true
+        editor.view.heightAnchor.constraint(equalToConstant: 870).isActive = true
+        let host = MixerNativeEditorHost(editor: editor)
+        let window = EpisodeAuxiliaryWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .resizable]
+        defer { window.close() }
+        host.configure(window, available: NSSize(width: 1200, height: 800))
+        let initial = try #require(window.contentView?.frame.size)
+        #expect(abs(initial.width / initial.height - 740.0 / 870.0) < 0.001)
+        #expect(initial.height <= 800 && initial.width < 740)
+        #expect(window.contentAspectRatio == NSSize(width: 740, height: 870))
+        window.setContentSize(NSSize(width: 370, height: 435))
+        host.view.layoutSubtreeIfNeeded()
+        let resized = try #require(window.contentView?.frame.size)
+        #expect(abs(resized.width - 370) < 1 && abs(resized.height - 435) < 1)
+        let canvas = try #require(host.scrollView.documentView)
+        #expect(abs(canvas.frame.height - 435) < 1)
+        #expect(canvas.bounds.size == NSSize(width: 740, height: 870))
+        #expect(editor.view.frame.size == NSSize(width: 740, height: 870))
+    }
+
+    @Test func tallNativeEditorFitsWidthAndScrollsToItsBottom() throws {
+        let editor = NSViewController()
+        editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 600, height: 2400))
+        editor.preferredContentSize = editor.view.frame.size
+        let host = MixerNativeEditorHost(editor: editor)
+        let window = EpisodeAuxiliaryWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .resizable]
+        defer { window.close() }
+        host.configure(window, available: NSSize(width: 1000, height: 700))
+        host.view.layoutSubtreeIfNeeded()
+        let size = try #require(window.contentView?.frame.size)
+        #expect(size == NSSize(width: 600, height: 700))
+        #expect(window.contentAspectRatio == .zero)
+        let canvas = try #require(host.scrollView.documentView)
+        #expect(canvas.frame.height == 2400)
+        #expect(host.scrollView.hasVerticalScroller && !host.scrollView.hasHorizontalScroller)
+        canvas.scroll(NSPoint(x: 0, y: 1700))
+        let bottom = host.scrollView.documentVisibleRect.maxY
+        #expect(abs(bottom - 2400) < 1)
+        window.setContentSize(NSSize(width: 400, height: 700))
+        host.view.needsLayout = true
+        host.view.layoutSubtreeIfNeeded()
+        #expect(abs(canvas.frame.height - 1600) < 1)
+        #expect(canvas.bounds.height == 2400)
+    }
+
+    @Test func nativeEditorUsesItsFrameWhenPreferredSizeIsMissing() {
+        let editor = NSViewController()
+        editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        #expect(MixerNativeEditorHost.measuredSize(editor) == NSSize(width: 800, height: 500))
+        editor.preferredContentSize = NSSize(width: CGFloat.nan, height: 0)
+        #expect(MixerNativeEditorHost.measuredSize(editor) == NSSize(width: 800, height: 500))
+    }
+
+    @Test func landscapeNativeEditorAdoptsPreferredSizeChanges() throws {
+        let editor = NSViewController()
+        editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 1600, height: 500))
+        editor.preferredContentSize = editor.view.frame.size
+        let host = MixerNativeEditorHost(editor: editor)
+        let window = EpisodeAuxiliaryWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .resizable]
+        defer { window.close() }
+        host.configure(window, available: NSSize(width: 1000, height: 700))
+        let initial = try #require(window.contentView?.frame.size)
+        #expect(initial.width == 1000 && abs(initial.height - 312.5) <= 1)
+        editor.preferredContentSize = NSSize(width: 600, height: 400)
+        host.view.layoutSubtreeIfNeeded()
+        #expect(host.editorSize == NSSize(width: 600, height: 400))
+        #expect(window.contentAspectRatio == NSSize(width: 600, height: 400))
+        let updated = try #require(window.contentView?.frame.size)
+        #expect(updated == NSSize(width: 600, height: 400))
+    }
+
     @Test func nativeStateDictionaryOrderingDoesNotRewriteUnchangedSerializedBytes() throws {
         let state: [String: Any] = ["name": "Synthetic", "opaque": Data([1, 2, 3]), "value": 2.5]
         let xml = try PropertyListSerialization.data(fromPropertyList: state, format: .xml, options: 0)

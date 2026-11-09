@@ -250,14 +250,23 @@ final class EpisodeMixerPresentation {
                     self.editedSlot = slot.id
                     self.editorRevision = revision
                     self.editorIsGeneric = native == nil
-                    let content = native ?? NSHostingController(rootView: MixerParameterView(presentation: self).wwAppEnvironment())
+                    let content: NSViewController
+                    if let native {
+                        content = MixerNativeEditorHost(editor: native)
+                    } else {
+                        let hosting = NSHostingController(rootView: MixerParameterView(presentation: self).wwAppEnvironment())
+                        hosting.sizingOptions = []
+                        content = hosting
+                    }
                     let window = EpisodeAuxiliaryWindow(contentViewController: content)
                     window.originatingState = self.state
                     window.styleMask = [.titled, .closable, .resizable]
-                    window.contentMinSize = NSSize(width: 360, height: 220)
-                    let size = content.preferredContentSize
-                    window.setContentSize(NSSize(width: max(420, min(1200, size.width)),
-                                                 height: max(340, min(900, size.height))))
+                    if let host = content as? MixerNativeEditorHost {
+                        host.configure(window, available: MixerNativeEditorHost.availableContentSize(for: window))
+                    } else {
+                        window.contentMinSize = NSSize(width: 360, height: 220)
+                        window.setContentSize(NSSize(width: 640, height: 480))
+                    }
                     window.title = "\(self.episode?.title ?? "Episode") - \(slot.productName ?? "Audio Unit")"
                     window.setAccessibilityIdentifier("ww.mixer.editor")
                     let owner = MixerEditorWindowController(window: window)

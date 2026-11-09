@@ -13,6 +13,48 @@ import WWSources
 struct AudioInsertionHostedTests {
     private let helper = MixerHostedTests()
 
+    @Test(arguments: [25.0, 35.0])
+    func reopeningCutProgramViewLoadsSpeakersWithoutManualRefresh(duration: Double) async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 4)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await helper.wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
+        let bed = try await importBed(f)
+        defer { Task { await bed.engine.shutdown() } }
+        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let revision = try #require(episode.alignment?.acceptedRevision)
+        let cut = ManualEpisodeCut(alignmentRevision: revision, startFrame: 48_000, endFrame: 96_000)
+        try #require(f.document.store.apply("Synthetic saved cut") { model throws(DomainError) in
+            try model.settingCleanup(.init(manualCuts: [cut]), in: episode.id)
+        })
+        try await helper.save(f.document)
+        f.model.suspend()
+        let fresh = EpisodeAlignmentModel(document: f.document, episodeID: episode.id, runtime: f.runtime)
+        defer { fresh.suspend() }
+        fresh.listening.workspace.layout = .speakersOnly
+        fresh.waveformDurationSeconds = duration
+        fresh.load()
+        try await helper.wait { fresh.audioEditor.composition != nil }
+        let initialTracks = fresh.waveformTracks.count
+        #expect(initialTracks == 0)
+        fresh.loadWaveforms()
+        fresh.synchronizeCuts()
+        fresh.synchronizeWaveforms()
+        fresh.ensureWaveformOverview()
+        try await helper.wait("reopened speaker waveforms") {
+            fresh.audioEditor.composition != nil && !fresh.isLoadingWaveforms
+                && fresh.primaryWaveformGroups.count == 2 && !fresh.waveformNeedsRefreshAfterSave
+        }
+        let groups = fresh.primaryWaveformGroups.map { $0.tracks.map(\.id) }
+        let sources = episode.speakerAssignments.compactMap { $0.primary?.sourceID }
+        #expect(Set(groups.flatMap { $0 }) == Set(sources))
+        let tracks = fresh.audioEditor.tracks.count
+        #expect(tracks == 1)
+        let cuts = fresh.cutTimeline.removals
+        #expect(cuts == [48_000..<96_000])
+    }
+
     private func importBed(_ f: AlignmentWaveformRetentionHostedTests.Fixture, seconds: Int = 40)
         async throws -> (clip: ProgramAudioClip, owner: EpisodeWindowController, engine: WWSourcesSetupEngine, file: URL) {
         let owner = helper.owner(f), editor = f.model.audioEditor

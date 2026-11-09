@@ -1854,6 +1854,18 @@ identifiers remain compatible. Detached windows are not document window
 controllers: they cannot keep a windowless document alive. They route commands
 and Undo through their originating state and close with that editor.
 
+Native Audio Unit editors are embedded in a host-owned scrolling canvas rather
+than used directly as window content. The host measures the plugin's preferred
+size (then fitting/frame size), fits its aspect ratio within the screen, and
+scales the native coordinate space uniformly when resized. Editors too tall to
+fit at a usable width instead fit the window width and scroll vertically.
+Plugin constraints cannot impose a fixed size on the resizable host window.
+
+Cut/program-view reprojection only advances an existing waveform snapshot's
+generation. If startup reprojection cancels the initial source load before any
+snapshot is published, it restarts that load instead of treating an empty cache
+as current. Supplemental Audio Tracks do not suppress speaker waveform loading.
+
 `MixerOperationQueue` serializes capture/parameter/load operations across actor
 awaits. Suspending editor observation cancels **and awaits** the poll before
 final capture. The final capture retains the editor coalescing key, then ends
