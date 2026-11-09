@@ -2,13 +2,13 @@ import XCTest
 
 @MainActor
 final class MixerUITests: XCTestCase {
-    private func launch(minimum: Bool = false) -> XCUIApplication {
+    private func launch(minimum: Bool = false, autosave: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()
         app.launchArguments = [
             "-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES",
             "-WWUITestResetPreferences", "YES", "-WWUITestCenterWindows", "YES",
-            "-WWUITestAutosave", "OFF", "-WWUITestOpenShow", "Mixer UI Fixture",
+            "-WWUITestAutosave", autosave ? "ON" : "OFF", "-WWUITestOpenShow", "Mixer UI Fixture",
             "-WWUITestShowFolder", "WWUITests-Mixer-\(UUID().uuidString)",
             "-WWUITestShowEpisodes", "1", "-WWUITestAlignmentFixture", "YES",
             "-WWUITestCleanupFixture", "YES", "-WWUITestCleanupTimelineFixture", "YES",
@@ -82,7 +82,7 @@ final class MixerUITests: XCTestCase {
     }
 
     func testGenericAppleEditorDirtyUndoSaveAndDetachedCloseReopen() {
-        let app = launch()
+        let app = launch(autosave: true)
         defer { app.terminate() }
         app.buttons["ww.mixer.toggle"].click()
         app.buttons["ww.mixer.detach"].click()
@@ -111,6 +111,12 @@ final class MixerUITests: XCTestCase {
         value.typeKey(.return, modifierFlags: [])
         XCTAssertTrue(wait { (value.value as? String)?.contains("1000") == true || (value.value as? String)?.contains("1,000") == true },
                       "Parameter field: \(String(describing: value.value)). \(app.debugDescription)")
+        XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true },
+                      "Automatic save must finish with the insert editor open.\n\(app.debugDescription)")
+        value.click()
+        value.typeKey("a", modifierFlags: .command)
+        value.typeText("2000")
+        value.typeKey(.return, modifierFlags: [])
         app.typeKey("s", modifierFlags: .command)
         XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true },
                       app.debugDescription)

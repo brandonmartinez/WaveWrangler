@@ -571,9 +571,19 @@ struct MixerHostedTests {
         }?.value) - 2000) < 0.1)
     }
 
-    @Test func saveBarrierCapturesUnpolledNativeStateAndSuspendsBeforeDraining() async throws {
+    @Test(arguments: [false, true])
+    func saveCapturesUnpolledNativeStateWithoutSuspendingObservation(automatic: Bool) async throws {
+        let preference = PersistenceEnvironment.autosaveGate.preference
+        if automatic {
+            PersistenceEnvironment.autosaveGate.preference = AutosavePreference(enabled: true, delaySeconds: 30)
+        }
+        defer { PersistenceEnvironment.autosaveGate.preference = preference }
         let f = try await ready()
         defer { f.close() }
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
         let slot = try appleSlot()
         try insert(slot, into: f)
         let controller = f.model.mixer
@@ -587,18 +597,152 @@ struct MixerHostedTests {
         controller.beforeStateCapture = { await gate.pauseOnce() }
         try await controller.beginEditorObservation(coalescing: "native-save")
         try await wait { gate.entered }
-        let saving = Task { try await save(f.document) }
-        try await wait { controller.editorObservationKey == nil }
+        let saving = Task {
+            if automatic {
+                try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                    f.document.autosave(withImplicitCancellability: false) { error in
+                        if let error { continuation.resume(throwing: error) }
+                        else { continuation.resume() }
+                    }
+                }
+            } else {
+                try await save(f.document)
+            }
+        }
+        try await wait { f.document.mixerTransactions.isBusy }
+        #expect(controller.editorObservationKey == "native-save")
         try await processor.setParameter(slot: slot.id, address: parameter.address, value: 2000)
         gate.resume()
         try await saving.value
-        #expect(f.document.verifiedModel == f.document.store.model && !f.document.isDocumentEdited)
+        let verifiedMatchesCurrent = f.document.verifiedModel == f.document.store.model
+        let editedAfterSave = f.document.isDocumentEdited
+        #expect(verifiedMatchesCurrent && !editedAfterSave)
         #expect(controller.editorObservationKey == "native-save")
         try await controller.endEditorObservation()
         _ = try await controller.prepare(programFrames: 0..<1)
         #expect(abs(try #require(try await controller.processor?.parameters(slot: slot.id).first {
             $0.address == parameter.address
         }?.value) - 2000) < 0.1)
+    }
+
+    @Test func slowSaveKeepsEditorAndRenderingLiveAndLeavesLaterEditsDirty() async throws {
+        let f = try await ready(durationSeconds: 20)
+        defer { f.close() }
+        let preference = PersistenceEnvironment.autosaveGate.preference
+        PersistenceEnvironment.autosaveGate.preference = AutosavePreference(enabled: true, delaySeconds: 30)
+        defer { PersistenceEnvironment.autosaveGate.preference = preference }
+        let presentation = owner(f).state.mixerPresentation
+        let slot = try appleSlot()
+        try insert(slot, into: f)
+        try await save(f.document)
+        f.model.playProductionMix(interval: 0...20)
+        try await wait(f.model.auditionLabel) { f.model.isAuditioning || f.model.lastError != nil }
+        try #require(f.model.isAuditioning)
+        presentation.openEditor(slot, generic: true)
+        try await wait { presentation.editorWindow != nil || presentation.error != nil }
+        try #require(presentation.error == nil)
+        let editor = try #require(presentation.editorWindow?.window)
+        let controller = f.model.mixer
+        let processor = try #require(controller.processor)
+        let parameter = try #require(presentation.parameters.first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 1000
+        })
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        let gate = CaptureGate()
+        ShowDocument.debugBeforeSaveCompletion = { await gate.pauseOnce() }
+        defer {
+            gate.resume()
+            ShowDocument.debugBeforeSaveCompletion = nil
+        }
+        let saving = Task { try await save(f.document) }
+        try await wait { gate.entered }
+        let savedSnapshot = f.document.store.model
+        let editorVisible = editor.isVisible
+        let observing = controller.editorObservationKey != nil
+        let busy = f.document.mixerTransactions.isBusy
+        let canEdit = presentation.canEdit
+        #expect(editorVisible && observing && !busy && canEdit)
+        let playhead = f.model.waveformPlayheadSeconds
+        presentation.setParameter(parameter, value: 1000)
+        try await wait("live parameter: \(presentation.error ?? "")") {
+            f.document.store.model != savedSnapshot && !f.document.mixerTransactions.isBusy
+        }
+        let editingError = presentation.error
+        let stillVisible = editor.isVisible
+        let sameProcessor = controller.processor === processor
+        #expect(editingError == nil && stillVisible && sameProcessor)
+        let liveValue = try #require(try await processor.parameters(slot: slot.id).first {
+            $0.address == parameter.address
+        }?.value)
+        #expect(abs(liveValue - 1000) < 0.1)
+        try await wait { f.model.waveformPlayheadSeconds > playhead + 0.05 || f.model.lastError != nil }
+        let stillPlaying = f.model.isAuditioning
+        let playbackError = f.model.lastError
+        #expect(stillPlaying && playbackError == nil)
+        let automaticError = await withCheckedContinuation { continuation in
+            f.document.autosave(withImplicitCancellability: true) {
+                continuation.resume(returning: $0)
+            }
+        }
+        #expect((automaticError as? CocoaError)?.code == .userCancelled)
+        gate.resume()
+        try await saving.value
+        let verified = f.document.verifiedModel
+        let edited = f.document.store.model
+        let isEdited = f.document.isDocumentEdited
+        let isSaved = f.document.status.saveStatus.state.isVerifiedOnDisk
+        #expect(verified == savedSnapshot && edited != savedSnapshot)
+        #expect(isEdited && !isSaved)
+        ShowDocument.debugBeforeSaveCompletion = nil
+        try await save(f.document)
+        let savedEdit = f.document.verifiedModel
+        let editedAfterSave = f.document.isDocumentEdited
+        #expect(savedEdit == edited && !editedAfterSave)
+        f.model.stopAudition()
+        try await controller.endEditorObservation()
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let recalled = try #require(try await controller.processor?.parameters(slot: slot.id).first {
+            $0.address == parameter.address
+        }?.value)
+        #expect(abs(recalled - 1000) < 0.1)
+    }
+
+    @Test func overlappingSavesSerializeTheirCandidatesWithoutLockingDocumentEdits() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let gate = CaptureGate()
+        var completions = 0
+        ShowDocument.debugBeforeSaveCompletion = {
+            completions += 1
+            await gate.pauseOnce()
+        }
+        defer {
+            gate.resume()
+            ShowDocument.debugBeforeSaveCompletion = nil
+        }
+        let first = Task { try await save(f.document) }
+        try await wait { gate.entered }
+        try #require(f.document.store.apply("Change Master Gain During Save") { model throws(DomainError) in
+            var master = model.episode(f.model.episodeID)?.mix?.master ?? MasterMixState()
+            master.gainDB = -6
+            return try model.settingMasterMix(master, in: f.model.episodeID)
+        })
+        let edited = f.document.store.model
+        let second = Task { try await save(f.document) }
+        for _ in 0..<10 { await Task.yield() }
+        let busy = f.document.mixerTransactions.isBusy
+        #expect(completions == 1 && !busy)
+        gate.resume()
+        try await first.value
+        try await second.value
+        let verified = f.document.verifiedModel
+        let isEdited = f.document.isDocumentEdited
+        let isSaved = f.document.status.saveStatus.state.isVerifiedOnDisk
+        #expect(completions == 2 && verified == edited)
+        #expect(!isEdited && isSaved)
     }
 
     @Test func undoBarrierDrainsPollAndNoLateCaptureCanOverwriteUndoOrRedo() async throws {

@@ -1828,9 +1828,17 @@ nonfinite vendor state without dropping it or silently reverting to defaults.
 State restore requires complete dictionary read-back agreement; vendors that
 normalize/refuse supplied state may be conservatively rejected.
 
-The UI integration must await `captureAndPersist` at **Save, Undo/Redo and close
-barriers**, suspend editor polling, perform the normal document operation, and
-restore/reload from the resulting document before resuming editing. On editor
+The UI integration must await `captureAndPersist` before **Save, Undo/Redo and
+close**. Save captures a coherent snapshot without hiding editors or suspending
+observation, then releases the mixer transaction before waiting for publication.
+Document saves serialize their candidates independently of mixer edits. An idle
+save without native state to capture starts synchronously, preserving AppKit's
+autosave/file-access context; only native capture and overlapping saves defer.
+Autosave captures native state before entering AppKit's file-access context,
+then rechecks the autosave policy. Its nested save reuses that capture instead
+of suspending inside AppKit's own autosave.
+Undo/Redo and close suspend polling and restore/reload from the resulting
+document before resuming editing. On editor
 close, await `endEditorObservation()`; do not rely on close as the first dirty
 capture. Serialize these barriers with new generic edits, dismiss stale native
 editors on reload, and surface any refused capture/transaction. Polling is not a
@@ -1880,13 +1888,20 @@ final capture. The final capture retains the editor coalescing key, then ends
 coalescing. Native baseline comparison ignores only property-list dictionary
 serialization order; original slot bytes are retained until the native state
 actually changes. Domain/recipe equality still preserves exact serialized bytes.
-No-op captures do not create Undo steps or dirty default state.
+No-op captures skip show-model reconstruction and validation, do not create Undo
+steps, and do not dirty default state.
 
 `ShowDocument.mixerTransactions` serializes document operations with generic edits.
-Save (including autosave), Undo/Redo, Revert, and document/editor close hide
-native editors, suspend polling, drain capture, and only then enter AppKit's
-ordinary operation. Save keeps the same current processor and resumes polling
-after completion. Undo/Redo and restart dismiss stale editors and invalidate the
+Save (including autosave) captures observed native state through the existing
+controller queues without hiding editors, suspending polling, or replacing the
+live processor. A separate save queue serializes immutable candidates through
+verified completion without holding the mixer edit queue during publication.
+Implicit autosaves defer while another save or mixer edit is active instead of
+building a backlog; the configured quiescence delay is unchanged. Edits arriving
+after a save's snapshot stay dirty and schedule a later publication; an older
+verified snapshot is not reported as the current model being Saved.
+Undo/Redo, Revert, and document/editor close retain the strict hide/suspend/drain
+barriers. Undo/Redo and restart dismiss stale editors and invalidate the
 old processor; the next editor/play prepares from the resulting document.
 Transport Stop alone preserves native state and observation. Refused capture
 aborts the document operation, leaves the saved slot unchanged, and exposes an

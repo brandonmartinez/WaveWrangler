@@ -306,9 +306,11 @@ final class EpisodeMixerController {
         }
         mix.master.inserts = mix.master.inserts.map { byID[$0.id] ?? $0 }
         let captured = mix
-        guard document.store.applyMixerCapture(coalescing: key, { (model: ShowDocumentModel) throws(DomainError) in
-            try model.settingMix(captured, in: episodeID)
-        }) else { throw MixerFailure.invalidRecipe("the document refused the Audio Unit state transaction") }
+        if captured != originalMix {
+            guard document.store.applyMixerCapture(coalescing: key, { (model: ShowDocumentModel) throws(DomainError) in
+                try model.settingMix(captured, in: episodeID)
+            }) else { throw MixerFailure.invalidRecipe("the document refused the Audio Unit state transaction") }
+        }
         expectedMix = mix
         refreshPlaybackControls()
         nativeStateBaseline = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
@@ -342,7 +344,7 @@ final class EpisodeMixerController {
         }
     }
 
-    /// Save/Undo/Redo/close must await capture, suspend polling, then restore/reload from the document.
+    /// Undo/Redo/close suspend polling before capture; saves capture without replacing the live instance.
     /// Never let a stale vendor editor overwrite Undo or a changed Primary/insert chain.
     func stop() {
         playback?.cancel()

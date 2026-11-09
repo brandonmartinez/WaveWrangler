@@ -53,6 +53,19 @@ final class MixerDocumentTransactions {
         }
     }
 
+    func captureForSave() async throws {
+        do {
+            try await edit { [self] in
+                for controller in liveControllers where controller.hasObservedState {
+                    try await controller.captureAndPersist(coalescing: controller.editorObservationKey)
+                }
+            }
+        } catch {
+            report(error)
+            throw error
+        }
+    }
+
     /// The document queue already serializes the requesting UI action.
     func handoffEditors(to target: EpisodeMixerController) async throws {
         guard isBusy, !isClosed else { throw MixerFailure.staleDependencies }

@@ -38,6 +38,15 @@ final class ShowDocument: NSDocument {
     private var pendingCandidate: EncodedDocument?
     private var lastReceipt: PublicationReceipt?
     private var scheduler: QuiescenceScheduler?
+    private struct SaveRequest {
+        let url: URL
+        let typeName: String
+        let operation: NSDocument.SaveOperationType
+        let captureNativeState: Bool
+        let completion: (Error?) -> Void
+    }
+    private var saveRequests: [SaveRequest] = []
+    private var preparedAutosaves = 0
     /// Offered C2b records whose Restore is currently in effect (Undo of the Restore removes the record again).
     /// They stay on disk until a verified publication that contains the restore, or an explicit Don't Save,
     /// resolves them, so a crash right after Restore loses nothing.
@@ -74,6 +83,8 @@ final class ShowDocument: NSDocument {
     static var debugFormatUpdateHooks: (any PublicationHooks)?
     /// Debug-only: runs before a show file is decoded (F-OLDER-BAD seeds an M1-era recovery checkpoint for it).
     static var debugBeforeRead: (@MainActor (URL) -> Void)?
+    /// Holds the completion boundary without blocking live editing (slow-save regression coverage).
+    static var debugBeforeSaveCompletion: (@MainActor () async -> Void)?
     #endif
     /// ST-11: after a failed save with autosave ON, WaveWrangler retries automatically at most this often.
     static var saveRetryInterval: TimeInterval = 30
@@ -313,23 +324,33 @@ final class ShowDocument: NSDocument {
         for saveOperation: NSDocument.SaveOperationType,
         completionHandler: @escaping (Error?) -> Void
     ) {
-        if mixerTransactions.needsBarrier {
+        let isAutomatic = saveOperation == .autosaveInPlaceOperation || saveOperation == .autosaveElsewhereOperation
+            || saveOperation == .autosaveAsOperation
+        let request = SaveRequest(url: url, typeName: typeName, operation: saveOperation,
+                                  captureNativeState: !isAutomatic || preparedAutosaves == 0, completion: completionHandler)
+        saveRequests.append(request)
+        if saveRequests.count == 1 { performSave(request) }
+    }
+
+    private func performSave(_ request: SaveRequest) {
+        let completion: (Error?) -> Void = { [self] error in
+            request.completion(error)
+            saveRequests.removeFirst()
+            if let next = saveRequests.first {
+                Task { @MainActor in performSave(next) }
+            }
+        }
+        if request.captureNativeState && mixerTransactions.needsBarrier {
             Task { @MainActor in
                 do {
-                    try await mixerTransactions.barrier {
-                        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                            self.saveCaptured(to: url, ofType: typeName, for: saveOperation) { error in
-                                if let error { continuation.resume(throwing: error) }
-                                else { continuation.resume() }
-                            }
-                        }
-                    }
-                    completionHandler(nil)
-                } catch { completionHandler(error) }
+                    try await mixerTransactions.captureForSave()
+                    saveCaptured(to: request.url, ofType: request.typeName, for: request.operation, completionHandler: completion)
+                } catch { completion(error) }
             }
-            return
+        } else {
+            // Preserve AppKit's active autosave/file-access context when no asynchronous capture is needed.
+            saveCaptured(to: request.url, ofType: request.typeName, for: request.operation, completionHandler: completion)
         }
-        saveCaptured(to: url, ofType: typeName, for: saveOperation, completionHandler: completionHandler)
     }
 
     private func saveCaptured(
@@ -365,9 +386,21 @@ final class ShowDocument: NSDocument {
         let restoredAtSaveStart = restoredOfferURLs
         super.save(to: url, ofType: typeName, for: saveOperation) { [weak self] error in
             guard let self else { return completionHandler(error) }
-            self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
-                            candidateModel: candidateModel, restoredAtSaveStart: restoredAtSaveStart)
-            completionHandler(error)
+            let finish = {
+                self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, url: url, candidateBytes: candidateBytes,
+                                candidateModel: candidateModel, restoredAtSaveStart: restoredAtSaveStart)
+                completionHandler(error)
+            }
+            #if DEBUG
+            if let hold = Self.debugBeforeSaveCompletion {
+                Task { @MainActor in
+                    await hold()
+                    finish()
+                }
+                return
+            }
+            #endif
+            finish()
         }
     }
 
@@ -443,8 +476,9 @@ final class ShowDocument: NSDocument {
             resolveOfferRecordsAfterVerifiedSave(
                 restoredAtSaveStart: restoredAtSaveStart, publishedEqualsCurrent: store.model == candidateModel
             )
-            if isAutosaveInPlace, isDocumentEdited {
+            if store.model != candidateModel || (isAutosaveInPlace && isDocumentEdited) {
                 status.set(.edited(autosaveEnabled: gate.isEnabled))
+                scheduler?.reschedulePending()
             } else {
                 status.set(.saved(revision: receipt.revision, at: receipt.verifiedAt))
             }
@@ -739,6 +773,14 @@ final class ShowDocument: NSDocument {
     }
 
     override func autosave(withImplicitCancellability autosavingIsImplicitlyCancellable: Bool, completionHandler: @escaping (Error?) -> Void) {
+        autosave(withImplicitCancellability: autosavingIsImplicitlyCancellable, captureNativeState: true,
+                 completionHandler: completionHandler)
+    }
+
+    private func autosave(
+        withImplicitCancellability autosavingIsImplicitlyCancellable: Bool, captureNativeState: Bool,
+        completionHandler: @escaping (Error?) -> Void
+    ) {
         // Every automatic entry (our scheduler, window/app deactivation, Close/Quit while ON) re-checks the flag.
         guard gate.isEnabled else {
             noteAutosaveSkipped()
@@ -756,7 +798,34 @@ final class ShowDocument: NSDocument {
             completionHandler(CocoaError(.userCancelled))
             return
         }
-        super.autosave(withImplicitCancellability: autosavingIsImplicitlyCancellable, completionHandler: completionHandler)
+        if autosavingIsImplicitlyCancellable,
+           !saveRequests.isEmpty || preparedAutosaves > 0 || mixerTransactions.isBusy {
+            scheduler?.reschedulePending()
+            completionHandler(CocoaError(.userCancelled))
+            return
+        }
+        if captureNativeState && mixerTransactions.needsBarrier {
+            Task { @MainActor in
+                do {
+                    try await mixerTransactions.captureForSave()
+                    autosave(withImplicitCancellability: autosavingIsImplicitlyCancellable, captureNativeState: false,
+                             completionHandler: completionHandler)
+                } catch { completionHandler(error) }
+            }
+        } else {
+            autosaveCaptured(withImplicitCancellability: autosavingIsImplicitlyCancellable, completionHandler: completionHandler)
+        }
+    }
+
+    private func autosaveCaptured(
+        withImplicitCancellability implicitlyCancellable: Bool, completionHandler: @escaping (Error?) -> Void
+    ) {
+        // AppKit's autosave holds file access while calling save(to:); capture before entering that context.
+        preparedAutosaves += 1
+        super.autosave(withImplicitCancellability: implicitlyCancellable) { [self] error in
+            preparedAutosaves -= 1
+            completionHandler(error)
+        }
     }
 
     override func updateChangeCount(_ change: NSDocument.ChangeType) {
