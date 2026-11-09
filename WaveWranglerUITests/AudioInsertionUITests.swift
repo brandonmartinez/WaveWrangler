@@ -56,7 +56,7 @@ final class AudioInsertionUITests: XCTestCase {
         XCTAssertTrue(wait { regionCount(app) == "1 regions" }, app.debugDescription)
         let restoredClip = app.buttons[clipID]
         XCTAssertTrue(wait {
-            app.buttons["ww.audioWorkspace.playMix"].isEnabled
+            app.buttons["alignment.waveforms.transport.play"].isEnabled
                 && clips(app).count == 1
                 && restoredClip.exists
                 && restoredClip.isHittable
@@ -68,13 +68,10 @@ final class AudioInsertionUITests: XCTestCase {
         let playhead = app.textFields["alignment.waveforms.playhead"]
         replace(playhead, with: "10.25")
         playhead.typeKey(.return, modifierFlags: [])
-        app.buttons["ww.audioWorkspace.playMix"].click()
-        let status = app.descendants(matching: .any)["alignment.waveforms.transport.status"]
-        XCTAssertTrue(wait {
-            displayedText(status).hasPrefix("Playing the production mix")
-        }, app.debugDescription)
+        playProductionMix(in: app)
+        XCTAssertTrue(wait { app.buttons["alignment.waveforms.transport.play"].label == "Pause" }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.play"].click()
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.sourceAudition"].isHittable)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.controlBar.listeningMode"].isHittable)
         focusWindow(review, in: app)
         review.buttons["ww.review.reattach"].click()
         XCTAssertTrue(wait { !review.exists })
@@ -143,9 +140,10 @@ final class AudioInsertionUITests: XCTestCase {
             displayedText(app.staticTexts["ww.audioInsertion.preview"]).contains("-2.000000000 to 2.000000000")
         }, app.debugDescription)
         app.buttons["ww.audioInsertion.apply"].click()
-        XCTAssertTrue(wait { regionCount(app) == "1 regions" })
+        XCTAssertTrue(app.buttons["ww.audioInsertion.apply"].waitForNonExistence(timeout: 5))
+        XCTAssertEqual(regionCount(app), "1 regions", app.debugDescription)
         let playhead = app.textFields["alignment.waveforms.playhead"]
-        replace(playhead, with: "0")
+        replace(playhead, with: "2")
         playhead.typeKey(.return, modifierFlags: [])
         openInsertion(intro: false, in: app)
         XCTAssertTrue(app.staticTexts["ww.audioInsertion.refusal"].waitForExistence(timeout: 5))
@@ -170,12 +168,13 @@ final class AudioInsertionUITests: XCTestCase {
         if minimum { app.launchArguments += ["-WWUITestMinimumShowWindow", "YES"] }
         app.launch()
         app.activate()
-        XCTAssertTrue(app.descendants(matching: .any)["ww.audioInsertion.regions"].waitForExistence(timeout: 20),
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].waitForExistence(timeout: 20),
                       app.debugDescription)
         return app
     }
 
     private func openInsertion(intro: Bool, in app: XCUIApplication) {
+        openTimelineAdd(in: app)
         let menu = app.descendants(matching: .any)["ww.audioInsertion.regions"]
         XCTAssertTrue(wait { menu.exists && menu.isEnabled && menu.isHittable }, app.debugDescription)
         menu.click()
@@ -202,15 +201,29 @@ final class AudioInsertionUITests: XCTestCase {
     }
 
     private func regionCount(_ app: XCUIApplication) -> String? {
-        app.descendants(matching: .any)["ww.audioInsertion.regions"].value as? String
+        openTimelineAdd(in: app)
+        app.descendants(matching: .any)["ww.audioInsertion.regions"].click()
+        let regions = insertedRegionItems(app)
+        _ = regions.firstMatch.waitForExistence(timeout: 3)
+        let count = regions.count
+        app.textFields["alignment.waveforms.playhead"].click()
+        closeTimelineMore(in: app)
+        return "\(count) regions"
     }
 
     private func openFirstRegion(_ app: XCUIApplication) {
+        openTimelineAdd(in: app)
         app.descendants(matching: .any)["ww.audioInsertion.regions"].click()
-        let item = app.menuItems.matching(NSPredicate(format: "identifier BEGINSWITH 'ww.audioInsertion.region.'")).firstMatch
+        let item = insertedRegionItems(app).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout: 5), app.debugDescription)
         item.click()
         XCTAssertTrue(app.textFields["ww.audioInsertion.length"].waitForExistence(timeout: 5))
+    }
+
+    private func insertedRegionItems(_ app: XCUIApplication) -> XCUIElementQuery {
+        // AppKit's second-level menu bridge replaces SwiftUI identifiers with menuAction:.
+        app.menuItems["ww.audioInsertion.regions"].menus.menuItems.matching(
+            NSPredicate(format: "title CONTAINS %@", " s · "))
     }
 
     private func clips(_ app: XCUIApplication) -> XCUIElementQuery {
@@ -239,7 +252,7 @@ final class AudioInsertionUITests: XCTestCase {
     }
 
     private func chooseAudio(_ file: URL, in app: XCUIApplication) {
-        app.buttons["ww.audioWorkspace.addAudio"].click()
+        chooseAddAudio(in: app)
         let identifier = "com.apple.appkit.xpc.openAndSavePanelService"
         var host: XCUIApplication?
         XCTAssertTrue(wait {

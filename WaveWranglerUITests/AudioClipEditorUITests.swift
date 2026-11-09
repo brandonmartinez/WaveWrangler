@@ -21,7 +21,7 @@ final class AudioClipEditorUITests: XCTestCase {
         if minimum { app.launchArguments += ["-WWUITestMinimumShowWindow", "YES"] }
         app.launch()
         app.activate()
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.addAudio"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].waitForExistence(timeout: 20), app.debugDescription)
         return app
     }
 
@@ -78,8 +78,8 @@ final class AudioClipEditorUITests: XCTestCase {
         }
         let inspector = app.buttons["ww.sidebar.recording"]
         if inspector.value as? String == "Shown" { inspector.click() }
-        app.buttons["alignment.waveforms.fitTimeline"].click()
-        app.descendants(matching: .any)["ww.audioWorkspace.audioTracks"].click()
+        clickTimelineButton("alignment.waveforms.fitTimeline", in: app)
+        app.descendants(matching: .any)["ww.controlBar.add"].click()
         app.menuItems["New Audio Track"].click()
         let destinationHeader = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.audioTrack.select.' AND label == 'Audio 2'")).firstMatch
@@ -115,7 +115,7 @@ final class AudioClipEditorUITests: XCTestCase {
         app.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(wait { clips(app).count == 3 })
         if inspector.value as? String == "Shown" { inspector.click() }
-        app.buttons["alignment.waveforms.fitTimeline"].click()
+        clickTimelineButton("alignment.waveforms.fitTimeline", in: app)
         let editorScreenshot = XCTAttachment(screenshot: app.windows["ww.show.window"].screenshot())
         editorScreenshot.name = "F5 synthetic multitrack Audio Clip editor"
         editorScreenshot.lifetime = .keepAlways
@@ -129,8 +129,8 @@ final class AudioClipEditorUITests: XCTestCase {
         XCTAssertEqual(audioName.label, "Ambience")
         let controls = app.descendants(matching: .any)["alignment.waveforms.controls"]
         XCTAssertTrue(controls.exists)
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.playMix"].isHittable)
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.playMix"].isEnabled)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.controlBar.listeningMode"].isHittable)
+        XCTAssertTrue(app.buttons["alignment.waveforms.transport.play"].isEnabled)
         app.buttons["ww.mixer.detach"].click()
         let mixer = app.windows["ww.mixer.window"]
         XCTAssertTrue(mixer.waitForExistence(timeout: 5))
@@ -166,14 +166,14 @@ final class AudioClipEditorUITests: XCTestCase {
         detach.click()
         let detached = app.windows["ww.review.window"]
         XCTAssertTrue(detached.waitForExistence(timeout: 5), app.debugDescription)
-        XCTAssertTrue(origin.frame.contains(app.buttons["ww.audioWorkspace.addAudio"].frame))
+        XCTAssertTrue(origin.frame.contains(app.buttons["ww.controlBar.more"].frame))
         XCTAssertTrue(origin.frame.contains(app.textFields["alignment.waveforms.playhead"].frame))
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.addAudio"].isEnabled)
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].isEnabled)
         XCTAssertTrue(app.textFields["alignment.waveforms.playhead"].isEnabled)
         replace(detached.textFields["ww.review.search"], with: "Host")
         detached.buttons["ww.review.reattach"].click()
         XCTAssertTrue(wait { !detached.exists })
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.addAudio"].isHittable)
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].isHittable)
         XCTAssertTrue(app.textFields["alignment.waveforms.playhead"].isHittable)
         XCTAssertEqual(app.textFields["alignment.waveforms.playhead"].frame.minY, top.minY, accuracy: 1)
         app.buttons["ww.review.detach"].click()
@@ -192,16 +192,13 @@ final class AudioClipEditorUITests: XCTestCase {
         mixer.buttons["ww.mixer.reattach"].click()
         XCTAssertTrue(wait { !mixer.exists })
         XCTAssertEqual(app.textFields["alignment.waveforms.playhead"].frame.minY, top.minY, accuracy: 1)
-        app.buttons["ww.audioWorkspace.playMix"].click()
+        playProductionMix(in: app)
         XCTAssertTrue(wait {
-            (app.buttons["ww.audioWorkspace.playMix"].value as? String) == "Selected"
+            (app.descendants(matching: .any)["ww.controlBar.listeningMode"].value as? String) == "Production Mix"
         }, app.debugDescription)
-        let status = app.descendants(matching: .any)["alignment.waveforms.transport.status"]
-        XCTAssertTrue(wait {
-            (status.value as? String ?? status.label).hasPrefix("Playing the production mix")
-        }, app.debugDescription)
+        XCTAssertTrue(wait { app.buttons["alignment.waveforms.transport.play"].label == "Pause" }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.play"].click()
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.sourceAudition"].isHittable)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.controlBar.listeningMode"].isHittable)
         XCTAssertEqual(app.textFields["alignment.waveforms.playhead"].frame.minY, top.minY, accuracy: 1)
         XCTAssertEqual(clips(app).count, 1)
     }
@@ -246,7 +243,7 @@ final class AudioClipEditorUITests: XCTestCase {
     }
 
     private func chooseAudio(_ file: URL, in app: XCUIApplication) {
-        app.buttons["ww.audioWorkspace.addAudio"].click()
+        chooseAddAudio(in: app)
         let identifier = "com.apple.appkit.xpc.openAndSavePanelService"
         var host: XCUIApplication?
         XCTAssertTrue(wait {

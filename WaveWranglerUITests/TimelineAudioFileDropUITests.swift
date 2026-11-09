@@ -38,10 +38,10 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         let playhead = app.textFields["alignment.waveforms.playhead"]
         replace(playhead, with: "\(start + 1)")
         playhead.typeKey(.return, modifierFlags: [])
-        app.buttons["alignment.waveforms.fitTimeline"].click()
+        clickTimelineButton("alignment.waveforms.fitTimeline", in: app)
         let fittedViewport = try viewport(app)
-        app.buttons["alignment.waveforms.zoomOut"].click()
-        app.buttons["alignment.waveforms.zoomOut"].click()
+        clickTimelineButton("alignment.waveforms.zoomOut", in: app)
+        clickTimelineButton("alignment.waveforms.zoomOut", in: app)
         let ruler = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"]
         let pan = ruler.coordinate(withNormalizedOffset: .init(dx: 0.8, dy: 0.4))
         let beforePan = try viewport(app)
@@ -375,7 +375,7 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         XCTAssertTrue(wait {
             self.clips(app).count == visibleClips
                 && !app.descendants(matching: .any)["ww.trackProcessing.overlay"].exists
-                && app.buttons["ww.audioWorkspace.playMix"].isEnabled
+                && app.buttons["alignment.waveforms.transport.play"].isEnabled
                 && self.clips(app).firstMatch.isHittable
         }, app.debugDescription)
         XCTAssertFalse(app.descendants(matching: .any)["ww.addAudio.error"].exists, app.debugDescription)

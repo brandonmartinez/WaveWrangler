@@ -72,15 +72,19 @@ final class EpisodeLibraryUITests: XCTestCase {
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         let originalRange = ruler.value as? String ?? ruler.label
         let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
+        openTimelineMore(in: app)
         XCTAssertTrue(layout.isHittable)
         layout.click()
         let modes = ["By recorder", "By speaker", "Overlay", "Speakers only"].map { app.menuItems[$0] }
         XCTAssertTrue(modes.allSatisfy(\.exists))
         XCTAssertEqual(modes.map(\.frame.minY), modes.map(\.frame.minY).sorted())
         app.typeKey(.escape, modifierFlags: [])
+        closeTimelineMore(in: app)
         XCTAssertTrue(app.staticTexts["alignment.waveforms.speakerHeading.unknown"].waitForExistence(timeout: 5))
         XCTAssertEqual(Set(tracks.allElementsBoundByIndex.map(\.identifier)), sourceIDs)
+        openTimelineMore(in: app)
         XCTAssertTrue(app.sliders["alignment.waveforms.laneHeight"].isHittable)
+        closeTimelineMore(in: app)
         let enabled = app.checkBoxes.matching(NSPredicate(
             format: "identifier BEGINSWITH %@", "alignment.waveforms.enabled."
         ))
@@ -91,7 +95,9 @@ final class EpisodeLibraryUITests: XCTestCase {
         let overlay = app.descendants(matching: .any)["alignment.waveforms.overlay.unknown"]
         XCTAssertTrue(overlay.waitForExistence(timeout: 5))
         XCTAssertTrue((overlay.value as? String ?? overlay.label).contains("1 enabled track"))
+        openTimelineMore(in: app)
         XCTAssertFalse(app.sliders["alignment.waveforms.laneHeight"].exists)
+        closeTimelineMore(in: app)
         selectTimelineLayout("By recorder", in: app)
         XCTAssertEqual(tracks.count, 1)
         app.checkBoxes[firstToggleID].click()
@@ -132,11 +138,13 @@ final class EpisodeLibraryUITests: XCTestCase {
         let zoom = app.sliders["alignment.waveforms.zoom"]
         let height = app.sliders["alignment.waveforms.laneHeight"]
         let fit = app.buttons["alignment.waveforms.fitTimeline"]
+        openTimelineMore(in: app)
         XCTAssertTrue(zoom.isHittable)
         XCTAssertTrue(height.isHittable)
         XCTAssertTrue(fit.isHittable)
-        let ruler = app.descendants(matching: .any)["alignment.waveforms.ruler.surface"].firstMatch
-        XCTAssertLessThan(abs(zoom.frame.midY - ruler.frame.minY), 65)
+        closeTimelineMore(in: app)
+        XCTAssertTrue(app.buttons["alignment.waveforms.transport.play"].isHittable)
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].isHittable)
         let shot = XCTAttachment(screenshot: window.screenshot())
         shot.name = "Episode-bound alignment at minimum width"
         shot.lifetime = .keepAlways

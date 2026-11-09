@@ -34,6 +34,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         let zoom = app.sliders["alignment.waveforms.zoom"]
         reveal(zoom, in: app)
         zoom.adjust(toNormalizedSliderPosition: 0)
+        closeTimelineMore(in: app)
         let range = app.staticTexts["alignment.waveforms.ruler"]
         let times = (range.value as? String ?? range.label).split(separator: " ").compactMap { Double($0) }
         let maximum = try XCTUnwrap(times.count == 2 ? times[1] - times[0] : nil)
@@ -52,7 +53,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             playhead.typeKey(.return, modifierFlags: [])
             let duration = Double(ruler.frame.width) / pixelsPerSecond
             let level = min(1, max(0, log(maximum / duration) / log(maximum / 0.5)))
-            zoom.adjust(toNormalizedSliderPosition: level)
+            adjustTimelineSlider("alignment.waveforms.zoom", to: level, in: app)
             XCTAssertTrue(wait { row.label.hasPrefix("Timeline transcript: \(title).") },
                           "\(title): \(app.debugDescription)")
             XCTAssertEqual(tracks.element(boundBy: 1).frame.minY - tracks.firstMatch.frame.minY,
@@ -125,13 +126,13 @@ final class UnifiedWorkspaceUITests: XCTestCase {
                       "An unsaved note must not block clicking the ruler to seek.")
         let marker = app.descendants(matching: .any)["alignment.waveforms.ruler.playhead"]
         XCTAssertTrue(marker.exists)
-        let beforeScrub = Double(playhead.value as? String ?? "") ?? -1
+        let beforeScrub = timelineClockSeconds(playhead) ?? -1
         let visibleRange = app.staticTexts["alignment.waveforms.ruler"]
         let viewport = { visibleRange.value as? String ?? visibleRange.label }
         let beforeScrubRange = viewport()
         let cap = marker.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.2))
         cap.click(forDuration: 0.1, thenDragTo: cap.withOffset(CGVector(dx: 20, dy: 0)))
-        XCTAssertTrue(wait { (Double(playhead.value as? String ?? "") ?? -1) > beforeScrub },
+        XCTAssertTrue(wait { (timelineClockSeconds(playhead) ?? -1) > beforeScrub },
                       "Dragging the visible playhead cap must change time while the document is dirty.")
         XCTAssertEqual(viewport(), beforeScrubRange, "Scrubbing does not pan the viewport.")
         let afterScrub = playhead.value as? String
@@ -172,17 +173,15 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             app.terminate()
         }
         app.activate()
-        let follow = app.buttons["alignment.waveforms.followPlayhead"]
-        XCTAssertTrue(follow.waitForExistence(timeout: 20))
-        follow.click()
-        XCTAssertEqual(follow.value as? String, "Off", "Keep this selection/locator workflow's viewport stable")
-        let addButton = app.buttons["ww.audioWorkspace.add"]
-        XCTAssertTrue(addButton.waitForExistence(timeout: 20), app.debugDescription)
-        addButton.click()
+        let play = app.buttons["alignment.waveforms.transport.play"]
+        XCTAssertTrue(play.waitForExistence(timeout: 20))
+        setTimelineFollowPlayhead(false, in: app)
+        chooseAddRecordings(in: app)
         XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertTrue(app.outlines["ww.setup.speakers"].exists)
         app.buttons["Done"].click()
-        XCTAssertTrue(wait { addButton.isHittable })
+        closeTimelineMore(in: app)
+        XCTAssertTrue(wait { play.isHittable })
         if !minimumSize {
             app.typeKey("i", modifierFlags: [.command, .shift])
             let cancelImport = app.buttons["Cancel"]
@@ -190,7 +189,8 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             cancelImport.click()
             XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 5))
             app.buttons["Done"].click()
-            XCTAssertTrue(wait { addButton.isHittable })
+            closeTimelineMore(in: app)
+            XCTAssertTrue(wait { play.isHittable })
             XCTAssertTrue(app.buttons["ww.show.destination.alignment"].isSelected,
                           "File Import keeps the integrated workspace rather than navigating to legacy Setup.")
         }
@@ -232,7 +232,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         app.buttons["Cycle selection"].firstMatch.click()
         playSelection.click()
         XCTAssertTrue(wait {
-            let status = app.staticTexts["alignment.waveforms.transport.status"]
+            let status = app.buttons["alignment.waveforms.transport.play"]
             return app.buttons["alignment.waveforms.transport.play"].label == "Pause"
                 || (status.value as? String ?? status.label) == "Finished selection audition."
         }, app.debugDescription)
@@ -286,7 +286,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             let marker = app.buttons["ww.cleanup.filler.\(reviewID)"]
             XCTAssertTrue(marker.waitForExistence(timeout: 10), app.debugDescription)
             let originalBounds = marker.value as? String
-            let transport = app.staticTexts["alignment.waveforms.transport.status"]
+            let transport = app.buttons["alignment.waveforms.transport.play"]
             review.doubleClick()
             XCTAssertTrue(wait { (transport.value as? String ?? transport.label) == "Finished selection audition." },
                           app.debugDescription)
@@ -343,7 +343,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["ww.show.blocked.heading"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Export isn't available yet"].exists)
         app.buttons["ww.show.destination.alignment"].click()
-        XCTAssertTrue(addButton.waitForExistence(timeout: 10))
+        XCTAssertTrue(play.waitForExistence(timeout: 10))
     }
 
     private func selectLayout(_ title: String, in app: XCUIApplication) {
@@ -353,6 +353,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, scrollID: String = "ww.alignment.workspace") {
+        if scrollID == "ww.alignment.workspace", revealTimelineControl(element, in: app) { return }
         let scroll = app.scrollViews[scrollID]
         if !element.exists {
             scroll.scroll(byDeltaX: 0, deltaY: 400)

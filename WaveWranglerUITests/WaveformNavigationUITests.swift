@@ -2,6 +2,108 @@ import XCTest
 
 @MainActor
 final class WaveformNavigationUITests: XCTestCase {
+    func testEpisodeControlBarDefaultLayoutAndFourBoundaries() throws {
+        let app = launch("Episode control bar", singlePrimary: true)
+        defer { app.terminate() }
+        XCTAssertTrue(tracks(in: app).firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        let play = app.buttons["alignment.waveforms.transport.play"]
+        let stop = app.buttons["alignment.waveforms.transport.stop"]
+        let clock = app.textFields["alignment.waveforms.playhead"]
+        let more = app.buttons["ww.controlBar.more"]
+        XCTAssertTrue(play.isHittable && stop.isHittable && clock.isHittable && more.isHittable, app.debugDescription)
+        XCTAssertEqual(play.frame.midY, stop.frame.midY, accuracy: 2)
+        XCTAssertLessThan(abs(play.frame.midY - clock.frame.midY), 16)
+        XCTAssertEqual(clock.value as? String, "00:00:00.000")
+        for id in ["episodeStart", "in"] {
+            XCTAssertTrue(app.staticTexts["alignment.waveforms.marker.\(id)"].exists, app.debugDescription)
+        }
+        let evidence = XCTAttachment(screenshot: app.windows["ww.show.window"].screenshot())
+        evidence.name = "Default episode control bar before customization"
+        evidence.lifetime = .keepAlways
+        add(evidence)
+        more.click()
+        XCTAssertTrue(app.buttons["ww.workflow.alignTracks"].isHittable, app.debugDescription)
+        XCTAssertTrue(app.buttons["ww.workflow.transcribeTracks"].exists)
+        XCTAssertTrue(app.popUpButtons["alignment.waveforms.layout"].exists)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.audioWorkspace.boundaries"].exists)
+    }
+
+    func testEpisodeBoundariesRestrictionAndAppLocalCustomization() throws {
+        let app = launch("Episode boundaries", singlePrimary: true)
+        defer { app.terminate() }
+        XCTAssertTrue(tracks(in: app).firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        let more = app.buttons["ww.controlBar.more"]
+        more.click()
+        app.descendants(matching: .any)["ww.audioWorkspace.boundaries"].click()
+        app.menuItems["Edit Boundary Times…"].click()
+        let start = app.textFields["ww.boundaries.start"]
+        XCTAssertTrue(start.waitForExistence(timeout: 5), app.debugDescription)
+        for (id, value) in [("start", "-0.5"), ("end", "5"), ("speakerIn", "0.5"), ("speakerOut", "4")] {
+            let field = app.textFields["ww.boundaries.\(id)"]
+            field.click()
+            field.typeKey("a", modifierFlags: .command)
+            field.typeText(value)
+        }
+        app.buttons["ww.boundaries.apply"].click()
+        XCTAssertTrue(start.waitForNonExistence(timeout: 5), app.debugDescription)
+        if !app.descendants(matching: .any)["ww.audioWorkspace.boundaries"].exists { more.click() }
+        app.descendants(matching: .any)["ww.audioWorkspace.boundaries"].click()
+        app.menuItems["Restrict spoken tracks to Speaker In/Out"].click()
+        if app.buttons["ww.controlBar.customize"].exists { more.click() }
+        let clock = app.textFields["alignment.waveforms.playhead"]
+        clock.click()
+        clock.typeKey("a", modifierFlags: .command)
+        clock.typeText("1")
+        clock.typeKey(.return, modifierFlags: [])
+        XCTAssertTrue(wait { clock.value as? String == "00:00:01.000" }, app.debugDescription)
+        app.menuBars.menuBarItems["View"].click()
+        app.menuBars.menuItems["Customize Control Bar and Display…"].click()
+        let customization = app.windows["ww.controlBar.customization"]
+        XCTAssertTrue(customization.waitForExistence(timeout: 5), app.debugDescription)
+        customization.popUpButtons["ww.controlBar.primary"].click()
+        app.menuItems["Timeline Time"].click()
+        customization.checkBoxes["ww.controlBar.labels"].click()
+        customization.buttons["Done"].click()
+        XCTAssertTrue(wait { clock.value as? String == "00:00:00.500" }, app.debugDescription)
+        app.buttons["ww.sidebar.recording"].click()
+        capture(app, name: "Independent episode and speaker bounds with excluded speech hatching")
+        app.typeKey("s", modifierFlags: .command)
+        XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true })
+        let arguments = app.launchArguments
+        let index = try XCTUnwrap(arguments.firstIndex(of: "-WWUITestShowFolder"))
+        app.terminate()
+        app.launchArguments = ["-ApplePersistenceIgnoreState", "YES", "-WWUITestHooks", "YES",
+            "-WWUITestOpenWithoutShowWindows", "\(arguments[index + 1])/Episode boundaries.wwshow"]
+        app.launch()
+        app.activate()
+        XCTAssertTrue(clock.waitForExistence(timeout: 20))
+        app.menuBars.menuBarItems["View"].click()
+        app.menuBars.menuItems["Customize Control Bar and Display…"].click()
+        XCTAssertTrue(customization.waitForExistence(timeout: 5))
+        XCTAssertEqual(customization.popUpButtons["ww.controlBar.primary"].value as? String, "Timeline Time")
+        XCTAssertEqual(String(describing: customization.checkBoxes["ww.controlBar.labels"].value ?? ""), "0",
+                       customization.debugDescription)
+        customization.buttons["Restore Defaults"].click()
+        XCTAssertEqual(customization.popUpButtons["ww.controlBar.primary"].value as? String, "Episode Time")
+        customization.buttons["Done"].click()
+    }
+
+    func testMinimumEpisodeControlBarKeepsTransportClockAndOverflowReachable() {
+        let app = launch("Minimum episode controls", minimum: true, singlePrimary: true)
+        defer { app.terminate() }
+        XCTAssertTrue(tracks(in: app).firstMatch.waitForExistence(timeout: 20), app.debugDescription)
+        let window = app.windows["ww.show.window"]
+        for control in [app.buttons["alignment.waveforms.transport.play"],
+                        app.buttons["alignment.waveforms.transport.stop"],
+                        app.textFields["alignment.waveforms.playhead"], app.buttons["ww.controlBar.more"]] {
+            XCTAssertTrue(control.isHittable && window.frame.contains(control.frame), app.debugDescription)
+        }
+        app.buttons["ww.controlBar.more"].click()
+        let boundaries = app.descendants(matching: .any)["ww.audioWorkspace.boundaries"]
+        XCTAssertTrue(boundaries.waitForExistence(timeout: 5) && boundaries.isHittable, app.debugDescription)
+        XCTAssertTrue(app.buttons["ww.controlBar.customize"].exists)
+    }
+
     func testFillSpaceDropdownAndConsolidatedToolbar() throws {
         let app = launch("Fitted tracks", singlePrimary: true)
         defer { app.terminate() }
@@ -11,6 +113,7 @@ final class WaveformNavigationUITests: XCTestCase {
         let sidebar = app.buttons["ww.sidebar.recording"]
         if sidebar.value as? String == "Shown" { sidebar.click() }
         let picker = app.popUpButtons["alignment.waveforms.layout"]
+        openTimelineMore(in: app)
         XCTAssertTrue(picker.isHittable)
         picker.click()
         let options = ["By recorder", "By speaker", "Overlay", "Speakers only"].map { picker.menuItems[$0] }
@@ -19,8 +122,10 @@ final class WaveformNavigationUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         selectTimelineLayout("Speakers only", in: app)
         let fit = app.descendants(matching: .any)["alignment.waveforms.fillSpace"]
+        reveal(fit, in: app)
         XCTAssertTrue(fit.isHittable, app.debugDescription)
         fit.click()
+        closeTimelineMore(in: app)
         let track = tracks(in: app).firstMatch
         XCTAssertTrue(wait { track.frame.height > 220 }, app.debugDescription)
         let scroll = app.scrollViews["ww.alignment.workspace"]
@@ -29,10 +134,13 @@ final class WaveformNavigationUITests: XCTestCase {
         selectTimelineLayout("By recorder", in: app)
         XCTAssertTrue(wait { track.frame.height >= 64 && track.frame.height < fittedHeight })
         selectTimelineLayout("Overlay", in: app)
+        openTimelineMore(in: app)
         XCTAssertTrue(app.sliders["alignment.waveforms.laneHeight"].exists == false)
+        closeTimelineMore(in: app)
         selectTimelineLayout("Speakers only", in: app)
         XCTAssertTrue(wait { track.frame.height > 220 })
         let slider = app.sliders["alignment.waveforms.laneHeight"]
+        reveal(slider, in: app)
         slider.adjust(toNormalizedSliderPosition: 0.5)
         XCTAssertTrue(wait {
             guard let value = slider.value as? NSNumber else { return false }
@@ -40,6 +148,7 @@ final class WaveformNavigationUITests: XCTestCase {
         },
                       "Manual slider=\(String(describing: slider.value)), row height=\(track.frame.height), fit=\(String(describing: fit.value))")
         XCTAssertEqual(String(describing: fit.value ?? ""), "0")
+        closeTimelineMore(in: app)
         let play = app.buttons["alignment.waveforms.transport.play"]
         let cycle = app.buttons["ww.timeline.cycle"]
         XCTAssertEqual(cycle.label, "Cycle")
@@ -47,19 +156,17 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertLessThan(cycle.frame.width, 50, "Cycle is icon-only")
         let workflow = app.buttons["ww.workflow.alignTracks"]
         let transcribe = app.buttons["ww.workflow.transcribeTracks"]
+        openTimelineMore(in: app)
         XCTAssertEqual(app.buttons.matching(identifier: "ww.workflow.alignTracks").count, 1)
         XCTAssertEqual(app.buttons.matching(identifier: "ww.workflow.transcribeTracks").count, 1)
         XCTAssertEqual(app.buttons.matching(identifier: "alignment.waveforms.load").count, 1)
-        XCTAssertLessThan(picker.frame.maxX, workflow.frame.minX)
         XCTAssertLessThan(workflow.frame.maxX, transcribe.frame.minX)
         let refresh = app.buttons["alignment.waveforms.load"]
-        let tool = app.menuButtons["alignment.waveforms.tool"]
-        XCTAssertTrue(refresh.isHittable && tool.isHittable && transcribe.isHittable)
-        XCTAssertGreaterThan(refresh.frame.maxX, tool.frame.maxX)
-        let chrome = app.descendants(matching: .any)["alignment.waveforms.controls"]
-        XCTAssertLessThan(chrome.frame.maxX - refresh.frame.maxX, 30, "Refresh is at the trailing edge")
-        capture(app, name: "Selected-view dropdown and single trailing control group")
+        let tool = app.scrollViews["ww.controlBar.overflow"].menuButtons["alignment.waveforms.tool"]
+        XCTAssertTrue(refresh.isHittable && tool.isHittable && transcribe.isHittable, app.debugDescription)
+        capture(app, name: "Unified control bar and grouped overflow commands")
         fit.click()
+        closeTimelineMore(in: app)
         XCTAssertTrue(wait { track.frame.height > 220 })
         app.typeKey("s", modifierFlags: .command)
         let arguments = app.launchArguments
@@ -70,6 +177,8 @@ final class WaveformNavigationUITests: XCTestCase {
             "-WWUITestOpenWithoutShowWindows", file]
         app.launch()
         app.activate()
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].waitForExistence(timeout: 20))
+        openTimelineMore(in: app)
         XCTAssertTrue(fit.waitForExistence(timeout: 20))
         XCTAssertEqual(String(describing: fit.value ?? ""), "1", "Fill Space is remembered per episode")
     }
@@ -124,7 +233,9 @@ final class WaveformNavigationUITests: XCTestCase {
         let follow = app.buttons["alignment.waveforms.followPlayhead"]
         XCTAssertEqual(follow.value as? String, "On")
         let zoom = app.sliders["alignment.waveforms.zoom"]
+        reveal(zoom, in: app)
         zoom.dragHorizontalSliderToMaximum()
+        closeTimelineMore(in: app)
         let playhead = app.textFields["alignment.waveforms.playhead"]
         playhead.click()
         playhead.typeKey("a", modifierFlags: .command)
@@ -179,7 +290,7 @@ final class WaveformNavigationUITests: XCTestCase {
                 guard let window = try? self.viewport(in: app) else { return false }
                 return abs(window.start + window.duration / 2 - 2.25) < 0.002
             }, "Both zoom directions keep the playhead centered: \(app.debugDescription)")
-            XCTAssertEqual(playhead.value as? String, "2.250", "Zooming is not a seek")
+            XCTAssertEqual(playhead.value as? String, "00:00:02.250", "Zooming is not a seek")
         }
         reveal(track, in: app)
         track.scroll(byDeltaX: -300, deltaY: 0)
@@ -192,7 +303,7 @@ final class WaveformNavigationUITests: XCTestCase {
             guard let window = try? self.viewport(in: app) else { return false }
             return abs(window.start + window.duration / 2 - 2.25) < 0.002
         }, "Option-scroll returns zoom to the playhead even after panning away")
-        XCTAssertEqual(playhead.value as? String, "2.250")
+        XCTAssertEqual(playhead.value as? String, "00:00:02.250")
     }
 
     func testTimelineSlidersExposeNativeValuesAndReceiveKeyboardInput() throws {
@@ -232,7 +343,7 @@ final class WaveformNavigationUITests: XCTestCase {
         let handle = app.steppers["alignment.waveforms.ruler.playhead"]
         XCTAssertTrue(handle.waitForExistence(timeout: 5),
                       "The visible playhead remains an actual adjustable accessibility control: \(app.debugDescription)")
-        XCTAssertEqual(handle.label, "Aligned playhead")
+        XCTAssertEqual(handle.label, "Program playhead")
         XCTAssertEqual(handle.frame.width, 20, accuracy: 1)
         XCTAssertEqual(handle.frame.height, 44, accuracy: 1)
         XCTAssertTrue(app.windows["ww.show.window"].frame.contains(handle.frame))
@@ -252,7 +363,8 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(rulerSurface.frame.width, track.frame.width, accuracy: 2,
                        "The pinned ruler must use the tracks' measured width, excluding the native scroll gutter")
         let before = try viewport(in: app)
-        let playhead = app.textFields["alignment.waveforms.playhead"].value as? String
+        let playheadField = app.textFields["alignment.waveforms.playhead"]
+        let playhead = playheadField.value as? String
         let height = track.frame.height
         track.scroll(byDeltaX: -40, deltaY: 0)
         XCTAssertTrue(wait { (try? self.viewport(in: app).start) != before.start }, app.debugDescription)
@@ -265,7 +377,7 @@ final class WaveformNavigationUITests: XCTestCase {
         }
         XCTAssertTrue(wait { (try? self.viewport(in: app).duration) != panned.duration }, app.debugDescription)
         let zoomed = try viewport(in: app)
-        XCTAssertEqual(zoomed.start + zoomed.duration / 2, try XCTUnwrap(Double(playhead ?? "")),
+        XCTAssertEqual(zoomed.start + zoomed.duration / 2, try XCTUnwrap(timelineClockSeconds(playheadField)),
                        accuracy: 0.002, "Option-horizontal zoom centers on the playhead")
         XCTAssertEqual(track.frame.height, height, accuracy: 1)
         XCUIElement.perform(withKeyModifiers: [.option]) {
@@ -277,10 +389,9 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(try viewport(in: app).duration, zoomed.duration, accuracy: 0.002)
         let controls = [
             app.textFields["alignment.waveforms.playhead"],
-            app.sliders["alignment.waveforms.zoom"],
-            app.sliders["alignment.waveforms.laneHeight"],
-            app.descendants(matching: .any)["alignment.waveforms.layout"],
-            app.menuButtons["alignment.waveforms.tool"],
+            app.buttons["alignment.waveforms.transport.play"],
+            app.buttons["alignment.waveforms.transport.stop"],
+            app.buttons["ww.controlBar.more"],
             app.descendants(matching: .any)["alignment.waveforms.ruler.surface"],
         ]
         let fixedFrames = controls.map(\.frame)
@@ -343,7 +454,8 @@ final class WaveformNavigationUITests: XCTestCase {
         let centeredStart = 2.25 - zoomedWindow.duration / 2
         XCTAssertEqual(try viewport(in: app).start, centeredStart, accuracy: 0.002)
         XCTAssertEqual(try viewport(in: app).duration, zoomedWindow.duration, accuracy: 0.002)
-        XCTAssertEqual(playhead.value as? String, "2.250", "Zooming does not seek")
+        XCTAssertEqual(playhead.value as? String, "00:00:02.250", "Zooming does not seek")
+        closeTimelineMore(in: app)
         let markers = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND identifier ENDSWITH '.start'"))
         XCTAssertTrue(wait { markers.count == 2 }, app.debugDescription)
@@ -436,6 +548,7 @@ final class WaveformNavigationUITests: XCTestCase {
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication) {
+        if revealTimelineControl(element, in: app) { return }
         let scroll = app.scrollViews["ww.alignment.workspace"]
         for _ in 0..<12 {
             let chrome = app.descendants(matching: .any)["alignment.waveforms.controls"]

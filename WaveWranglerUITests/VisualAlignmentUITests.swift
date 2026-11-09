@@ -277,8 +277,9 @@ final class VisualAlignmentUITests: XCTestCase {
         assertMeasuredRecordings(["host.wav", "guest.wav"], in: app)
         let play = app.buttons["alignment.waveforms.transport.play"]
         XCTAssertTrue(play.isHittable)
+        selectSourceAudition(in: app)
         play.click()
-        let status = app.staticTexts["alignment.waveforms.transport.status"]
+        let status = app.buttons["alignment.waveforms.transport.play"]
         XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 timed track") },
                       app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
@@ -339,6 +340,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let zoom = app.sliders["alignment.waveforms.zoom"]
         scrollTo(zoom, in: app)
         zoom.adjust(toNormalizedSliderPosition: 0.66)
+        closeTimelineMore(in: app)
         XCTAssertTrue(waitUntil { tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio" })
         let target = app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier BEGINSWITH %@ AND label CONTAINS %@",
@@ -419,7 +421,7 @@ final class VisualAlignmentUITests: XCTestCase {
         }, app.debugDescription)
         replace(playhead, with: "3.5", in: app)
         XCTAssertTrue(waitUntil {
-            (Double(playhead.value as? String ?? "") ?? -1) > 2
+            (timelineClockSeconds(playhead) ?? -1) > 2
                 && (ruler.value as? String ?? ruler.label).contains("Visible aligned time ruler")
         }, "Editing aligned time must move the shared playhead")
         XCTAssertTrue(waitUntil {
@@ -429,7 +431,7 @@ final class VisualAlignmentUITests: XCTestCase {
         replace(playhead, with: "4.5", in: app)
         XCTAssertTrue(waitUntil {
             tracks.count == 2 && app.buttons["alignment.waveforms.load"].label == "Refresh audio"
-                && abs((Double(playhead.value as? String ?? "") ?? -1) - 4.5) < 0.01
+                && abs((timelineClockSeconds(playhead) ?? -1) - 4.5) < 0.01
         }, app.debugDescription)
         XCTAssertTrue((revision.value as? String ?? revision.label).contains("Map revision 1"))
 
@@ -437,26 +439,26 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(rulerSurface, in: app)
         XCTAssertTrue(rulerSurface.exists)
         rulerSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.08, dy: 0.8)).click()
-        XCTAssertTrue(waitUntil { (Double(playhead.value as? String ?? "") ?? -1) < 4.5 })
+        XCTAssertTrue(waitUntil { (timelineClockSeconds(playhead) ?? -1) < 4.5 })
         let marker = app.descendants(matching: .any)["alignment.waveforms.ruler.playhead"]
         XCTAssertTrue(marker.exists)
         XCTAssertTrue(marker.label.contains("Aligned playhead"))
-        let beforeDrag = Double(playhead.value as? String ?? "") ?? -1
+        let beforeDrag = timelineClockSeconds(playhead) ?? -1
         let handle = rulerSurface.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(
             dx: marker.frame.midX - rulerSurface.frame.minX, dy: 37
         ))
         handle.click(forDuration: 0.1, thenDragTo: handle.withOffset(CGVector(dx: 12, dy: 0)))
-        let markerMoved = waitUntil { (Double(playhead.value as? String ?? "") ?? -1) > beforeDrag }
+        let markerMoved = waitUntil { (timelineClockSeconds(playhead) ?? -1) > beforeDrag }
         if !markerMoved { attachDisplay(app, name: "Ruler after marker drag") }
         XCTAssertTrue(markerMoved,
                       "Dragging the ruler marker should move the shared audible playhead")
-        let afterDrag = Double(playhead.value as? String ?? "") ?? -1
+        let afterDrag = timelineClockSeconds(playhead) ?? -1
         let beforePan = ruler.value as? String ?? ruler.label
         let emptyRuler = rulerSurface.coordinate(withNormalizedOffset: CGVector(dx: 0.75, dy: 0.8))
         emptyRuler.click(forDuration: 0.3, thenDragTo: emptyRuler.withOffset(CGVector(dx: -60, dy: 0)))
         XCTAssertTrue(waitUntil { (ruler.value as? String ?? ruler.label) != beforePan },
                       "Dragging empty ruler space should still pan the shared timeline")
-        XCTAssertEqual(Double(playhead.value as? String ?? "") ?? -1, afterDrag, accuracy: 0.001)
+        XCTAssertEqual(timelineClockSeconds(playhead) ?? -1, afterDrag, accuracy: 0.001)
     }
 
     func testUntimedSoloAndPairedPointsAllowManualPlacementThenFurtherDragging() throws {
@@ -486,12 +488,13 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(target.exists, app.debugDescription)
         let solo = app.scrollViews["ww.alignment.workspace"].buttons["Solo synthetic-remote.wav"]
         scrollTo(solo, in: app)
+        selectSourceAudition(in: app)
         solo.click()
         XCTAssertTrue(app.descendants(matching: .any)["alignment.waveforms.sourceTime"].waitForExistence(timeout: 5))
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
         play.click()
-        let status = app.descendants(matching: .any)["alignment.waveforms.transport.status"]
+        let status = app.buttons["alignment.waveforms.transport.play"]
         XCTAssertTrue(waitUntil {
             (status.value as? String ?? status.label).contains("original source time")
         }, app.debugDescription)
@@ -503,18 +506,24 @@ final class VisualAlignmentUITests: XCTestCase {
         let zoom = app.sliders["alignment.waveforms.zoom"]
         scrollTo(zoom, in: app)
         zoom.adjust(toNormalizedSliderPosition: 0.7)
+        closeTimelineMore(in: app)
         XCTAssertTrue(waitUntil { !app.descendants(matching: .any)["ww.trackProcessing.overlay"].exists })
         let anchors = app.descendants(matching: .any)["alignment.waveforms.anchorPoints"]
         scrollTo(reference, in: app)
         reference.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).click()
+        scrollTo(anchors, in: app)
         anchors.click()
         app.menuItems["Mark reference point"].click()
+        closeTimelineMore(in: app)
         scrollTo(target, in: app)
         target.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5)).click()
+        scrollTo(anchors, in: app)
         anchors.click()
         app.menuItems["Link matching point"].click()
+        scrollTo(anchors, in: app)
         anchors.click()
         app.menuItems["Apply offset from this pair"].click()
+        closeTimelineMore(in: app)
         XCTAssertTrue(waitForMapRevision(1, in: app), app.debugDescription)
         XCTAssertFalse(app.textFields["alignment.numeric.rate"].exists, "Point matching must not require numeric entry")
         let tool = app.menuButtons["alignment.waveforms.tool"]
@@ -564,6 +573,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertEqual(String(describing: normalize.value ?? ""), "1")
         normalize.click()
         XCTAssertEqual(String(describing: normalize.value ?? ""), "0")
+        closeTimelineMore(in: app)
         let place = app.buttons["alignment.waveforms.placeInitial"]
         scrollTo(place, in: app)
         place.click()
@@ -607,8 +617,9 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(waitUntil { target.exists && (group.value as? String) == "On" })
         let play = app.buttons["alignment.waveforms.transport.play"]
         scrollTo(play, in: app)
+        selectSourceAudition(in: app)
         play.click()
-        let status = app.descendants(matching: .any).matching(identifier: "alignment.waveforms.transport.status").firstMatch
+        let status = app.buttons["alignment.waveforms.transport.play"]
         XCTAssertTrue(waitUntil { (status.value as? String ?? status.label).contains("Playing 1 timed track") }, app.debugDescription)
         app.buttons["alignment.waveforms.transport.stop"].click()
         scrollTo(group, in: app)
@@ -701,7 +712,7 @@ final class VisualAlignmentUITests: XCTestCase {
         scrollTo(compare, in: app, sidebar: "recording")
         XCTAssertTrue(compare.isEnabled)
         compare.click()
-        let listening = app.staticTexts["alignment.waveforms.transport.status"]
+        let listening = app.buttons["alignment.waveforms.transport.play"]
         XCTAssertTrue(waitUntil { (listening.value as? String ?? listening.label).contains("reference channel 1 left") })
         compare.click()
         XCTAssertTrue(waitUntil { compare.label == "Compare Aligned Audio" })
@@ -795,6 +806,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let zoom = app.sliders["alignment.waveforms.zoom"]
         scrollTo(zoom, in: app)
         zoom.adjust(toNormalizedSliderPosition: 0.82)
+        closeTimelineMore(in: app)
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
         replace(app.textFields["alignment.waveforms.playhead"], with: "1", in: app)
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
@@ -802,7 +814,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue((ruler.value as? String ?? ruler.label).contains("Visible aligned time ruler"))
         replace(app.textFields["alignment.waveforms.playhead"], with: "3", in: app)
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
-        XCTAssertTrue((Double(app.textFields["alignment.waveforms.playhead"].value as? String ?? "") ?? 0) > 2)
+        XCTAssertTrue((timelineClockSeconds(app.textFields["alignment.waveforms.playhead"]) ?? 0) > 2)
         attachHierarchy(app, name: "Zoomed genuine audio in second episode; first-episode identities absent")
     }
 
@@ -832,6 +844,7 @@ final class VisualAlignmentUITests: XCTestCase {
         let zoom = app.sliders["alignment.waveforms.zoom"]
         scrollTo(zoom, in: app)
         zoom.adjust(toNormalizedSliderPosition: 0.82)
+        closeTimelineMore(in: app)
         XCTAssertTrue(waitUntil { tracks.count == 2 && load.label == "Refresh audio" })
 
         let overviewDisclosure = app.disclosureTriangles.matching(
@@ -845,7 +858,7 @@ final class VisualAlignmentUITests: XCTestCase {
         XCTAssertTrue(revision.exists)
         let storedRevision = revision.value as? String ?? revision.label
         replace(playhead, with: "-86401", in: app)
-        XCTAssertTrue(waitUntil { (Double(playhead.value as? String ?? "") ?? -1) >= 0 },
+        XCTAssertTrue(waitUntil { (timelineClockSeconds(playhead) ?? -1) >= 0 },
                       "Out-of-range timeline navigation must be refused")
         replace(playhead, with: "3.5", in: app)
         XCTAssertTrue(waitUntil {
@@ -1035,6 +1048,8 @@ final class VisualAlignmentUITests: XCTestCase {
     }
 
     private func scrollTo(_ element: XCUIElement, in app: XCUIApplication, sidebar: String? = nil) {
+        if sidebar == nil, revealTimelineControl(element, in: app) { return }
+        if sidebar != nil { closeTimelineMore(in: app) }
         if let sidebar { showSidebar(sidebar, in: app) }
         // Listening controls intentionally share identifiers across the canvas and Recording activity.
         let scroll = sidebar.map { app.scrollViews[$0 == "alignment" ? "ww.inspector.alignment.details" : "ww.inspector"] }

@@ -14,12 +14,14 @@ final class AudioFadeUITests: XCTestCase {
         try importAudio(file, in: app)
         fade(app, direction: "out", start: "1", duration: "1", level: "0.25")
         fade(app, direction: "out", start: "4", duration: "1", level: "0")
-        app.buttons["alignment.waveforms.fitTimeline"].click()
+        clickTimelineButton("alignment.waveforms.fitTimeline", in: app)
         let clip = clips(app).firstMatch, clipFrame = clip.frame, clipValue = clip.value as? String
         let tools = app.menuButtons["alignment.waveforms.tool"]
+        if !tools.exists || !tools.isHittable { openTimelineMore(in: app) }
         XCTAssertTrue(tools.isHittable, app.debugDescription)
         tools.click()
         app.menuItems["Automation"].click()
+        closeTimelineMore(in: app)
         let first = automationPoint(1, in: app), second = automationPoint(2, in: app)
         XCTAssertTrue(first.waitForExistence(timeout: 10) && first.isHittable, app.debugDescription)
         let before = try automationValue(first)
@@ -118,7 +120,7 @@ final class AudioFadeUITests: XCTestCase {
         app.typeKey("s", modifierFlags: .command)
         XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true })
         XCTAssertEqual(try Data(contentsOf: file), bytes)
-        app.buttons["alignment.waveforms.fitTimeline"].click()
+        clickTimelineButton("alignment.waveforms.fitTimeline", in: app)
         XCTAssertTrue(clips(app).firstMatch.isHittable)
         screenshot(app, name: "F8 linear fade sequence and visible clip points")
     }
@@ -167,12 +169,12 @@ final class AudioFadeUITests: XCTestCase {
         app.buttons["ww.audioFade.cancel"].click()
         XCTAssertTrue(wait {
             !app.sheets.firstMatch.exists && !app.buttons["ww.audioFade.apply"].exists
-                && app.buttons["ww.audioWorkspace.playMix"].isEnabled
+                && app.buttons["alignment.waveforms.transport.play"].isEnabled
                 && app.buttons["ww.audioFade.out"].isEnabled
         }, "Point editing must finish dismissing before the next seek and fade action.")
         let selected = clips(app).firstMatch
         XCTAssertEqual(selected.value as? String, "Program start 0.000 seconds; duration 6.000 seconds; 3 fade points")
-        app.buttons["alignment.waveforms.fitTimeline"].click()
+        clickTimelineButton("alignment.waveforms.fitTimeline", in: app)
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         XCTAssertTrue(wait {
             let bounds = text(ruler).split(separator: " ").compactMap { Double($0) }
@@ -184,7 +186,7 @@ final class AudioFadeUITests: XCTestCase {
         XCTAssertGreaterThan(try XCTUnwrap(programBounds.last), 7)
         seek(app, to: "7")
         let playhead = app.textFields["alignment.waveforms.playhead"]
-        XCTAssertTrue(wait { playhead.value as? String == "7.000" },
+        XCTAssertTrue(wait { playhead.value as? String == "00:00:07.000" },
                       "Return must commit the actual program playhead outside the selected six-second clip.")
         let fadeOut = app.buttons["ww.audioFade.out"]
         reveal(fadeOut, in: app)
@@ -227,11 +229,10 @@ final class AudioFadeUITests: XCTestCase {
             XCTAssertEqual(app.textFields["alignment.waveforms.playhead"].frame, chrome)
             XCTAssertEqual(clip.frame, lane)
         }
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.playMix"].isHittable)
+        XCTAssertTrue(app.descendants(matching: .any)["ww.controlBar.listeningMode"].isHittable)
         seek(app, to: "0.5")
-        app.buttons["ww.audioWorkspace.playMix"].click()
-        let status = app.descendants(matching: .any)["alignment.waveforms.transport.status"]
-        XCTAssertTrue(wait { (status.value as? String ?? status.label).hasPrefix("Playing the production mix") },
+        playProductionMix(in: app)
+        XCTAssertTrue(wait { app.buttons["alignment.waveforms.transport.play"].label == "Pause" },
                       app.debugDescription)
         app.buttons["alignment.waveforms.transport.play"].click()
         screenshot(app, name: "F8 detached review keeps fixed timeline chrome and unchanged clip lane")
@@ -255,12 +256,12 @@ final class AudioFadeUITests: XCTestCase {
         if minimum { app.launchArguments += ["-WWUITestMinimumShowWindow", "YES"] }
         app.launch()
         app.activate()
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.addAudio"].waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].waitForExistence(timeout: 20), app.debugDescription)
         return app
     }
 
     private func importAudio(_ file: URL, in app: XCUIApplication) throws {
-        app.buttons["ww.audioWorkspace.addAudio"].click()
+        chooseAddAudio(in: app)
         let identifier = "com.apple.appkit.xpc.openAndSavePanelService"
         var host: XCUIApplication?
         XCTAssertTrue(wait {

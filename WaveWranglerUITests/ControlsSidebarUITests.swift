@@ -66,12 +66,12 @@ final class ControlsSidebarUITests: XCTestCase {
         app.typeKey(.space, modifierFlags: [])
         XCTAssertTrue(wait { play.label == "Play" }, "Space pauses transport without a focused control.")
         let timelinePlayhead = app.textFields["alignment.waveforms.playhead"]
-        let beforeJump = try XCTUnwrap(Double(timelinePlayhead.value as? String ?? ""))
+        let beforeJump = try XCTUnwrap(timelineClockSeconds(timelinePlayhead))
         app.typeKey(.rightArrow, modifierFlags: [])
-        XCTAssertTrue(wait { (Double(timelinePlayhead.value as? String ?? "") ?? beforeJump) > beforeJump })
-        let afterJump = try XCTUnwrap(Double(timelinePlayhead.value as? String ?? ""))
+        XCTAssertTrue(wait { (timelineClockSeconds(timelinePlayhead) ?? beforeJump) > beforeJump })
+        let afterJump = try XCTUnwrap(timelineClockSeconds(timelinePlayhead))
         app.typeKey(.leftArrow, modifierFlags: [])
-        XCTAssertTrue(wait { (Double(timelinePlayhead.value as? String ?? "") ?? afterJump) < afterJump })
+        XCTAssertTrue(wait { (timelineClockSeconds(timelinePlayhead) ?? afterJump) < afterJump })
         let region = app.buttons[candidate.identifier]
         app.menuButtons["alignment.waveforms.commandTool"].click()
         app.menuItems["Reject"].click()
@@ -164,7 +164,7 @@ final class ControlsSidebarUITests: XCTestCase {
         XCTAssertTrue(candidate.waitForExistence(timeout: 20), app.debugDescription)
         app.menuBars.menuBarItems["Window"].click()
         app.menuBars.menuItems["Zoom"].click()
-        app.sliders["alignment.waveforms.laneHeight"].adjust(toNormalizedSliderPosition: 0)
+        adjustTimelineSlider("alignment.waveforms.laneHeight", to: 0, in: app)
         let markerID = candidate.identifier
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         let originalViewport = ruler.value as? String
@@ -178,6 +178,13 @@ final class ControlsSidebarUITests: XCTestCase {
         reveal(layout, in: app)
         selectTimelineLayout("Speakers only", in: app)
         reveal(candidate, in: app)
+        if !candidate.isHittable {
+            let attachment = XCTAttachment(screenshot: app.screenshot())
+            attachment.name = "Unreachable filler marker"
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
+        XCTAssertTrue(candidate.isHittable, app.debugDescription)
         candidate.click()
         let cutAction = app.buttons["ww.timeline.selection.cut"]
         XCTAssertTrue(cutAction.waitForExistence(timeout: 5) && cutAction.isHittable)
@@ -264,7 +271,7 @@ final class ControlsSidebarUITests: XCTestCase {
         XCTAssertEqual(actions.count, 1)
         XCTAssertEqual(actions.firstMatch.frame.maxY, clickedTrack.frame.minY, accuracy: 20,
                        "Expanded boundary handles also update the editing context.")
-        let transportStatus = app.staticTexts["alignment.waveforms.transport.status"]
+        let transportStatus = app.buttons["alignment.waveforms.transport.play"]
         for action in ["play", "context"] {
             app.buttons["ww.timeline.cut.\(action)"].click()
             XCTAssertTrue(wait {
@@ -315,9 +322,10 @@ final class ControlsSidebarUITests: XCTestCase {
         let mutedNonPrimaries = app.buttons.matching(NSPredicate(
             format: "identifier BEGINSWITH 'ww.listening.mute.source.' AND value == 'On'"))
         XCTAssertGreaterThan(mutedNonPrimaries.count, 0, "Hidden non-primary tracks were automatically muted")
-        let restoreListening = app.buttons["ww.listening.restore"]
-        reveal(restoreListening, in: app)
-        restoreListening.click()
+        openTimelineMore(in: app)
+        app.menuButtons["Listening Presets"].click()
+        app.menuItems["Restore listening choices"].click()
+        closeTimelineMore(in: app)
         XCTAssertEqual(mutedNonPrimaries.count, 0)
     }
 
@@ -325,13 +333,14 @@ final class ControlsSidebarUITests: XCTestCase {
         let app = launch(singlePrimary: true)
         defer { app.terminate() }
         let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
-        XCTAssertTrue(layout.waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].waitForExistence(timeout: 20))
         selectTimelineLayout("Speakers only", in: app)
         let playhead = app.textFields["alignment.waveforms.playhead"]
         playhead.click()
         playhead.typeKey("a", modifierFlags: .command)
         playhead.typeText("2.25")
         playhead.typeKey(.return, modifierFlags: [])
+        openTimelineMore(in: app)
         let fit = app.buttons["alignment.waveforms.fitTimeline"]
         XCTAssertTrue(wait { fit.exists && fit.isEnabled })
         fit.click()
@@ -348,6 +357,7 @@ final class ControlsSidebarUITests: XCTestCase {
         let viewport = app.staticTexts["alignment.waveforms.ruler"].value as? String
         let heightValue = try XCTUnwrap(height.value as? NSNumber).doubleValue
         let normalizedValue = normalized.value as? String
+        closeTimelineMore(in: app)
         let args = app.launchArguments
         let folderIndex = try XCTUnwrap(args.firstIndex(of: "-WWUITestShowFolder"))
         let file = "\(args[folderIndex + 1])/Controls Sidebar Fixture.wwshow"
@@ -359,12 +369,14 @@ final class ControlsSidebarUITests: XCTestCase {
         ]
         app.launch()
         app.activate()
-        XCTAssertTrue(layout.waitForExistence(timeout: 20), app.debugDescription)
+        XCTAssertTrue(app.buttons["ww.controlBar.more"].waitForExistence(timeout: 20), app.debugDescription)
+        openTimelineMore(in: app)
         XCTAssertEqual(layout.value as? String, "Speakers only")
-        XCTAssertEqual(playhead.value as? String, "2.250")
+        XCTAssertEqual(playhead.value as? String, "00:00:02.250")
         XCTAssertEqual(app.staticTexts["alignment.waveforms.ruler"].value as? String, viewport)
         XCTAssertEqual(try XCTUnwrap(height.value as? NSNumber).doubleValue, heightValue, accuracy: 0.01)
         XCTAssertEqual(normalized.value as? String, normalizedValue)
+        closeTimelineMore(in: app)
         XCTAssertEqual(app.buttons["ww.sidebar.recording"].value as? String, "Hidden")
         let tracks = app.descendants(matching: .any).matching(NSPredicate(
             format: "identifier BEGINSWITH 'alignment.waveforms.track.'"))
@@ -412,25 +424,28 @@ final class ControlsSidebarUITests: XCTestCase {
         reveal(primary, in: app)
         XCTAssertTrue(primary.isHittable)
         XCTAssertTrue(app.menuButtons["alignment.waveforms.commandTool"].isHittable)
-        let preset = app.buttons["ww.listening.preset.soloPrimaries"]
-        XCTAssertTrue(preset.isHittable)
-        XCTAssertTrue(app.buttons["ww.audioWorkspace.add"].isHittable)
+        openTimelineMore(in: app)
+        app.menuButtons["Listening Presets"].click()
+        let preset = app.menuItems["ww.listening.preset.soloPrimaries"]
+        XCTAssertTrue(preset.exists)
         preset.click()
-        XCTAssertEqual(preset.value as? String, "On")
-        XCTAssertTrue(app.buttons["ww.listening.restore"].exists)
-        app.buttons["ww.listening.restore"].click()
-        XCTAssertEqual(preset.value as? String, "Off")
-        XCTAssertFalse(app.buttons["ww.listening.restore"].exists)
+        app.menuButtons["Listening Presets"].click()
+        XCTAssertTrue(app.menuItems["Restore listening choices"].exists)
+        app.menuItems["Restore listening choices"].click()
+        closeTimelineMore(in: app)
         let window = app.windows["ww.show.window"]
         let play = app.buttons["alignment.waveforms.transport.play"]
-        let zoom = app.sliders["alignment.waveforms.zoom"]
         func assertDockedControls() {
-            for control in [play, zoom, primary] {
+            for control in [play, app.textFields["alignment.waveforms.playhead"], app.buttons["ww.controlBar.more"]] {
                 XCTAssertTrue(control.exists && control.isHittable,
-                              "Timeline controls stay directly reachable with either bottom pane open.")
+                              "Timeline controls stay directly reachable with either bottom pane open. \(app.debugDescription)")
                 XCTAssertTrue(window.frame.contains(control.frame),
                               "Bottom pane layout must not move controls outside the episode window.")
             }
+            openTimelineMore(in: app)
+            XCTAssertTrue(app.sliders["alignment.waveforms.zoom"].isHittable)
+            XCTAssertTrue(primary.isHittable)
+            closeTimelineMore(in: app)
         }
         assertDockedControls()
         let dockedY = play.frame.minY
@@ -473,6 +488,7 @@ final class ControlsSidebarUITests: XCTestCase {
     }
 
     private func reveal(_ element: XCUIElement, in app: XCUIApplication, scrollID: String = "ww.alignment.workspace") {
+        if scrollID == "ww.alignment.workspace", revealTimelineControl(element, in: app) { return }
         let scroll = app.scrollViews[scrollID]
         for _ in 0..<16 {
             if element.isHittable { return }
