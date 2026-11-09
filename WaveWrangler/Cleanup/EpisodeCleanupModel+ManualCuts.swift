@@ -242,7 +242,11 @@ extension EpisodeCleanupModel {
             return
         }
         error = nil
-        play(interval: range, loop: false)
+        if mode != .join, let workspaceAlignment {
+            workspaceAlignment.playEnabledTracks(interval: range, repeatInterval: false)
+        } else {
+            play(interval: range, loop: false)
+        }
     }
 
     func selectManualCut(_ id: UUID) {

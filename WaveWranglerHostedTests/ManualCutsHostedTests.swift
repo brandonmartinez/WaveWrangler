@@ -8,6 +8,46 @@ import WWPersistence
 @MainActor
 @Suite("Manual cut production listening and waveform path", .serialized)
 struct ManualCutsHostedTests {
+    @Test func removedAudioAuditionsExplicitlyLeaveProductionMixAndKeepOtherCuts() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 6)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        f.model.synchronizeWaveforms()
+        try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
+        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let revision = try #require(episode.alignment?.acceptedRevision)
+        let cut = ManualEpisodeCut(alignmentRevision: revision, startFrame: 48_000, endFrame: 96_000)
+        let other = ManualEpisodeCut(alignmentRevision: revision, startFrame: 192_000, endFrame: 240_000)
+        try #require(f.document.store.apply("Synthetic cut audition fixture", { model throws(DomainError) in
+            try model.settingCleanup(EpisodeCleanup(manualCuts: [cut, other]), in: episode.id)
+        }))
+        try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: episode.id, runtime: f.runtime)
+        cleanup.connectWorkspace(to: f.model)
+        defer { cleanup.cancel() }
+        await cleanup.refresh()
+        f.model.load()
+        f.model.synchronizeWaveforms()
+        try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
+        try #require(!f.model.enabledSources.isEmpty)
+        let saved = f.document.store.model
+        for mode: ManualCutAudition in [.removed, .original] {
+            f.model.selectProductionMix()
+            cleanup.auditionManualCut(cut.id, mode: mode)
+            let usesProductionMix = f.model.listening.usesProductionMix
+            #expect(!usesProductionMix, "Removed audio is an explicit diagnostic source audition, not a production selection")
+            try await wait { !f.model.isPreparingAudition && !f.model.isAuditioning }
+            let status = f.model.auditionLabel
+            let error = cleanup.error
+            #expect(status == "Finished selection audition.")
+            #expect(error == nil)
+            #expect(cleanup.cutTimeline.removals == [other.startFrame..<other.endFrame])
+            #expect(f.document.store.model == saved)
+        }
+    }
+
     @Test func sameRippleFramesReachPrimariesBackupsAndBothListeningPaths() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
