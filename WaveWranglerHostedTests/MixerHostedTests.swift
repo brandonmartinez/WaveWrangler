@@ -538,6 +538,347 @@ struct MixerHostedTests {
         func resume() { release?.resume(); release = nil }
     }
 
+    @MainActor private final class ObservationTicks {
+        private var waiter: CheckedContinuation<Duration, Error>?
+        private var canceled = false
+        private(set) var requests = 0
+
+        func next() async throws -> Duration {
+            try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                if canceled { throw CancellationError() }
+                return try await withCheckedThrowingContinuation {
+                    waiter = $0
+                    requests += 1
+                }
+            } onCancel: {
+                Task { @MainActor in self.cancel() }
+            }
+        }
+
+        func advance(_ elapsed: Duration = .milliseconds(200)) throws {
+            let continuation = try #require(waiter)
+            waiter = nil
+            continuation.resume(returning: elapsed)
+        }
+
+        func cancel() {
+            canceled = true
+            waiter?.resume(throwing: CancellationError())
+            waiter = nil
+        }
+    }
+
+    private func advance(_ ticks: ObservationTicks, by elapsed: Duration = .milliseconds(200)) async throws {
+        let next = ticks.requests + 1
+        try ticks.advance(elapsed)
+        try await wait("next deterministic editor tick") { ticks.requests == next }
+    }
+
+    private func insertPair(into f: AlignmentWaveformRetentionHostedTests.Fixture) throws -> [AudioUnitSlot] {
+        let slots = try [appleSlot(), appleSlot()]
+        try #require(f.document.store.apply("Add Two Apple Test Effects") { model throws(DomainError) in
+            try model.settingMasterMix(.init(inserts: slots), in: f.model.episodeID)
+        })
+        return slots
+    }
+
+    @Test func genericEditsCaptureOnlyEditedSlotAndPreserveOtherSlotBytesThroughUndoRedo() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let slots = try insertPair(into: f)
+        try await save(f.document)
+        let controller = f.model.mixer
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let processor = try #require(controller.processor)
+        let parameter = try #require(try await processor.parameters(slot: slots[0].id).first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 1500
+        })
+        let ticks = ObservationTicks()
+        defer { ticks.cancel() }
+        controller.waitForEditorObservationTick = { try await ticks.next() }
+        controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
+        var captures: [[AudioUnitSlotID]] = []
+        controller.didCaptureNativeStates = { captures.append($0) }
+        try await controller.beginEditorObservation(coalescing: "single-slot-editor")
+        try await wait { ticks.requests == 1 }
+        captures = []
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        undo.removeAllActions()
+        undo.beginUndoGrouping()
+        try await controller.setParameter(slot: slots[0].id, address: parameter.address,
+            value: 1000, coalescing: "single-slot-editor")
+        try await controller.setParameter(slot: slots[0].id, address: parameter.address,
+            value: 1500, coalescing: "single-slot-editor")
+        undo.endUndoGrouping()
+        #expect(captures == [[slots[0].id], [slots[0].id]])
+        let edited = try #require(f.document.store.model.episode(f.model.episodeID)?.mix)
+        #expect(edited.master.inserts[0].documentState != nil)
+        #expect(edited.master.inserts[1] == slots[1])
+        undo.undo()
+        try await wait {
+            controller.processor == nil && !f.document.mixerTransactions.isBusy
+                && f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts == slots
+        }
+        undo.redo()
+        #expect(f.document.store.model.episode(f.model.episodeID)?.mix == edited)
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let recalled = try #require(try await controller.processor?.parameters(slot: slots[0].id).first {
+            $0.address == parameter.address
+        }?.value)
+        #expect(abs(recalled - 1500) < 0.1)
+    }
+
+    @Test func revisionTicksCaptureChangedSlotsButOpaqueFallbackStillRunsAfterOneSecondAndStop() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let slots = try insertPair(into: f)
+        let controller = f.model.mixer
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let processor = try #require(controller.processor)
+        let parameters = try await processor.parameters(slot: slots[0].id)
+        let parameter = try #require(parameters.first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 2000
+        })
+        let ticks = ObservationTicks()
+        defer { ticks.cancel() }
+        controller.waitForEditorObservationTick = { try await ticks.next() }
+        controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
+        var captures: [[AudioUnitSlotID]] = []
+        controller.didCaptureNativeStates = { captures.append($0) }
+        try await controller.beginEditorObservation(coalescing: "bounded-editor")
+        try await wait { ticks.requests == 1 }
+        #expect(captures == [slots.map(\.id), [slots[0].id], [slots[1].id]])
+        captures = []
+        let before = f.document.store.model
+        // Freeze the revision hint to model a vendor that changes state without notification.
+        try await processor.setParameter(slot: slots[0].id, address: parameter.address, value: 1000)
+        for _ in 0..<4 { try await advance(ticks) }
+        #expect(captures.isEmpty && f.document.store.model == before)
+        controller.stop()
+        #expect(controller.processor === processor && controller.hasObservedState)
+        try await advance(ticks)
+        #expect(captures == [[slots[0].id], [slots[1].id]])
+        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts[0].documentState != nil)
+        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts[1] == slots[1])
+        captures = []
+        try await processor.setParameter(slot: slots[1].id, address: parameter.address, value: 2000)
+        controller.observationParameterRevisions?[slots[1].id] = 1
+        try await advance(ticks)
+        #expect(captures == [[slots[1].id]])
+        try await advance(ticks)
+        #expect(captures == [[slots[1].id]], "Unchanged revision ticks must not serialize state.")
+        try await controller.endEditorObservation()
+        #expect(captures.last == slots.map(\.id), "Editor close must capture the whole chain freshly.")
+    }
+
+    @Test func backgroundSweepAllowsRenderingButQueuesGenericEditsAndSaveUntilAtomicPublication() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let slots = try insertPair(into: f)
+        let controller = f.model.mixer
+        let recipe = try await controller.prepare(programFrames: 0..<512)
+        let processor = try #require(controller.processor)
+        let parameter = try #require(try await processor.parameters(slot: slots[0].id).first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 2000
+        })
+        let ticks = ObservationTicks(), gate = CaptureGate()
+        defer { ticks.cancel(); gate.resume() }
+        controller.waitForEditorObservationTick = { try await ticks.next() }
+        controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
+        try await controller.beginEditorObservation(coalescing: "interleaved-editor")
+        try await wait { ticks.requests == 1 }
+        for slot in slots {
+            try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
+        }
+        let before = f.document.store.model
+        var captures: [[AudioUnitSlotID]] = []
+        controller.didCaptureNativeStates = { captures.append($0) }
+        controller.afterObservationSlotCapture = { _ in await gate.pauseOnce() }
+        try ticks.advance(.seconds(1))
+        try await wait { gate.entered }
+        #expect(captures == [[slots[0].id]] && f.document.store.model == before)
+        let rendered = try await processor.process(.init(frames: 0..<512,
+            channels: Dictionary(uniqueKeysWithValues: recipe.routes.map {
+                ($0.reference, [Float](repeating: 0.25, count: 512))
+            })))
+        #expect(rendered.frameCount == max(0, 512 - processor.latencyFrames),
+            "Rendering must complete while the sweep is between vendor getters.")
+        let editing = Task {
+            try await controller.setParameter(slot: slots[0].id, address: parameter.address,
+                value: 2000, coalescing: "interleaved-editor")
+        }
+        try await wait { controller.pendingStateOperations == 2 }
+        let saving = Task { try await save(f.document) }
+        try await wait { f.document.mixerTransactions.isBusy }
+        #expect(f.document.store.model == before, "No partial background state may escape to the document.")
+        gate.resume()
+        try await editing.value
+        try await saving.value
+        #expect(f.document.verifiedModel == f.document.store.model)
+        #expect(captures.prefix(2) == [[slots[0].id], [slots[1].id]])
+        #expect(captures.contains(slots.map(\.id)), "Save must perform a fresh whole-chain capture.")
+        try await controller.endEditorObservation()
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let recalled = try #require(controller.processor)
+        let first = try #require(try await recalled.parameters(slot: slots[0].id).first {
+            $0.address == parameter.address
+        }?.value)
+        let second = try #require(try await recalled.parameters(slot: slots[1].id).first {
+            $0.address == parameter.address
+        }?.value)
+        #expect(abs(first - 2000) < 0.1 && abs(second - 1000) < 0.1)
+    }
+
+    @Test func notifiedEditDuringSweepRejectsMixedCandidateAndFreshCaptureRecoversBothSlots() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let slots = try insertPair(into: f)
+        let controller = f.model.mixer
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let processor = try #require(controller.processor)
+        let parameter = try #require(try await processor.parameters(slot: slots[0].id).first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 2000
+        })
+        let ticks = ObservationTicks(), gate = CaptureGate()
+        defer { ticks.cancel(); gate.resume() }
+        controller.waitForEditorObservationTick = { try await ticks.next() }
+        controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
+        try await controller.beginEditorObservation(coalescing: "revision-race")
+        try await wait { ticks.requests == 1 }
+        for slot in slots {
+            try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
+        }
+        let before = f.document.store.model
+        controller.afterObservationSlotCapture = { _ in await gate.pauseOnce() }
+        try ticks.advance(.seconds(1))
+        try await wait { gate.entered }
+        try await processor.setParameter(slot: slots[0].id, address: parameter.address, value: 2000)
+        controller.observationParameterRevisions?[slots[0].id] = 1
+        gate.resume()
+        try await wait { ticks.requests == 2 }
+        #expect(f.document.store.model == before, "An old A/new B sweep must not publish after A's revision changes.")
+        try await controller.captureAndPersist(coalescing: "revision-race")
+        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.allSatisfy {
+            $0.documentState != nil
+        } == true)
+        try await controller.endEditorObservation()
+    }
+
+    @Test func failedBackgroundSweepPublishesNothingAndFreshBarrierCanRecover() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let slots = try insertPair(into: f)
+        let controller = f.model.mixer
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let processor = try #require(controller.processor)
+        let parameter = try #require(try await processor.parameters(slot: slots[0].id).first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 1000
+        })
+        let ticks = ObservationTicks()
+        defer { ticks.cancel() }
+        controller.waitForEditorObservationTick = { try await ticks.next() }
+        controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
+        try await controller.beginEditorObservation(coalescing: "failed-sweep")
+        try await wait { ticks.requests == 1 }
+        for slot in slots {
+            try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
+        }
+        let before = f.document.store.model
+        let failure = MixerFailure.state(slots[1].id, "synthetic second-slot observation failure")
+        controller.afterObservationSlotCapture = { id in
+            if id == slots[1].id { throw failure }
+        }
+        try ticks.advance(.seconds(1))
+        try await wait { controller.state == .failed(failure.localizedDescription) }
+        #expect(f.document.store.model == before && controller.hasObservedState)
+        controller.afterObservationSlotCapture = nil
+        try await controller.captureAndPersist(coalescing: "failed-sweep")
+        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.allSatisfy {
+            $0.documentState != nil
+        } == true)
+        try await controller.endEditorObservation()
+    }
+
+    @Test func closeCancelsPartialSweepThenCapturesFreshStateBeforeRetiringProcessor() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let slots = try insertPair(into: f)
+        let controller = f.model.mixer
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let processor = try #require(controller.processor)
+        let parameter = try #require(try await processor.parameters(slot: slots[0].id).first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 2000
+        })
+        let ticks = ObservationTicks(), gate = CaptureGate()
+        defer { ticks.cancel(); gate.resume() }
+        controller.waitForEditorObservationTick = { try await ticks.next() }
+        controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
+        try await controller.beginEditorObservation(coalescing: "retiring-editor")
+        try await wait { ticks.requests == 1 }
+        let before = f.document.store.model
+        var captures: [[AudioUnitSlotID]] = []
+        controller.didCaptureNativeStates = { captures.append($0) }
+        controller.afterObservationSlotCapture = { _ in await gate.pauseOnce() }
+        try ticks.advance(.seconds(1))
+        try await wait { gate.entered }
+        let closing = Task { try await controller.endEditorObservation() }
+        try await wait { controller.editorObservationKey == nil }
+        for slot in slots {
+            try await processor.setParameter(slot: slot.id, address: parameter.address, value: 2000)
+        }
+        #expect(f.document.store.model == before)
+        gate.resume()
+        try await closing.value
+        #expect(captures == [[slots[0].id], slots.map(\.id)],
+            "The canceled sweep must neither read its second slot nor publish; close captures both anew.")
+        controller.invalidatePreparedInstance()
+        let retired = f.document.store.model
+        for _ in 0..<5 { await Task.yield() }
+        #expect(controller.processor == nil && f.document.store.model == retired)
+        #expect(captures == [[slots[0].id], slots.map(\.id)])
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let reloaded = try #require(controller.processor)
+        for slot in slots {
+            let value = try #require(try await reloaded.parameters(slot: slot.id).first {
+                $0.address == parameter.address
+            }?.value)
+            #expect(abs(value - 2000) < 0.1)
+        }
+    }
+
+    @Test func suspendedObservationQueuedBehindCaptureNeverReadsRetiredProcessor() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let slots = try insertPair(into: f)
+        let controller = f.model.mixer
+        _ = try await controller.prepare(programFrames: 0..<1)
+        let ticks = ObservationTicks(), gate = CaptureGate()
+        defer { ticks.cancel(); gate.resume() }
+        controller.waitForEditorObservationTick = { try await ticks.next() }
+        controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
+        try await controller.beginEditorObservation(coalescing: "queued-editor")
+        try await wait { ticks.requests == 1 }
+        var captures: [[AudioUnitSlotID]] = []
+        controller.didCaptureNativeStates = { captures.append($0) }
+        controller.beforeStateCapture = { await gate.pauseOnce() }
+        let capturing = Task { try await controller.captureAndPersist(coalescing: "queued-editor") }
+        try await wait { gate.entered }
+        try ticks.advance(.seconds(1))
+        try await wait { controller.pendingStateOperations == 2 }
+        let suspending = Task { await controller.suspendEditorObservation() }
+        try await wait { controller.editorObservationKey == nil }
+        gate.resume()
+        try await capturing.value
+        await suspending.value
+        controller.invalidatePreparedInstance()
+        #expect(captures == [slots.map(\.id)], "An obsolete queued observation must stop before any getter.")
+        #expect(controller.processor == nil)
+    }
+
     @Test func overlappingPollAndCloseDrainBeforeFinalCaptureWithoutStalePublication() async throws {
         let f = try await ready()
         defer { f.close() }

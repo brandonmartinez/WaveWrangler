@@ -1,4 +1,5 @@
 import Foundation
+import Synchronization
 import WWCore
 
 /// Targets may change between prepared windows. Ramps are linear amplitude, 10 ms, sample-clocked.
@@ -25,6 +26,18 @@ public struct MixerLiveControls: Sendable {
 public enum MixerLoadingEvent: Sendable {
     case loading(AudioUnitSlotID)
     case ready(MixerUnitStatus)
+}
+
+/// Explicit cancellation for observations submitted by an unstructured operation queue.
+/// Check on the processor too, so a getter queued behind rendering can become obsolete.
+public final class MixerStateCaptureCancellation: Sendable {
+    private let canceled = Atomic<Bool>(false)
+
+    public init() {}
+    public func cancel() { canceled.store(true, ordering: .releasing) }
+    fileprivate func check() throws {
+        if canceled.load(ordering: .acquiring) { throw CancellationError() }
+    }
 }
 
 /// One serial non-realtime DSP owner. Playback and offline use independent instances of this exact
@@ -138,9 +151,18 @@ public actor MixerProcessor {
         try unit(slot).setParameter(address: address, value: value)
     }
 
-    /// Poll while ANY editor is open, not just after close. Also capture at Save/Undo barriers.
-    /// The UI must atomically persist returned slots in the normal document transaction (see guide).
-    /// Capturing every unit also detects opaque vendor changes that emit no parameter notification.
+    /// Background observers may call once per slot, yielding the actor to rendering between units.
+    /// The caller must validate the complete candidate and publish atomically, never slot by slot.
+    public func captureDocumentState(slot: AudioUnitSlotID,
+                                    cancellation: MixerStateCaptureCancellation? = nil) throws -> AudioUnitSlot {
+        try cancellation?.check()
+        let captured = try unit(slot).capture()
+        try cancellation?.check()
+        return captured
+    }
+
+    /// Authoritative Save/Undo/close capture: no suspension between units. Background observers
+    /// must still periodically capture every unit to detect opaque edits without notifications.
     public func captureDocumentStates() throws -> [AudioUnitSlot] {
         let captured = try allUnits.map { try $0.capture() }
         guard captured.reduce(0, { $0 + ($1.documentState?.count ?? 0) }) <= EpisodeMixState.maximumDocumentStateBytes else {

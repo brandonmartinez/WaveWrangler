@@ -27,7 +27,10 @@ final class EpisodeMixerController {
     @ObservationIgnored private var snapshot: ShowDocumentModel?
     @ObservationIgnored private var expectedMix: EpisodeMixState?
     @ObservationIgnored private var nativeStateBaseline: [AudioUnitSlotID: AudioUnitSlot]?
+    @ObservationIgnored private var capturedParameterRevisions: [AudioUnitSlotID: UInt64] = [:]
     @ObservationIgnored private var editorPolling: Task<Void, Never>?
+    @ObservationIgnored private var editorObservationGeneration: UInt64 = 0
+    @ObservationIgnored private var editorObservationCancellation: MixerStateCaptureCancellation?
     @ObservationIgnored private let operations = MixerOperationQueue()
     private(set) var editorObservationKey: String?
     @ObservationIgnored private var generation: UInt64 = 0
@@ -36,6 +39,11 @@ final class EpisodeMixerController {
     let episodeID: EpisodeID
     #if DEBUG
     @ObservationIgnored var beforeStateCapture: (@MainActor () async throws -> Void)?
+    @ObservationIgnored var afterObservationSlotCapture: (@MainActor (AudioUnitSlotID) async throws -> Void)?
+    @ObservationIgnored var didCaptureNativeStates: (@MainActor ([AudioUnitSlotID]) -> Void)?
+    @ObservationIgnored var waitForEditorObservationTick: (@MainActor () async throws -> Duration)?
+    @ObservationIgnored var observationParameterRevisions: [AudioUnitSlotID: UInt64]?
+    var pendingStateOperations: Int { operations.pending }
     #endif
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime) {
@@ -70,6 +78,9 @@ final class EpisodeMixerController {
         playback = nil
         generation &+= 1
         let generation = generation
+        editorObservationGeneration &+= 1
+        editorObservationCancellation?.cancel()
+        editorObservationCancellation = nil
         editorPolling?.cancel()
         editorPolling = nil
         state = .loading
@@ -93,6 +104,7 @@ final class EpisodeMixerController {
             snapshot = model
             expectedMix = model.episode(episodeID)?.mix ?? EpisodeMixState()
             nativeStateBaseline = nil
+            capturedParameterRevisions = [:]
             let speakers = Set(recipe.routes.map(\.speaker))
             mutedSpeakers.formIntersection(speakers)
             soloedSpeakers.formIntersection(speakers)
@@ -226,7 +238,7 @@ final class EpisodeMixerController {
             try await establishNativeStateBaseline()
             try await processor.setParameter(slot: slot, address: address, value: value)
             guard generation == self.generation else { throw CancellationError() }
-            try await captureState(coalescing: key)
+            try await captureState(coalescing: key, slot: slot)
         }
     }
 
@@ -236,13 +248,42 @@ final class EpisodeMixerController {
         await suspendEditorObservation()
         try await operations.run { [self] in try await establishNativeStateBaseline() }
         editorObservationKey = key
+        let token = editorObservationGeneration
+        let generation = generation
+        let cancellation = MixerStateCaptureCancellation()
+        editorObservationCancellation = cancellation
         editorPolling = Task { [weak self] in
+            let clock = ContinuousClock()
+            var lastTick = clock.now
+            var sinceFallback: Duration = .seconds(1)
             while let self, !Task.isCancelled {
                 do {
-                    try await captureAndPersist(coalescing: key)
+                    let fallback = sinceFallback >= .seconds(1)
+                    let completedFallback = try await operations.run { [self] in
+                        try await observeEditorState(coalescing: key, token: token,
+                            generation: generation, cancellation: cancellation, fallback: fallback)
+                    }
+                    if completedFallback { sinceFallback = .zero }
+                    let elapsed: Duration
+                    #if DEBUG
+                    if let waitForEditorObservationTick {
+                        elapsed = try await waitForEditorObservationTick()
+                    } else {
+                        try await Task.sleep(for: .milliseconds(200))
+                        elapsed = lastTick.duration(to: clock.now)
+                    }
+                    #else
                     try await Task.sleep(for: .milliseconds(200))
+                    elapsed = lastTick.duration(to: clock.now)
+                    #endif
+                    lastTick = clock.now
+                    sinceFallback += elapsed
                 } catch is CancellationError { return }
-                catch { fail(error); return }
+                catch {
+                    guard editorObservationGeneration == token, self.generation == generation else { return }
+                    fail(error)
+                    return
+                }
             }
         }
     }
@@ -253,9 +294,15 @@ final class EpisodeMixerController {
         try await captureAndPersist(coalescing: key)
         document?.store.endCoalescing()
         nativeStateBaseline = nil
+        capturedParameterRevisions = [:]
     }
 
     func suspendEditorObservation() async {
+        // MixerOperationQueue uses unstructured tasks: cancellation of the waiting caller alone
+        // cannot invalidate an observation that is queued or suspended between vendor getters.
+        editorObservationGeneration &+= 1
+        editorObservationCancellation?.cancel()
+        editorObservationCancellation = nil
         let polling = editorPolling
         editorPolling = nil
         editorObservationKey = nil
@@ -272,26 +319,101 @@ final class EpisodeMixerController {
         }
     }
 
-    private func captureState(coalescing key: String?) async throws {
+    private func captureState(coalescing key: String?, slot: AudioUnitSlotID? = nil) async throws {
         try validateCurrent()
-        guard let processor, let document else { throw MixerFailure.staleDependencies }
+        guard let processor else { throw MixerFailure.staleDependencies }
         try await establishNativeStateBaseline()
         let generation = generation
         let expectedAtCapture = expectedMix
+        let revisions = parameterRevisions(await processor.unitStatuses())
         #if DEBUG
         try await beforeStateCapture?()
         #endif
-        let slots = try await processor.captureDocumentStates()
+        let slots: [AudioUnitSlot]
+        if let slot { slots = [try await processor.captureDocumentState(slot: slot)] }
+        else { slots = try await processor.captureDocumentStates() }
+        #if DEBUG
+        didCaptureNativeStates?(slots.map(\.id))
+        #endif
         try Task.checkCancellation()
         guard generation == self.generation else { throw CancellationError() }
         guard expectedMix == expectedAtCapture else { throw stale("another capture replaced the expected mix") }
+        try publishCapturedStates(slots, complete: slot == nil, coalescing: key)
+        for slot in slots { capturedParameterRevisions[slot.id] = revisions[slot.id] }
+        let statuses = await processor.unitStatuses()
+        guard generation == self.generation else { throw CancellationError() }
+        unitStatuses = statuses
+    }
+
+    private func parameterRevisions(_ statuses: [MixerUnitStatus]) -> [AudioUnitSlotID: UInt64] {
+        #if DEBUG
+        if let observationParameterRevisions { return observationParameterRevisions }
+        #endif
+        return Dictionary(uniqueKeysWithValues: statuses.map { ($0.slot, $0.parameterRevision) })
+    }
+
+    private func validateObservation(token: UInt64, generation: UInt64) throws {
+        guard token == editorObservationGeneration, generation == self.generation else { throw CancellationError() }
         try validateCurrent()
+    }
+
+    /// The controller queue spans the sweep, but each vendor getter owns only one processor turn.
+    private func observeEditorState(coalescing key: String, token: UInt64,
+                                    generation: UInt64, cancellation: MixerStateCaptureCancellation,
+                                    fallback: Bool) async throws -> Bool {
+        try validateObservation(token: token, generation: generation)
+        guard let processor else { throw MixerFailure.staleDependencies }
+        let expectedAtCapture = expectedMix
+        let statuses = await processor.unitStatuses()
+        try validateObservation(token: token, generation: generation)
+        let revisions = parameterRevisions(statuses)
+        let ids = statuses.filter { fallback || capturedParameterRevisions[$0.slot] != revisions[$0.slot] }.map(\.slot)
+        guard !ids.isEmpty else { return fallback }
+        #if DEBUG
+        try await beforeStateCapture?()
+        #endif
+        var slots: [AudioUnitSlot] = []
+        for id in ids {
+            try validateObservation(token: token, generation: generation)
+            slots.append(try await processor.captureDocumentState(slot: id, cancellation: cancellation))
+            #if DEBUG
+            didCaptureNativeStates?([id])
+            try await afterObservationSlotCapture?(id)
+            #endif
+            try validateObservation(token: token, generation: generation)
+        }
+        let after = await processor.unitStatuses()
+        try validateObservation(token: token, generation: generation)
+        guard expectedMix == expectedAtCapture else { throw stale("another capture replaced the expected mix") }
+        // Native editors do not take our operation queue. A notified edit during the sweep makes
+        // this candidate obsolete; retry on a later tick, rather than publish a mixed revision.
+        guard parameterRevisions(after) == revisions else { return false }
+        try publishCapturedStates(slots, complete: fallback, coalescing: key)
+        for id in ids { capturedParameterRevisions[id] = revisions[id] }
+        unitStatuses = after
+        return fallback
+    }
+
+    private func publishCapturedStates(_ slots: [AudioUnitSlot], complete: Bool,
+                                       coalescing key: String?) throws {
+        try validateCurrent()
+        guard let document else { throw MixerFailure.staleDependencies }
         guard let episode = document.store.model.episode(episodeID) else { throw MixerFailure.staleDependencies }
         var mix = episode.mix ?? EpisodeMixState()
         let originalMix = mix
         let expectedIDs = Set((mix.speakers.flatMap(\.inserts)
             + (mix.audioTracks ?? []).flatMap(\.inserts) + mix.master.inserts).map(\.id))
-        guard Set(slots.map(\.id)) == expectedIDs else { throw stale("captured slot IDs differ from the document") }
+        let ids = Set(slots.map(\.id))
+        guard ids.count == slots.count, (complete ? ids == expectedIDs : ids.isSubset(of: expectedIDs)) else {
+            throw stale("captured slot IDs differ from the document")
+        }
+        var baseline = nativeStateBaseline ?? [:]
+        for slot in slots { baseline[slot.id] = slot }
+        guard Set(baseline.keys) == expectedIDs else { throw stale("native state baseline is incomplete") }
+        guard baseline.values.reduce(0, { $0 + ($1.documentState?.count ?? 0) })
+                <= EpisodeMixState.maximumDocumentStateBytes else {
+            throw MixerFailure.invalidRecipe("combined captured document state exceeds the episode budget")
+        }
         let byID = Dictionary(uniqueKeysWithValues: try slots.filter {
             try !Self.sameNativeState(nativeStateBaseline?[$0.id]?.documentState, $0.documentState, slot: $0.id)
         }.map { ($0.id, $0) })
@@ -313,11 +435,8 @@ final class EpisodeMixerController {
         }
         expectedMix = mix
         refreshPlaybackControls()
-        nativeStateBaseline = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
+        nativeStateBaseline = baseline
         if mix != originalMix { document.mixerTransactions.didCapture(from: self) }
-        let statuses = await processor.unitStatuses()
-        guard generation == self.generation else { throw CancellationError() }
-        unitStatuses = statuses
     }
 
     static func sameNativeState(_ lhs: Data?, _ rhs: Data?, slot: AudioUnitSlotID) throws -> Bool {
@@ -336,11 +455,16 @@ final class EpisodeMixerController {
         try validateCurrent()
         guard let processor else { throw MixerFailure.staleDependencies }
         let generation = generation
+        let revisions = parameterRevisions(await processor.unitStatuses())
         let slots = try await processor.captureDocumentStates()
+        #if DEBUG
+        didCaptureNativeStates?(slots.map(\.id))
+        #endif
         guard generation == self.generation else { throw CancellationError() }
         try validateCurrent()
         if nativeStateBaseline == nil {
             nativeStateBaseline = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, $0) })
+            capturedParameterRevisions = revisions
         }
     }
 
@@ -359,12 +483,16 @@ final class EpisodeMixerController {
     func invalidatePreparedInstance() {
         precondition(editorPolling == nil)
         generation &+= 1
+        editorObservationGeneration &+= 1
+        editorObservationCancellation?.cancel()
+        editorObservationCancellation = nil
         playback?.invalidate(MixerFailure.staleDependencies)
         playback = nil
         processor = nil
         snapshot = nil
         expectedMix = nil
         nativeStateBaseline = nil
+        capturedParameterRevisions = [:]
         unitStatuses = []
         meters = nil
         state = .idle
@@ -379,6 +507,9 @@ final class EpisodeMixerController {
     func fail(_ error: Error) {
         playback?.invalidate(error)
         generation &+= 1
+        editorObservationGeneration &+= 1
+        editorObservationCancellation?.cancel()
+        editorObservationCancellation = nil
         editorPolling?.cancel()
         editorPolling = nil
         state = .failed(error.localizedDescription)

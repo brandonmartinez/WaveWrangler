@@ -1838,13 +1838,21 @@ Live gain changes are accepted against the frozen media/cut/slot dependencies;
 offline rendering instead freezes every gain and opaque state byte.
 
 Generic edits go through
-`setParameter(slot:address:value:coalescing:)`, which captures
-`AUAudioUnit.fullStateForDocument` and commits the validated opaque state through
-the existing document store. Await `beginEditorObservation(coalescing:)`
+`setParameter(slot:address:value:coalescing:)`, which immediately captures only
+the edited slot's `AUAudioUnit.fullStateForDocument` and commits its validated
+opaque state through the existing document store and Undo coalescing key.
+It preserves the other slots' baseline and original serialized bytes.
+Await `beginEditorObservation(coalescing:)`
 **before** displaying a vendor editor. It establishes an unchanged-state baseline
 so opening an editor does not dirty default/nil state or rewrite unchanged
-serialized slot bytes, then polls the complete document state every
-200 ms, including opaque changes with no parameter notification. The Audio Unit
+serialized slot bytes, then performs an initial complete observation. A single
+worker checks parameter revisions every 200 ms and captures changed slots.
+Regardless of notifications, a complete fallback sweep is due every second,
+including opaque changes with no parameter notification. The interval includes
+capture time; slow work never accumulates a backlog of missed ticks or concurrent
+sweeps. Opaque-only edits can therefore take about a second, plus capture and
+queue time, to become dirty; Save/Undo/close never wait for the next poll.
+The Audio Unit
 parameter observer only increments an atomic revision; it never calls an actor,
 allocates a task, does I/O, or writes the document from the callback.
 `captureAndPersist(coalescing:)` refuses stale slots and invalid, oversized or
@@ -1907,7 +1915,27 @@ snapshot is published, it restarts that load instead of treating an empty cache
 as current. Supplemental Audio Tracks do not suppress speaker waveform loading.
 
 `MixerOperationQueue` serializes capture/parameter/load operations across actor
-awaits. Suspending editor observation cancels **and awaits** the poll before
+awaits. A background sweep holds this queue for its whole candidate but invokes
+the processor once per selected slot, allowing rendering between units. It
+publishes only once, after slot identity, aggregate state budget, expected mix,
+instance generation, and observation-token checks. Notified parameter changes
+during a sweep reject the candidate and retry on a later tick. This is eventual
+observation, not a claim that multiple vendor editors expose an atomic snapshot
+of opaque edits without notifications.
+
+Authoritative Save/autosave, Undo/Redo, close, restart, and editor handoff still
+capture the whole chain freshly in one processor turn; they never substitute a
+cached or partially assembled background sweep. Vendor getters and binary
+property-list serialization remain on the processor actor, never concurrent with
+its rendering. One slow vendor getter is uninterruptible and can still block a
+render turn; neither revision hints nor per-slot scheduling makes an arbitrary
+vendor getter realtime-safe. No additional output buffering is introduced.
+
+Suspending editor observation invalidates an explicit observation token and a
+sendable cancellation flag checked on the processor before and after each
+background getter. Work queued behind rendering can therefore become obsolete
+before entering a vendor getter; canceling during a getter discards its result
+after it returns. Suspension also cancels **and awaits** the poll before
 final capture. The final capture retains the editor coalescing key, then ends
 coalescing. Native baseline comparison ignores only property-list dictionary
 serialization order; original slot bytes are retained until the native state

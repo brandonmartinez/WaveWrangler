@@ -248,6 +248,89 @@ struct MixerProcessorTests {
         #expect(throws: MixerFailure.self) { try invalid.capture() }
     }
 
+    @Test func singleSlotCaptureReadsOnlyItsUnitAndRenderingCanRunBetweenCaptures() async throws {
+        let f = MixFixture()
+        let slots = (0..<2).map { _ in
+            AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+                manufacturer: kAudioUnitManufacturer_Apple))
+        }
+        let units = try slots.map { _ in
+            try GeneratedUnit(channels: 2, operation: .identity, latency: 0, tail: 0)
+        }
+        var episode = f.episode
+        episode.mix = .init(master: .init(inserts: slots))
+        let recipe = try f.recipe(episode, frames: 0..<32)
+        let native = try zip(slots, units).map {
+            try NativeAudioUnit(slot: $0.0, unit: $0.1, channels: 2, policy: .init())
+        }
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]], masterUnits: native)
+        let first = try await processor.captureDocumentState(slot: slots[0].id)
+        #expect(first.id == slots[0].id && first.documentState != nil)
+        #expect(units.map(\.documentCaptureCount) == [1, 0])
+        let rendered = try await processor.process(.init(frames: 0..<32,
+            channels: [recipe.routes[0].reference: .init(repeating: 0.25, count: 32)]))
+        #expect(rendered.frameCount == 32 && units.map(\.renderCount) == [1, 1])
+        let second = try await processor.captureDocumentState(slot: slots[1].id)
+        #expect(second.id == slots[1].id)
+        #expect(units.map(\.documentCaptureCount) == [1, 1])
+        let complete = try await processor.captureDocumentStates()
+        #expect(complete.map(\.id) == slots.map(\.id))
+        #expect(units.map(\.documentCaptureCount) == [2, 2])
+    }
+
+    @Test func singleSlotCaptureRejectsMissingAndInvalidStatesWithoutReadingOtherUnits() async throws {
+        let f = MixFixture()
+        let slots = (0..<2).map { _ in
+            AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+                manufacturer: kAudioUnitManufacturer_Apple))
+        }
+        let units = try slots.map { _ in
+            try GeneratedUnit(channels: 2, operation: .identity, latency: 0, tail: 0)
+        }
+        let native = try zip(slots, units).map {
+            try NativeAudioUnit(slot: $0.0, unit: $0.1, channels: 2, policy: .init())
+        }
+        let processor = try MixerProcessor(recipe: f.recipe(), speakerUnits: [[]], masterUnits: native)
+        let missing = AudioUnitSlotID()
+        await #expect(throws: MixerFailure.missingUnit(missing)) {
+            try await processor.captureDocumentState(slot: missing)
+        }
+        #expect(units.map(\.documentCaptureCount) == [0, 0])
+        units[0].fullStateForDocument = ["invalid": Double.nan]
+        await #expect(throws: MixerFailure.self) {
+            try await processor.captureDocumentState(slot: slots[0].id)
+        }
+        #expect(units.map(\.documentCaptureCount) == [1, 0])
+        units[0].fullStateForDocument = nil
+        await #expect(throws: MixerFailure.self) { try await processor.captureDocumentStates() }
+        #expect(units.map(\.documentCaptureCount) == [2, 0])
+    }
+
+    @Test func obsoleteSingleSlotCaptureChecksCancellationBeforeAndAfterVendorGetter() async throws {
+        let f = MixFixture()
+        let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+            manufacturer: kAudioUnitManufacturer_Apple))
+        let unit = try GeneratedUnit(channels: 2, operation: .identity, latency: 0, tail: 0)
+        let native = try NativeAudioUnit(slot: slot, unit: unit, channels: 2, policy: .init())
+        let processor = try MixerProcessor(recipe: f.recipe(), speakerUnits: [[]], masterUnits: [native])
+        let obsolete = MixerStateCaptureCancellation()
+        obsolete.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await processor.captureDocumentState(slot: slot.id, cancellation: obsolete)
+        }
+        #expect(unit.documentCaptureCount == 0)
+        let interrupted = MixerStateCaptureCancellation()
+        unit.onDocumentCapture = { interrupted.cancel() }
+        await #expect(throws: CancellationError.self) {
+            try await processor.captureDocumentState(slot: slot.id, cancellation: interrupted)
+        }
+        #expect(unit.documentCaptureCount == 1, "An already-running getter cannot be interrupted.")
+        unit.onDocumentCapture = nil
+        let authoritative = try await processor.captureDocumentStates()
+        #expect(authoritative.count == 1 && unit.documentCaptureCount == 2,
+            "Canceling observation must not disable authoritative document barriers.")
+    }
+
     @Test func unusedSidechainInputsAreDisabledAfterStateRecall() throws {
         for channels in [1, 2] {
             var slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
@@ -569,6 +652,9 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     private var cursor = 0
     private var failures: Int
     private var documentState: [String: Any]? = ["generated": true]
+    private(set) var documentCaptureCount = 0
+    private(set) var renderCount = 0
+    var onDocumentCapture: (@Sendable () -> Void)?
     var reportedLatency: TimeInterval?
     var reportedTail: TimeInterval?
 
@@ -595,7 +681,11 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     override var latency: TimeInterval { reportedLatency ?? Double(delay) / 48_000 }
     override var tailTime: TimeInterval { reportedTail ?? Double(tail) / 48_000 }
     override var fullStateForDocument: [String: Any]? {
-        get { documentState }
+        get {
+            documentCaptureCount += 1
+            onDocumentCapture?()
+            return documentState
+        }
         set {
             documentState = newValue
             if let enabled = newValue?["auxiliaryEnabled"] as? Bool {
@@ -605,6 +695,7 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     }
     override var internalRenderBlock: AUInternalRenderBlock {
         { [self] flags, time, count, _, output, _, pull in
+            renderCount += 1
             if failures > 0 {
                 failures -= 1
                 return kAudioUnitErr_CannotDoInCurrentContext
