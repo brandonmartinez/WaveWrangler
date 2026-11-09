@@ -338,6 +338,9 @@ to native controls, text editors, the review pane, inspector controls and the fo
 role, preserving SwiftUI boundary-handle arrow events. Space ignores repeat events; Left/Right and
 the transport buttons share the typed `TimelineJumpInterval` preference. This setting changes only
 navigation, not episode documents or active inference configuration.
+Stop during playback or preparation preserves the current playhead. Stop while
+already stopped seeks to Episode Start (including its program/display projection),
+not the visible viewport's left edge; pressing Stop twice stops and then returns.
 
 Waveform projection/reprojection runs off the main actor with cancellation and
 snapshot checks before publication. Waveform pixel aggregation and path drawing

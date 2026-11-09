@@ -424,6 +424,27 @@ struct AudioClipEditorHostedTests {
         #expect(f.editor.importer.error?.contains("changed") == true)
     }
 
+    @Test(arguments: [-0.5, 0, 0.5], [false, true])
+    func stoppedTransportReturnsToEpisodeStartNotViewport(start: Double, sourceAudition: Bool) async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        _ = try await imported(f)
+        f.editor.setEpisodeBoundary(start: true, programSeconds: start)
+        f.editor.refresh()
+        let frames = try #require(f.editor.production?.episodeFrames)
+        #expect(Double(frames.lowerBound) / 48_000 == start)
+        if sourceAudition { f.model.selectSourceAudition() }
+        f.model.waveformStartSeconds = -10
+        f.model.seekEnabledTracks(to: 0.75)
+        f.model.stopEnabledTracks()
+        #expect(f.model.waveformPlayheadSeconds == start)
+        #expect(f.model.auditionPlayheadSeconds == start)
+        #expect(!f.model.canStopAudition)
+        f.model.stopEnabledTracks()
+        #expect(f.model.waveformPlayheadSeconds == start)
+        #expect(f.model.listening.usesProductionMix == !sourceAudition)
+    }
+
     @Test func productionChoiceSurvivesPauseSeekLayoutSelectionAndProgramOutro() async throws {
         let f = try await fixture()
         defer { f.close() }
@@ -446,6 +467,15 @@ struct AudioClipEditorHostedTests {
         try #require(f.model.isAuditioning, Comment(rawValue: f.model.lastError ?? f.model.auditionLabel))
         #expect(f.model.listeningMode == .productionMix)
         f.model.stopEnabledTracks()
+        let stopped = f.model.waveformPlayheadSeconds
+        #expect(stopped >= 2.1)
+        #expect(stopped == f.model.auditionPlayheadSeconds)
+        #expect(!f.model.canStopAudition)
+        f.model.stopEnabledTracks()
+        let start = try #require(f.editor.production?.episodeFrames).lowerBound
+        let expected = f.model.presentationTimeline.displayTime(forProgramTime: Double(start) / 48_000)
+        #expect(f.model.waveformPlayheadSeconds == expected)
+        #expect(f.model.auditionPlayheadSeconds == expected)
         #expect(f.model.listening.usesProductionMix)
         f.model.selectSourceAudition()
         #expect(!f.model.listening.usesProductionMix)

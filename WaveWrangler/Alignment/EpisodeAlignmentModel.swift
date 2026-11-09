@@ -2074,8 +2074,14 @@ final class EpisodeAlignmentModel {
     }
 
     func stopEnabledTracks() {
-        stopAudition()
-        waveformPlayheadSeconds = waveformStartSeconds
+        if canStopAudition {
+            pauseEnabledTracks()
+        } else {
+            let start = audioEditor.production?.episodeFrames.map {
+                presentationTimeline.displayTime(forProgramTime: Double($0.lowerBound) / 48_000)
+            } ?? 0
+            seekEnabledTracks(to: start)
+        }
     }
 
     func jumpEnabledTracks(by seconds: Double) {
