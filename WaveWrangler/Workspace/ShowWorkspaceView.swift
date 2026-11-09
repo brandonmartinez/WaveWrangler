@@ -20,26 +20,32 @@ private struct ShowWindowContent: View {
 
     var body: some View {
         GeometryReader { geometry in
-            // The hand-built split keeps content and inspector reachable in a 760-wide window (T-M2-01).
-            // Switching this branch on the destination re-enters AppKit's constraint update and aborts,
-            // so every destination uses it, and the inspector stays narrow enough for the Sources table
-            // to keep its columns' minimum width at the default size (#129).
-            if geometry.size.width < 900 {
-                HStack(spacing: 0) {
-                    core
-                    if state.inspectorPresented {
-                        Divider()
-                        InspectorContainer(state: state)
-                            .frame(width: state.compactInspectorWidth)
-                    }
+            VStack(spacing: 0) {
+                if state.destination == .alignment, let model = state.alignmentModel,
+                   model.episodeID == state.selectedEpisodeID {
+                    EpisodeControlBar(model: model, state: state, width: max(0, geometry.size.width - 24))
                 }
-            } else {
-                core
-                    // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
-                    // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
-                    .inspector(isPresented: $state.inspectorPresented) {
-                        InspectorContainer(state: state)
+                // The hand-built split keeps content and inspector reachable in a 760-wide window (T-M2-01).
+                // Switching this branch on the destination re-enters AppKit's constraint update and aborts,
+                // so every destination uses it, and the inspector stays narrow enough for the Sources table
+                // to keep its columns' minimum width at the default size (#129).
+                if geometry.size.width < 900 {
+                    HStack(spacing: 0) {
+                        core
+                        if state.inspectorPresented {
+                            Divider()
+                            InspectorContainer(state: state)
+                                .frame(width: state.compactInspectorWidth)
+                        }
                     }
+                } else {
+                    core
+                        // No inspectorColumnWidth(min:ideal:max:): inside an AppKit-hosted window it caused a
+                        // re-entrant constraint-update loop (crash) on macOS 27; the default inspector width is used.
+                        .inspector(isPresented: $state.inspectorPresented) {
+                            InspectorContainer(state: state)
+                        }
+                }
             }
         }
         .accessibilityElement(children: .contain)

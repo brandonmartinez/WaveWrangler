@@ -54,7 +54,6 @@ struct AlignmentWaveformView: View {
     @State private var trackViewportFrame: CGRect = .zero
     @Bindable private var settings = AppSettings.shared
     private var primaryClock: EpisodeClock { settings.controlBar.primaryClock }
-    @State private var showingMore = false
 
     private let headerWidth: CGFloat = 190
     private var processingOperation: TrackProcessingOperation? {
@@ -449,7 +448,6 @@ struct AlignmentWaveformView: View {
 
     private var timelineChrome: some View {
         VStack(alignment: .leading, spacing: 8) {
-            primaryControlBar
             if model.isSourceTimePreview {
                 Label("Original source time - not aligned. No timing is assumed or saved.", systemImage: "waveform")
                     .font(.caption).foregroundStyle(.orange)
@@ -468,184 +466,6 @@ struct AlignmentWaveformView: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Track controls")
         .accessibilityIdentifier("alignment.waveforms.controls")
-    }
-
-    private var primaryControlBar: some View {
-        HStack(spacing: 10) {
-            if trackContentWidth >= 650, let workspaceState {
-                AudioWorkspaceActions(state: workspaceState, alignment: model, surface: .add)
-                Divider().frame(height: 28)
-            }
-            Menu {
-                Button("Production Mix") { model.selectProductionMix() }
-                    .accessibilityIdentifier("ww.audioWorkspace.playMix")
-                Button("Source Audition") { model.selectSourceAudition() }
-                    .accessibilityIdentifier("ww.audioWorkspace.sourceAudition")
-            } label: {
-                Label(
-                    model.listening.usesProductionMix ? "Mix" : "Source",
-                    systemImage: model.listening.usesProductionMix ? "waveform" : "ear")
-            }
-            .fixedSize()
-            .accessibilityIdentifier("ww.controlBar.listeningMode")
-            .accessibilityValue(model.listening.usesProductionMix ? "Production Mix" : "Source Audition")
-            .help(
-                "Mix follows Episode Start/End and saved speaker restriction. Source Audition is diagnostic and may expose excluded original audio."
-            )
-            transport
-            Divider().frame(height: 28)
-            EpisodeClockDisplay(
-                model: model, clock: $settings.controlBar.primaryClock,
-                configuration: settings.controlBar)
-            Spacer(minLength: 0)
-            ForEach(settings.controlBar.displayedGroups(width: trackContentWidth), id: \.self) { group in
-                Divider().frame(height: 28)
-                switch group {
-                case .episode: EpisodeBoundaryControls(model: model, cleanup: cleanup)
-                case .tools: TimelineToolControls(listening: model.listening)
-                case .view:
-                    layoutPicker
-                    Button("Fit", systemImage: "arrow.left.and.right.righttriangle.left.righttriangle.right") {
-                        model.fitWaveformTimeline()
-                    }
-                    .help("Fit the entire timeline in the visible area")
-                }
-            }
-            .labelStyle(ControlBarLabelStyle(showsLabels: settings.controlBar.showsLabels))
-            Button("More", systemImage: "ellipsis") { showingMore.toggle() }
-                .labelStyle(.iconOnly)
-                .accessibilityIdentifier("ww.controlBar.more")
-                .help("Episode actions, boundary editing, timeline tools, and view controls")
-                .popover(isPresented: $showingMore) { moreControls }
-        }
-        .controlSize(.small)
-        .buttonStyle(.bordered)
-        .help(model.auditionLabel)
-        .background(TimelineToolModifierMonitor(listening: model.listening).frame(width: 0, height: 0))
-        .contextMenu { customizeControlBar }
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("ww.controlBar")
-    }
-
-    private var moreControls: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
-                if trackContentWidth < 650, let workspaceState {
-                    AudioWorkspaceActions(state: workspaceState, alignment: model, surface: .add)
-                }
-                Text("Episode").font(.headline)
-                EpisodeBoundaryControls(model: model, cleanup: cleanup)
-                if let workspaceState {
-                    AudioWorkspaceWorkflowActions(state: workspaceState, alignment: model)
-                    AudioWorkspaceActions(state: workspaceState, alignment: model, surface: .listening)
-                }
-                Button("Transcription Settings…", systemImage: "gearshape") {
-                    SettingsWindowController.show(pane: .transcription)
-                }
-                .help(cleanup?.transcriptionSettings.selection.title ?? "Transcription engine settings")
-                Divider()
-                Text("Timeline").font(.headline)
-                if trackContentWidth < 650 {
-                    HStack {
-                        Button("Jump Back") {
-                            model.jumpEnabledTracks(by: -settings.timelineJumpInterval.seconds)
-                        }
-                        Button("Jump Forward") {
-                            model.jumpEnabledTracks(by: settings.timelineJumpInterval.seconds)
-                        }
-                        Toggle(
-                            "Cycle",
-                            isOn: Binding(
-                                get: { model.listening.cycleEnabled },
-                                set: { enabled in
-                                    if enabled, model.listening.cycleRange == nil {
-                                        model.listening.setCycleRange(
-                                            model.listening.selection
-                                                ?? model.waveformAuditionBounds)
-                                    }
-                                    model.listening.cycleEnabled = enabled
-                                }))
-                        Toggle(
-                            "Follow Playhead",
-                            isOn: Binding(
-                                get: { model.listening.workspace.followPlayhead },
-                                set: { model.setFollowPlayhead($0) }))
-                    }
-                }
-                TimelineToolControls(listening: model.listening)
-                anchorMenu
-                Divider()
-                Text("View").font(.headline)
-                layoutPicker
-                normalization
-                navigationControls.zoomGroup
-                navigationControls.heightGroup
-                AudioTimelineRefresh(
-                    prefix: "alignment.waveforms",
-                    isLoading: hasRecordings && (model.isLoadingWaveforms || model.isLoadingOverview),
-                    canNavigate: model.pendingWaveformMove == nil && !model.isWorking
-                        && cleanup?.isBusy != true && cleanup?.isRefreshing != true,
-                    refresh: refreshWaveforms)
-                Text(model.message).font(.caption).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                Divider()
-                customizeControlBar
-                if let error = settings.controlBarError {
-                    Text(error).font(.caption).foregroundStyle(.red)
-                }
-            }
-            .controlSize(.small)
-            .disabled(processingOperation != nil)
-            .padding(16).frame(width: 560, alignment: .leading)
-        }
-        .frame(width: 560, height: 500)
-        .accessibilityIdentifier("ww.controlBar.overflow")
-    }
-
-    private var customizeControlBar: some View {
-        Button("Customize Control Bar and Display…", systemImage: "slider.horizontal.3") {
-            ControlBarCustomizationController.show()
-        }
-        .accessibilityIdentifier("ww.controlBar.customize")
-    }
-
-    private var anchorMenu: some View {
-        Menu("Anchor points", systemImage: "pin") {
-            if let track = model.selectedWaveform {
-                AlignmentAnchorControls(model: model, track: track)
-            } else {
-                Text("Click a point on a waveform first.")
-            }
-        }
-        .fixedSize()
-        .help("Mark a sound on the reference, link the same sound on another recording, then apply offset or drift.")
-        .accessibilityIdentifier("alignment.waveforms.anchorPoints")
-    }
-    private var layoutPicker: some View {
-        Picker("Track view", selection: Binding(get: { layout }, set: { layout = $0 })) {
-            layoutOptions
-        }
-        .pickerStyle(.menu)
-        .labelsHidden()
-        .fixedSize()
-        .accessibilityLabel("Compare waveform layout")
-        .accessibilityIdentifier("alignment.waveforms.layout")
-        .help(
-            "Speakers only shows confirmed Primary tracks and mutes non-primary tracks. Primary Solo/Mute choices are preserved. Hidden tracks receive the same cross-track cuts."
-        )
-    }
-
-    private var layoutOptions: some View {
-        ForEach(AlignmentWaveformLayout.allCases, id: \.self) { mode in
-            Text(mode.rawValue).tag(mode)
-        }
-    }
-
-    private var normalization: some View {
-        Toggle("Normalize view", isOn: Binding(get: { normalizeView }, set: { normalizeView = $0 }))
-            .toggleStyle(.checkbox)
-            .help("Scales displayed peaks only. Playback, originals, and saved timing are unchanged.")
-            .accessibilityIdentifier("alignment.waveforms.normalizeView")
     }
 
     private var recordings: some View {
@@ -698,76 +518,6 @@ struct AlignmentWaveformView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(8)
         .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
-    }
-
-    private var transport: some View {
-        AudioTimelineTransport(
-            prefix: "alignment.waveforms", isPlaying: model.canStopAudition,
-            isPreparing: model.isPreparingAudition, canPlay: processingOperation == nil,
-            canNavigate: processingOperation == nil,
-            playhead: model.waveformPlayheadSeconds, status: model.auditionLabel,
-            back: { model.jumpEnabledTracks(by: -AppSettings.shared.timelineJumpInterval.seconds) },
-            playPause: { model.canStopAudition ? model.pauseEnabledTracks() : model.playTransport() },
-            stop: { model.stopEnabledTracks() },
-            forward: { model.jumpEnabledTracks(by: AppSettings.shared.timelineJumpInterval.seconds) },
-            seek: { model.seekEnabledTracks(to: $0) },
-            isEdited: !model.isSourceTimePreview && !model.cutTimeline.removals.isEmpty,
-            cycleEnabled: trackContentWidth >= 550 ? model.listening.cycleEnabled : nil,
-            toggleCycle: {
-                if model.listening.cycleRange == nil {
-                    model.listening.setCycleRange(
-                        model.listening.selection
-                            ?? model.waveformStartSeconds...(model.waveformStartSeconds + model.waveformDurationSeconds)
-                    )
-                }
-                model.listening.cycleEnabled.toggle()
-            },
-            followPlayhead: trackContentWidth >= 550 ? model.listening.workspace.followPlayhead : nil,
-            toggleFollowPlayhead: { model.setFollowPlayhead(!model.listening.workspace.followPlayhead) },
-            jumpSeconds: AppSettings.shared.timelineJumpInterval.rawValue,
-            coordinateLabel: nil, showsDisplay: false, showsStatus: false, compact: true,
-            showsJumps: trackContentWidth >= 650
-        )
-        .padding(.vertical, 2)
-    }
-
-    private var navigationControls: AudioTimelineNavigation {
-        AudioTimelineNavigation(
-            prefix: "alignment.waveforms", maximumDuration: model.maximumWaveformDuration,
-            duration: Binding(
-                get: { model.waveformDurationSeconds },
-                set: { duration in
-                    _ = model.zoomWaveformViewport(
-                        magnification: model.waveformDurationSeconds / duration)
-                }), laneHeight: Binding(get: { laneHeight }, set: { laneHeight = $0 }),
-            showsLaneHeight: layout != .overlay,
-            isLoading: hasRecordings && model.isLoadingWaveforms,
-            canNavigate: model.pendingWaveformMove == nil,
-            zoomEditing: { editing in
-                if !editing {
-                    if hasRecordings, model.waveformDurationSeconds <= 30 {
-                        model.loadWaveforms(keepingSnapshot: true, preload: true)
-                    }
-                }
-            },
-            fit: { if model.waveformFitRange != nil { model.fitWaveformTimeline() } },
-            refresh: refreshWaveforms,
-            fillSpace: Binding(get: { fillsSpace }, set: { model.listening.workspace.fillSpace = $0 }),
-            showsRefresh: false
-        )
-    }
-
-    private func refreshWaveforms() {
-        if hasRecordings && (model.isLoadingWaveforms || model.isLoadingOverview) {
-            model.cancelWaveforms(keepingSnapshot: true)
-            model.cancelWaveformOverview(keepingSnapshot: true)
-        } else {
-            model.audioEditor.reloadWaveforms()
-            if hasRecordings { model.loadWaveforms(keepingSnapshot: model.pendingWaveformMove != nil) }
-            if let cleanup, !cleanup.isBusy, !cleanup.isRefreshing, !model.isWorking {
-                Task { await cleanup.refresh() }
-            }
-        }
     }
 
     private var ruler: some View {

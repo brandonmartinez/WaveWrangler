@@ -9,14 +9,66 @@ struct ControlBarSettingsTests {
         for preset in ControlBarConfiguration.Preset.allCases {
             let value = ControlBarConfiguration.preset(preset)
             #expect(value.isValid)
-            #expect(value.displayedGroups(width: 500).isEmpty)
-            #expect(value.displayedGroups(width: 2000) == value.groups.filter { value.visible.contains($0) })
+            #expect(value.displayedControls(width: 0).isEmpty)
+            #expect(value.displayedControls(width: 2000) == value.groups.flatMap { value.selectedControls(in: $0) })
             #expect(try JSONDecoder().decode(ControlBarConfiguration.self,
                 from: JSONEncoder().encode(value)) == value)
         }
         var duplicate = ControlBarConfiguration()
         duplicate.groups = [.episode, .episode, .view]
         #expect(!duplicate.isValid)
+    }
+
+    @Test func individualControlsRemoveEmptyGroupsAndRespectSpace() {
+        var value = ControlBarConfiguration()
+        #expect(value.displayedControls(width: 350).contains(.zoom))
+        #expect(value.displayedControls(width: 350).contains(.height))
+        value.controls = [.primaryTool]
+        #expect(value.selectedControls(in: .episode).isEmpty)
+        #expect(value.selectedControls(in: .view).isEmpty)
+        #expect(value.displayedControls(width: 50) == [.primaryTool])
+        value.controls = [.height, .fit]
+        #expect(value.displayedControls(width: 28, available: [.fit]) == [.fit])
+        value.controls = []
+        #expect(value.displayedControls(width: 2000).isEmpty)
+        #expect(value.isValid)
+    }
+
+    @Test func legacyGroupPreferencesMigrateWithoutLosingClocksOrOrder() throws {
+        let legacy = Data("""
+        {"version":1,"groups":["tools","episode","view"],"visible":["view","episode"],
+         "showsLabels":false,"primaryClock":"timeline","secondaryClock":"speaker","readout":"remaining"}
+        """.utf8)
+        let value = try JSONDecoder().decode(ControlBarConfiguration.self, from: legacy)
+        #expect(value.version == 2)
+        #expect(value.groups == [.tools, .episode, .view])
+        #expect(!value.controls.contains(.primaryTool))
+        #expect(!value.controls.contains(.commandTool))
+        #expect(value.controls.contains(.boundaries))
+        #expect(value.controls.contains(.zoom) && value.controls.contains(.height))
+        #expect(!value.showsLabels && value.primaryClock == .timeline && value.secondaryClock == .speaker)
+        #expect(value.readout == .remaining)
+        #expect(try JSONDecoder().decode(ControlBarConfiguration.self, from: JSONEncoder().encode(value)) == value)
+        for invalid in [
+            String(decoding: legacy, as: UTF8.self).replacingOccurrences(of: "\"version\":1", with: "\"version\":3"),
+            String(decoding: legacy, as: UTF8.self).replacingOccurrences(of: "\"tools\",\"episode\",\"view\"", with: "\"tools\",\"tools\",\"view\""),
+            String(decoding: legacy, as: UTF8.self).replacingOccurrences(of: "\"view\",\"episode\"]", with: "\"unknown\"]")
+        ] {
+            #expect(throws: (any Error).self) {
+                try JSONDecoder().decode(ControlBarConfiguration.self, from: Data(invalid.utf8))
+            }
+        }
+    }
+
+    @Test func fitActionsFollowTheirScalesWithoutCouplingTheirSelections() {
+        var value = ControlBarConfiguration()
+        value.controls = [.zoom, .fit, .height, .fillSpace, .layout]
+        #expect(value.selectedControls(in: .view) == [.zoom, .fit, .height, .fillSpace, .layout])
+        #expect(value.displayedControls(width: 350) == [.zoom, .fit, .height, .fillSpace])
+        value.controls.remove(.fit)
+        #expect(value.selectedControls(in: .view) == [.zoom, .height, .fillSpace, .layout])
+        value.controls.remove(.height)
+        #expect(value.selectedControls(in: .view) == [.zoom, .fillSpace, .layout])
     }
 
     @Test func preferencesSurviveRecreationAndCorruptionIsReported() throws {

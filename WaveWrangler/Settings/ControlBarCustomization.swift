@@ -24,8 +24,9 @@ final class ControlBarCustomizationController: NSWindowController {
     }
 
     private init() {
+        let contentHeight = NSScreen.main.map { min(730, $0.visibleFrame.height - 48) } ?? 730
         let window = NSWindow(contentViewController: NSHostingController(
-            rootView: ControlBarCustomization(settings: .shared)))
+            rootView: ControlBarCustomization(settings: .shared, contentHeight: contentHeight)))
         window.title = "Customize Control Bar and Display"
         window.styleMask = [.titled, .closable]
         window.tabbingMode = .disallowed
@@ -40,6 +41,7 @@ final class ControlBarCustomizationController: NSWindowController {
 
 private struct ControlBarCustomization: View {
     @Bindable var settings: AppSettings
+    let contentHeight: CGFloat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
@@ -56,20 +58,27 @@ private struct ControlBarCustomization: View {
                     .accessibilityIdentifier("ww.controlBar.restoreDefaults")
             }
             Form {
-                Section("Control groups") {
+                Section("Controls") {
                     ForEach(settings.controlBar.groups, id: \.self) { group in
-                        HStack {
-                            Toggle(group.title, isOn: Binding(
-                                get: { settings.controlBar.visible.contains(group) },
-                                set: { enabled in
-                                    if enabled { settings.controlBar.visible.insert(group) }
-                                    else { settings.controlBar.visible.remove(group) }
-                                }))
-                            Spacer()
-                            Button("Move \(group.title) Earlier", systemImage: "chevron.up") { move(group, by: -1) }
-                                .disabled(settings.controlBar.groups.first == group)
-                            Button("Move \(group.title) Later", systemImage: "chevron.down") { move(group, by: 1) }
-                                .disabled(settings.controlBar.groups.last == group)
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text(group.title).fontWeight(.semibold)
+                                Spacer()
+                                Button("Move \(group.title) Earlier", systemImage: "chevron.up") { move(group, by: -1) }
+                                    .disabled(settings.controlBar.groups.first == group)
+                                Button("Move \(group.title) Later", systemImage: "chevron.down") { move(group, by: 1) }
+                                    .disabled(settings.controlBar.groups.last == group)
+                            }
+                            ForEach(ControlBarConfiguration.Control.allCases.filter { $0.group == group }, id: \.self) { control in
+                                Toggle(control.title, isOn: Binding(
+                                    get: { settings.controlBar.controls.contains(control) },
+                                    set: { enabled in
+                                        if enabled { settings.controlBar.controls.insert(control) }
+                                        else { settings.controlBar.controls.remove(control) }
+                                    }))
+                                .toggleStyle(.checkbox)
+                                .accessibilityIdentifier("ww.controlBar.control.\(control.rawValue)")
+                            }
                         }
                     }
                     .labelStyle(.iconOnly)
@@ -92,7 +101,7 @@ private struct ControlBarCustomization: View {
                 }
             }
             .formStyle(.grouped)
-            Text("Transport and the primary clock always stay visible. Hidden groups and controls that do not fit remain in More.")
+            Text("Transport and the centered display always stay visible. Unchecked controls and controls that do not fit remain in More. Groups with no selected controls are hidden.")
                 .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
             if let error = settings.controlBarError {
                 Text(error).font(.caption).foregroundStyle(.red)
@@ -102,7 +111,7 @@ private struct ControlBarCustomization: View {
                 Button("Done") { NSApp.keyWindow?.close() }.keyboardShortcut(.defaultAction)
             }
         }
-        .padding(20).frame(width: 440, height: 610)
+        .padding(20).frame(width: 460, height: contentHeight)
     }
 
     private func move(_ group: ControlBarConfiguration.Group, by offset: Int) {

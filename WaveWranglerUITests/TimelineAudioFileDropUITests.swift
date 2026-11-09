@@ -14,6 +14,8 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         try bytes.write(to: first); try bytes.write(to: fresh)
         let app = try launch()
         defer { app.terminate() }
+        app.menuButtons["ww.controlBar.clock"].click()
+        app.menuItems["Timeline Time"].click()
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")
         XCTAssertTrue(NSWorkspace.shared.open(root))
         let window = finder.windows[root.lastPathComponent]
@@ -118,8 +120,9 @@ final class TimelineAudioFileDropUITests: XCTestCase {
         placementEvidence.lifetime = .keepAlways
         add(placementEvidence)
         for _ in 0..<7 {
-            app.descendants(matching: .any)["ww.audioWorkspace.audioTracks"].click()
+            openTimelineAdd(in: app)
             app.menuItems["New Audio Track"].click()
+            closeTimelineMore(in: app)
         }
         let capturedClipMidX = app.buttons[originalClipID].frame.midX
         let capturedRulerFrame = ruler.frame

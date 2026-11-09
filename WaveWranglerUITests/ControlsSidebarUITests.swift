@@ -165,6 +165,7 @@ final class ControlsSidebarUITests: XCTestCase {
         app.menuBars.menuBarItems["Window"].click()
         app.menuBars.menuItems["Zoom"].click()
         adjustTimelineSlider("alignment.waveforms.laneHeight", to: 0, in: app)
+        setTimelineFollowPlayhead(false, in: app)
         let markerID = candidate.identifier
         let ruler = app.staticTexts["alignment.waveforms.ruler"]
         let originalViewport = ruler.value as? String
@@ -283,6 +284,7 @@ final class ControlsSidebarUITests: XCTestCase {
                     && (transportStatus.value as? String ?? transportStatus.label) == "Finished selection audition."
             }, "Short cut auditions finish naturally; their transient Stop button may disappear before a click.")
         }
+        XCTAssertTrue(start.waitForExistence(timeout: 5) && end.exists, app.debugDescription)
         let previousStart = start.value as? String
         let previousEnd = end.value as? String
         reveal(start, in: app)

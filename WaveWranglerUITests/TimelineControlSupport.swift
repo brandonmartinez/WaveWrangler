@@ -18,23 +18,16 @@ func closeTimelineMore(in app: XCUIApplication) {
 
 @MainActor
 func revealTimelineControl(_ element: XCUIElement, in app: XCUIApplication) -> Bool {
-    let overflow = app.scrollViews["ww.controlBar.overflow"]
-    let identifier = element.exists ? element.identifier : ""
-    let isTimelineControl = identifier.isEmpty
-        || (identifier.hasPrefix("alignment.waveforms.")
+    closeTimelineMore(in: app)
+    guard element.exists else { return false }
+    let identifier = element.identifier
+    let isTimelineControl = (identifier.hasPrefix("alignment.waveforms.")
             && !identifier.hasPrefix("alignment.waveforms.track."))
         || identifier.hasPrefix("ww.controlBar.")
         || identifier.hasPrefix("ww.audioWorkspace.")
     if !isTimelineControl {
         closeTimelineMore(in: app)
         return element.exists && element.isHittable
-    }
-    if overflow.exists {
-        if element.exists, overflow.descendants(matching: .any)
-            .matching(identifier: element.identifier).firstMatch.exists {
-            return element.isHittable
-        }
-        closeTimelineMore(in: app)
     }
     if element.exists && element.isHittable { return true }
     openTimelineMore(in: app)
@@ -87,16 +80,27 @@ func setTimelineFollowPlayhead(_ enabled: Bool, in app: XCUIApplication) {
 
 @MainActor
 func clickTimelineButton(_ identifier: String, in app: XCUIApplication) {
-    let button = app.buttons[identifier]
-    if !button.exists || !button.isHittable { openTimelineMore(in: app) }
-    button.click()
+    closeTimelineMore(in: app)
+    let primary = app.buttons[identifier]
+    if primary.exists && primary.isHittable {
+        primary.click()
+    } else {
+        openTimelineMore(in: app)
+        app.scrollViews["ww.controlBar.overflow"].buttons[identifier].click()
+    }
     closeTimelineMore(in: app)
 }
 
 @MainActor
 func adjustTimelineSlider(_ identifier: String, to position: CGFloat, in app: XCUIApplication) {
-    openTimelineMore(in: app)
-    app.sliders[identifier].adjust(toNormalizedSliderPosition: position)
+    closeTimelineMore(in: app)
+    let primary = app.sliders[identifier]
+    if primary.exists && primary.isHittable {
+        primary.adjust(toNormalizedSliderPosition: position)
+    } else {
+        openTimelineMore(in: app)
+        app.scrollViews["ww.controlBar.overflow"].sliders[identifier].adjust(toNormalizedSliderPosition: position)
+    }
     closeTimelineMore(in: app)
 }
 
@@ -119,13 +123,26 @@ func timelineClockSeconds(_ field: XCUIElement) -> Double? {
 
 @MainActor
 func selectTimelineLayout(_ title: String, in app: XCUIApplication) {
-    let picker = app.popUpButtons["alignment.waveforms.layout"]
-    if !picker.exists || !picker.isHittable { openTimelineMore(in: app) }
+    closeTimelineMore(in: app)
+    let primary = app.popUpButtons["alignment.waveforms.layout"]
+    let picker: XCUIElement
+    if primary.exists && primary.isHittable {
+        picker = primary
+    } else {
+        openTimelineMore(in: app)
+        picker = app.scrollViews["ww.controlBar.overflow"].popUpButtons["alignment.waveforms.layout"]
+    }
     XCTAssertTrue(picker.waitForExistence(timeout: 10) && picker.isHittable, app.debugDescription)
     picker.click()
     let option = picker.menuItems[title]
     XCTAssertTrue(option.waitForExistence(timeout: 3), app.debugDescription)
     option.click()
-    XCTAssertEqual(picker.value as? String, title)
+    if picker.exists {
+        XCTAssertEqual(picker.value as? String, title)
+    } else {
+        openTimelineMore(in: app)
+        XCTAssertEqual(app.scrollViews["ww.controlBar.overflow"]
+            .popUpButtons["alignment.waveforms.layout"].value as? String, title)
+    }
     closeTimelineMore(in: app)
 }

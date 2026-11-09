@@ -14,6 +14,25 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(play.frame.midY, stop.frame.midY, accuracy: 2)
         XCTAssertLessThan(abs(play.frame.midY - clock.frame.midY), 16)
         XCTAssertEqual(clock.value as? String, "00:00:00.000")
+        let window = app.windows["ww.show.window"]
+        XCTAssertEqual(clock.frame.midX, window.frame.midX, accuracy: 1)
+        for id in ["alignment.waveforms.zoom", "alignment.waveforms.laneHeight"] {
+            let slider = app.sliders[id]
+            XCTAssertTrue(slider.isHittable && window.frame.contains(slider.frame), app.debugDescription)
+            XCTAssertGreaterThan(slider.frame.minX, clock.frame.maxX)
+        }
+        let zoom = app.sliders["alignment.waveforms.zoom"]
+        let fit = app.buttons["alignment.waveforms.fitTimeline"]
+        let height = app.sliders["alignment.waveforms.laneHeight"]
+        XCTAssertTrue(fit.isHittable, app.debugDescription)
+        XCTAssertGreaterThan(fit.frame.minX, zoom.frame.maxX)
+        XCTAssertLessThan(fit.frame.minX - zoom.frame.maxX, 50)
+        XCTAssertLessThan(fit.frame.maxX, height.frame.minX)
+        let recording = app.buttons["ww.sidebar.recording"]
+        recording.click()
+        XCTAssertTrue(wait { abs(clock.frame.midX - window.frame.midX) <= 1 }, app.debugDescription)
+        recording.click()
+        XCTAssertTrue(wait { abs(clock.frame.midX - window.frame.midX) <= 1 }, app.debugDescription)
         for id in ["episodeStart", "in"] {
             XCTAssertTrue(app.staticTexts["alignment.waveforms.marker.\(id)"].exists, app.debugDescription)
         }
@@ -60,15 +79,33 @@ final class WaveformNavigationUITests: XCTestCase {
         app.menuBars.menuItems["Customize Control Bar and Display…"].click()
         let customization = app.windows["ww.controlBar.customization"]
         XCTAssertTrue(customization.waitForExistence(timeout: 5), app.debugDescription)
-        customization.popUpButtons["ww.controlBar.primary"].click()
+        let primaryClock = customization.popUpButtons["ww.controlBar.primary"]
+        revealCustomizationControl(primaryClock, in: customization)
+        primaryClock.click()
         app.menuItems["Timeline Time"].click()
-        customization.checkBoxes["ww.controlBar.labels"].click()
+        let labels = customization.checkBoxes["ww.controlBar.labels"]
+        revealCustomizationControl(labels, in: customization)
+        labels.click()
+        for control in ["zoom", "height", "layout", "fit", "primaryTool"] {
+            let checkbox = customization.checkBoxes["ww.controlBar.control.\(control)"]
+            revealCustomizationControl(checkbox, in: customization)
+            XCTAssertEqual(String(describing: checkbox.value ?? ""), "1")
+            checkbox.click()
+        }
         customization.buttons["Done"].click()
+        XCTAssertTrue(customization.waitForNonExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(wait { clock.value as? String == "00:00:00.500" }, app.debugDescription)
+        XCTAssertFalse(app.descendants(matching: .any)["ww.controlBar.group.view"].exists,
+                       "A group with every control unchecked is omitted.")
+        XCTAssertFalse(app.menuButtons["alignment.waveforms.tool"].exists)
+        XCTAssertTrue(app.menuButtons["alignment.waveforms.commandTool"].isHittable,
+                      "Tool selectors can be selected independently.\n\(app.debugDescription)")
+        XCTAssertEqual(clock.frame.midX, app.windows["ww.show.window"].frame.midX, accuracy: 1)
         app.buttons["ww.sidebar.recording"].click()
         capture(app, name: "Independent episode and speaker bounds with excluded speech hatching")
         app.typeKey("s", modifierFlags: .command)
-        XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true })
+        XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true },
+                      "Save status: \(String(describing: app.buttons["ww.show.saveStatus"].value))\n\(app.debugDescription)")
         let arguments = app.launchArguments
         let index = try XCTUnwrap(arguments.firstIndex(of: "-WWUITestShowFolder"))
         app.terminate()
@@ -83,6 +120,10 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(customization.popUpButtons["ww.controlBar.primary"].value as? String, "Timeline Time")
         XCTAssertEqual(String(describing: customization.checkBoxes["ww.controlBar.labels"].value ?? ""), "0",
                        customization.debugDescription)
+        for control in ["zoom", "height", "layout", "fit", "primaryTool"] {
+            XCTAssertEqual(String(describing: customization.checkBoxes["ww.controlBar.control.\(control)"].value ?? ""), "0")
+        }
+        XCTAssertEqual(String(describing: customization.checkBoxes["ww.controlBar.control.commandTool"].value ?? ""), "1")
         customization.buttons["Restore Defaults"].click()
         XCTAssertEqual(customization.popUpButtons["ww.controlBar.primary"].value as? String, "Episode Time")
         customization.buttons["Done"].click()
@@ -98,6 +139,11 @@ final class WaveformNavigationUITests: XCTestCase {
                         app.textFields["alignment.waveforms.playhead"], app.buttons["ww.controlBar.more"]] {
             XCTAssertTrue(control.isHittable && window.frame.contains(control.frame), app.debugDescription)
         }
+        let clock = app.textFields["alignment.waveforms.playhead"]
+        XCTAssertEqual(clock.frame.midX, window.frame.midX, accuracy: 1)
+        capture(app, name: "Minimum centered episode controls")
+        app.buttons["ww.sidebar.recording"].click()
+        XCTAssertTrue(wait { abs(clock.frame.midX - window.frame.midX) <= 1 }, app.debugDescription)
         app.buttons["ww.controlBar.more"].click()
         let boundaries = app.descendants(matching: .any)["ww.audioWorkspace.boundaries"]
         XCTAssertTrue(boundaries.waitForExistence(timeout: 5) && boundaries.isHittable, app.debugDescription)
@@ -112,7 +158,7 @@ final class WaveformNavigationUITests: XCTestCase {
         app.menuBars.menuItems["Zoom"].click()
         let sidebar = app.buttons["ww.sidebar.recording"]
         if sidebar.value as? String == "Shown" { sidebar.click() }
-        let picker = app.popUpButtons["alignment.waveforms.layout"]
+        let picker = app.scrollViews["ww.controlBar.overflow"].popUpButtons["alignment.waveforms.layout"]
         openTimelineMore(in: app)
         XCTAssertTrue(picker.isHittable)
         picker.click()
@@ -121,8 +167,8 @@ final class WaveformNavigationUITests: XCTestCase {
         XCTAssertEqual(options.map(\.frame.minY), options.map(\.frame.minY).sorted())
         app.typeKey(.escape, modifierFlags: [])
         selectTimelineLayout("Speakers only", in: app)
-        let fit = app.descendants(matching: .any)["alignment.waveforms.fillSpace"]
-        reveal(fit, in: app)
+        openTimelineMore(in: app)
+        let fit = app.scrollViews["ww.controlBar.overflow"].descendants(matching: .any)["alignment.waveforms.fillSpace"]
         XCTAssertTrue(fit.isHittable, app.debugDescription)
         fit.click()
         closeTimelineMore(in: app)
@@ -147,6 +193,7 @@ final class WaveformNavigationUITests: XCTestCase {
             return abs(track.frame.height - value.doubleValue) <= 1.5
         },
                       "Manual slider=\(String(describing: slider.value)), row height=\(track.frame.height), fit=\(String(describing: fit.value))")
+        openTimelineMore(in: app)
         XCTAssertEqual(String(describing: fit.value ?? ""), "0")
         closeTimelineMore(in: app)
         let play = app.buttons["alignment.waveforms.transport.play"]
@@ -559,6 +606,16 @@ final class WaveformNavigationUITests: XCTestCase {
             scroll.scroll(byDeltaX: 0, deltaY: -min(100, max(-100, distance)))
         }
         XCTAssertTrue(element.isHittable, element.debugDescription)
+    }
+
+    private func revealCustomizationControl(_ element: XCUIElement, in window: XCUIElement) {
+        let scroll = window.scrollViews.firstMatch
+        for _ in 0..<8 {
+            if element.isHittable && scroll.frame.contains(element.frame) { return }
+            let distance = element.frame.midY - scroll.frame.midY
+            scroll.scroll(byDeltaX: 0, deltaY: -min(100, max(-100, distance)))
+        }
+        XCTAssertTrue(element.isHittable && scroll.frame.contains(element.frame), window.debugDescription)
     }
 
     private func wait(_ condition: () -> Bool) -> Bool {

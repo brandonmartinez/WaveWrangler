@@ -3,16 +3,19 @@ import SwiftUI
 
 struct TimelineToolControls: View {
     @Bindable var listening: EpisodeListeningState
+    var showsPrimary = true
+    var showsCommand = true
 
     var body: some View {
         HStack(spacing: 4) {
-            selector("Primary tool", selection: $listening.tool, command: false)
-            selector("Command-click tool", selection: $listening.commandTool, command: true)
+            if showsPrimary { selector("Primary tool", selection: $listening.tool, command: false) }
+            if showsCommand { selector("Command-click tool", selection: $listening.commandTool, command: true) }
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Timeline tools")
         .accessibilityValue(listening.effectiveTool.rawValue)
-        .accessibilityIdentifier("alignment.waveforms.tools")
+        .accessibilityIdentifier(showsPrimary && showsCommand ? "alignment.waveforms.tools"
+                                : showsPrimary ? "alignment.waveforms.primaryTools" : "alignment.waveforms.commandTools")
     }
 
     private func selector(_ title: String, selection: Binding<EpisodeListeningState.Tool>, command: Bool) -> some View {

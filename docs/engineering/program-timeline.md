@@ -61,18 +61,31 @@ Speaker In/Out only when restriction is enabled in Production Mix.
 ## Episode control bar and clocks
 
 The workspace has one primary control bar: Add, listening mode, transport,
-editable primary clock, optional command groups, and More. Narrow windows
+editable primary clock, optional command groups, and More. The control bar sits
+above the content/inspector split, so its LCD-style time display remains centered
+in the full episode window when sidebars, bottom panes, or controls change.
+Horizontal zoom and track-height scales are selected by default. Fit Timeline
+follows horizontal zoom; Fill Space follows track height when selected. Each
+scale and fit action remains independently selectable. Narrow windows
 overflow secondary groups instead of creating another toolbar row. More retains
 boundary editing, processing, listening presets, timeline tools, and view
 controls. Passive explanations live in help; errors, stale-boundary review, and
 active-operation progress remain visible.
 
 View > Customize Control Bar and Display provides Editing, Review, and Mixing
-presets, optional groups and their order, icon labels, primary/secondary clocks,
+presets, individual controls within ordered groups, icon labels, primary/secondary clocks,
 and duration, remaining-time, or selection readouts. Restore Defaults restores
 the Editing configuration. Configuration is versioned app-local state shared by
 episode windows; it is not saved in the show. Malformed stored configuration
 produces an explicit error and is retained until the user restores defaults.
+Groups with no selected controls have no primary-bar container or divider.
+Version 1 group visibility migrates to version 2 individual selections while
+preserving group order, clocks, labels, and readouts.
+
+Hear Removed Audio and Hear Cut with Context explicitly select diagnostic Source
+Audition, including when invoked from Production Mix. They reveal only the
+selected cut; other cuts and saved document state remain unchanged.
+
 Per-episode viewport/listening navigation remains in the existing local view
 store; production boundaries and speech restriction remain saved document state.
 

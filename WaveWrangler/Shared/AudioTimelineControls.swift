@@ -240,6 +240,7 @@ struct AudioTimelineNavigation: View {
     let refresh: () -> Void
     var fillSpace: Binding<Bool>? = nil
     var showsRefresh = true
+    var compactScales = false
 
     var body: some View {
         AudioTimelineAdaptiveRow(alignsTrailing: true) {
@@ -259,15 +260,7 @@ struct AudioTimelineNavigation: View {
     var heightGroup: some View {
         HStack(spacing: 12) {
             if showsLaneHeight { heightControls }
-            if let fillSpace {
-                Toggle(isOn: fillSpace) {
-                    Label("Fill Space", systemImage: "arrow.up.and.down")
-                }
-                .toggleStyle(.button)
-                .labelStyle(.iconOnly)
-                .help("Fit visible tracks to the available height, keeping waveforms at least 64 points tall. Adjusting track height exits Fill Space.")
-                .accessibilityIdentifier("\(prefix).fillSpace")
-            }
+            fillSpaceButton
             if showsRefresh {
                 Spacer(minLength: 0)
                 AudioTimelineRefresh(prefix: prefix, isLoading: isLoading,
@@ -276,7 +269,7 @@ struct AudioTimelineNavigation: View {
         }
     }
 
-    private var zoomControls: some View {
+    var zoomControls: some View {
         HStack(spacing: 5) {
             zoomButton(increment: false)
             NativeTimelineSlider(
@@ -292,12 +285,16 @@ struct AudioTimelineNavigation: View {
                 ), range: 0...1, label: "Horizontal zoom", identifier: "\(prefix).zoom",
                 onEditingChanged: zoomEditing
             )
-            .frame(minWidth: 90, idealWidth: 120, maxWidth: 220)
+            .frame(minWidth: compactScales ? 84 : 90, idealWidth: compactScales ? 84 : 120,
+                   maxWidth: compactScales ? 84 : 220)
             .disabled(!canNavigate)
             zoomButton(increment: true)
-            Text(AlignmentPresentation.formatTime(duration))
-                .font(.caption).monospacedDigit().frame(minWidth: 54)
+            if !compactScales {
+                Text(AlignmentPresentation.formatTime(duration))
+                    .font(.caption).monospacedDigit().frame(minWidth: 54)
+            }
         }
+        .help("Horizontal zoom: \(AlignmentPresentation.formatTime(duration)) visible")
     }
 
     private func zoomButton(increment: Bool) -> some View {
@@ -316,7 +313,7 @@ struct AudioTimelineNavigation: View {
         .accessibilityIdentifier("\(prefix).\(increment ? "zoomIn" : "zoomOut")")
     }
 
-    private var fitButton: some View {
+    var fitButton: some View {
         Button("Fit timeline", systemImage: "arrow.left.and.right", action: fit)
             .labelStyle(.iconOnly)
             .help("Fit the complete aligned timeline.")
@@ -324,17 +321,29 @@ struct AudioTimelineNavigation: View {
             .accessibilityIdentifier("\(prefix).fitTimeline")
     }
 
-    private var heightControls: some View {
+    var heightControls: some View {
         HStack(spacing: 5) {
             Image(systemName: "waveform")
             NativeTimelineSlider(
                 value: $laneHeight, range: 64...220,
                 label: "Track height", identifier: "\(prefix).laneHeight")
-                .frame(minWidth: 70, idealWidth: 90, maxWidth: 130)
+                .frame(minWidth: 70, idealWidth: compactScales ? 70 : 90, maxWidth: compactScales ? 70 : 130)
                 .disabled(!canNavigate)
         }
     }
 
+    @ViewBuilder
+    var fillSpaceButton: some View {
+        if let fillSpace {
+            Toggle(isOn: fillSpace) {
+                Label("Fill Space", systemImage: "arrow.up.and.down")
+            }
+            .toggleStyle(.button)
+            .labelStyle(.iconOnly)
+            .help("Fit visible tracks to the available height, keeping waveforms at least 64 points tall. Adjusting track height exits Fill Space.")
+            .accessibilityIdentifier("\(prefix).fillSpace")
+        }
+    }
 }
 
 struct AudioTimelineRefresh: View {

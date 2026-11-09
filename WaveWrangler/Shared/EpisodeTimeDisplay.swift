@@ -43,6 +43,15 @@ struct EpisodeClockDisplay: View {
     var configuration = ControlBarConfiguration()
     @State private var draft = ""
     @FocusState private var editing: Bool
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var displayInk: Color {
+        colorScheme == .dark ? Color(red: 0.78, green: 0.91, blue: 0.78) : Color(red: 0.12, green: 0.20, blue: 0.14)
+    }
+
+    private var displayBackground: Color {
+        colorScheme == .dark ? Color(red: 0.08, green: 0.13, blue: 0.11) : Color(red: 0.82, green: 0.88, blue: 0.80)
+    }
 
     private var title: String {
         if model.isSourceTimePreview { return "Source Time" }
@@ -94,17 +103,15 @@ struct EpisodeClockDisplay: View {
                     ForEach(EpisodeClock.allCases, id: \.self) { Text($0.title).tag($0) }
                 }
             } label: {
-                HStack(spacing: 4) {
-                    Text(title).font(.caption)
-                    Image(systemName: "chevron.down").font(.caption2)
-                }
+                Text(title).font(.caption)
             }
             .menuStyle(.borderlessButton)
             .fixedSize()
             .disabled(!model.listening.usesProductionMix)
             .accessibilityIdentifier("ww.controlBar.clock")
             TextField(title, text: $draft)
-                .font(.system(.title3, design: .monospaced).weight(.medium))
+                .font(.system(size: 21, weight: .medium, design: .monospaced))
+                .monospacedDigit()
                 .multilineTextAlignment(.center)
                 .textFieldStyle(.plain)
                 .frame(width: 175)
@@ -121,14 +128,25 @@ struct EpisodeClockDisplay: View {
             if let additionalReadout {
                 Text(additionalReadout).font(.system(.caption2, design: .monospaced))
                     .lineLimit(1).minimumScaleFactor(0.75)
-                    .frame(width: 210)
+                    .frame(width: 196)
                     .accessibilityIdentifier("ww.controlBar.readout")
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 5)
-        .background(.background, in: RoundedRectangle(cornerRadius: 5))
-        .overlay { RoundedRectangle(cornerRadius: 5).strokeBorder(.separator) }
+        .frame(width: 196)
+        .foregroundStyle(displayInk)
+        .tint(displayInk)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 7)
+        .background(displayBackground, in: RoundedRectangle(cornerRadius: 5))
+        .overlay {
+            RoundedRectangle(cornerRadius: 5).strokeBorder(.black.opacity(0.35))
+                .overlay(alignment: .top) {
+                    Rectangle().fill(.black.opacity(0.18)).frame(height: 1).padding(.horizontal, 5)
+                }
+                .allowsHitTesting(false)
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("ww.controlBar.display")
         .help("Enter signed HH:MM:SS.mmm or seconds in the selected clock. Changing clocks never moves audio.")
         .onAppear { draft = displayed }
         .onChange(of: displayed) { _, value in if !editing { draft = value } }
