@@ -42,6 +42,50 @@ test identities and nonzero count, not just the command's exit status.
 coverage, environment admission, the scheme default, and CLI routing without
 launching apps. Its static checks also run before `scripts/test.sh`.
 
+### Sustained production playback qualification
+
+The hosted test below is opt-in with `WW_PRODUCTION_TIMING_TESTS=1` in the
+test runner's environment. Build the `WaveWranglerHostedTests` scheme with
+isolated DerivedData (for example, `.build/DerivedData-playback-reliability`)
+and two workers, then stage and run on a ready, leased VM using the pipeline
+below. Do not execute hosted audio tests on the development desktop.
+Swift Testing method selectors require the parentheses:
+
+```text
+-only-testing:WaveWranglerHostedTests/SustainedProductionPlaybackHostedTests/adaptiveProductionSurvivesLiveInsertEditingSavingAndTranscriptLayout()
+```
+
+The test plays 32 seconds of real production audio from two authorized,
+generated 48-second originals. Its accepted map has one smooth adaptive segment
+over the first 40 seconds and 4,096 short segments in the final eight seconds:
+recording-sized metadata does not turn the played interval into thousands of
+tiny stretch operations. The run starts with cold adaptive audio tiles and
+crosses at least seven five-second tiles without increasing playback buffers.
+
+Two speaker inserts and one master insert use native Apple Lowpass units.
+A generic editor remains active with normal observation timing while explicit
+controller edits alternate with native parameter edits that observation must
+capture. Main-actor transcript layout performs actual CPU work with suspensions,
+and real saves occur around program seconds 12 and 25. Acceptance includes
+exact program-end completion without an error, live mute/unmute DSP meters,
+the same processing instance, verified save/reload, post-playback Undo/Redo and
+parameter recall, unchanged accepted timing, and byte-identical synthetic
+originals. Counters require editing, capture, and layout after second 21.
+The synthetic alignment window must finish attaching and loading its initial
+waveforms before transport starts; initial view setup is not playback load.
+The completion timeout is 60 seconds after startup, separate from setup waits;
+there is no per-cold-window one-second performance gate.
+
+Record the bounded numeric `SUSTAINED_PRODUCTION` summary and actual executed
+test identities/counts. Repeat with two or three fresh fixtures for qualification
+evidence. Retain the `FlattenedPlaybackHostedTests` negative controls for
+intentional queue starvation, refusal of externally changed sources, and
+stop/stale-producer invalidation. Existing deterministic queue and control
+horizon tests remain responsible for their bounds.
+
+These are VM functional regression results, not supported physical-hardware
+performance qualification.
+
 ## Prepare the build
 
 Load `source "$HOME/.shell/exports-core.sh"` before each local shell command.
