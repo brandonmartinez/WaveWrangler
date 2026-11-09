@@ -1396,14 +1396,22 @@ UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPre
 `-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
 `-WWForceReduceMotion YES`.
 
-### Mixer model and persistence (schemas 9-10)
+### Mixer model and persistence (schemas 9-11)
 
 `WWCore.Episode.mix` holds optional `EpisodeMixState`; absence is neutral:
-0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-9 shows
+0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-10 shows
 require the existing consented C5 migration with an exact-byte backup. Migration
 changes no timing, transcripts, cuts, assignments, or history. Older-schema
 payloads carrying mix state are refused, even when the state is neutral; newer
 schemas remain read-only/refused by the usual format gate.
+
+Schema 11 also stores optional independent episode production boundaries and
+the speech-only restriction preference. The boundary, clock, and playback contract is
+described in [program-timeline.md](program-timeline.md#episode-production-foundation-schema-11);
+normal production playback follows Episode Start/End and the optional speech
+gate. Music and shared master tails may continue after Speaker Out, but Stop
+immediately silences every branch. The unified control bar provides boundary
+editing, explicit Mix/Source modes, selectable clocks, and app-local customization.
 
 `RecordingInputGain` is scoped by episode, `SourceID`, and explicit zero-based
 channel. `settingInputGain(_:for:in:)` refuses unknown channels rather than

@@ -5,6 +5,89 @@
 playback, an editor, source access, persistence services, or recorder-clock edits.
 F1's schema-10 arrangement and shared model transaction/Undo path remain in use.
 
+## Episode production foundation (schema 11)
+
+`Episode.productionRange` stores independent optional `start`/`end` placement
+anchors and `restrictSpeech` (default false). An absent edge is automatic.
+`settingProductionRange(_:in:)` is a whole-value transaction for the existing
+shared-store save/Undo path; resetting all controls to neutral removes the
+optional value. Original recordings, working-range serialized keys, clips, and
+accepted timing do not change. Production settings invalidate
+`EpisodeProcessingInputs`, not raw media/alignment/transcription inputs.
+
+`EpisodeProductionProjection(episode:composition:)` is shared by production
+playback, boundary editing, markers, and presentation clocks. It refuses a mismatched composition,
+stale explicit Speaker In/Out, unresolved boundary anchors, and reversed episode
+bounds. Boundary edits use the document transaction, verified-save, and Undo/Redo
+paths; changed program dependencies stop and invalidate prepared playback.
+
+Automatic bounds include projected Speaker In/Out (or available dialogue when
+omitted), every supplemental clip, and intentional insertion-region extents.
+They do not depend on listening controls. Audio-only episodes use their
+arrangement; empty episodes have no playable range, including when saved manual
+edges remain. The full `ProgramComposition.programFrames` media hull stays
+unchanged and is not the finished-episode range. Speaker In has following-sample
+insertion affinity; Speaker Out is an exclusive edge before insertions at that
+boundary. Manual edges use the existing placement-anchor affinity.
+
+The projection provides reversible integer-frame presentation clocks:
+**Episode Time** is program time relative to Episode Start and can be negative;
+**Timeline Time** is the unchanged signed program coordinate; **Speaker Time**
+is edited dialogue elapsed from Speaker In, excluding cuts and inserted time.
+Speaker Time is unavailable in insertion-only positions and outside dialogue
+sample coverage. Clock inverses return no position when unavailable rather than
+seeking a different clock. Elapsed clocks support the entire two-day difference
+between signed-day endpoints. Expanded Show Cut coordinates are not inputs to
+these production APIs.
+
+The pure `speechGain` prescription is unity when restriction is off. When on,
+it is zero outside projected Speaker In/Out and has a 240-frame (5 ms) ramp
+entirely on the allowed side. The production mixer hard-gates speaker input
+before speaker inserts and applies the
+single de-click ramp/gate after speaker processing and latency compensation.
+Excluded speech cannot excite speaker effects, and speaker effect tails cannot
+leak outside Speaker In/Out. Supplemental branches are unaffected. Shared master
+effects may decay after Speaker Out, alongside music, until Episode End.
+**Stop is different:** it invalidates queued rendering and immediately silences
+all output, including music and effect tails; it does not drain the tail.
+
+Production Mix is the default listening mode. Playback, selection/context
+playback, seeks, and cycles use Episode Start/End without discarding manually
+included silence outside dialogue coverage. Source Audition and expanded Show
+Cut are explicitly diagnostic views of original material, not alternate
+production prescriptions. Spoken lanes are dimmed and diagonally hatched outside
+Speaker In/Out only when restriction is enabled in Production Mix.
+
+## Episode control bar and clocks
+
+The workspace has one primary control bar: Add, listening mode, transport,
+editable primary clock, optional command groups, and More. Narrow windows
+overflow secondary groups instead of creating another toolbar row. More retains
+boundary editing, processing, listening presets, timeline tools, and view
+controls. Passive explanations live in help; errors, stale-boundary review, and
+active-operation progress remain visible.
+
+View > Customize Control Bar and Display provides Editing, Review, and Mixing
+presets, optional groups and their order, icon labels, primary/secondary clocks,
+and duration, remaining-time, or selection readouts. Restore Defaults restores
+the Editing configuration. Configuration is versioned app-local state shared by
+episode windows; it is not saved in the show. Malformed stored configuration
+produces an explicit error and is retained until the user restores defaults.
+Per-episode viewport/listening navigation remains in the existing local view
+store; production boundaries and speech restriction remain saved document state.
+
+The display accepts signed `HH:MM:SS.mmm` or seconds in the selected clock.
+Changing clocks never seeks or moves media. Unavailable inverse positions are
+refused explicitly. The ruler uses the selected primary clock; Source Audition
+is labeled Source Time rather than pretending to be Episode Time.
+
+Schema 1-10 shows require explicit C5 migration consent and an exact-byte backup.
+Migration changes only the schema version (plus the existing schema-1 channel
+migration), never inventing boundaries or enabling restriction. Old-schema
+payloads containing even neutral production state are refused. Frozen schema-10
+bytes and complete-arrangement migration/recovery tests cover the previous
+format; the library schema and time-map schema are unchanged.
+
 ## Coordinates and boundaries
 
 The chain is **original-aligned dialogue -> merged `ManualCutTimeline` ->
