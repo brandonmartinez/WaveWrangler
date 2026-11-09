@@ -1804,12 +1804,15 @@ final class EpisodeAlignmentModel {
         guard let document, let episode = document.store.model.episode(episodeID) else { return }
         let hasDialogue = !episode.speakerAssignments.isEmpty || episode.alignment?.acceptedMap != nil
         guard !hasDialogue || (timingIsVerified(document.store.model) && !waveformTimingIsDraft
-              && loadedWaveformMap != nil && !waveformNeedsRefreshAfterSave
               && groupDraftMilliseconds == 0 && pendingWaveformMove == nil) else {
-            auditionLabel = "Save and verify accepted timing before playing the production mix."
+            let error = AlignmentTransportFailure.unverifiedProductionTiming
+            mixer.fail(error)
+            lastError = error.localizedDescription
+            auditionLabel = error.localizedDescription
             return
         }
         let generation = auditionGeneration
+        lastError = nil
         listeningMode = .productionMix
         isPreparingAudition = true
         auditionLabel = "Preparing the production mix."

@@ -276,6 +276,71 @@ struct MixerHostedTests {
         #expect(f.document.store.model.episode(f.model.episodeID)?.alignment == before.episode(f.model.episodeID)?.alignment)
     }
 
+    @Test(arguments: [false, true])
+    func verifiedProductionPlaysWithoutDecodedWaveformTiles(clearingLoadedTiles: Bool) async throws {
+        let f = try await ready()
+        let model = clearingLoadedTiles ? f.model : EpisodeAlignmentModel(
+            document: f.document, episodeID: f.model.episodeID, runtime: f.runtime,
+            listening: EpisodeListeningState())
+        defer { model.suspend(); f.close() }
+        if clearingLoadedTiles { model.cancelWaveforms() }
+        let waveformMap = model.waveformMap
+        let needsWaveformRefresh = model.waveformNeedsRefreshAfterSave
+        #expect(waveformMap == nil && needsWaveformRefresh)
+        let before = f.document.store.model
+        let originals = try f.files.map { try Data(contentsOf: $0) }
+        model.playProductionMix(interval: 0...1)
+        let preparing = model.canStopAudition
+        try #require(preparing, "\(model.auditionLabel)")
+        try await wait(model.auditionLabel) { model.isAuditioning || model.lastError != nil }
+        let started = model.isAuditioning
+        let meters = model.mixer.meters
+        try #require(started, "\(model.auditionLabel): \(model.lastError ?? "")")
+        #expect(meters != nil)
+        try await wait(model.auditionLabel) { !model.canStopAudition }
+        let error = model.lastError
+        let label = model.auditionLabel
+        let end = model.waveformPlayheadSeconds
+        let after = f.document.store.model
+        let unchangedOriginals = try f.files.map { try Data(contentsOf: $0) } == originals
+        #expect(error == nil && label == "Production mix reached the end of the selected program.")
+        #expect(end == 1)
+        #expect(after == before && unchangedOriginals)
+    }
+
+    @Test(arguments: [false, true])
+    func productionRejectsPendingTimingEditsAndCanRetryAfterDiscardingThem(groupDraft: Bool) async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let before = f.document.store.model
+        if groupDraft { f.model.groupDraftMilliseconds = 10 }
+        else { f.model.waveformOffsetMilliseconds += 10 }
+        f.model.playProductionMix(interval: 0...1)
+        let playing = f.model.canStopAudition
+        let error = f.model.lastError
+        let state = f.model.mixer.state
+        let expected = AlignmentTransportFailure.unverifiedProductionTiming.localizedDescription
+        let rejected = f.document.store.model
+        #expect(!playing && error == expected && state == .failed(expected))
+        #expect(rejected == before)
+        f.model.resetWaveformTiming()
+        f.model.cancelWaveforms()
+        f.model.playProductionMix(interval: 0...1)
+        let retryError = f.model.lastError
+        #expect(retryError == nil)
+        try await wait(f.model.auditionLabel) { f.model.isAuditioning || f.model.lastError != nil }
+        let started = f.model.isAuditioning
+        let meters = f.model.mixer.meters
+        try #require(started, "\(f.model.auditionLabel): \(f.model.lastError ?? "")")
+        #expect(meters != nil)
+        try await wait(f.model.auditionLabel) { !f.model.canStopAudition }
+        let finalError = f.model.lastError
+        let label = f.model.auditionLabel
+        let after = f.document.store.model
+        #expect(finalError == nil && label == "Production mix reached the end of the selected program.")
+        #expect(after == before)
+    }
+
     @Test func productionWithTwoSpeakerInsertsAndAMasterInsertRunsThroughTheProgramEnd() async throws {
         try await runInsertedProduction(drift: false)
     }

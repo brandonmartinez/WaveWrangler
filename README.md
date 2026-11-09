@@ -561,6 +561,23 @@ their existing keyboard behavior.
 
 ## Local development builds and file access
 
+Build and install the latest locally signed app in `/Applications`:
+
+```bash
+bash scripts/install-local.sh          # Debug
+bash scripts/install-local.sh Release  # Release
+open /Applications/WaveWrangler.app
+```
+
+Quit WaveWrangler first. The installer refuses to replace a running app, verifies the signed
+bundle and copied contents, and restores the previous installation if replacement fails.
+It uses ad-hoc signing with the existing sandbox entitlements, not notarized distribution signing.
+Build output defaults to `.build/LocalInstallDerivedData`, separate from test builds.
+Run the command again after source changes; it does not watch or fetch changes automatically.
+If `/Applications` is not writable, create `~/Applications` and use
+`WW_INSTALL_DIR="$HOME/Applications" bash scripts/install-local.sh`; do not build with `sudo`.
+`WW_JOBS` and `WW_DERIVED_DATA` retain their existing build overrides.
+
 Keep the app used for editing separate from the bundles rebuilt by tests:
 
 ```bash

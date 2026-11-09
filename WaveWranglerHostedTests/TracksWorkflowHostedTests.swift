@@ -192,6 +192,10 @@ struct TracksWorkflowHostedTests {
         undo.endUndoGrouping()
         let reset = f.document.store.model
         #expect(f.document.verifiedModel == before && reset != before)
+        other.playProductionMix()
+        let resetPlaying = other.canStopAudition
+        let resetPlaybackError = other.lastError
+        #expect(!resetPlaying && resetPlaybackError == AlignmentTransportFailure.unverifiedProductionTiming.localizedDescription)
         other.analyzeTracks()
         #expect(!other.isWorking && other.lastError?.contains("Save and verify") == true)
         try await wait { f.document.verifiedModel == reset && !f.model.isLoadingWaveforms
@@ -201,6 +205,11 @@ struct TracksWorkflowHostedTests {
             && f.model.waveformMap != nil }
         undo.redo()
         #expect(f.document.verifiedModel == before && f.document.store.model == reset)
+        other.playProductionMix()
+        let redoPlaying = other.canStopAudition
+        let redoPlaybackError = other.lastError
+        #expect(!redoPlaying && redoPlaybackError == AlignmentTransportFailure.unverifiedProductionTiming.localizedDescription,
+                "Production playback in another window cannot bypass the verified-save gate after Redo")
         other.analyzeTracks()
         #expect(!other.isWorking && other.lastError?.contains("Save and verify") == true,
                 "Redo and another window cannot depend on the original model's pending-reset flag")
