@@ -31,6 +31,7 @@ final class RegularAudioPlayback: Sendable {
     private let presentation: AudioTimelineProjection?
     private let initialSources: [SourceID]
     private let availableSources: [SourceID]
+    private let meterReferences: [SpeakerID: Set<ChannelReference>]
     private let state: Mutex<State>
     private let canceled = Atomic<Bool>(false)
 
@@ -47,6 +48,9 @@ final class RegularAudioPlayback: Sendable {
         media = EpisodeMediaInputs(episode)
         self.initialSources = sources
         self.availableSources = availableSources
+        meterReferences = Dictionary(uniqueKeysWithValues: episode.speakerAssignments.map { assignment in
+            (assignment.speakerID, Set(assignment.primary.map { [$0] } ?? []).union(assignment.backups))
+        })
         self.applyingCuts = applyingCuts
         self.revealingCut = revealingCut
         self.timebase = timebase
@@ -147,9 +151,16 @@ final class RegularAudioPlayback: Sendable {
                 }
             }
             try check()
+            let meterSpeakers = meterReferences.mapValues { references in
+                Set(references.compactMap { reference -> SourceID? in
+                    guard let clip = clips[reference.sourceID], let channel = clip.sourceChannel,
+                          reference.resolvedChannel(channelCount: clip.sourceChannelCount) == channel else { return nil }
+                    return reference.sourceID
+                })
+            }
             try output.enqueue(clips, startSeconds: Double(frames.lowerBound) / 48_000, first: first,
                 availableSources: Set(availableSources), final: frames.upperBound == schedule.endFrame,
-                generation: outputGeneration,
+                generation: outputGeneration, meterSpeakers: meterSpeakers,
                 onSourcesJoined: onSourcesJoined, onBufferDeadline: onBufferDeadline)
             first = false
             try applyGains()

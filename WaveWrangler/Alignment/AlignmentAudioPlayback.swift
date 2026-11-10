@@ -10,6 +10,8 @@ struct AlignmentAudioClip: Sendable {
     var sampleRate: Double
     var samples: [Float]
     var channelCount: Int = 1
+    var sourceChannel: Int?
+    var sourceChannelCount: Int?
 
     var duration: Double { Double(samples.count) / Double(channelCount) / sampleRate }
 
@@ -115,6 +117,11 @@ final class AlignmentAudioPlayback: @unchecked Sendable {
     var generation: UInt64 { queue.sync { sessionGeneration } }
     var preparedSources: Set<SourceID> { queue.sync { graph.preparedSources } }
     var pendingSources: Set<SourceID> { queue.sync { graph.pendingSources } }
+    var sourceMeters: MixerConsoleSnapshot { queue.sync { graph.readSourceMeters() } }
+
+    func resetSourceMeterPeaks(for bus: MixerBusAddress) {
+        queue.sync { graph.sourceMetering.resetPeaks(for: bus) }
+    }
 
     func stop() { queue.sync { sessionGeneration &+= 1; graph.stop() } }
     func stop(ifCurrent generation: UInt64, preservingClock: Bool = false) {
@@ -153,12 +160,13 @@ final class AlignmentAudioPlayback: @unchecked Sendable {
 
     func enqueue(_ clips: [SourceID: AlignmentAudioClip], startSeconds: Double, first: Bool,
                  availableSources: Set<SourceID>, final: Bool, generation: UInt64? = nil,
+                 meterSpeakers: [SpeakerID: Set<SourceID>] = [:],
                  onSourcesJoined: @escaping @MainActor @Sendable () -> Void,
                  onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
         try queue.sync {
             if let generation, sessionGeneration != generation { throw CancellationError() }
             try graph.enqueue(clips, startSeconds: startSeconds, first: first,
-                availableSources: availableSources, final: final, onSourcesJoined: onSourcesJoined,
+                availableSources: availableSources, final: final, meterSpeakers: meterSpeakers, onSourcesJoined: onSourcesJoined,
                 onBufferDeadline: onBufferDeadline)
         }
     }
@@ -201,6 +209,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private var completion = PlaybackCompletion(1)
     private var sourceJoinTasks: [SourceID: Task<Void, Never>] = [:]
     private var transportSources = AlignmentTransportSources()
+    var sourceMetering = AlignmentSourceMetering()
     private(set) var clock: AlignmentPlaybackClock?
     var isFinished: Bool { finalBuffer && completion.isFinished }
 
@@ -272,6 +281,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         clock = terminal
         transportHostTime = nil
         transportSources = AlignmentTransportSources()
+        sourceMetering = AlignmentSourceMetering()
     }
 
     private func watch(final: Bool, deadline: @escaping @MainActor @Sendable () -> Void) {
@@ -358,7 +368,16 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     func setGains(_ gains: [SourceID: Float]) {
+        _ = readSourceMeters()
+        sourceMetering.gains = gains
         for (source, player) in players { player.volume = gains[source] ?? 0 }
+    }
+
+    func readSourceMeters() -> MixerConsoleSnapshot {
+        guard let clock = readClock(), transportSampleRate == Double(MixerRecipe.sampleRate) else {
+            return MixerConsoleSnapshot()
+        }
+        return sourceMetering.read(through: Int64((clock.playhead() * Double(MixerRecipe.sampleRate)).rounded(.down)))
     }
 
     static func validateProduction(_ output: MixerPCMOutput) throws -> AlignmentAudioClip {
@@ -426,6 +445,8 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     func excludeSource(_ source: SourceID) {
+        _ = readSourceMeters()
+        sourceMetering.gains[source] = nil
         sourceJoinTasks.removeValue(forKey: source)?.cancel()
         players[source]?.volume = 0
         players[source]?.stop()
@@ -461,6 +482,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     func enqueue(
         _ clips: [SourceID: AlignmentAudioClip], startSeconds: Double, first: Bool,
         availableSources: Set<SourceID>, final: Bool,
+        meterSpeakers: [SpeakerID: Set<SourceID>],
         onSourcesJoined: @escaping @MainActor @Sendable () -> Void,
         onBufferDeadline: @escaping @MainActor @Sendable () -> Void
     ) throws {
@@ -551,6 +573,8 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             }
         }
         transportSources.schedule(Set(clips.keys), startingAt: startSeconds)
+        sourceMetering.speakers = meterSpeakers
+        sourceMetering.append(buffers, firstFrame: Int64((startSeconds * Double(MixerRecipe.sampleRate)).rounded()))
         watch(final: final, deadline: onBufferDeadline)
     }
 }

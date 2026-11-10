@@ -1943,7 +1943,11 @@ gateway, mutation, hook, or thread token. Its regression scans the actual
 
 The mixer is a bank of adjacent fixed-width 144-point console strips, with
 Master pinned to the right of horizontal scrolling and one shared vertical
-scroll for aligned insert rows and controls. A full-width name block, existing
+scroll for aligned insert rows and controls. Non-master strips use a native
+legacy-style horizontal scrollbar whenever they overflow, independent of the
+system's overlay-scrollbar preference; it stays below the shared vertical viewport
+in short panes and hides when every strip fits.
+A full-width name block, existing
 speaker appearance (including episode overrides) or track icon, and temporary
 Solo/Mute controls identify each strip. Source/channel details and actionable
 Primary warnings are available from the identity button, not repeated prose
@@ -1972,12 +1976,25 @@ zero (center pan/balance or unity gain). A drag
 ends one Undo coalescing interval. Generic AU parameter fields and recording
 input gain outside the mixer retain their existing field/slider behavior.
 
+Source Audition keeps recording input gain and appearance editing active.
+Production-only inserts, Solo/Mute, pan/balance, and output gain are disabled and
+dimmed even while stopped; source listening choices remain in the main editor.
+Source meters share the scheduled mono buffers without copying or decoding audio
+again. On the serial output queue they advance in bounded 512-frame blocks only
+through the playback clock, applying the current diagnostic listening gains and
+reusing production's sample-peak hold/clip latch, 20 dB/s release, and 300 ms RMS
+window. Speaker meters sum audible assigned recording channels; the master meter
+shows the diagnostic mono sum, not the bypassed production master processing.
+Buffers are released as heard and source meter state clears on stop/restart.
+
 Insert pills expose power, settings and a replacement/actions menu on hover
 or keyboard focus; context menus provide the same actions without hover.
 Option-click toggles bypass, double-click opens settings, Return opens the
 focused pill and Space toggles bypass. Same-strip dragging is scoped to the
 originating presentation and episode; cross-strip moving/cloning is not
 implemented. Move Earlier/Later provides a keyboard-accessible alternative.
+Blank insert rows retain the plus/add affordance and accessible insert-position
+label, without visible "Empty" text.
 Pills prefer the loaded Audio Unit's optional `audioUnitShortName`; otherwise
 they omit an exact installed manufacturer prefix from the product name. Discovery
 never instantiates an effect just to get a short name. Full product names remain

@@ -5,6 +5,7 @@ import WWMix
 struct MixerView: View {
     @Bindable var presentation: EpisodeMixerPresentation
     var detached = false
+    @State private var trackScroll = MixerTrackScrollState()
 
     var body: some View {
         VStack(spacing: 0) {
@@ -35,7 +36,7 @@ struct MixerView: View {
                 GeometryReader { viewport in
                     ScrollView(.vertical) {
                         HStack(alignment: .top, spacing: 0) {
-                            ScrollView(.horizontal) {
+                            MixerTrackScrollView(state: trackScroll, contentWidth: tracksWidth) {
                                 HStack(alignment: .top, spacing: 0) {
                                     ForEach(presentation.episode?.speakerAssignments ?? [], id: \.speakerID) { assignment in
                                         MixerConsoleStrip(presentation: presentation, bus: .speaker(assignment.speakerID),
@@ -55,7 +56,6 @@ struct MixerView: View {
                                     }
                                 }
                             }
-                            .accessibilityIdentifier("ww.mixer.speakers")
                             Divider()
                             MixerConsoleStrip(presentation: presentation, bus: .master, minimumHeight: viewport.size.height)
                                 .frame(width: 144)
@@ -63,6 +63,16 @@ struct MixerView: View {
                         }
                     }
                     .accessibilityIdentifier("ww.mixer.console")
+                    .safeAreaInset(edge: .bottom, spacing: 0) {
+                        if trackScroll.overflows {
+                            HStack(spacing: 0) {
+                                MixerTrackScroller(state: trackScroll)
+                                    .frame(width: trackScroll.viewportWidth)
+                                Spacer(minLength: 145)
+                            }
+                            .frame(height: MixerTrackScroller.thickness)
+                        }
+                    }
                 }
             } else {
                 ContentUnavailableView("Episode unavailable", systemImage: "waveform.badge.exclamationmark")
@@ -91,7 +101,16 @@ struct MixerView: View {
         if presentation.state?.isReadOnly == true { return "Read-only show. Mixer editing is disabled." }
         if presentation.state?.store.document?.mixerTransactions.isBusy == true { return "Completing mixer transaction..." }
         if presentation.controller?.state == .loading { return "Loading Audio Units..." }
+        if !presentation.usesProductionMix {
+            return "Source audition. Input gain and source meters active; production controls bypassed."
+        }
         return "48 kHz stereo. Sample peak + RMS meters. Solo/Mute is not saved."
+    }
+
+    private var tracksWidth: CGFloat {
+        let count = (presentation.episode?.speakerAssignments.count ?? 0)
+            + (presentation.episode?.audioArrangement?.tracks.count ?? 0)
+        return count == 0 ? 240 : CGFloat(count) * 144
     }
 }
 

@@ -1,4 +1,5 @@
 import AppKit
+import AVFAudio
 import Foundation
 import SwiftUI
 import Testing
@@ -10,6 +11,96 @@ import WWPersistence
 @MainActor
 @Suite("Document-bound mixer integration (synthetic and Apple units)", .serialized)
 struct MixerHostedTests {
+    @Test func sourceMetersFollowHeardBuffersGainsAndCancellationWithoutReadingAhead() throws {
+        let first = SourceID(), second = SourceID(), speaker = SpeakerID()
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))
+        func buffer(_ value: Float) throws -> AVAudioPCMBuffer {
+            let result = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 9_600))
+            result.frameLength = 9_600
+            let samples = try #require(result.floatChannelData?.pointee)
+            samples.initialize(repeating: value, count: 9_600)
+            return result
+        }
+        var meters = AlignmentSourceMetering()
+        meters.speakers = [speaker: [first]]
+        meters.gains = [first: 0.5, second: 0.5]
+        meters.append([first: try buffer(0.5), second: try buffer(-0.5)], firstFrame: -9_600)
+        meters.append([first: try buffer(2), second: try buffer(0)], firstFrame: 0)
+        let unheard = meters.read(through: -9_600)
+        #expect(unheard.levels.isEmpty)
+        let heard = meters.read(through: -4_800)
+        let strip = try #require(heard.levels[.speaker(speaker)]?.first)
+        #expect(abs(strip.peakDB - 20 * log10(0.25)) < 0.001)
+        #expect(abs(strip.rmsDB - strip.peakDB) < 0.001)
+        #expect(heard.levels[.master]?.allSatisfy { $0.rmsDB == -.infinity } == true,
+                "The source sum must measure phase cancellation, not sum source meter magnitudes.")
+        #expect(!strip.clipped, "An unheard loud buffer must not appear on the meters.")
+        #expect(meters.bufferedWindowCount == 2)
+        meters.resetPeaks(for: .speaker(speaker))
+        let reset = meters.read(through: -4_800)
+        #expect(reset.levels[.speaker(speaker)]?.first?.heldPeakDB == -.infinity)
+        meters.gains = [:]
+        let muted = meters.read(through: 19_200)
+        #expect(muted.levels[.master]?.allSatisfy { $0.rmsDB == -.infinity } == true)
+        #expect(muted.levels[.speaker(speaker)]?.first?.rmsDB == -.infinity)
+        #expect(meters.bufferedWindowCount == 0)
+        meters = AlignmentSourceMetering()
+        #expect(meters.read(through: 0).levels.isEmpty)
+    }
+
+    @Test func sourceListeningPublishesMetersAndLeavesOnlyActiveMixerControlsEditable() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let owner = owner(f), presentation = owner.state.mixerPresentation
+        let before = f.document.store.model
+        f.model.playEnabledTracks(interval: 0...2, repeatInterval: false)
+        defer { f.model.stopAudition() }
+        try await wait(f.model.lastError ?? f.model.auditionLabel) {
+            f.model.sourceConsoleMeters.levels[.master]?.contains { $0.peakDB > -60 } == true
+                || f.model.lastError != nil
+        }
+        try #require(f.model.lastError == nil)
+        let levels = presentation.consoleMeters.levels
+        let productionEditable = presentation.canEditMix
+        let recordingEditable = presentation.canEdit
+        let active = presentation.metersPlaying
+        #expect(!productionEditable && recordingEditable && active)
+        let speakerLevels = levels.filter { if case .speaker = $0.key { return true }; return false }
+        #expect(speakerLevels.values.contains { $0.contains { $0.peakDB > -60 } })
+        presentation.setFader(-12, bus: .master)
+        let after = f.document.store.model
+        #expect(after == before)
+        f.model.stopAudition()
+        let stopped = presentation.consoleMeters.levels
+        #expect(stopped.isEmpty)
+        f.model.selectProductionMix()
+        let restored = presentation.canEditMix
+        #expect(restored)
+    }
+
+    @Test func trackScrollerPersistsOnlyWhenStripsOverflow() async throws {
+        let state = MixerTrackScrollState()
+        let host = HostedTimelineWindow(width: 500, height: 300, content:
+            MixerTrackScrollView(state: state, contentWidth: 900) {
+                Color.clear.frame(width: 900, height: 200)
+            }.frame(width: 500))
+        defer { host.close() }
+        try await host.settle()
+        let scroll = try #require(host.descendants.compactMap { $0 as? NSScrollView }.first {
+            $0.accessibilityIdentifier() == "ww.mixer.speakers"
+        })
+        #expect(state.overflows)
+        #expect(scroll.documentVisibleRect.width < 900)
+        state.scroll(to: 200)
+        #expect(scroll.documentVisibleRect.minX > 0)
+        #expect(state.offset == 200)
+        host.view.rootView = MixerTrackScrollView(state: state, contentWidth: 200) {
+            Color.clear.frame(width: 200, height: 200)
+        }.frame(width: 500)
+        try await host.settle()
+        #expect(!state.overflows && state.offset == 0)
+    }
+
     @Test func nativeEditorFitsAspectAndResizesWithoutPluginWindowConstraints() throws {
         let editor = NSViewController()
         editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 740, height: 870))

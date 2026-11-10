@@ -211,6 +211,11 @@ enum LaunchFixtures {
                                                              in: episode.id)
                         }
                     }
+                    if defaults.bool(forKey: "WWUITestMixerOverflowFixture"), !model.episodes.isEmpty {
+                        let speaker = Speaker(name: "Additional synthetic speaker")
+                        model.speakers.append(speaker)
+                        model.episodes[0].speakerAssignments.append(SpeakerAssignment(speakerID: speaker.id))
+                    }
                     NewShowCommand.create(at: showURL, model: model)
                 } catch {
                     NSApp.presentError(error)

@@ -14,6 +14,7 @@ final class MixerUITests: XCTestCase {
             "-WWUITestCleanupFixture", "YES", "-WWUITestCleanupTimelineFixture", "YES",
             "-WWUITestTranscriptFixture", "YES",
         ]
+        if minimum { app.launchArguments += ["-WWUITestMixerOverflowFixture", "YES"] }
         if minimum { app.launchArguments += ["-WWUITestMinimumShowWindow", "YES"] }
         app.launch()
         app.activate()
@@ -122,10 +123,35 @@ final class MixerUITests: XCTestCase {
         let frame = master.frame
         let speakers = app.scrollViews["ww.mixer.speakers"]
         XCTAssertTrue(speakers.exists)
+        let scrollbar = app.scrollBars["ww.mixer.trackScrollbar"]
+        XCTAssertTrue(scrollbar.waitForExistence(timeout: 5))
+        XCTAssertTrue(scrollbar.isHittable, "Overflow must have a persistent, usable horizontal scrollbar.")
+        XCTAssertGreaterThan(scrollbar.frame.width, scrollbar.frame.height)
+        let speakerNames = speakers.descendants(matching: .any)
+            .matching(NSPredicate(format: "identifier ENDSWITH '.name'"))
+        let firstName = app.descendants(matching: .any)[speakerNames.firstMatch.identifier]
+        let originalX = firstName.frame.minX
+        let knob = scrollbar.coordinate(withNormalizedOffset: CGVector(dx: 0.4, dy: 0.5))
+        knob.click(forDuration: 0.1,
+                   thenDragTo: scrollbar.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)))
+        XCTAssertTrue(wait { firstName.frame.minX < originalX - 10 })
         speakers.scroll(byDeltaX: 350, deltaY: 0)
         XCTAssertTrue(master.isHittable, app.debugDescription)
         XCTAssertEqual(master.frame.minX, frame.minX, accuracy: 1)
         XCTAssertEqual(master.frame.width, frame.width, accuracy: 1)
+        XCTAssertFalse(app.staticTexts["Empty"].exists)
+        let mode = app.descendants(matching: .any)["ww.controlBar.listeningMode"].firstMatch
+        mode.click()
+        app.menuItems["Source Audition"].click()
+        let masterGain = app.textFields["ww.mixer.strip.master.gain"]
+        XCTAssertTrue(wait { masterGain.exists && !masterGain.isEnabled })
+        let addEffect = app.descendants(matching: .any)["ww.mixer.strip.master.add"]
+        XCTAssertFalse(addEffect.isEnabled)
+        let inputGain = app.textFields.matching(NSPredicate(format: "identifier ENDSWITH '.inputGain'")).firstMatch
+        XCTAssertTrue(inputGain.isEnabled, "Recording gain still applies to source listening.")
+        mode.click()
+        app.menuItems["Production Mix"].click()
+        XCTAssertTrue(wait { masterGain.isEnabled && addEffect.isEnabled })
         let screenshot = XCTAttachment(screenshot: app.screenshot())
         screenshot.name = "Pinned Master and horizontally scrolled speaker strips"
         screenshot.lifetime = .keepAlways

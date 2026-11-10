@@ -444,6 +444,14 @@ final class EpisodeAlignmentModel {
     enum ListeningMode { case sourceAudition, sourceTimePreview, productionMix }
     private(set) var listeningMode: ListeningMode = .sourceAudition
     private(set) var sourceTimePreviewSource: SourceID?
+    private(set) var sourceConsoleMeters = MixerConsoleSnapshot()
+    private(set) var sourceMetersUpdatedAt = Date()
+
+    func resetSourceMeterPeaks(for bus: MixerBusAddress) {
+        audioPlayback.resetSourceMeterPeaks(for: bus)
+        sourceConsoleMeters = audioPlayback.sourceMeters
+        sourceMetersUpdatedAt = Date()
+    }
     private weak var document: ShowDocument?
     private let runtime: AlignmentRuntime
     @ObservationIgnored private let audioPlayback = AlignmentAudioPlayback()
@@ -2028,6 +2036,8 @@ final class EpisodeAlignmentModel {
                         let time = min(end, clock.playhead())
                         waveformPlayheadSeconds = usesCuts || sourceTimeTrack != nil ? time : cutTimeline.editedTime(forAlignedTime: time)
                         refreshTransportGains()
+                        sourceConsoleMeters = audioPlayback.sourceMeters
+                        sourceMetersUpdatedAt = Date()
                         followPlayheadIfNeeded()
                     }
                     do { try await Task.sleep(for: .milliseconds(100)) }
@@ -3239,6 +3249,8 @@ final class EpisodeAlignmentModel {
         sourcePlayback = nil
         sourceTimePreviewSource = nil
         audioPlayback.stop()
+        sourceConsoleMeters = MixerConsoleSnapshot()
+        sourceMetersUpdatedAt = Date()
         mixer.stop()
         transportProgressTask?.cancel()
         transportProgressTask = nil

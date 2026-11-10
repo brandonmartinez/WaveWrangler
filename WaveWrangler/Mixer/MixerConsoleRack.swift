@@ -8,7 +8,7 @@ struct MixerConsoleRack: View {
     let bus: MixerBus
     private var slots: [AudioUnitSlot] { presentation.inserts(bus) }
     private var canEdit: Bool {
-        presentation.canEdit && presentation.state?.store.document?.mixerTransactions.isBusy != true
+        presentation.canEditMix && presentation.state?.store.document?.mixerTransactions.isBusy != true
     }
     private var firstBlank: Int? {
         (0..<EpisodeMixState.maximumInsertsPerBus).first { row in slot(at: row) == nil }
@@ -29,7 +29,6 @@ struct MixerConsoleRack: View {
                             }
                         } label: {
                             HStack {
-                                Text("Empty").font(.caption).foregroundStyle(.secondary)
                                 Spacer(minLength: 0)
                                 Image(systemName: "plus").font(.system(size: 9))
                             }.padding(.horizontal, 7).frame(maxWidth: .infinity, minHeight: 24)
@@ -61,6 +60,7 @@ struct MixerConsoleRack: View {
             }
         }
         .disabled(!canEdit)
+        .opacity(presentation.usesProductionMix ? 1 : 0.4)
         .accessibilityElement(children: .contain).accessibilityLabel("Insert effects")
     }
 
@@ -204,6 +204,7 @@ private struct MixerConsoleInsert: View {
     }
 
     private func openEditor(generic: Bool = false) {
+        guard presentation.canEditMix else { return }
         hovered = false
         focus = nil
         presentation.openEditor(slot, generic: generic)

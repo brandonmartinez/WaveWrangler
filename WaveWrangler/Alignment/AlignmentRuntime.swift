@@ -981,7 +981,8 @@ actor AlignmentRuntime {
                     guard samples.allSatisfy(\.isFinite) else { throw MixerFailure.nonfinitePCM }
                 }
                 clips[source] = AuditionClip(
-                    sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples
+                    sampleRate: Double(AlignedAuditionWindowReader.outputRate), samples: samples,
+                    sourceChannel: channel, sourceChannelCount: interpretation.channelCount
                 )
                 admissions.append(admission)
             } catch {

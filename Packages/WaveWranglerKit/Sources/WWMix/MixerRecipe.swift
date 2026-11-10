@@ -279,7 +279,7 @@ public struct MixerMeter: Sendable, Equatable {
     public var headroomDB: Double { peak == 0 ? .infinity : -20 * log10(Double(peak)) }
     public var clipped: Bool { peak > 1 }
 
-    init(_ samples: [Float]) {
+    public init(_ samples: [Float]) {
         peak = samples.reduce(0) { max($0, abs($1)) }
         rms = samples.isEmpty ? 0 : Float(sqrt(samples.reduce(0.0) { $0 + Double($1) * Double($1) }
             / Double(samples.count)))

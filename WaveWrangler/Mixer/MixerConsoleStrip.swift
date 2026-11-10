@@ -11,6 +11,7 @@ struct MixerConsoleStrip: View {
     private var canEdit: Bool {
         presentation.canEdit && presentation.state?.store.document?.mixerTransactions.isBusy != true
     }
+    private var canEditMix: Bool { canEdit && presentation.usesProductionMix }
     private var speaker: Speaker? {
         guard case .speaker(let id) = bus else { return nil }
         return presentation.state?.store.model.speaker(id)
@@ -36,7 +37,7 @@ struct MixerConsoleStrip: View {
             }
         }, set: { presentation.setFader($0, bus: bus) })
     }
-    private var levels: [MixerConsoleLevel] { presentation.controller?.consoleMeters.levels[bus] ?? [] }
+    private var levels: [MixerConsoleLevel] { presentation.consoleMeters.levels[bus] ?? [] }
 
     var body: some View {
         MixerStripHeightLayout(minimumHeight: minimumHeight) { stripContent }
@@ -69,11 +70,12 @@ struct MixerConsoleStrip: View {
                         .accessibilityLabel("Mute \(name)").accessibilityIdentifier("\(identifier).mute")
                 }
                 .toggleStyle(.button).controlSize(.small).frame(height: 24)
+                .disabled(!canEditMix).opacity(presentation.usesProductionMix ? 1 : 0.4)
                 inputGain.frame(height: 96)
                 Divider()
                 MixerConsoleRack(presentation: presentation, bus: bus)
                 Divider()
-                pan.frame(height: 96)
+                pan.frame(height: 96).opacity(presentation.usesProductionMix ? 1 : 0.4)
                 output
             }
             .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 12)
@@ -156,11 +158,11 @@ struct MixerConsoleStrip: View {
         case .speaker(let id):
             MixerConsoleDial(title: "Pan", value: Binding(get: { presentation.mix.state(for: id).pan },
                 set: { presentation.setPan($0, speaker: id) }), range: -1...1,
-                identifier: "\(identifier).pan", endEditing: endEditing).disabled(!canEdit)
+                identifier: "\(identifier).pan", endEditing: endEditing).disabled(!canEditMix)
         case .audioTrack(let id):
             MixerConsoleDial(title: "Balance", value: Binding(get: { presentation.mix.state(for: id).balance },
                 set: { presentation.setBalance($0, track: id) }), range: -1...1,
-                identifier: "\(identifier).balance", endEditing: endEditing).disabled(!canEdit)
+                identifier: "\(identifier).balance", endEditing: endEditing).disabled(!canEditMix)
         case .master:
             Color.clear.accessibilityHidden(true)
         }
@@ -171,9 +173,9 @@ struct MixerConsoleStrip: View {
             HStack(spacing: 2) {
                 MixerNumberControl(title: "Output (dB)", value: gain, range: EpisodeMixState.gainRangeDB,
                     identifier: "\(identifier).gain", endEditing: endEditing, compact: true)
-                    .disabled(!canEdit)
+                    .disabled(!canEditMix).opacity(presentation.usesProductionMix ? 1 : 0.4)
                 Button {
-                    presentation.controller?.resetMeterPeaks(for: bus)
+                    presentation.resetMeterPeaks(for: bus)
                 } label: {
                     let peak = levels.map(\.heldPeakDB).max() ?? -.infinity
                     Text(peak.isFinite ? String(format: "%.1f", peak) : "--")
@@ -186,9 +188,11 @@ struct MixerConsoleStrip: View {
                 .help("Held sample peak in dBFS. Click to reset the peak and latched overload.")
             }
             HStack(spacing: 8) {
-                MixerConsoleFader(value: gain, identifier: identifier, endEditing: endEditing).disabled(!canEdit)
-                MixerConsoleMeterView(levels: levels, updatedAt: presentation.controller?.metersUpdatedAt ?? .now,
-                                      playing: presentation.controller?.state == .playing,
+                MixerConsoleFader(value: gain, identifier: identifier, endEditing: endEditing)
+                    .disabled(!canEditMix).opacity(presentation.usesProductionMix ? 1 : 0.4)
+                MixerConsoleMeterView(levels: levels, updatedAt: presentation.metersUpdatedAt,
+                                      playing: presentation.metersPlaying,
+                                      sourceAudition: !presentation.usesProductionMix,
                                       identifier: "\(identifier).level")
             }
             Text("dB / dBFS").font(.system(size: 9)).foregroundStyle(.secondary)
@@ -206,7 +210,7 @@ struct MixerConsoleStrip: View {
             case .master: return controller.masterMuted
             }
         }, set: { value in
-            guard let controller = presentation.controller else { return }
+            guard canEditMix, let controller = presentation.controller else { return }
             switch bus {
             case .speaker(let id):
                 if solo {

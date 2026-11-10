@@ -39,6 +39,24 @@ final class EpisodeMixerPresentation {
     var episode: Episode? { state?.selectedEpisode }
     var mix: EpisodeMixState { episode?.mix ?? EpisodeMixState() }
     var canEdit: Bool { state?.canEdit == true && !isClosed }
+    var usesProductionMix: Bool { model?.listening.usesProductionMix != false }
+    var canEditMix: Bool { canEdit && usesProductionMix }
+    var consoleMeters: MixerConsoleSnapshot {
+        usesProductionMix ? controller?.consoleMeters ?? MixerConsoleSnapshot()
+            : model?.sourceConsoleMeters ?? MixerConsoleSnapshot()
+    }
+    var metersUpdatedAt: Date {
+        (usesProductionMix ? controller?.metersUpdatedAt : model?.sourceMetersUpdatedAt) ?? .now
+    }
+    var metersPlaying: Bool {
+        usesProductionMix ? controller?.state == .playing
+            : model?.isAuditioning == true && model?.listeningMode != .productionMix
+    }
+
+    func resetMeterPeaks(for bus: MixerBus) {
+        if usesProductionMix { controller?.resetMeterPeaks(for: bus) }
+        else { model?.resetSourceMeterPeaks(for: bus) }
+    }
     var insertRowCount: Int {
         let racks = (episode?.speakerAssignments ?? []).map { mix.state(for: $0.speakerID).inserts }
             + (episode?.audioArrangement?.tracks ?? []).map { mix.state(for: $0.id).inserts }
@@ -149,7 +167,7 @@ final class EpisodeMixerPresentation {
     }
 
     func setFader(_ gain: Double, bus: MixerBus) {
-        guard canEdit, let state, let id = state.selectedEpisodeID else { return }
+        guard canEditMix, let state, let id = state.selectedEpisodeID else { return }
         state.store.apply("Adjust Mixer Fader", coalescing: "mixer.\(id).\(bus.identifier).gain") { model throws(DomainError) in
             var mix = model.episode(id)?.mix ?? EpisodeMixState()
             switch bus {
@@ -169,7 +187,7 @@ final class EpisodeMixerPresentation {
     }
 
     func setPan(_ pan: Double, speaker: SpeakerID) {
-        guard canEdit, let state, let id = state.selectedEpisodeID else { return }
+        guard canEditMix, let state, let id = state.selectedEpisodeID else { return }
         state.store.apply("Adjust Mixer Pan", coalescing: "mixer.\(id).\(speaker).pan") { model throws(DomainError) in
             var strip = (model.episode(id)?.mix ?? EpisodeMixState()).state(for: speaker)
             strip.pan = pan
@@ -178,7 +196,7 @@ final class EpisodeMixerPresentation {
     }
 
     func setBalance(_ balance: Double, track: AudioTrackID) {
-        guard canEdit, let state, let id = state.selectedEpisodeID else { return }
+        guard canEditMix, let state, let id = state.selectedEpisodeID else { return }
         state.store.apply("Adjust Audio Track Balance", coalescing: "mixer.\(id).audio.\(track).balance") {
             model throws(DomainError) in
             var strip = (model.episode(id)?.mix ?? EpisodeMixState()).state(for: track)
@@ -196,7 +214,7 @@ final class EpisodeMixerPresentation {
     }
 
     func changeInserts(_ bus: MixerBus, action: String, _ edit: @escaping ([AudioUnitSlot]) throws -> [AudioUnitSlot]) {
-        guard canEdit, let state, let id = state.selectedEpisodeID, let document = state.store.document else { return }
+        guard canEditMix, let state, let id = state.selectedEpisodeID, let document = state.store.document else { return }
         Task {
             do {
                 try await document.mixerTransactions.barrier(replacingInstances: true, episode: id) {

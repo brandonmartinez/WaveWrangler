@@ -130,6 +130,7 @@ struct MixerConsoleMeterView: View {
     let levels: [MixerConsoleLevel]
     let updatedAt: Date
     let playing: Bool
+    var sourceAudition = false
     let identifier: String
     @State private var decayFinished = false
 
@@ -171,7 +172,7 @@ struct MixerConsoleMeterView: View {
             decayFinished = true
         }
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Post-fader peak and RMS levels")
+        .accessibilityLabel(sourceAudition ? "Source audition peak and RMS levels" : "Post-fader peak and RMS levels")
         .accessibilityValue(levels.map { level in
             "Peak \(db(level.peakDB)), RMS \(db(level.rmsDB))\(level.clipped ? ", clipped" : "")"
         }.joined(separator: "; "))
