@@ -1938,6 +1938,11 @@ Primary warnings are available from the identity button, not repeated prose
 in the strip. Only speakers expose recording input gain and mono pan; audio
 tracks expose stereo balance. Master reserves alignment space without
 inventing input/pan/solo controls.
+When the mixer has extra vertical space, fader travel and meters expand together;
+upper controls and insert rows retain their compact size. Smaller panes keep the
+minimum fader travel and scroll instead of shrinking controls. Speaker identity
+popovers reuse the shared appearance editor for portable avatars, colors, and
+episode overrides without exposing unrelated show-host membership.
 
 The main toolbar remains the only mixer transport. Docked content has no
 duplicate title, Play/Stop or Pop Out row; the pane's segmented picker hides
@@ -1950,7 +1955,8 @@ Input gain and pan/balance are vertical-drag dials. Output uses a vertical
 piecewise-dB fader with unity at 60% travel and the existing -96...+24 dB range;
 the bottom is finite attenuation, not negative infinity. Numeric entry remains
 available. Shift-drag gives fine adjustment, arrow keys and accessibility
-adjustment step the value, and double-click resets a control to zero. A drag
+adjustment step the value, and Option-click or double-click resets a control to
+zero (center pan/balance or unity gain). A drag
 ends one Undo coalescing interval. Generic AU parameter fields and recording
 input gain outside the mixer retain their existing field/slider behavior.
 
@@ -1960,6 +1966,10 @@ Option-click toggles bypass, double-click opens settings, Return opens the
 focused pill and Space toggles bypass. Same-strip dragging is scoped to the
 originating presentation and episode; cross-strip moving/cloning is not
 implemented. Move Earlier/Later provides a keyboard-accessible alternative.
+Pills prefer the loaded Audio Unit's optional `audioUnitShortName`; otherwise
+they omit an exact installed manufacturer prefix from the product name. Discovery
+never instantiates an effect just to get a short name. Full product names remain
+in accessibility labels, tooltips, menus, editor titles, and saved slots.
 All edits retain the existing capture/replacement barrier and error reporting;
 insert changes remain playback restart boundaries, not promised hot swaps.
 
@@ -1976,9 +1986,12 @@ and Undo through their originating state and close with that editor.
 
 Native Audio Unit editors are embedded in a host-owned scrolling canvas rather
 than used directly as window content. The host measures the plugin's preferred
-size (then fitting/frame size), fits its aspect ratio within the screen, and
+size (then frame/fitting size), fits its aspect ratio within the screen, and
 scales the native coordinate space uniformly when resized. Editors too tall to
 fit at a usable width instead fit the window width and scroll vertically.
+Late preferred-size and native-view frame requests update the host's size and
+aspect ratio. Even a programmatic resize outside that ratio preserves the
+complete plugin canvas rather than stretching or cropping it.
 Plugin constraints cannot impose a fixed size on the resizable host window.
 
 Cut/program-view reprojection only advances an existing waveform snapshot's

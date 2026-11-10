@@ -108,8 +108,7 @@ final class MixerUITests: XCTestCase {
         apple.hover()
         let lowpass = app.menuItems["AULowpass"]
         XCTAssertTrue(lowpass.waitForExistence(timeout: 5), app.debugDescription)
-        apple.typeKey(.rightArrow, modifierFlags: [])
-        mixer.typeText("AULowpass")
+        lowpass.hover()
         mixer.typeKey(.return, modifierFlags: [])
         let pill = insertPills(in: mixer).firstMatch
         XCTAssertTrue(pill.waitForExistence(timeout: 10), app.debugDescription)
@@ -164,6 +163,10 @@ final class MixerUITests: XCTestCase {
         app.buttons["ww.bottomPane.detachMixer"].click()
         let mixer = app.windows["ww.mixer.window"]
         XCTAssertTrue(mixer.waitForExistence(timeout: 5))
+        let masterFader = mixer.descendants(matching: .any)["ww.mixer.strip.master.fader"]
+        let speakerFader = mixer.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier MATCHES %@", "ww\\.mixer\\.strip\\.[A-Fa-f0-9-]+\\.fader")).firstMatch
+        XCTAssertEqual(masterFader.frame.height, speakerFader.frame.height, accuracy: 1)
         let masterName = mixer.staticTexts["ww.mixer.strip.master.name"]
         XCTAssertEqual(masterName.frame.width, 144, accuracy: 1)
         let empty = mixer.descendants(matching: .any)["ww.mixer.strip.master.add"]
@@ -205,7 +208,7 @@ final class MixerUITests: XCTestCase {
         mixer.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(wait { movedHighpass.frame.minY > movedLowpass.frame.minY })
         XCUIElement.perform(withKeyModifiers: .option) { movedHighpass.click() }
-        XCTAssertTrue(wait { movedHighpass.label.contains("bypassed") })
+        XCTAssertTrue(wait { movedHighpass.label.contains("bypassed") }, app.debugDescription)
         XCUIElement.perform(withKeyModifiers: .option) {
             movedHighpass.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).click()
         }
@@ -216,6 +219,16 @@ final class MixerUITests: XCTestCase {
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
         editor.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(wait { !editor.exists })
+    }
+
+    func testConsoleResetsAndSpeakerAppearance() {
+        let app = launch()
+        defer { app.terminate() }
+        app.buttons["ww.mixer.toggle"].click()
+        app.buttons["ww.bottomPane.detachMixer"].click()
+        let mixer = app.windows["ww.mixer.window"]
+        XCTAssertTrue(mixer.waitForExistence(timeout: 5))
+        let masterFader = mixer.descendants(matching: .any)["ww.mixer.strip.master.fader"]
         let pan = mixer.descendants(matching: .any).matching(NSPredicate(
             format: "identifier ENDSWITH '.pan.dial'")).firstMatch
         pan.click()
@@ -223,17 +236,37 @@ final class MixerUITests: XCTestCase {
         let originalPan = panField.value as? String
         pan.typeKey(.rightArrow, modifierFlags: [])
         XCTAssertTrue(wait { panField.value as? String != originalPan })
+        XCUIElement.perform(withKeyModifiers: .option) { pan.click() }
+        XCTAssertTrue(wait { panField.value as? String == originalPan })
+        pan.typeKey(.rightArrow, modifierFlags: [])
+        XCTAssertTrue(wait { panField.value as? String != originalPan })
         pan.doubleClick()
         XCTAssertTrue(wait { panField.value as? String == originalPan })
-        let masterFader = mixer.descendants(matching: .any)["ww.mixer.strip.master.fader"]
+        let inputGain = mixer.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier ENDSWITH '.inputGain.dial'")).firstMatch
+        let inputField = mixer.textFields.matching(NSPredicate(format: "identifier ENDSWITH '.inputGain'")).firstMatch
+        inputGain.click()
+        mixer.typeKey(.upArrow, modifierFlags: [])
+        XCTAssertTrue(wait { inputField.value as? String != "0.00" })
+        XCUIElement.perform(withKeyModifiers: .option) { inputGain.click() }
+        XCTAssertTrue(wait { inputField.value as? String == "0.00" }, app.debugDescription)
         XCTAssertTrue(masterFader.exists)
         mixer.scrollViews["ww.mixer.console"].scroll(byDeltaX: 0, deltaY: -200)
         let before = mixer.textFields["ww.mixer.strip.master.gain"].value as? String
         masterFader.click()
         masterFader.typeKey(.downArrow, modifierFlags: [])
         XCTAssertTrue(wait { (mixer.textFields["ww.mixer.strip.master.gain"].value as? String) != before })
+        XCUIElement.perform(withKeyModifiers: .option) { masterFader.click() }
+        XCTAssertTrue(wait { mixer.textFields["ww.mixer.strip.master.gain"].value as? String == before })
+        let identity = mixer.buttons.matching(NSPredicate(
+            format: "identifier MATCHES %@", "ww\\.mixer\\.strip\\.[A-Fa-f0-9-]+\\.input")).firstMatch
+        identity.click()
+        XCTAssertTrue(mixer.buttons["workspace.speaker.chooseAvatar"].waitForExistence(timeout: 5))
+        XCTAssertTrue(mixer.popUpButtons["workspace.speaker.color"].exists)
+        XCTAssertFalse(mixer.checkBoxes["workspace.speaker.host"].exists)
+        mixer.typeKey(.escape, modifierFlags: [])
         let screenshot = XCTAttachment(screenshot: app.screenshot())
-        screenshot.name = "Console strips with persistent insert gaps and aligned faders"
+        screenshot.name = "Console controls reset to defaults"
         screenshot.lifetime = .keepAlways
         add(screenshot)
     }

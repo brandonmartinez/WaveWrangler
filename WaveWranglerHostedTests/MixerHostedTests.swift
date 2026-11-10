@@ -88,6 +88,26 @@ struct MixerHostedTests {
         #expect(updated == NSSize(width: 600, height: 400))
     }
 
+    @Test func nativeEditorAdoptsLateFrameRequestsAndPreservesAspectDuringUnconstrainedResize() throws {
+        let editor = NSViewController()
+        editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        let host = MixerNativeEditorHost(editor: editor)
+        let window = EpisodeAuxiliaryWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .resizable]
+        defer { window.close() }
+        host.configure(window, available: NSSize(width: 1200, height: 900))
+        editor.view.setFrameSize(NSSize(width: 740, height: 870))
+        #expect(host.editorSize == NSSize(width: 740, height: 870))
+        #expect(window.contentAspectRatio == NSSize(width: 740, height: 870))
+        window.setContentSize(NSSize(width: 1000, height: 500))
+        host.view.needsLayout = true
+        host.view.layoutSubtreeIfNeeded()
+        let canvas = try #require(host.scrollView.documentView)
+        #expect(abs(canvas.frame.width / canvas.frame.height - 740.0 / 870.0) < 0.001)
+        #expect(canvas.frame.height <= 500)
+        #expect(abs(canvas.bounds.width - 740) < 0.001 && abs(canvas.bounds.height - 870) < 0.001)
+    }
+
     @Test func nativeStateDictionaryOrderingDoesNotRewriteUnchangedSerializedBytes() throws {
         let state: [String: Any] = ["name": "Synthetic", "opaque": Data([1, 2, 3]), "value": 2.5]
         let xml = try PropertyListSerialization.data(fromPropertyList: state, format: .xml, options: 0)
@@ -115,6 +135,29 @@ struct MixerHostedTests {
         f.document.addWindowController(owner)
         if let window = owner.window { owner.state.attach(to: window) }
         return owner
+    }
+
+    @Test func consoleUsesExtraViewportHeightForAlignedFaders() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let owner = owner(f), presentation = owner.state.mixerPresentation
+        let host = HostedTimelineWindow(width: 900, height: 650,
+            content: MixerView(presentation: presentation).frame(width: 900, height: 650))
+        defer { host.close() }
+        try await host.settle()
+        func faderHeights() -> [CGFloat] {
+            host.descendants.compactMap { $0 as? MixerOptionClick.MonitorView }
+                .filter { abs($0.frame.width - 70) < 1 && $0.frame.height >= 164 }
+                .map(\.frame.height)
+        }
+        let compact = try #require(faderHeights().first)
+        host.view.rootView = MixerView(presentation: presentation).frame(width: 900, height: 1000)
+        try await host.settle()
+        let expanded = faderHeights()
+        #expect(expanded.count >= 2)
+        #expect(expanded.allSatisfy { $0 > compact + 200 })
+        let first = try #require(expanded.first)
+        #expect(expanded.allSatisfy { abs($0 - first) < 1 })
     }
 
     func wait(_ context: @autoclosure () -> String = "mixer condition", _ condition: () -> Bool) async throws {

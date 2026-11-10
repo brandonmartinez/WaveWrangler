@@ -118,6 +118,7 @@ struct SpeakerAppearanceEditor: View {
     let store: ShowDocumentStore
     let episodeID: EpisodeID
     let speakerID: SpeakerID
+    var showsHostMembership = true
     @State private var choosingImage = false
     @State private var dropTargeted = false
     @State private var importing = false
@@ -133,7 +134,8 @@ struct SpeakerAppearanceEditor: View {
     var body: some View {
         if let appearance {
             VStack(alignment: .leading, spacing: 8) {
-                Toggle("Show host · default in new episodes", isOn: Binding(
+                if showsHostMembership {
+                    Toggle("Show host · default in new episodes", isOn: Binding(
                     get: { store.model.show.profile?.hosts.contains(speakerID) == true },
                     set: { value in apply("Change Show Hosts") { model throws(DomainError) in
                         try model.settingHost(speakerID, isHost: value)
@@ -141,6 +143,7 @@ struct SpeakerAppearanceEditor: View {
                 ))
                 .help("Only future new episodes inherit host membership. Existing episode assignments are never rewritten.")
                 .accessibilityIdentifier("workspace.speaker.host")
+                }
                 Toggle("Override appearance in this episode", isOn: Binding(
                     get: { episodeOverride },
                     set: { value in

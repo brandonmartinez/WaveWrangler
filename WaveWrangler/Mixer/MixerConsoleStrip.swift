@@ -5,6 +5,7 @@ import WWMix
 struct MixerConsoleStrip: View {
     @Bindable var presentation: EpisodeMixerPresentation
     let bus: MixerBus
+    var minimumHeight: CGFloat = 0
     @State private var showingInput = false
     private var identifier: String { "ww.mixer.strip.\(bus.identifier)" }
     private var canEdit: Bool {
@@ -38,6 +39,15 @@ struct MixerConsoleStrip: View {
     private var levels: [MixerConsoleLevel] { presentation.controller?.consoleMeters.levels[bus] ?? [] }
 
     var body: some View {
+        MixerStripHeightLayout(minimumHeight: minimumHeight) { stripContent }
+            .background(.quaternary.opacity(bus == .master ? 0.6 : 0.2))
+            .overlay(alignment: .trailing) { Rectangle().fill(.separator).frame(width: 1) }
+            .accessibilityElement(children: .contain)
+            .accessibilityLabel("\(name) mixer strip")
+            .accessibilityIdentifier(identifier)
+    }
+
+    private var stripContent: some View {
         VStack(spacing: 0) {
             Text(name).font(.headline).lineLimit(1).truncationMode(.middle)
                 .frame(maxWidth: .infinity, minHeight: 32).padding(.horizontal, 6)
@@ -68,11 +78,6 @@ struct MixerConsoleStrip: View {
             }
             .padding(.horizontal, 10).padding(.top, 8).padding(.bottom, 12)
         }
-        .background(.quaternary.opacity(bus == .master ? 0.6 : 0.2))
-        .overlay(alignment: .trailing) { Rectangle().fill(.separator).frame(width: 1) }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(name) mixer strip")
-        .accessibilityIdentifier(identifier)
     }
 
     private var identity: some View {
@@ -91,7 +96,7 @@ struct MixerConsoleStrip: View {
             .frame(maxWidth: .infinity)
         }
         .buttonStyle(.plain).frame(height: 30)
-        .accessibilityLabel("\(name) input information\(inputWarning.map { ": \($0)" } ?? "")")
+        .accessibilityLabel("\(name) input information\(speaker == nil ? "" : " and appearance")\(inputWarning.map { ": \($0)" } ?? "")")
         .accessibilityIdentifier("\(identifier).input")
         .help(inputWarning ?? inputDescription)
         .popover(isPresented: $showingInput) {
@@ -99,7 +104,14 @@ struct MixerConsoleStrip: View {
                 Text(name).font(.headline)
                 Text(inputDescription).textSelection(.enabled)
                 if let inputWarning { Text(inputWarning).foregroundStyle(.red) }
-            }.padding(16).frame(width: 260)
+                if let speaker, let state = presentation.state, let episode = presentation.episode {
+                    Divider()
+                    SpeakerAppearanceEditor(store: state.store, episodeID: episode.id, speakerID: speaker.id,
+                                            showsHostMembership: false)
+                        .disabled(!canEdit)
+                }
+
+            }.padding(16).frame(width: 300)
         }
     }
 
@@ -211,5 +223,18 @@ struct MixerConsoleStrip: View {
             case .master: controller.masterMuted = value
             }
         })
+    }
+}
+
+private struct MixerStripHeightLayout: Layout {
+    let minimumHeight: CGFloat
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let intrinsic = subviews[0].sizeThatFits(ProposedViewSize(width: proposal.width, height: nil))
+        return CGSize(width: proposal.width ?? intrinsic.width, height: max(minimumHeight, intrinsic.height))
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        subviews[0].place(at: bounds.origin, anchor: .topLeading, proposal: ProposedViewSize(bounds.size))
     }
 }

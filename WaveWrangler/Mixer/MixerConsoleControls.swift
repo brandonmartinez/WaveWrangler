@@ -37,6 +37,7 @@ struct MixerConsoleDial: View {
             }.onEnded { _ in previousDrag = 0; endEditing() })
             .onTapGesture(count: 2) { set(0); endEditing() }
             .onTapGesture { focused = true }
+            .background { MixerOptionClick { focused = true; set(0); endEditing() } }
             .focusable().focused($focused)
             .onKeyPress(.upArrow) { step(1); return .handled }
             .onKeyPress(.rightArrow) { step(1); return .handled }
@@ -47,7 +48,7 @@ struct MixerConsoleDial: View {
             .accessibilityValue(value.formatted(.number.precision(.fractionLength(2))))
             .accessibilityAdjustableAction { direction in step(direction == .increment ? 1 : -1) }
             .accessibilityIdentifier("\(identifier).dial")
-            .help("Drag vertically to adjust. Hold Shift for fine adjustment. Double-click to reset to zero.")
+            .help("Drag vertically to adjust. Hold Shift for fine adjustment. Option-click or double-click to reset to zero.")
             MixerNumberControl(title: title, value: $value, range: range, identifier: identifier,
                                endEditing: endEditing, compact: true)
         }
@@ -68,50 +69,54 @@ struct MixerConsoleFader: View {
     let endEditing: () -> Void
     @State private var previousDrag: CGFloat = 0
     @FocusState private var focused: Bool
-    private let travel: CGFloat = 142
 
     var body: some View {
-        ZStack {
-            Capsule().fill(.primary.opacity(0.18)).frame(width: 4, height: travel)
-            ForEach([-96.0, -48, -12, 0, 12, 24], id: \.self) { db in
-                HStack(spacing: 4) {
-                    Text(db == -96 ? "-96" : String(Int(db))).font(.system(size: 9))
-                        .foregroundStyle(db == 0 ? .primary : .secondary)
-                        .frame(width: 22, alignment: .trailing)
-                    Rectangle().fill(.primary.opacity(db == 0 ? 0.7 : 0.25))
-                        .frame(width: db == 0 ? 13 : 7, height: 1)
+        GeometryReader { geometry in
+            let travel = max(142, geometry.size.height - 22)
+            ZStack {
+                Capsule().fill(.primary.opacity(0.18)).frame(width: 4, height: travel)
+                ForEach([-96.0, -48, -12, 0, 12, 24], id: \.self) { db in
+                    HStack(spacing: 4) {
+                        Text(db == -96 ? "-96" : String(Int(db))).font(.system(size: 9))
+                            .foregroundStyle(db == 0 ? .primary : .secondary)
+                            .frame(width: 22, alignment: .trailing)
+                        Rectangle().fill(.primary.opacity(db == 0 ? 0.7 : 0.25))
+                            .frame(width: db == 0 ? 13 : 7, height: 1)
+                    }
+                    .offset(x: -20, y: (0.5 - MixerConsoleScale.faderPosition(db)) * travel)
                 }
-                .offset(x: -20, y: (0.5 - MixerConsoleScale.faderPosition(db)) * travel)
+                RoundedRectangle(cornerRadius: 3).fill(.background)
+                    .frame(width: 28, height: 18)
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 3).strokeBorder(.primary.opacity(focused ? 0.9 : 0.45))
+                        Rectangle().fill(.primary).frame(width: 20, height: 1)
+                    }
+                    .shadow(color: .black.opacity(0.18), radius: 2, y: 2)
+                    .offset(y: (0.5 - MixerConsoleScale.faderPosition(value)) * travel)
             }
-            RoundedRectangle(cornerRadius: 3).fill(.background)
-                .frame(width: 28, height: 18)
-                .overlay {
-                    RoundedRectangle(cornerRadius: 3).strokeBorder(.primary.opacity(focused ? 0.9 : 0.45))
-                    Rectangle().fill(.primary).frame(width: 20, height: 1)
-                }
-                .shadow(color: .black.opacity(0.18), radius: 2, y: 2)
-                .offset(y: (0.5 - MixerConsoleScale.faderPosition(value)) * travel)
+            .frame(width: 70, height: geometry.size.height).contentShape(Rectangle())
+            .gesture(DragGesture(minimumDistance: 1).onChanged { drag in
+                focused = true
+                let delta = previousDrag - drag.translation.height
+                previousDrag = drag.translation.height
+                let fine = NSEvent.modifierFlags.contains(.shift) ? 0.1 : 1
+                let position = MixerConsoleScale.faderPosition(value) + Double(delta / travel) * fine
+                value = MixerConsoleScale.faderDecibels(position)
+            }.onEnded { _ in previousDrag = 0; endEditing() })
+            .onTapGesture(count: 2) { value = 0; endEditing() }
+            .onTapGesture { focused = true }
+            .background { MixerOptionClick { focused = true; value = 0; endEditing() } }
+            .focusable().focused($focused)
+            .onKeyPress(.upArrow) { step(1); return .handled }
+            .onKeyPress(.downArrow) { step(-1); return .handled }
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Output volume")
+            .accessibilityValue("\(value.formatted(.number.precision(.fractionLength(1)))) dB")
+            .accessibilityAdjustableAction { step($0 == .increment ? 1 : -1) }
+            .accessibilityIdentifier("\(identifier).fader")
+            .help("Output volume, -96 to +24 dB. Drag vertically; Shift adjusts finely. Option-click or double-click for unity gain.")
         }
-        .frame(width: 70, height: 164).contentShape(Rectangle())
-        .gesture(DragGesture(minimumDistance: 1).onChanged { drag in
-            focused = true
-            let delta = previousDrag - drag.translation.height
-            previousDrag = drag.translation.height
-            let fine = NSEvent.modifierFlags.contains(.shift) ? 0.1 : 1
-            let position = MixerConsoleScale.faderPosition(value) + Double(delta / travel) * fine
-            value = MixerConsoleScale.faderDecibels(position)
-        }.onEnded { _ in previousDrag = 0; endEditing() })
-        .onTapGesture(count: 2) { value = 0; endEditing() }
-        .onTapGesture { focused = true }
-        .focusable().focused($focused)
-        .onKeyPress(.upArrow) { step(1); return .handled }
-        .onKeyPress(.downArrow) { step(-1); return .handled }
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("Output volume")
-        .accessibilityValue("\(value.formatted(.number.precision(.fractionLength(1)))) dB")
-        .accessibilityAdjustableAction { step($0 == .increment ? 1 : -1) }
-        .accessibilityIdentifier("\(identifier).fader")
-        .help("Output volume, -96 to +24 dB. Drag vertically; Shift adjusts finely. Double-click for unity gain.")
+        .frame(minWidth: 70, maxWidth: 70, minHeight: 164, maxHeight: .infinity)
         .onDisappear { endEditing() }
     }
 
@@ -156,7 +161,9 @@ struct MixerConsoleMeterView: View {
                 }
             }
         }
-        .frame(width: 20, height: 142)
+        .frame(width: 20)
+        .frame(minHeight: 142, maxHeight: .infinity)
+        .padding(.vertical, 11)
         .task(id: playing) {
             decayFinished = false
             guard !playing else { return }

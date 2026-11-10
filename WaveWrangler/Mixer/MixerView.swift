@@ -32,35 +32,38 @@ struct MixerView: View {
                     .help("Requires confirmation. Reloads the last document state without capturing the failed editor.")
             }
             if presentation.episode != nil {
-                ScrollView(.vertical) {
-                    HStack(alignment: .top, spacing: 0) {
-                    ScrollView(.horizontal) {
+                GeometryReader { viewport in
+                    ScrollView(.vertical) {
                         HStack(alignment: .top, spacing: 0) {
-                            ForEach(presentation.episode?.speakerAssignments ?? [], id: \.speakerID) { assignment in
-                                MixerConsoleStrip(presentation: presentation, bus: .speaker(assignment.speakerID))
-                                    .frame(width: 144)
+                            ScrollView(.horizontal) {
+                                HStack(alignment: .top, spacing: 0) {
+                                    ForEach(presentation.episode?.speakerAssignments ?? [], id: \.speakerID) { assignment in
+                                        MixerConsoleStrip(presentation: presentation, bus: .speaker(assignment.speakerID),
+                                                          minimumHeight: viewport.size.height)
+                                            .frame(width: 144)
+                                    }
+                                    ForEach(presentation.episode?.audioArrangement?.tracks ?? []) { track in
+                                        MixerConsoleStrip(presentation: presentation, bus: .audioTrack(track.id),
+                                                          minimumHeight: viewport.size.height)
+                                            .frame(width: 144)
+                                    }
+                                    if presentation.episode?.speakerAssignments.isEmpty == true
+                                        && presentation.episode?.audioArrangement?.tracks.isEmpty != false {
+                                        ContentUnavailableView("No mixer tracks", systemImage: "person.wave.2",
+                                            description: Text("Assign confirmed speaker Primaries or add supplemental audio tracks."))
+                                            .frame(width: 240)
+                                    }
+                                }
                             }
-                            ForEach(presentation.episode?.audioArrangement?.tracks ?? []) { track in
-                                MixerConsoleStrip(presentation: presentation, bus: .audioTrack(track.id))
-                                    .frame(width: 144)
-                            }
-                            if presentation.episode?.speakerAssignments.isEmpty == true
-                                && presentation.episode?.audioArrangement?.tracks.isEmpty != false {
-                                ContentUnavailableView("No mixer tracks", systemImage: "person.wave.2",
-                                    description: Text("Assign confirmed speaker Primaries or add supplemental audio tracks."))
-                                    .frame(width: 240)
-                            }
+                            .accessibilityIdentifier("ww.mixer.speakers")
+                            Divider()
+                            MixerConsoleStrip(presentation: presentation, bus: .master, minimumHeight: viewport.size.height)
+                                .frame(width: 144)
+                                .background(.bar)
                         }
                     }
-                    .accessibilityIdentifier("ww.mixer.speakers")
-                    Divider()
-                    MixerConsoleStrip(presentation: presentation, bus: .master)
-                        .frame(width: 144)
-                        .background(.bar)
-                    }
-                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("ww.mixer.console")
                 }
-                .accessibilityIdentifier("ww.mixer.console")
             } else {
                 ContentUnavailableView("Episode unavailable", systemImage: "waveform.badge.exclamationmark")
             }

@@ -7,6 +7,8 @@ final class MixerNativeEditorHost: NSViewController {
     let scrollView = NSScrollView()
     private let canvas = Canvas()
     private var sizeObservation: NSKeyValueObservation?
+    private var frameObservation: NSObjectProtocol?
+    private var scrollsVertically = false
 
     init(editor: NSViewController) {
         self.editor = editor
@@ -30,25 +32,43 @@ final class MixerNativeEditorHost: NSViewController {
         root.addSubview(scrollView)
         editor.view.autoresizingMask = []
         canvas.addSubview(editor.view)
+        editor.view.postsFrameChangedNotifications = true
+        frameObservation = NotificationCenter.default.addObserver(
+            forName: NSView.frameDidChangeNotification, object: editor.view, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.updateRequestedSize(self.editor.view.frame.size)
+            }
+        }
         sizeObservation = editor.observe(\.preferredContentSize, options: [.new]) { [weak self] _, _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.editorSize = Self.measuredSize(self.editor)
-                if let window = self.view.window {
-                    self.configure(window, available: Self.availableContentSize(for: window))
-                }
-                self.view.needsLayout = true
+                self.updateRequestedSize(Self.measuredSize(self.editor))
             }
         }
     }
 
+    isolated deinit {
+        if let frameObservation { NotificationCenter.default.removeObserver(frameObservation) }
+    }
+
     static func measuredSize(_ editor: NSViewController) -> NSSize {
-        for size in [editor.preferredContentSize, editor.view.fittingSize, editor.view.frame.size] {
-            if size.width.isFinite, size.height.isFinite, size.width > 0, size.height > 0 {
-                return size
-            }
+        for size in [editor.preferredContentSize, editor.view.frame.size, editor.view.fittingSize] {
+            if valid(size) { return size }
         }
         return NSSize(width: 640, height: 480)
+    }
+
+    private static func valid(_ size: NSSize) -> Bool {
+        size.width.isFinite && size.height.isFinite && size.width > 0 && size.height > 0
+    }
+
+    private func updateRequestedSize(_ size: NSSize) {
+        guard Self.valid(size), size != editorSize else { return }
+        editorSize = size
+        if let window = view.window { configure(window, available: Self.availableContentSize(for: window)) }
+        view.needsLayout = true
     }
 
     static func availableContentSize(for window: NSWindow) -> NSSize {
@@ -61,23 +81,29 @@ final class MixerNativeEditorHost: NSViewController {
         let minimumWidth = min(360, editorSize.width, available.width)
         let scale = min(1, available.width / editorSize.width, available.height / editorSize.height)
         let fitsAspect = editorSize.width * scale >= minimumWidth
+        scrollsVertically = !fitsAspect
         let width = fitsAspect ? editorSize.width * scale : min(editorSize.width, available.width)
         let height = min(available.height, width * editorSize.height / editorSize.width)
+        window.contentAspectRatio = .zero
+        window.contentMinSize = .zero
+        window.setContentSize(NSSize(width: width, height: height))
         window.contentAspectRatio = fitsAspect ? editorSize : .zero
         window.contentMinSize = NSSize(
             width: minimumWidth,
             height: fitsAspect ? minimumWidth * editorSize.height / editorSize.width : min(220, height))
-        window.setContentSize(NSSize(width: width, height: height))
     }
 
     private func layoutEditor() {
         scrollView.frame = view.bounds
-        let width = scrollView.contentSize.width
-        guard width > 0 else { return }
-        let height = width * editorSize.height / editorSize.width
+        let available = scrollView.contentSize
+        guard available.width > 0, available.height > 0 else { return }
+        let scale = scrollsVertically ? available.width / editorSize.width
+            : min(available.width / editorSize.width, available.height / editorSize.height)
+        let width = editorSize.width * scale
+        let height = editorSize.height * scale
         // Scale the complete native coordinate space, including fixed-size and remote AU views.
         // Plugin layout constraints stay inside the canvas, never becoming window constraints.
-        canvas.frame = NSRect(x: 0, y: 0, width: width, height: height)
+        canvas.frame = NSRect(x: max(0, (available.width - width) / 2), y: 0, width: width, height: height)
         canvas.bounds = NSRect(origin: .zero, size: editorSize)
         editor.view.frame = NSRect(origin: .zero, size: editorSize)
     }

@@ -118,7 +118,7 @@ private struct MixerConsoleInsert: View {
         ZStack {
             HStack(spacing: 3) {
                 if missing { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
-                Text(name).lineLimit(1).truncationMode(.middle)
+                Text(compactName).lineLimit(1).truncationMode(.tail)
                 Spacer(minLength: 0)
                 Image(systemName: slot.bypassed ? "power" : "chevron.down").font(.system(size: 8))
             }
@@ -150,7 +150,7 @@ private struct MixerConsoleInsert: View {
         .overlay { RoundedRectangle(cornerRadius: 4).strokeBorder(.primary.opacity(focus != nil ? 0.7 : 0.2)) }
         .contentShape(Rectangle())
         .onHover { hovered = $0 }
-        .background { MixerInsertOptionClick(bypass: bypass) }
+        .background { MixerOptionClick(action: bypass) }
         .onTapGesture(count: 2) {
             if NSEvent.modifierFlags.contains(.option) { bypass() } else { presentation.openEditor(slot) }
         }
@@ -166,6 +166,12 @@ private struct MixerConsoleInsert: View {
         .accessibilityAction(named: Text("Toggle bypass")) { bypass() }
         .accessibilityAction(named: Text("Open editor")) { presentation.openEditor(slot) }
         .help("\(name). \(diagnostics) Option-click to enable or bypass. Double-click for settings. Drag to move within this strip.")
+    }
+
+    private var compactName: String {
+        let shortName = presentation.controller?.unitStatuses.first { $0.slot == slot.id }?.shortName
+        let manufacturer = presentation.components.first { $0.identity == slot.component }?.manufacturer
+        return MixerAudioUnits.compactName(name, shortName: shortName, manufacturer: manufacturer)
     }
 
     @ViewBuilder private var actions: some View {
@@ -209,24 +215,24 @@ private struct MixerConsoleInsert: View {
     }
 }
 
-private struct MixerInsertOptionClick: NSViewRepresentable {
-    let bypass: () -> Void
+struct MixerOptionClick: NSViewRepresentable {
+    let action: () -> Void
 
-    func makeNSView(context: Context) -> MonitorView { MonitorView(bypass: bypass) }
+    func makeNSView(context: Context) -> MonitorView { MonitorView(action: action) }
     func updateNSView(_ view: MonitorView, context: Context) {
-        view.bypass = bypass
+        view.action = action
         view.isEnabled = context.environment.isEnabled
     }
     static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.stop() }
 
     final class MonitorView: NSView {
-        var bypass: () -> Void
+        var action: () -> Void
         var isEnabled = true
         private var monitor: Any?
         private var consumedDown = false
 
-        init(bypass: @escaping () -> Void) {
-            self.bypass = bypass
+        init(action: @escaping () -> Void) {
+            self.action = action
             super.init(frame: .zero)
             setAccessibilityElement(false)
         }
@@ -252,12 +258,13 @@ private struct MixerInsertOptionClick: NSViewRepresentable {
             }
             guard event.type == .leftMouseDown else { return false }
             consumedDown = false
+            let point = convert(event.locationInWindow, from: nil)
             guard isEnabled, !isHiddenOrHasHiddenAncestor, window.attachedSheet == nil,
                   event.modifierFlags.contains(.option),
-                  visibleRect.contains(convert(event.locationInWindow, from: nil)) else { return false }
+                  bounds.contains(point), visibleRect.contains(point) else { return false }
             // Handle the original event before a child button or native menu starts tracking.
             consumedDown = true
-            bypass()
+            action()
             return true
         }
 
