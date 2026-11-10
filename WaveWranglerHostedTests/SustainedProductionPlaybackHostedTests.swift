@@ -8,7 +8,7 @@ import WWPersistence
 @testable import WaveWrangler
 
 @MainActor
-@Suite("Sustained mixed-load production playback (synthetic only)", .serialized)
+@Suite("Sustained mixed-load production playback (controlled test media)", .serialized)
 struct SustainedProductionPlaybackHostedTests {
     private func wait(_ reason: @autoclosure () -> String, timeout: Duration = .seconds(25),
                       _ condition: () -> Bool) async throws {
@@ -26,13 +26,14 @@ struct SustainedProductionPlaybackHostedTests {
         let target = try #require(targetTrack)
         let referenceSource = episode.speakerAssignments.first?.primary?.sourceID
         let reference = try #require(referenceSource)
-        var segments = [SourceTimingSegment(sourceStart: 0, sourceEnd: 40, alignedStart: 0,
+        let smoothEnd = Double(target.envelope.totalFrames) / Double(target.envelope.sampleRate) - 8
+        var segments = [SourceTimingSegment(sourceStart: 0, sourceEnd: smoothEnd, alignedStart: 0,
             rateRatio: 1.000125, kind: .estimated)]
         var aligned = segments[0].alignedEnd
         // Recording-sized metadata stays outside both playback and its five-second cache tiles.
         for index in 0..<4096 {
-            let segment = SourceTimingSegment(sourceStart: 40 + Double(index) / 512,
-                sourceEnd: 40 + Double(index + 1) / 512, alignedStart: aligned,
+            let segment = SourceTimingSegment(sourceStart: smoothEnd + Double(index) / 512,
+                sourceEnd: smoothEnd + Double(index + 1) / 512, alignedStart: aligned,
                 rateRatio: index.isMultiple(of: 2) ? 0.999 : 1.001, kind: .estimated)
             segments.append(segment)
             aligned = segment.alignedEnd
@@ -78,8 +79,34 @@ struct SustainedProductionPlaybackHostedTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_PRODUCTION_TIMING_TESTS"] == "1",
         "Opt-in sustained production qualification on a leased macOS VM; synthetic media only."))
     func adaptiveProductionSurvivesLiveInsertEditingSavingAndTranscriptLayout() async throws {
+        try await run(episodeSoak: false)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_EPISODE_SOAK_TESTS"] == "1",
+        "Opt-in 15-minute real-time VM qualification; requires explicitly staged reusable test media."))
+    func fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves() async throws {
+        try await run(episodeSoak: true)
+    }
+
+    private func stockSlot(subtype: UInt32) throws -> AudioUnitSlot {
+        let installed = MixerAudioUnits.installedEffects().first {
+            $0.identity.manufacturer == 0x6170706C && $0.identity.subtype == subtype
+        }
+        let component = try #require(installed)
+        return AudioUnitSlot(component: component.identity, productName: component.name)
+    }
+
+    private func run(episodeSoak: Bool) async throws {
+        let programSeconds = episodeSoak ? 900.0 : 32.0
+        var sourceFiles: [URL]?
+        if episodeSoak {
+            let directory = ProcessInfo.processInfo.environment["WW_EPISODE_SOAK_MEDIA"]
+            let path = try #require(directory, "Explicitly stage reusable test media before enabling the soak test.")
+            let folder = URL(fileURLWithPath: path, isDirectory: true)
+            sourceFiles = ["reader-one.wav", "reader-two.wav"].map { folder.appendingPathComponent($0) }
+        }
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(
-            cleanupPrimaries: 2, durationSeconds: 48)
+            cleanupPrimaries: 2, durationSeconds: 48, sourceFiles: sourceFiles)
         defer { f.close() }
         let originals = try f.files.map { try Data(contentsOf: $0) }
         f.model.placeGroupsAtSourceTime()
@@ -96,17 +123,52 @@ struct SustainedProductionPlaybackHostedTests {
         }
         let currentEpisode = f.document.store.model.episode(f.model.episodeID)
         let episode = try #require(currentEpisode)
-        let slots = try (0..<3).map { _ in try MixerHostedTests().appleSlot() }
+        if episodeSoak {
+            let editor = f.model.audioEditor
+            editor.refresh()
+            try await wait("Episode production geometry loaded") { editor.production != nil }
+            let currentComposition = editor.composition
+            let composition = try #require(currentComposition)
+            let range = EpisodeProductionRange(
+                start: try composition.timeline.unpinnedAnchor(atProgramFrame: 0),
+                end: try composition.timeline.unpinnedAnchor(atProgramFrame: 43_200_000))
+            let bounded = editor.setBoundaryTimes(range: range, speakerIn: nil, speakerOut: nil)
+            try #require(bounded)
+            try await saveAndVerify(f.document)
+            f.model.synchronizeWaveforms()
+            try await wait("Verified 15-minute episode boundaries") {
+                !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
+            }
+        }
+        let slots = try (0..<3).map { _ in
+            try episodeSoak ? stockSlot(subtype: 0x706D6571) : MixerHostedTests().appleSlot()
+        }
+        let compressors = try episodeSoak ? (0..<3).map { _ in try stockSlot(subtype: 0x64636D70) } : []
         let inserted = f.document.store.apply("Add Sustained Apple Monitoring Inserts") { model throws(DomainError) in
             var result = model
             for (index, assignment) in episode.speakerAssignments.enumerated() {
+                let inserts = episodeSoak ? [compressors[index], slots[index]] : [slots[index]]
                 result = try result.settingSpeakerMix(
-                    SpeakerMixState(speaker: assignment.speakerID, inserts: [slots[index]]), in: episode.id)
+                    SpeakerMixState(speaker: assignment.speakerID, inserts: inserts), in: episode.id)
             }
-            return try result.settingMasterMix(MasterMixState(inserts: [slots[2]]), in: episode.id)
+            let master = episodeSoak ? [compressors[2], slots[2]] : [slots[2]]
+            return try result.settingMasterMix(MasterMixState(inserts: master), in: episode.id)
         }
         try #require(inserted)
         try await saveAndVerify(f.document)
+        if episodeSoak {
+            let controller = f.model.mixer
+            _ = try await controller.prepare(programFrames: 0..<43_200_000)
+            for slot in compressors {
+                try await controller.setParameter(slot: slot.id, address: 0, value: -24, coalescing: "soak.setup")
+                try await controller.setParameter(slot: slot.id, address: 1, value: 6, coalescing: "soak.setup")
+            }
+            for slot in slots {
+                try await controller.setParameter(slot: slot.id, address: 0, value: 1200, coalescing: "soak.setup")
+                try await controller.setParameter(slot: slot.id, address: 2, value: 2, coalescing: "soak.setup")
+            }
+            try await saveAndVerify(f.document)
+        }
         let initial = f.document.store.model
         let timing = initial.episode(episode.id)?.alignment
         let coldStates = await f.runtime.coordinator.states()
@@ -129,7 +191,7 @@ struct SustainedProductionPlaybackHostedTests {
         let presentation = owner.state.mixerPresentation
         let controller = f.model.mixer
         let requestedAt = ContinuousClock.now
-        f.model.playProductionMix(interval: 0...32, repeating: false)
+        f.model.playProductionMix(interval: 0...programSeconds, repeating: false)
         try await wait("Production audio started: \(f.model.auditionLabel); preparing=\(f.model.isPreparingAudition)") {
             f.model.isAuditioning || f.model.lastError != nil
         }
@@ -137,7 +199,7 @@ struct SustainedProductionPlaybackHostedTests {
         let startupError = f.model.lastError
         try #require(started && startupError == nil, Comment(rawValue: startupError ?? "Playback did not start"))
         let startedAt = ContinuousClock.now
-        let deadline = startedAt.advanced(by: .seconds(60))
+        let deadline = startedAt.advanced(by: .seconds(programSeconds + 60))
         let hasClock = f.model.playbackClockForTesting != nil
         try #require(hasClock)
         // Clock values are snapshots capped at the currently scheduled horizon; read a fresh one.
@@ -149,7 +211,7 @@ struct SustainedProductionPlaybackHostedTests {
         let revision = controller.instanceRevision
         let recipeCount = await f.runtime.productionRecipeConstructionCount
         presentation.openEditor(slots[2], generic: true)
-        try await wait("Generic Apple Lowpass editor opened") {
+        try await wait("Generic Apple effect editor opened") {
             presentation.editorWindow != nil || presentation.error != nil
         }
         let editorError = presentation.error
@@ -183,6 +245,8 @@ struct SustainedProductionPlaybackHostedTests {
         var layouts = 0, lateLayouts = 0, coveredWords = 0
         var layoutTime: Duration = .zero
         var saveTimes: [Double] = []
+        let saveMilestones = episodeSoak ? Array(stride(from: 30.0, to: programSeconds, by: 60)) : [12, 25]
+        var reportedMinutes: Set<Int> = []
         var nextEdit = 0.0
         var finalValue: Float = parameter.value
         var checkedMute = false
@@ -193,7 +257,7 @@ struct SustainedProductionPlaybackHostedTests {
             try #require(playbackError == nil && editingError == nil && sameInstance,
                 Comment(rawValue: playbackError ?? editingError ?? "Live processor was replaced"))
             let position = playhead()
-            if position >= nextEdit, position < 30 {
+            if position >= nextEdit, position < programSeconds - 2 {
                 let explicit = (explicitEdits + observedEdits).isMultiple(of: 2)
                 finalValue = explicit ? 1000 : 2000
                 if explicit {
@@ -202,13 +266,15 @@ struct SustainedProductionPlaybackHostedTests {
                     explicitEdits += 1
                     if position > 21 { lateExplicitEdits += 1 }
                 } else {
-                    let priorState = f.document.store.model.episode(episode.id)?.mix?.master.inserts.first?.documentState
+                    let priorState = f.document.store.model.episode(episode.id)?.mix?.master.inserts
+                        .first { $0.id == slots[2].id }?.documentState
                     let beforeCapture = captures
                     try await processor.setParameter(slot: slots[2].id, address: parameter.address, value: finalValue)
                     // No explicit capture here: normal editor observation must publish the native edit.
                     try await wait("Normal observation captured the native parameter edit", timeout: .seconds(5)) {
                         captures > beforeCapture
-                            && f.document.store.model.episode(episode.id)?.mix?.master.inserts.first?.documentState != priorState
+                            && f.document.store.model.episode(episode.id)?.mix?.master.inserts
+                                .first { $0.id == slots[2].id }?.documentState != priorState
                     }
                     observedEdits += 1
                     if position > 21 { lateObservedEdits += 1 }
@@ -233,7 +299,7 @@ struct SustainedProductionPlaybackHostedTests {
                 }
                 checkedMute = true
             }
-            if saveTimes.count < 2, position >= (saveTimes.isEmpty ? 12 : 25) {
+            if saveTimes.count < saveMilestones.count, position >= saveMilestones[saveTimes.count] {
                 let savePosition = playhead()
                 let playingBefore = f.model.isAuditioning
                 try await saveAndVerify(f.document)
@@ -242,6 +308,10 @@ struct SustainedProductionPlaybackHostedTests {
                     && controller.editorObservationKey == coalescing
                 try #require(playingBefore && playingAfter && editorStillActive)
                 saveTimes.append(savePosition)
+            }
+            if episodeSoak, reportedMinutes.insert(Int(position / 60)).inserted {
+                print("EPISODE_SOAK_PROGRESS second=\(position) edits=\(explicitEdits + observedEdits) "
+                    + "captures=\(captures) saves=\(saveTimes.count) layouts=\(layouts)")
             }
             let layoutStarted = ContinuousClock.now
             let burstEnd = layoutStarted.advanced(by: .milliseconds(100))
@@ -266,11 +336,13 @@ struct SustainedProductionPlaybackHostedTests {
         let unitCount = controller.unitStatuses.count
         let constructionCount = await f.runtime.productionRecipeConstructionCount
         try #require(stopped && error == nil && presentationError == nil,
-            Comment(rawValue: error ?? presentationError ?? "Production did not finish within 60 seconds"))
+            Comment(rawValue: error ?? presentationError ?? "Production exceeded its real-time completion deadline"))
         #expect(label == "Production mix reached the end of the selected program.")
-        #expect(end == 32 && sameInstance && unitCount == 3)
+        #expect(end == programSeconds && sameInstance && unitCount == slots.count + compressors.count)
+        #expect(elapsed >= .seconds(programSeconds - 1), "Qualification requires real-time playback, not an offline render.")
+        if episodeSoak { #expect(reportedMinutes == Set(0..<15)) }
         #expect(constructionCount == recipeCount)
-        #expect(checkedMute && saveTimes.count == 2)
+        #expect(checkedMute && saveTimes.count == saveMilestones.count)
         #expect(explicitEdits > 0 && observedEdits > 0 && captures > 0)
         #expect(lateExplicitEdits > 0 && lateObservedEdits > 0 && lateCaptures > 0 && lateLayouts > 0)
         #expect(layouts > 0 && coveredWords > 0 && layoutTime > .zero)
@@ -278,7 +350,8 @@ struct SustainedProductionPlaybackHostedTests {
         let tileCount = states.values.compactMap(\.key).filter {
             $0.asset.kind == "ww.adaptive-audio-pcm"
         }.count
-        #expect(tileCount >= 7, "Playback must prepare multiple cold five-second adaptive tiles.")
+        #expect(tileCount >= Int(ceil(programSeconds / 5)),
+            "Playback must prepare cold adaptive tiles across the full episode.")
         try await saveAndVerify(f.document)
         let edited = f.document.store.model
         undo.endUndoGrouping()
@@ -302,7 +375,7 @@ struct SustainedProductionPlaybackHostedTests {
         let unchangedTiming = f.document.store.model.episode(episode.id)?.alignment == timing
         let unchangedOriginals = try f.files.map { try Data(contentsOf: $0) } == originals
         #expect(unchangedTiming && unchangedOriginals)
-        print("SUSTAINED_PRODUCTION seconds=32 segments=4097 mapBytes=\(mapBytes) "
+        print("SUSTAINED_PRODUCTION seconds=\(programSeconds) units=\(unitCount) segments=4097 mapBytes=\(mapBytes) "
             + "startup=\(requestedAt.duration(to: startedAt)) elapsed=\(elapsed) tiles=\(tileCount) "
             + "explicitEdits=\(explicitEdits) observedEdits=\(observedEdits) captures=\(captures) "
             + "lateExplicitEdits=\(lateExplicitEdits) lateObservedEdits=\(lateObservedEdits) "

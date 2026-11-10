@@ -73,7 +73,8 @@ parameter recall, unchanged accepted timing, and byte-identical synthetic
 originals. Counters require editing, capture, and layout after second 21.
 The synthetic alignment window must finish attaching and loading its initial
 waveforms before transport starts; initial view setup is not playback load.
-The completion timeout is 60 seconds after startup, separate from setup waits;
+The completion deadline is 60 seconds beyond the selected playback duration,
+separate from setup waits;
 there is no per-cold-window one-second performance gate.
 
 Record the bounded numeric `SUSTAINED_PRODUCTION` summary and actual executed
@@ -85,6 +86,32 @@ horizon tests remain responsible for their bounds.
 
 These are VM functional regression results, not supported physical-hardware
 performance qualification.
+
+#### Full 15-minute episode soak
+
+The same suite has a separately gated
+`fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable
+`WW_EPISODE_SOAK_TESTS=1` only on a ready, leased VM and set
+`WW_EPISODE_SOAK_MEDIA` to an explicitly staged directory containing
+`reader-one.wav` and `reader-two.wav`. Use authorized, reusable speech recordings
+with at least 920 seconds per track, converted to 48 kHz mono PCM WAV. Tests do
+not download media or discover user recordings. Keep downloaded media outside
+the repository and record its provenance and reuse terms with the run evidence.
+
+The test sets actual Episode Start/End to 0 and 900 seconds, starts cold adaptive
+playback, and runs in real time. Each speaker bus and the master bus have active
+Apple Dynamics Processor compression and Parametric EQ, for six stock inserts.
+Parameter edits and normal editor observation continue through the episode,
+with saves every minute beginning at second 30 and repeated transcript-layout
+CPU work. Per-minute progress, elapsed wall time, all 180 adaptive tiles, normal
+completion, retained processor identity, Undo/Redo, parameter recall, verified
+saves, accepted timing and original-byte integrity are checked.
+
+Allow at least 1,200 seconds per test invocation in Xcode and use separate
+30-minute GUI leases for repeated passes. Every invocation creates fresh copied
+sources and caches; do not loop a short warmed audio buffer and call it a
+15-minute test. The existing 32-second generated-media regression remains
+available without any external speech fixtures.
 
 ## Prepare the build
 
