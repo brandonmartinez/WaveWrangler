@@ -208,7 +208,7 @@ struct AlignmentWorkspace: View {
                     Picker("Bottom pane", selection: $state.bottomPaneContent) {
                         ForEach(EpisodeBottomPaneContent.allCases, id: \.self) { Text($0.rawValue).tag($0) }
                     }
-                    .pickerStyle(.segmented).frame(width: 180)
+                    .pickerStyle(.segmented).labelsHidden().frame(width: 180)
                     .accessibilityIdentifier("ww.bottomPane.content")
                     Spacer()
                     if state.bottomPaneContent == .review, !state.reviewPresentation.isDetached {

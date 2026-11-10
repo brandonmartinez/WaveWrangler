@@ -21,7 +21,8 @@ public enum SchemaVersion {
     /// 9: recording/channel input gain, speaker/Master controls, and ordered Audio Unit document state.
     /// 10: source-purpose partition, supplemental assets/tracks/clips/arrangement and audio-track mix.
     /// 11: independent finished-episode boundaries and optional spoken-track playback restriction.
-    public static let show = 11
+    /// 12: optional insert rack positions preserve empty rows without changing processing order.
+    public static let show = 12
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.

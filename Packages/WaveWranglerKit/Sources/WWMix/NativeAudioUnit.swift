@@ -22,6 +22,22 @@ public struct MixerComponentGroup: Sendable, Equatable, Identifiable {
 }
 
 public enum MixerAudioUnits {
+    public static func compactName(_ name: String, shortName: String?, manufacturer: String?) -> String {
+        if let shortName = shortName?.trimmingCharacters(in: .whitespacesAndNewlines), !shortName.isEmpty {
+            return shortName
+        }
+        if let manufacturer = manufacturer?.trimmingCharacters(in: .whitespacesAndNewlines), !manufacturer.isEmpty {
+            for separator in [": ", " "] {
+                let prefix = manufacturer + separator
+                if name.hasPrefix(prefix) {
+                    let product = String(name.dropFirst(prefix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !product.isEmpty { return product }
+                }
+            }
+        }
+        return name
+    }
+
     /// Discovery loads no unit, reads no media, and includes only installed audio/music effects.
     @MainActor public static func installedEffects() -> [MixerComponent] {
         [kAudioUnitType_Effect, kAudioUnitType_MusicEffect].flatMap { type -> [MixerComponent] in
@@ -66,6 +82,7 @@ public struct MixerParameter: Sendable, Equatable {
 
 public struct MixerUnitStatus: Sendable, Equatable {
     public let slot: AudioUnitSlotID
+    public let shortName: String?
     public let loadedInProcess: Bool
     public let bypassed: Bool
     public let channels: Int
@@ -138,6 +155,7 @@ final class NativeAudioUnit: @unchecked Sendable {
     private let pullBlock: AURenderPullInputBlock
     private let revision = ParameterRevision()
     private let includesTail: Bool
+    private let shortName: String?
     private var observer: AUParameterObserverToken?
     private var sampleTime: Double = 0
 
@@ -174,6 +192,7 @@ final class NativeAudioUnit: @unchecked Sendable {
         self.slot = slot
         self.unit = unit
         self.channels = channels
+        shortName = unit.audioUnitShortName
         includesTail = policy.tail == .includeReported
         func formatFailure(_ reason: String) -> MixerFailure {
             let layout = channels == 1 ? "mono" : channels == 2 ? "stereo" : "\(channels)-channel"
@@ -271,7 +290,7 @@ final class NativeAudioUnit: @unchecked Sendable {
     }
 
     var status: MixerUnitStatus {
-        .init(slot: slot.id, loadedInProcess: unit.isLoadedInProcess, bypassed: slot.bypassed,
+        .init(slot: slot.id, shortName: shortName, loadedInProcess: unit.isLoadedInProcess, bypassed: slot.bypassed,
             channels: channels, latencyFrames: latencyFrames, tailFrames: tailFrames,
             parameterRevision: revision.value.load(ordering: .relaxed))
     }

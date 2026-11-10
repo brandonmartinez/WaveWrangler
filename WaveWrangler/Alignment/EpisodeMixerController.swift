@@ -14,6 +14,8 @@ final class EpisodeMixerController {
 
     private(set) var state: State = .idle
     private(set) var meters: MixerPCMOutput?
+    private(set) var consoleMeters = MixerConsoleSnapshot()
+    private(set) var metersUpdatedAt = Date()
     private(set) var unitStatuses: [MixerUnitStatus] = []
     private(set) var instanceRevision: UInt64 = 0
     private(set) var dependencyFailure: String?
@@ -210,6 +212,8 @@ final class EpisodeMixerController {
             model: snapshot, controls: try liveControls(), outputGeneration: output.generation)
         playback?.cancel()
         playback = prepared
+        consoleMeters = MixerConsoleSnapshot()
+        metersUpdatedAt = Date()
         return prepared
     }
 
@@ -221,10 +225,21 @@ final class EpisodeMixerController {
         } catch { playback.invalidate(error) }
     }
 
-    func publishPlaybackMeters() {
+    func publishPlaybackMeters(at programSeconds: Double) {
         guard let playback else { return }
-        meters = playback.latestOutput
-        if meters != nil { state = .playing }
+        consoleMeters = playback.meterSnapshot(through: Int64(programSeconds * Double(MixerRecipe.sampleRate)))
+        metersUpdatedAt = Date()
+        if !consoleMeters.levels.isEmpty { state = .playing }
+    }
+
+    func resetMeterPeaks(for bus: MixerBusAddress) {
+        playback?.resetMeterPeaks(for: bus)
+        guard var levels = consoleMeters.levels[bus] else { return }
+        for index in levels.indices {
+            levels[index].heldPeakDB = -.infinity
+            levels[index].clipped = false
+        }
+        consoleMeters.levels[bus] = levels
     }
 
     func setParameter(slot: AudioUnitSlotID, address: UInt64, value: Float,
@@ -495,6 +510,7 @@ final class EpisodeMixerController {
         capturedParameterRevisions = [:]
         unitStatuses = []
         meters = nil
+        consoleMeters = MixerConsoleSnapshot()
         state = .idle
         instanceRevision &+= 1
     }

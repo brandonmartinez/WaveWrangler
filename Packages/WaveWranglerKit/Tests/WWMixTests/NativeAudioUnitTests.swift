@@ -42,6 +42,19 @@ struct NativeAudioUnitTests {
         #expect(MixerAudioUnits.groupedByManufacturer([]).isEmpty)
     }
 
+    @Test func compactNamesPreferVendorShortNamesWithoutChangingProductIdentity() {
+        #expect(MixerAudioUnits.compactName("Martinez Parametric", shortName: "  Parametric EQ  ",
+                                          manufacturer: "Martinez") == "Parametric EQ")
+        #expect(MixerAudioUnits.compactName("Martinez Parametric", shortName: nil,
+                                          manufacturer: "Martinez") == "Parametric")
+        #expect(MixerAudioUnits.compactName("Vendor: Compressor", shortName: " ",
+                                          manufacturer: "Vendor") == "Compressor")
+        #expect(MixerAudioUnits.compactName("AULowpass", shortName: nil, manufacturer: "Apple") == "AULowpass")
+        #expect(MixerAudioUnits.compactName("Vendorish Effect", shortName: nil,
+                                          manufacturer: "Vendor") == "Vendorish Effect")
+        #expect(MixerAudioUnits.compactName("Missing Effect", shortName: nil, manufacturer: nil) == "Missing Effect")
+    }
+
     @Test func appleMonoAndStereoRenderAndRecallOpaqueDocumentState() async throws {
         for channels in [1, 2] {
             let unit = try await NativeAudioUnit.load(slot(), channels: channels, policy: .init())

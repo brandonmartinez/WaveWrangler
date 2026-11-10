@@ -51,6 +51,8 @@ public actor MixerProcessor {
     private let masterUnits: [NativeAudioUnit]
     private var delays: [FrameDelay]
     private var audioTrackDelays: [[FrameDelay]]
+    private var speakerMeterDelays: [FrameDelay]
+    private var audioTrackMeterDelays: [[FrameDelay]]
     private var audioTrackGains: [[GainRamp]]
     private var inputGains: [GainRamp]
     private var leftGains: [GainRamp]
@@ -106,7 +108,8 @@ public actor MixerProcessor {
         let latencies = (speakerUnits + audioTrackUnits).map { $0.reduce(0) { $0 + $1.latencyFrames } }
         let parallelLatency = latencies.max() ?? 0
         self.parallelLatency = parallelLatency
-        latencyFrames = parallelLatency + masterUnits.reduce(0) { $0 + $1.latencyFrames }
+        let masterLatency = masterUnits.reduce(0) { $0 + $1.latencyFrames }
+        latencyFrames = parallelLatency + masterLatency
         let reportedTail = ((speakerUnits + audioTrackUnits).map { $0.reduce(0) { $0 + $1.tailFrames } }.max() ?? 0)
             + masterUnits.reduce(0) { $0 + $1.tailFrames }
         guard latencyFrames <= recipe.policy.maximumLatencyFrames else { throw MixerFailure.latencyLimit }
@@ -117,6 +120,10 @@ public actor MixerProcessor {
         delays = latencies.prefix(speakerUnits.count).map { FrameDelay(frames: parallelLatency - $0) }
         audioTrackDelays = latencies.dropFirst(speakerUnits.count).map {
             [FrameDelay(frames: parallelLatency - $0), FrameDelay(frames: parallelLatency - $0)]
+        }
+        speakerMeterDelays = recipe.routes.map { _ in FrameDelay(frames: masterLatency) }
+        audioTrackMeterDelays = recipe.audioTracks.map { _ in
+            [FrameDelay(frames: masterLatency), FrameDelay(frames: masterLatency)]
         }
         audioTrackGains = recipe.audioTracks.map {
             let balance = MixerStereoBalance.gains(balance: $0.strip.balance)
@@ -311,6 +318,8 @@ public actor MixerProcessor {
         for offset in stride(from: 0, to: count, by: MixerRecipe.blockFrames) {
             try Task.checkCancellation()
             let blockCount = min(MixerRecipe.blockFrames, count - offset)
+            let skip = min(discarded, blockCount)
+            discarded -= skip
             var sum = Array(repeating: [Float](repeating: 0, count: blockCount), count: 2)
             for (index, route) in recipe.routes.enumerated() {
                 guard let source = channels[route.reference] else { throw MixerFailure.incompletePCM }
@@ -324,6 +333,7 @@ public actor MixerProcessor {
                 }
                 for unit in speakerUnits[index] { mono = try unit.render([mono])[0] }
                 mono = delays[index].process(mono)
+                var meter = [Float](repeating: 0, count: blockCount)
                 for frame in 0..<blockCount {
                     let position = renderFrame + Int64(offset + frame - parallelLatency)
                     let speech = mono[frame] * (recipe.production?.speechGain(atProgramFrame: position) ?? 1)
@@ -331,8 +341,9 @@ public actor MixerProcessor {
                     let right = speech * rightGains[index].next()
                     sum[0][frame] += left
                     sum[1][frame] += right
-                    metered[index].append(max(abs(left), abs(right)))
+                    meter[frame] = max(abs(left), abs(right))
                 }
+                metered[index] += speakerMeterDelays[index].process(meter).dropFirst(skip)
             }
             for (index, route) in recipe.audioTracks.enumerated() {
                 guard let input = audioTracks[route.track] else { throw MixerFailure.incompletePCM }
@@ -344,13 +355,12 @@ public actor MixerProcessor {
                         let sample = stereo[channel][frame] * audioTrackGains[index][channel].next()
                         guard sample.isFinite else { throw MixerFailure.nonfinitePCM }
                         sum[channel][frame] += sample
-                        trackMeters[index][channel].append(sample)
+                        stereo[channel][frame] = sample
                     }
+                    trackMeters[index][channel] += audioTrackMeterDelays[index][channel].process(stereo[channel]).dropFirst(skip)
                 }
             }
             for unit in masterUnits { sum = try unit.render(sum) }
-            let skip = min(discarded, blockCount)
-            discarded -= skip
             for frame in 0..<blockCount {
                 let gain = masterGain.next()
                 let left = sum[0][frame] * gain, right = sum[1][frame] * gain

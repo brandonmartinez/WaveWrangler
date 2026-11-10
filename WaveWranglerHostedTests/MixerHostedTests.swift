@@ -88,6 +88,26 @@ struct MixerHostedTests {
         #expect(updated == NSSize(width: 600, height: 400))
     }
 
+    @Test func nativeEditorAdoptsLateFrameRequestsAndPreservesAspectDuringUnconstrainedResize() throws {
+        let editor = NSViewController()
+        editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        let host = MixerNativeEditorHost(editor: editor)
+        let window = EpisodeAuxiliaryWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .resizable]
+        defer { window.close() }
+        host.configure(window, available: NSSize(width: 1200, height: 900))
+        editor.view.setFrameSize(NSSize(width: 740, height: 870))
+        #expect(host.editorSize == NSSize(width: 740, height: 870))
+        #expect(window.contentAspectRatio == NSSize(width: 740, height: 870))
+        window.setContentSize(NSSize(width: 1000, height: 500))
+        host.view.needsLayout = true
+        host.view.layoutSubtreeIfNeeded()
+        let canvas = try #require(host.scrollView.documentView)
+        #expect(abs(canvas.frame.width / canvas.frame.height - 740.0 / 870.0) < 0.001)
+        #expect(canvas.frame.height <= 500)
+        #expect(abs(canvas.bounds.width - 740) < 0.001 && abs(canvas.bounds.height - 870) < 0.001)
+    }
+
     @Test func nativeStateDictionaryOrderingDoesNotRewriteUnchangedSerializedBytes() throws {
         let state: [String: Any] = ["name": "Synthetic", "opaque": Data([1, 2, 3]), "value": 2.5]
         let xml = try PropertyListSerialization.data(fromPropertyList: state, format: .xml, options: 0)
@@ -115,6 +135,29 @@ struct MixerHostedTests {
         f.document.addWindowController(owner)
         if let window = owner.window { owner.state.attach(to: window) }
         return owner
+    }
+
+    @Test func consoleUsesExtraViewportHeightForAlignedFaders() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let owner = owner(f), presentation = owner.state.mixerPresentation
+        let host = HostedTimelineWindow(width: 900, height: 650,
+            content: MixerView(presentation: presentation).frame(width: 900, height: 650))
+        defer { host.close() }
+        try await host.settle()
+        func faderHeights() -> [CGFloat] {
+            host.descendants.compactMap { $0 as? MixerOptionClick.MonitorView }
+                .filter { abs($0.frame.width - 70) < 1 && $0.frame.height >= 164 }
+                .map(\.frame.height)
+        }
+        let compact = try #require(faderHeights().first)
+        host.view.rootView = MixerView(presentation: presentation).frame(width: 900, height: 1000)
+        try await host.settle()
+        let expanded = faderHeights()
+        #expect(expanded.count >= 2)
+        #expect(expanded.allSatisfy { $0 > compact + 200 })
+        let first = try #require(expanded.first)
+        #expect(expanded.allSatisfy { abs($0 - first) < 1 })
     }
 
     func wait(_ context: @autoclosure () -> String = "mixer condition", _ condition: () -> Bool) async throws {
@@ -158,11 +201,14 @@ struct MixerHostedTests {
         presentation.showDocked()
         #expect(state.bottomPaneContent == .mixer && state.bottomPanePresented)
         presentation.detach()
+        #expect(!state.bottomPanePresented)
         let first = try #require(presentation.detachedWindow?.window)
         #expect(first.styleMask.contains(.resizable) && first.title.contains("Synthetic"))
         #expect(ShowWindowRegistry.state(for: first) === state)
         #expect(first.undoManager === f.document.undoManager)
         presentation.detach()
+        presentation.showDocked()
+        #expect(!state.bottomPanePresented)
         #expect(presentation.detachedWindow?.window === first)
         #expect(state.alignmentModel === f.model && presentation.controller === controller)
         #expect(!f.model.canStopAudition && f.document.store.model == before)
@@ -254,6 +300,60 @@ struct MixerHostedTests {
         #expect(presentation.inserts(.master) == retained)
     }
 
+    @Test func positionedRackEditsRetainNativeStateGapsUndoRedoAndVerifiedSave() async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let owner = owner(f), presentation = owner.state.mixerPresentation
+        let earlier = try appleSlot(), later = try appleSlot()
+        presentation.changeInserts(.master, action: "Add Later Effect") {
+            try MixerInsertRack.adding(later, at: 3, to: $0)
+        }
+        try await wait { presentation.inserts(.master).first?.rackPosition == 3 }
+        #expect(presentation.insertRowCount == 5)
+        presentation.changeInserts(.master, action: "Backfill Earlier Effect") {
+            try MixerInsertRack.adding(earlier, at: 1, to: $0)
+        }
+        try await wait { presentation.inserts(.master).count == 2 && !f.document.mixerTransactions.needsBarrier }
+        presentation.openEditor(later, generic: true)
+        try await wait { presentation.editorWindow != nil || presentation.error != nil }
+        try #require(presentation.error == nil, "\(presentation.error ?? "")")
+        let processor = try #require(presentation.controller?.processor)
+        let parameter = try #require(presentation.parameters.first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 1000
+        })
+        try await processor.setParameter(slot: later.id, address: parameter.address, value: 1000)
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        undo.beginUndoGrouping()
+        presentation.changeInserts(.master, action: "Move Later Effect") {
+            try MixerInsertRack.moving(later.id, to: 5, in: $0)
+        }
+        try await wait { presentation.inserts(.master).last?.rackPosition == 5
+            && !f.document.mixerTransactions.needsBarrier }
+        undo.endUndoGrouping()
+        let moved = presentation.inserts(.master)
+        #expect(moved.map(\.rackPosition) == [1, 5])
+        #expect(moved.map(\.id) == [earlier.id, later.id])
+        #expect(moved.last?.documentState != nil)
+        #expect(presentation.insertRowCount == 7)
+        undo.undo()
+        try await wait { presentation.inserts(.master).map(\.rackPosition) == [1, 3] }
+        undo.redo()
+        try await wait { presentation.inserts(.master).map(\.rackPosition) == [1, 5] }
+        try await save(f.document)
+        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+            Data(contentsOf: #require(f.document.fileURL))).payload
+        #expect(saved.episode(f.model.episodeID)?.mix?.master.inserts == presentation.inserts(.master))
+        presentation.changeInserts(.master, action: "Remove Earlier Effect") {
+            try MixerInsertRack.removing(earlier.id, from: $0)
+        }
+        try await wait { presentation.inserts(.master).count == 1 }
+        let remainingPosition = presentation.inserts(.master).first?.rackPosition
+        #expect(remainingPosition == 5 && presentation.insertRowCount == 7)
+    }
+
     @Test func productionListeningIsExplicitAndSharesTheExistingTransportWhenDetached() async throws {
         let f = try await ready()
         defer { f.close() }
@@ -265,7 +365,7 @@ struct MixerHostedTests {
         try await wait(f.model.auditionLabel) { f.model.isAuditioning || f.model.lastError != nil }
         try #require(f.model.isAuditioning, "\(f.model.auditionLabel), \(f.model.lastError ?? "")")
         #expect(f.model.listeningMode == .productionMix)
-        #expect(f.model.mixer.meters != nil)
+        try await wait { !f.model.mixer.consoleMeters.levels.isEmpty }
         presentation.setFader(-12, bus: .master)
         presentation.controller?.masterMuted = true
         presentation.reattach()
@@ -294,9 +394,8 @@ struct MixerHostedTests {
         try #require(preparing, "\(model.auditionLabel)")
         try await wait(model.auditionLabel) { model.isAuditioning || model.lastError != nil }
         let started = model.isAuditioning
-        let meters = model.mixer.meters
         try #require(started, "\(model.auditionLabel): \(model.lastError ?? "")")
-        #expect(meters != nil)
+        try await wait { !model.mixer.consoleMeters.levels.isEmpty }
         try await wait(model.auditionLabel) { !model.canStopAudition }
         let error = model.lastError
         let label = model.auditionLabel
@@ -330,9 +429,8 @@ struct MixerHostedTests {
         #expect(retryError == nil)
         try await wait(f.model.auditionLabel) { f.model.isAuditioning || f.model.lastError != nil }
         let started = f.model.isAuditioning
-        let meters = f.model.mixer.meters
         try #require(started, "\(f.model.auditionLabel): \(f.model.lastError ?? "")")
-        #expect(meters != nil)
+        try await wait { !f.model.mixer.consoleMeters.levels.isEmpty }
         try await wait(f.model.auditionLabel) { !f.model.canStopAudition }
         let finalError = f.model.lastError
         let label = f.model.auditionLabel

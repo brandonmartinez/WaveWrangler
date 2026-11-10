@@ -29,22 +29,25 @@ public struct AudioUnitSlot: Sendable, Equatable, Codable, Identifiable {
     /// A serialized property-list dictionary from the unit's document state, not an object archive.
     /// `nil` requests the unit's default state; empty or malformed bytes are invalid.
     public var documentState: Data?
+    /// Zero-based console row. Absent in older documents, where array index is the row.
+    public var rackPosition: Int?
 
     public static let maximumDocumentStateBytes = 16 * 1024 * 1024
 
     public init(id: AudioUnitSlotID = AudioUnitSlotID(), component: AudioUnitComponentIdentity,
                 bypassed: Bool = false, productName: String? = nil, version: String? = nil,
-                documentState: Data? = nil) {
+                documentState: Data? = nil, rackPosition: Int? = nil) {
         self.id = id
         self.component = component
         self.bypassed = bypassed
         self.productName = productName
         self.version = version
         self.documentState = documentState
+        self.rackPosition = rackPosition
     }
 
     public var isValid: Bool {
-        guard component.isValid,
+        guard component.isValid, rackPosition.map({ (0..<EpisodeMixState.maximumInsertsPerBus).contains($0) }) != false,
               [productName, version].compactMap({ $0 }).allSatisfy({
                   !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && $0.utf8.count <= 1024
               }) else { return false }
@@ -108,7 +111,7 @@ public struct SpeakerMixState: Sendable, Equatable, Codable {
 
     public var isValid: Bool {
         EpisodeMixState.isValidGain(gainDB) && pan.isFinite && (-1...1).contains(pan)
-            && inserts.count <= EpisodeMixState.maximumInsertsPerBus && inserts.allSatisfy(\.isValid)
+            && MixerInsertRack.isValid(inserts)
     }
 }
 
@@ -124,7 +127,7 @@ public struct MasterMixState: Sendable, Equatable, Codable {
 
     public var isValid: Bool {
         EpisodeMixState.isValidGain(gainDB)
-            && inserts.count <= EpisodeMixState.maximumInsertsPerBus && inserts.allSatisfy(\.isValid)
+            && MixerInsertRack.isValid(inserts)
     }
 }
 
@@ -144,7 +147,7 @@ public struct AudioTrackMixState: Sendable, Equatable, Codable {
 
     public var isValid: Bool {
         EpisodeMixState.isValidGain(gainDB) && balance.isFinite && (-1...1).contains(balance)
-            && inserts.count <= EpisodeMixState.maximumInsertsPerBus && inserts.allSatisfy(\.isValid)
+            && MixerInsertRack.isValid(inserts)
     }
 }
 

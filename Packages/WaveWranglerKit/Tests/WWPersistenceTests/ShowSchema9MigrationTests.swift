@@ -12,7 +12,7 @@ struct ShowSchema9MigrationTests {
     @Test(arguments: 0..<9)
     func schemas1Through9MigrateDirectlyWithExactBackupsAndNeutralAbsence(_ index: Int) throws {
         let bytes = Self.goldens[index], schema = index + 1
-        #expect(ShowSchemaMigration.migratableSchemas == Set(1...10))
+        #expect(ShowSchemaMigration.migratableSchemas == Set(1..<SchemaVersion.show))
         #expect(throws: PersistenceError.unsupportedOlderSchema(found: schema, minimum: SchemaVersion.show)) { try coder.decode(bytes) }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(bytes)
         #expect(upgraded.payload.schemaVersion == SchemaVersion.show)
@@ -205,8 +205,9 @@ struct ShowSchema9MigrationTests {
             #expect(throws: PersistenceError.self) { try coder.encode(changed, revision: 1) }
             #expect(throws: PersistenceError.self) { try coder.decode(helper.unchecked(changed, schema: SchemaVersion.show)) }
         }
-        let future = Data(#"{"format":"com.brandonmartinez.wavewrangler.show","schemaVersion":12,"payload":"future"}"#.utf8)
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 12, supported: SchemaVersion.show)) {
+        let version = SchemaVersion.show + 1
+        let future = Data("{\"format\":\"com.brandonmartinez.wavewrangler.show\",\"schemaVersion\":\(version),\"payload\":\"future\"}".utf8)
+        #expect(throws: PersistenceError.unknownNewerSchema(found: version, supported: SchemaVersion.show)) {
             try ShowSchemaMigration.decodeUpgradingOlder(future)
         }
 

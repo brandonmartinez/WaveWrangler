@@ -55,6 +55,13 @@ extension ShowDocumentModel {
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if expectedSchemaVersion < 12, let mix = episode.mix {
+                let slots = mix.speakers.flatMap(\.inserts) + mix.master.inserts
+                    + (mix.audioTracks ?? []).flatMap(\.inserts)
+                if slots.contains(where: { $0.rackPosition != nil }) {
+                    issues.append(.init(.invalidMix, "schemas before 12 cannot contain insert rack positions"))
+                }
+            }
             if expectedSchemaVersion < 11, episode.productionRange != nil {
                 issues.append(.init(.invalidAudio, "schemas before 11 cannot contain production boundaries"))
             }
