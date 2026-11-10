@@ -22,6 +22,12 @@ struct AudioProgramProjectionHostedTests {
         episode.audioArrangement = .init(insertionRegions: [first, second])
         let timeline = try ProgramTimeline(episode: episode, dialogueFrames: 0..<960_000)
         let projection = AudioTimelineProjection(program: timeline)
+        let reviewRows = [FillerReviewRow(id: UUID(), speakerID: Speaker(name: "Host").id,
+            speaker: "Host", phrase: "um", status: "Needs review", category: .pending,
+            start: 5, end: 6, issue: nil, cutID: nil)]
+        #expect(ReviewPlaybackPosition.locate(projection.originalTime(forDisplayTime: 9), in: reviewRows) == nil)
+        #expect(ReviewPlaybackPosition.locate(projection.originalTime(forDisplayTime: 15.5), in: reviewRows)
+            == .init(row: 0, fraction: 0.5))
         #expect(projection.originalTime(forDisplayTime: 5) == nil)
         #expect(projection.originalTime(forExclusiveDisplayEnd: 5) == 5)
         #expect(projection.originalTime(forDisplayTime: 15) == 5)

@@ -68,6 +68,13 @@ final class EpisodeCleanupModel {
         set { standaloneTransportMessage = newValue }
     }
     var playhead = 0.0
+    var reviewPlaybackAlignedTime: Double? {
+        if let workspaceAlignment { return workspaceAlignment.reviewPlaybackAlignedTime }
+        let displayTime = playhead
+        guard isPlaying else { return nil }
+        return playbackAppliesCuts ? cutTimeline.originalTime(forDisplayTime: displayTime)
+            : playbackStart + min(scheduledDuration, elapsedPlayback)
+    }
     var inText = ""
     var outText = ""
     var selectedSpeaker: SpeakerID?

@@ -36,6 +36,20 @@ struct ReviewPresentationHostedTests {
         #expect(!f.model.canStopAudition && f.document.store.model == before)
         presentation.detach()
         #expect(presentation.detachedWindow?.window === first)
+        func indicator(in view: NSView?) -> ReviewPlaybackIndicator.IndicatorView? {
+            guard let view else { return nil }
+            if let indicator = view as? ReviewPlaybackIndicator.IndicatorView { return indicator }
+            return view.subviews.lazy.compactMap { indicator(in: $0) }.first
+        }
+        cleanup.play(interval: 0...6, loop: false)
+        let deadline = ContinuousClock.now.advanced(by: .seconds(10))
+        while !cleanup.isPlaying, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        try #require(cleanup.isPlaying)
+        try await settle()
+        let detachedIndicator = try #require(indicator(in: first.contentView))
+        #expect(!detachedIndicator.line.isHidden)
         presentation.reattach()
         try await settle()
         #expect(!presentation.isDetached && !first.isVisible)
@@ -43,6 +57,12 @@ struct ReviewPresentationHostedTests {
         #expect(cleanup.reviewSearch == "um" && cleanup.selectedReviewRowID == review.id)
         #expect(f.document.store.model == before)
         #expect(ShowWindowRegistry.state(for: first) == nil)
+        #expect(cleanup.isPlaying, "Reattaching the review does not restart or stop the shared transport.")
+        let dockedIndicator = try #require(indicator(in: owner.window?.contentView))
+        #expect(!dockedIndicator.line.isHidden)
+        cleanup.stopPlayback()
+        try await settle()
+        #expect(dockedIndicator.line.isHidden)
     }
 
     @Test func detachedEditsUseTheSameUndoHistoryAndClosingTheWindowDoesNotCloseTheEpisode() async throws {

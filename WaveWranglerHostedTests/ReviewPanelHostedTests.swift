@@ -90,6 +90,37 @@ struct ReviewPanelHostedTests {
         #expect(cleanup.visibleFillers(for: lane).map(\.id) == [cleanup.fillerReviews[1].id])
     }
 
+    @Test func playbackLineTracksTheSharedClockWithoutChangingSelection() async throws {
+        let (f, cleanup, _) = try await fixture()
+        defer { cleanup.cancel(); f.close() }
+        let host = HostedTimelineWindow(width: 900, height: 440, content: FillerReviewPanel(model: cleanup))
+        defer { host.close() }
+        try await host.settle()
+        let indicator = try #require(host.descendants.compactMap {
+            $0 as? ReviewPlaybackIndicator.IndicatorView
+        }.first)
+        let before = f.document.store.model
+        #expect(indicator.line.isHidden)
+        #expect(cleanup.reviewPlaybackAlignedTime == nil)
+        cleanup.play(interval: 0...6, loop: false)
+        try await wait { cleanup.isPlaying && f.model.waveformPlayheadSeconds >= 1.05 }
+        try await host.settle()
+        let time = try #require(cleanup.reviewPlaybackAlignedTime)
+        #expect(time == f.model.waveformPlayheadSeconds)
+        #expect(cleanup.playhead == 0, "The review line must observe the shared clock, not the stale cleanup copy.")
+        #expect(!indicator.line.isHidden)
+        try await wait { f.model.waveformPlayheadSeconds >= 1.5 }
+        try await host.settle()
+        #expect(indicator.position == .init(row: 1, fraction: 0))
+        #expect(cleanup.selectedReviewRowID == nil)
+        try host.capture("Playback position in Transcript and Review")
+        cleanup.stopPlayback()
+        try await host.settle()
+        #expect(indicator.line.isHidden)
+        #expect(cleanup.reviewPlaybackAlignedTime == nil)
+        #expect(f.document.store.model == before)
+    }
+
     @Test(arguments: [
         CGSize(width: 460, height: 440),
         CGSize(width: 760, height: 440),
@@ -214,9 +245,11 @@ struct ReviewPanelHostedTests {
         #expect(cleanup.error != nil && f.document.store.model == retained)
     }
 
-    @Test func rowAuditionPlaysCurrentBoundsAndCutAudioWithoutEditingTheDocument() async throws {
+    @Test(arguments: [false, true])
+    func rowAuditionPlaysCurrentBoundsAndCutAudioWithoutEditingTheDocument(_ productionMix: Bool) async throws {
         let (f, cleanup, _) = try await fixture()
         defer { cleanup.cancel(); f.close() }
+        f.model.listening.usesProductionMix = productionMix
         let detected = try #require(cleanup.fillerReviews.first)
         cleanup.resizeReviewInterval(detected.id, expanding: true)
         let review = try #require(cleanup.selectedFiller)
@@ -225,8 +258,13 @@ struct ReviewPanelHostedTests {
         cleanup.requestReviewRowFocus(review.id)
         cleanup.auditionReviewRow(review.id)
         try #require(f.model.canStopAudition, "\(cleanup.error ?? f.model.auditionLabel)")
+        try await wait { cleanup.reviewPlaybackAlignedTime != nil }
+        let auditionTime = try #require(cleanup.reviewPlaybackAlignedTime)
+        #expect(auditionTime >= review.bounds.alignedStart && auditionTime < review.bounds.alignedEnd)
         try await wait { !f.model.canStopAudition }
-        #expect(f.model.auditionLabel == "Finished selection audition.")
+        let expected = productionMix ? "Production mix reached the end of the selected program."
+            : "Finished selection audition."
+        #expect(f.model.auditionLabel == expected)
         #expect(abs(f.model.waveformPlayheadSeconds - review.bounds.alignedEnd) < 1 / 48_000)
         #expect(f.document.store.model == before)
         cleanup.autoCutReviewRow(review.id)
@@ -235,6 +273,10 @@ struct ReviewPanelHostedTests {
         let withCut = f.document.store.model
         cleanup.auditionReviewRow(review.id)
         try #require(f.model.canStopAudition, "\(cleanup.error ?? f.model.auditionLabel)")
+        try await wait { cleanup.reviewPlaybackAlignedTime != nil }
+        let removedTime = try #require(cleanup.reviewPlaybackAlignedTime)
+        #expect(removedTime >= cut.alignedStart && removedTime < cut.alignedEnd)
+        #expect(ReviewPlaybackPosition.locate(removedTime, in: cleanup.reviewRows)?.row == 0)
         try await wait { !f.model.canStopAudition }
         #expect(f.model.auditionLabel == "Finished selection audition.")
         #expect(cleanup.listening.expandedManualCutID == cut.id)

@@ -226,6 +226,12 @@ final class EpisodeAlignmentModel {
         get { listening.workspace.playheadSeconds }
         set { listening.workspace.playheadSeconds = newValue }
     }
+    var reviewPlaybackAlignedTime: Double? {
+        let displayTime = waveformPlayheadSeconds
+        guard isAuditioning, listeningMode != .sourceTimePreview else { return nil }
+        if auditionUsesOriginalTime { return audioPlayback.clock?.playhead() }
+        return presentationTimeline.originalTime(forDisplayTime: displayTime)
+    }
     private var alignedNavigationEndSeconds = 0.0
     var waveformNavigationEndSeconds: Double {
         max(presentationTimeline.editedTime(forAlignedTime: alignedNavigationEndSeconds),

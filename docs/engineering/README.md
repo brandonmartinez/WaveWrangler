@@ -296,6 +296,12 @@ phrase, status, aligned timestamp, duration and row actions. Header filters wrap
 The trailing inspector shows just the selected review or cut, timing fields, decisions and collapsed
 captured-origin/transcript details. Display timestamps use milliseconds; the underlying source-frame
 anchors and exact captured timing remain unchanged.
+A thin red horizontal line shows the current playback position in the filtered review table,
+in both docked and detached views. It progresses through a row's interval and sits at the
+next row boundary between intervals. Playback skips removed intervals; inserted-only audio
+and untimed source auditions have no transcript position and hide the line. The line uses
+native row geometry, clips below the header, and never changes selection or scroll position.
+It disappears when playback stops.
 **Detach review** opens Transcript & Review in an episode-owned auxiliary window. It shares the
 existing cleanup model, selected review, phrase/speaker/status filters, cut actions and document
 Undo/Redo; it does not copy the show or start playback. **Reattach** returns the same review state
