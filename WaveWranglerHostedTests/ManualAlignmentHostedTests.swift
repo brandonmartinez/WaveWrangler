@@ -48,6 +48,7 @@ struct ManualAlignmentHostedTests {
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         #expect(f.model.listeningMode == .sourceTimePreview)
         #expect(f.model.sourceTimePreviewSource == f.target)
+        #expect(f.model.reviewPlaybackAlignedTime == nil, "Untimed source playback has no transcript position.")
         #expect(f.model.auditionLabel.contains("source"))
         try await wait(f.model.auditionLabel) { !f.model.canStopAudition }
         #expect(abs(f.model.waveformPlayheadSeconds - 1.25) < 1 / 48_000)

@@ -27,6 +27,45 @@ final class MixerUITests: XCTestCase {
         return condition()
     }
 
+    func testOptionClickOpensReviewAndMixerDirectlyInSeparateWindows() {
+        let app = launch()
+        defer { app.terminate() }
+        let main = app.windows["ww.show.window"]
+        XCTAssertTrue(main.waitForExistence(timeout: 20))
+        for panel in ["review", "mixer"] {
+            let toggle = main.buttons["ww.\(panel).toggle"]
+            let docked = main.descendants(matching: .any)[panel == "review" ? "ww.review.panel" : "ww.mixer.docked"]
+            let window = app.windows["ww.\(panel).window"]
+            let hide = main.buttons["ww.bottomPane.hide"]
+            if hide.exists { hide.click() }
+            toggle.click()
+            XCTAssertTrue(docked.waitForExistence(timeout: 5), "\(panel) still opens docked on an ordinary click.")
+            toggle.click()
+            XCTAssertTrue(docked.waitForNonExistence(timeout: 5))
+
+            XCUIElement.perform(withKeyModifiers: .option) { toggle.click() }
+            XCTAssertTrue(window.waitForExistence(timeout: 5), app.debugDescription)
+            XCTAssertFalse(docked.exists)
+            XCTAssertFalse(hide.exists, "Option-click from hidden must not open the bottom pane.")
+            XCUIElement.perform(withKeyModifiers: .option) { toggle.click() }
+            XCTAssertEqual(app.windows.matching(identifier: "ww.\(panel).window").count, 1)
+            XCTAssertFalse(hide.exists, "Refocusing a detached window must not open the bottom pane.")
+
+            window.buttons["ww.\(panel).reattach"].click()
+            XCTAssertTrue(window.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(docked.waitForExistence(timeout: 5))
+            XCUIElement.perform(withKeyModifiers: .option) { toggle.click() }
+            XCTAssertTrue(window.waitForExistence(timeout: 5))
+            XCTAssertFalse(docked.exists, "Option-click also detaches an already-docked panel.")
+            toggle.click()
+            XCTAssertTrue(window.exists, "An ordinary click retains the detached window.")
+            XCTAssertEqual(app.windows.matching(identifier: "ww.\(panel).window").count, 1)
+            window.typeKey("w", modifierFlags: .command)
+            XCTAssertTrue(window.waitForNonExistence(timeout: 5))
+            XCTAssertTrue(main.exists)
+        }
+    }
+
     private func insertPills(in scope: XCUIElement) -> XCUIElementQuery {
         scope.descendants(matching: .any).matching(NSPredicate(
             format: "identifier MATCHES %@", "ww\\.mixer\\.slot\\.[A-Fa-f0-9-]+"))

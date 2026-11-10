@@ -362,6 +362,10 @@ struct FillerReviewPanel: View {
             }
             .accessibilityIdentifier("ww.review.table")
             .overlay {
+                ReviewPlaybackIndicator(rows: rows, alignedTime: model.reviewPlaybackAlignedTime)
+                    .allowsHitTesting(false)
+            }
+            .overlay {
                 if rows.isEmpty {
                     ContentUnavailableView("No matching reviews", systemImage: "text.bubble",
                         description: Text(model.reviewRows.isEmpty

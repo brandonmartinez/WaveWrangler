@@ -296,11 +296,20 @@ phrase, status, aligned timestamp, duration and row actions. Header filters wrap
 The trailing inspector shows just the selected review or cut, timing fields, decisions and collapsed
 captured-origin/transcript details. Display timestamps use milliseconds; the underlying source-frame
 anchors and exact captured timing remain unchanged.
+A thin red horizontal line shows the current playback position in the filtered review table,
+in both docked and detached views. It progresses through a row's interval and sits at the
+next row boundary between intervals. Playback skips removed intervals; inserted-only audio
+and untimed source auditions have no transcript position and hide the line. The line uses
+native row geometry, clips below the header, and never changes selection or scroll position.
+It disappears when playback stops.
 **Detach review** opens Transcript & Review in an episode-owned auxiliary window. It shares the
 existing cleanup model, selected review, phrase/speaker/status filters, cut actions and document
 Undo/Redo; it does not copy the show or start playback. **Reattach** returns the same review state
 to the bottom pane. Closing only the auxiliary window leaves the episode open; closing the
 originating editor or deleting its episode closes that editor's detached review.
+Option-clicking the workspace Review or Mixer button opens its separate window directly,
+without first showing the bottom pane; if already detached, it focuses the existing window.
+Ordinary clicks retain their toggle/focus behavior.
 Clicking a current filler row centers its automatic focus view three ordinary zoom-out steps
 wider than the old close-up (1.25x per step), capped by the available timeline. Repeated row
 selection does not progressively zoom out. Explicit Zoom to word/cut commands keep their closer
