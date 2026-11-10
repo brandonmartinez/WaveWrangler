@@ -43,14 +43,16 @@ struct MixerTrackScrollView<Content: View>: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
         scroll.setAccessibilityIdentifier("ww.mixer.speakers")
-        let host = NSHostingView(rootView: AnyView(content.frame(width: contentWidth).wwAppEnvironment()))
+        let host = NSHostingView(rootView: AnyView(content.frame(width: contentWidth)
+            .frame(maxWidth: .infinity, alignment: .leading).wwAppEnvironment()))
         scroll.documentView = host
         return scroll
     }
 
     func updateNSView(_ scroll: TrackScrollView, context: Context) {
         if let host = scroll.documentView as? NSHostingView<AnyView> {
-            host.rootView = AnyView(content.frame(width: contentWidth).wwAppEnvironment())
+            host.rootView = AnyView(content.frame(width: contentWidth)
+                .frame(maxWidth: .infinity, alignment: .leading).wwAppEnvironment())
         }
         scroll.contentWidth = contentWidth
         scroll.needsLayout = true
