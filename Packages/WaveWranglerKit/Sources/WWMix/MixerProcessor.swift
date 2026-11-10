@@ -9,6 +9,7 @@ public struct MixerLiveControls: Sendable {
     public var speakers: [SpeakerID: SpeakerMixState]
     public var audioTracks: [AudioTrackID: AudioTrackMixState]
     public var masterGainDB: Double
+    public var bypassedSlots: Set<AudioUnitSlotID>
     public var mutedSpeakers: Set<SpeakerID> = []
     public var soloedSpeakers: Set<SpeakerID> = []
     public var mutedAudioTracks: Set<AudioTrackID> = []
@@ -20,6 +21,9 @@ public struct MixerLiveControls: Sendable {
         speakers = Dictionary(uniqueKeysWithValues: recipe.routes.map { ($0.speaker, $0.strip) })
         audioTracks = Dictionary(uniqueKeysWithValues: recipe.audioTracks.map { ($0.track, $0.strip) })
         masterGainDB = recipe.master.gainDB
+        bypassedSlots = Set((recipe.routes.flatMap(\.strip.inserts)
+            + recipe.audioTracks.flatMap(\.strip.inserts) + recipe.master.inserts)
+            .filter(\.bypassed).map(\.id))
     }
 }
 
@@ -66,9 +70,14 @@ public actor MixerProcessor {
     private var flushRemaining: Int?
     private var terminal = false
     private var failure: (any Error)?
+    private let livePlayback: Bool
+    private var playbackInputFrames: Int64 = 0
+    private var playbackStartOffset: Int64 = 0
+    private var playbackSegments: [(streamFrame: Int64, programFrame: Int64)] = []
 
     public static func load(
         recipe: MixerRecipe,
+        livePlayback: Bool = false,
         progress: @Sendable (MixerLoadingEvent) -> Void = { _ in }
     ) async throws -> MixerProcessor {
         try Task.checkCancellation()
@@ -80,7 +89,8 @@ public actor MixerProcessor {
             for slot in slots {
                 try Task.checkCancellation()
                 progress(.loading(slot.id))
-                let unit = try await NativeAudioUnit.load(slot, channels: channels, policy: recipe.policy)
+                let unit = try await NativeAudioUnit.load(slot, channels: channels, policy: recipe.policy,
+                                                         supportsLiveBypass: livePlayback)
                 units.append(unit)
                 progress(.ready(unit.status))
             }
@@ -92,16 +102,18 @@ public actor MixerProcessor {
         for route in recipe.audioTracks { tracks.append(try await chain(route.strip.inserts, channels: 2)) }
         let master = try await chain(recipe.master.inserts, channels: 2)
         try Task.checkCancellation()
-        return try MixerProcessor(recipe: recipe, speakerUnits: speakers, masterUnits: master, audioTrackUnits: tracks)
+        return try MixerProcessor(recipe: recipe, speakerUnits: speakers, masterUnits: master,
+                                  audioTrackUnits: tracks, livePlayback: livePlayback)
         #endif
     }
 
     init(recipe: MixerRecipe, speakerUnits: [[NativeAudioUnit]], masterUnits: [NativeAudioUnit],
-         audioTrackUnits: [[NativeAudioUnit]] = []) throws {
+         audioTrackUnits: [[NativeAudioUnit]] = [], livePlayback: Bool = false) throws {
         guard speakerUnits.count == recipe.routes.count, audioTrackUnits.count == recipe.audioTracks.count else {
             throw MixerFailure.invalidRecipe("unit chains do not match bus routes")
         }
         self.recipe = recipe
+        self.livePlayback = livePlayback
         self.speakerUnits = speakerUnits
         self.audioTrackUnits = audioTrackUnits
         self.masterUnits = masterUnits
@@ -185,6 +197,7 @@ public actor MixerProcessor {
               Set(controls.audioTracks.keys) == Set(recipe.audioTracks.map(\.track)),
               controls.inputGainDB.values.allSatisfy(EpisodeMixState.isValidGain),
               EpisodeMixState.isValidGain(controls.masterGainDB),
+              controls.bypassedSlots.isSubset(of: Set(allUnits.map(\.slot.id))),
               controls.mutedSpeakers.isSubset(of: Set(controls.speakers.keys)),
               controls.soloedSpeakers.isSubset(of: Set(controls.speakers.keys)),
               controls.mutedAudioTracks.isSubset(of: Set(controls.audioTracks.keys)),
@@ -204,6 +217,10 @@ public actor MixerProcessor {
             controls.audioTracks[$0.track]?.track == $0.track
                 && controls.audioTracks[$0.track]?.inserts == $0.strip.inserts
         }) else { throw MixerFailure.staleDependencies }
+        guard allUnits.allSatisfy({
+            $0.supportsLiveBypass || $0.status.bypassed == controls.bypassedSlots.contains($0.slot.id)
+        }) else { throw MixerFailure.staleDependencies }
+        for unit in allUnits { try unit.setBypassed(controls.bypassedSlots.contains(unit.slot.id)) }
         let hasSolo = !controls.soloedSpeakers.isEmpty || !controls.soloedAudioTracks.isEmpty
         for (index, route) in recipe.routes.enumerated() {
             guard let gain = controls.inputGainDB[route.reference], let strip = controls.speakers[route.speaker] else {
@@ -253,12 +270,33 @@ public actor MixerProcessor {
         do {
             let result = try render(channels: window.channels, audioTracks: window.audioTracks, count: window.frames.count)
             nextInput = window.frames.upperBound
+            if livePlayback {
+                playbackInputFrames += Int64(window.frames.count)
+                if let index = playbackSegments.lastIndex(where: {
+                    $0.streamFrame <= playbackInputFrames - Int64(latencyFrames)
+                }), index > 0 { playbackSegments.removeFirst(index) }
+            }
             return result
         } catch {
             terminal = true
             failure = error
             throw error
         }
+    }
+
+    /// Reuse a live graph and its warm effects at a program boundary; device output remains monotonic.
+    public func beginPlaybackPass(at frame: Int64) throws {
+        try ensureActive()
+        guard livePlayback, flushRemaining == nil,
+              frame >= recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames),
+              frame < recipe.programFrames.upperBound else { throw MixerFailure.staleDependencies }
+        if playbackInputFrames == 0 {
+            playbackStartOffset = frame + Int64(recipe.policy.prerollFrames) - recipe.programFrames.lowerBound
+            emitted = playbackStartOffset
+        }
+        nextInput = frame
+        renderFrame = frame
+        playbackSegments.append((playbackInputFrames, frame))
     }
 
     /// Drain latency and the declared tail in bounded windows. Call until nil; no device/file output.
@@ -273,7 +311,9 @@ public actor MixerProcessor {
         if flushRemaining == nil { flushRemaining = latencyFrames + tailFrames }
         guard let remaining = flushRemaining else { throw MixerFailure.incompletePCM }
         if remaining == 0 {
-            let expected = Int64(recipe.programFrames.count + tailFrames)
+            let expected = livePlayback
+                ? playbackStartOffset + playbackInputFrames - Int64(recipe.policy.prerollFrames) + Int64(tailFrames)
+                : Int64(recipe.programFrames.count + tailFrames)
             guard emitted == expected, discarded == 0 else { throw MixerFailure.incompletePCM }
             terminal = true
             return nil
@@ -307,6 +347,15 @@ public actor MixerProcessor {
     }
     private static func amplitude(_ db: Double) -> Float { Float(pow(10, db / 20)) }
 
+    private func programPosition(at offset: Int64) -> Int64 {
+        let flushed = flushRemaining.map { latencyFrames + tailFrames - $0 } ?? 0
+        let streamFrame = playbackInputFrames + Int64(flushed) + offset
+        guard livePlayback, let segment = playbackSegments.last(where: {
+            $0.streamFrame <= streamFrame
+        }) ?? playbackSegments.first else { return renderFrame + offset }
+        return segment.programFrame + streamFrame - segment.streamFrame
+    }
+
     private func render(channels: [ChannelReference: [Float]], audioTracks: [AudioTrackID: [[Float]]],
                         count: Int) throws -> MixerPCMOutput {
         let firstFrame = recipe.programFrames.lowerBound + emitted
@@ -335,7 +384,7 @@ public actor MixerProcessor {
                 mono = delays[index].process(mono)
                 var meter = [Float](repeating: 0, count: blockCount)
                 for frame in 0..<blockCount {
-                    let position = renderFrame + Int64(offset + frame - parallelLatency)
+                    let position = programPosition(at: Int64(offset + frame - parallelLatency))
                     let speech = mono[frame] * (recipe.production?.speechGain(atProgramFrame: position) ?? 1)
                     let left = speech * leftGains[index].next()
                     let right = speech * rightGains[index].next()

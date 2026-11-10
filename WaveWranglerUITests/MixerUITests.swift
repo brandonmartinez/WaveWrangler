@@ -168,15 +168,17 @@ final class MixerUITests: XCTestCase {
         let add = mixer.descendants(matching: .any)["ww.mixer.strip.master.add"]
         XCTAssertTrue(add.waitForExistence(timeout: 5), app.debugDescription)
         add.click()
-        let apple = app.menuItems["Apple"]
-        XCTAssertTrue(apple.waitForExistence(timeout: 5), app.debugDescription)
-        apple.hover()
-        let lowpass = app.menuItems["AULowpass"]
-        XCTAssertTrue(lowpass.waitForExistence(timeout: 5), app.debugDescription)
-        lowpass.hover()
-        mixer.typeKey(.return, modifierFlags: [])
+        app.menuItems["Apple"].hover()
+        app.menuItems["AULowpass"].click()
         let pill = insertPills(in: mixer).firstMatch
-        XCTAssertTrue(pill.waitForExistence(timeout: 10), app.debugDescription)
+        guard pill.waitForExistence(timeout: 10) else {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Mixer after adding an effect"
+            screenshot.lifetime = .keepAlways
+            self.add(screenshot)
+            XCTFail(app.debugDescription)
+            return
+        }
         pill.hover()
         let actions = mixer.descendants(matching: .any).matching(NSPredicate(format: "identifier ENDSWITH '.actions'")).firstMatch
         XCTAssertTrue(actions.waitForExistence(timeout: 5), app.debugDescription)
@@ -237,6 +239,12 @@ final class MixerUITests: XCTestCase {
         XCTAssertEqual(masterFader.frame.height, speakerFader.frame.height, accuracy: 1)
         let masterName = mixer.staticTexts["ww.mixer.strip.master.name"]
         XCTAssertEqual(masterName.frame.width, 144, accuracy: 1)
+        let speakers = mixer.scrollViews["ww.mixer.speakers"]
+        let firstName = speakers.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier ENDSWITH '.name'")).firstMatch
+        XCTAssertEqual(firstName.frame.minX, speakers.frame.minX, accuracy: 1,
+                       "Track strips stay left-aligned when the viewport is wider than their content.")
+        XCTAssertFalse(mixer.scrollBars["ww.mixer.trackScrollbar"].exists)
         let empty = mixer.descendants(matching: .any)["ww.mixer.strip.master.add"]
         XCTAssertTrue(empty.waitForExistence(timeout: 5))
         empty.click()
@@ -265,16 +273,53 @@ final class MixerUITests: XCTestCase {
         let highpassID = highpass.identifier
         let target = mixer.descendants(matching: .any)["ww.mixer.strip.master.add"]
         XCTAssertGreaterThan(target.frame.minY, movedLowpass.frame.minY)
-        let grip = highpass.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let grip = mixer.descendants(matching: .any)["\(highpassID).drag"]
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
         grip.click(forDuration: 0.3, thenDragTo: target.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
-        XCTAssertTrue(wait { mixer.descendants(matching: .any)["ww.mixer.strip.master.empty.3"].exists },
-                      "Dragging onto the trailing blank must leave the old row empty and extend every rack.")
+        guard wait({ mixer.descendants(matching: .any)["ww.mixer.strip.master.empty.3"].exists }) else {
+            let screenshot = XCTAttachment(screenshot: app.screenshot())
+            screenshot.name = "Mixer after dragging to an empty row"
+            screenshot.lifetime = .keepAlways
+            add(screenshot)
+            XCTFail("Dragging onto the trailing blank must leave the old row empty and extend every rack.\n\(app.debugDescription)")
+            return
+        }
         let movedHighpass = mixer.descendants(matching: .any)[highpassID]
         XCTAssertGreaterThan(movedHighpass.frame.minY, movedLowpass.frame.minY)
         mixer.typeKey("z", modifierFlags: .command)
         XCTAssertTrue(wait { movedHighpass.frame.minY < movedLowpass.frame.minY })
         mixer.typeKey("z", modifierFlags: [.command, .shift])
         XCTAssertTrue(wait { movedHighpass.frame.minY > movedLowpass.frame.minY })
+        let thirdBlank = mixer.descendants(matching: .any)["ww.mixer.strip.master.empty.3"]
+        thirdBlank.click()
+        app.menuItems["Apple"].hover()
+        app.menuItems["AUParametricEQ"].click()
+        XCTAssertTrue(wait { insertPills(in: mixer).count == 3 })
+        let eq = insertPills(in: mixer).matching(NSPredicate(format: "label BEGINSWITH 'AUParametricEQ,'")).firstMatch
+        let eqID = eq.identifier
+        let beforeReorderLowpassY = movedLowpass.frame.minY
+        let beforeReorderHighpassY = movedHighpass.frame.minY
+        mixer.descendants(matching: .any)["\(eqID).drag"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .click(forDuration: 0.3, thenDragTo: movedLowpass.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        let movedEQ = mixer.descendants(matching: .any)[eqID]
+        XCTAssertTrue(wait { movedEQ.frame.minY < movedLowpass.frame.minY
+            && movedLowpass.frame.minY < movedHighpass.frame.minY })
+        XCTAssertEqual(movedEQ.frame.minY, beforeReorderLowpassY, accuracy: 1)
+        XCTAssertEqual(movedLowpass.frame.minY, beforeReorderHighpassY, accuracy: 1,
+                       "Moving last to first shifts the intervening effects instead of swapping endpoints.")
+        XCTAssertEqual(insertPills(in: mixer).count, 3, "Reordering must not copy an effect.")
+        mixer.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { movedEQ.frame.minY > movedHighpass.frame.minY })
+        mixer.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(wait { movedEQ.frame.minY < movedLowpass.frame.minY })
+        mixer.descendants(matching: .any)["\(eqID).drag"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .click(forDuration: 0.3, thenDragTo: movedHighpass.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)))
+        XCTAssertTrue(wait { movedLowpass.frame.minY < movedHighpass.frame.minY
+            && movedHighpass.frame.minY < movedEQ.frame.minY },
+                      "Moving first to last shifts the intervening effects upward.")
+        XCTAssertEqual(insertPills(in: mixer).count, 3)
+        mixer.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { movedEQ.frame.minY < movedLowpass.frame.minY })
         XCUIElement.perform(withKeyModifiers: .option) { movedHighpass.click() }
         XCTAssertTrue(wait { movedHighpass.label.contains("bypassed") }, app.debugDescription)
         XCUIElement.perform(withKeyModifiers: .option) {

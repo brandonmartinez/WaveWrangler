@@ -51,6 +51,81 @@ struct MixFixture {
 
 @Suite("Shared mixer processing", .serialized)
 struct MixerProcessorTests {
+    @Test(arguments: [0, 23])
+    func livePassesPreserveDSPStateAndMonotonicFramesThroughTheFinalFlush(latency: Int) async throws {
+        let f = MixFixture()
+        var episode = f.episode
+        episode.mix = .init(speakers: [.init(speaker: f.speaker, pan: -1)])
+        let recipe = try f.recipe(episode, frames: 0..<1024, policy: .init(prerollFrames: 17))
+        let unit = try generated(.identity, channels: 2, latency: latency)
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]], masterUnits: [unit], livePlayback: true)
+        try await processor.beginPlaybackPass(at: 239)
+        var output: [Float] = []
+        var next: Int64 = 256
+        for (index, range) in [Int64(239)..<1024, 512..<1024, 512..<1024].enumerated() {
+            if index > 0 { try await processor.beginPlaybackPass(at: range.lowerBound) }
+            let rendered = try await processor.process(.init(frames: range,
+                channels: [recipe.routes[0].reference: range.map { Float($0 % 7) / 10 }]))
+            #expect(rendered.firstFrame == next)
+            next += Int64(rendered.frameCount)
+            output += rendered.channels[0]
+        }
+        while let rendered = try await processor.finishNext(maximumFrames: 11) {
+            #expect(rendered.firstFrame == next)
+            next += Int64(rendered.frameCount)
+            output += rendered.channels[0]
+        }
+        let expected = [Int64(256)..<1024, 512..<1024, 512..<1024].flatMap {
+            $0.map { Float($0 % 7) / 10 }
+        }
+        #expect(output == expected)
+        #expect(next == 2048)
+        #expect(processor.recipe.programFrames == 0..<1024)
+        let offline = try MixerProcessor(recipe: recipe, speakerUnits: [[]], masterUnits: [])
+        await #expect(throws: MixerFailure.staleDependencies) { try await offline.beginPlaybackPass(at: 512) }
+    }
+
+    @Test(arguments: [0, 23], [false, true])
+    func liveBypassKeepsTheSameFrameClockAndCrossfadesCompensatedDryAudio(
+        latency: Int, initiallyBypassed: Bool
+    ) async throws {
+        let f = MixFixture()
+        let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+            manufacturer: kAudioUnitManufacturer_Apple), bypassed: initiallyBypassed)
+        var episode = f.episode
+        episode.mix = .init(speakers: [.init(speaker: f.speaker, pan: -1)],
+                            master: .init(inserts: [slot]))
+        let recipe = try f.recipe(episode, frames: 0..<1536)
+        let generated = try GeneratedUnit(channels: 2, operation: .square, latency: latency, tail: 0)
+        let unit = try NativeAudioUnit(slot: slot, unit: generated, channels: 2, policy: recipe.policy,
+                                      supportsLiveBypass: true)
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]], masterUnits: [unit])
+        var controls = MixerLiveControls(recipe: recipe)
+        func input(_ start: Int64) -> MixerPCMWindow {
+            .init(frames: start..<(start + 512),
+                  channels: [recipe.routes[0].reference: .init(repeating: 0.5, count: 512)])
+        }
+        let first = try await processor.process(input(0))
+        #expect(processor.latencyFrames == latency)
+        #expect(first.firstFrame == 0 && first.frameCount == 512 - latency)
+        #expect(first.channels[0].last == (initiallyBypassed ? 0.5 : 0.25))
+        controls.bypassedSlots = initiallyBypassed ? [] : [slot.id]
+        try await processor.setLiveControls(controls)
+        let changed = try await processor.process(input(512))
+        #expect(changed.firstFrame == Int64(first.frameCount) && changed.frameCount == 512)
+        #expect(abs(changed.channels[0][0] - first.channels[0].last!) < 0.001)
+        #expect(changed.channels[0].last == (initiallyBypassed ? 0.25 : 0.5))
+        controls.bypassedSlots = initiallyBypassed ? [slot.id] : []
+        try await processor.setLiveControls(controls)
+        let restored = try await processor.process(input(1024))
+        #expect(restored.firstFrame == changed.firstFrame + 512)
+        #expect(restored.channels[0].last == first.channels[0].last)
+        #expect(generated.renderCount == 3, "The wet path stays warm while bypassed.")
+        let status = try #require(await processor.unitStatuses().first)
+        #expect(status.bypassed == initiallyBypassed && status.latencyFrames == latency)
+        #expect(processor.recipe.master.inserts == [slot], "Live bypass must not mutate frozen render inputs.")
+    }
+
     @Test func routeMetersExcludePrerollAndFollowCommonMasterLatency() async throws {
         let f = MixFixture(), track = AudioTrack(name: "Stereo meter test")
         var episode = f.episode
@@ -74,8 +149,11 @@ struct MixerProcessorTests {
         #expect(output.masterMeters[0].peak == 1 && output.masterMeters[1].peak == 0.5)
     }
 
-    @Test(arguments: [false, true], [false, true])
-    func speechGateIsSampleClockedThroughLatencySeekPrerollAndFlush(seeking: Bool, restricted: Bool) async throws {
+    @Test(arguments: [false, true], [(false, false), (true, false), (false, true), (true, true)])
+    func speechGateIsSampleClockedThroughLatencySeekPrerollAndFlush(
+        seeking: Bool, configuration: (restricted: Bool, live: Bool)
+    ) async throws {
+        let restricted = configuration.restricted
         let f = MixFixture(), track = AudioTrack(name: "Unaffected music")
         var episode = f.episode
         let occurrence = try SourceOccurrence(source: f.source.id, nominalRate: NominalRate(48_000), frameCount: 48_000)
@@ -104,32 +182,37 @@ struct MixerProcessorTests {
         let processor = try MixerProcessor(recipe: recipe,
             speakerUnits: [[generated(.decay, channels: 1, latency: 23, tail: 31)]],
             masterUnits: [generated(.decay, channels: 2, latency: 13, tail: 19)],
-            audioTrackUnits: [[generated(.identity, channels: 2, latency: 7)]])
+            audioTrackUnits: [[generated(.identity, channels: 2, latency: 7)]], livePlayback: configuration.live)
         var output = [[Float](), [Float]()]
-        var cursor = first - 37
-        while cursor < 4096 {
-            let end = min(cursor + 173, 4096), count = Int(end - cursor)
-            let value = try await processor.process(.init(frames: cursor..<end,
-                channels: [recipe.routes[0].reference: .init(repeating: 0.5, count: count)],
-                audioTracks: [track.id: [.init(repeating: 0.25, count: count), .init(repeating: -0.25, count: count)]]))
-            output[0] += value.channels[0]; output[1] += value.channels[1]
-            cursor = end
+        let passes = configuration.live ? [(first - 37)..<4096, first..<4096] : [(first - 37)..<4096]
+        for pass in passes {
+            if configuration.live { try await processor.beginPlaybackPass(at: pass.lowerBound) }
+            var cursor = pass.lowerBound
+            while cursor < pass.upperBound {
+                let end = min(cursor + 173, pass.upperBound), count = Int(end - cursor)
+                let value = try await processor.process(.init(frames: cursor..<end,
+                    channels: [recipe.routes[0].reference: .init(repeating: 0.5, count: count)],
+                    audioTracks: [track.id: [.init(repeating: 0.25, count: count), .init(repeating: -0.25, count: count)]]))
+                output[0] += value.channels[0]; output[1] += value.channels[1]
+                cursor = end
+            }
         }
         while let value = try await processor.finishNext(maximumFrames: 17) {
             output[0] += value.channels[0]; output[1] += value.channels[1]
         }
-        #expect(output[0].count == Int(4096 - first) + 50)
+        #expect(output[0].count == Int(4096 - first) * passes.count + 50)
         let production = try #require(recipe.production)
         var speaker: Float = 0, left: Float = 0, right: Float = 0
-        for frame in (first - 37)..<4096 {
+        var index = 0
+        for frame in passes.flatMap({ $0 }) {
             let input: Float = !restricted || (960..<2880).contains(frame) ? 0.5 : 0
             speaker = input + speaker * 0.5
             left = 0.25 + speaker * production.speechGain(atProgramFrame: frame) + left * 0.5
             right = -0.25 + right * 0.5
             if frame >= first {
-                let index = Int(frame - first)
                 #expect(abs(output[0][index] - left) < 0.000_001)
                 #expect(abs(output[1][index] - right) < 0.000_001, "Speaker restriction must never gate music.")
+                index += 1
             }
         }
         if restricted {

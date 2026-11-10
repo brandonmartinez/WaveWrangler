@@ -879,6 +879,27 @@ actor AlignmentRuntime {
         return clip
     }
 
+    func validateSourceAudition(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, sources requested: [SourceID],
+        timebase: AuditionTimebase
+    ) async throws {
+        guard let episode = model.episode(episodeID) else { throw AlignmentAcceptanceError.episodeNotFound(episodeID) }
+        let sources = try await resolveSources(episode.sources)
+        if timebase == .acceptedTimeline {
+            try await pipeline.activate(model: model, episode: episodeID)
+            _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
+        }
+        for source in requested {
+            try Task.checkCancellation()
+            do {
+                let admission = try await waveformSource(source, sources: sources)
+                try await reverify(admission)
+            } catch {
+                throw AuditionSourceFailure(source: source, reason: error.localizedDescription)
+            }
+        }
+    }
+
     func sourceAuditions(
         model: ShowDocumentModel, episode episodeID: EpisodeID,
         sources requested: [SourceID], outputFrames: Range<Int64>, applyingCuts: Bool = true,

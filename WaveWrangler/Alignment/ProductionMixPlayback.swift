@@ -46,8 +46,15 @@ final class ProductionPlaybackRetirements: Sendable {
     }
 }
 
+protocol PlaybackPCMWindow: Sendable {
+    var frames: Range<Int64> { get }
+}
+
+extension MixerPCMWindow: PlaybackPCMWindow {}
+typealias ProductionPCMQueue = PlaybackPCMQueue<MixerPCMWindow>
+
 /// One bounded raw-PCM producer. Prepared samples do not contain gains, effects, or faders.
-actor ProductionPCMQueue {
+actor PlaybackPCMQueue<Window: PlaybackPCMWindow> {
     enum WaitKind: Sendable, Equatable { case capacity, input, ready }
 
     private struct Waiter {
@@ -56,11 +63,16 @@ actor ProductionPCMQueue {
     }
 
     private let end: Int64
-    private let prepare: @Sendable (Range<Int64>) async throws -> MixerPCMWindow
+    private let prepare: @Sendable (Range<Int64>) async throws -> Window
     private let failed: @Sendable (any Error) -> Void
     private let diagnostics: ProductionPlaybackDiagnostics
     private var nextFrame: Int64
-    private var windows: [MixerPCMWindow] = []
+    private var windows: [Window] = []
+    private let initialWindowFrames: Int64
+    private let windowFrames: Int64
+    private let capacity: Int
+    private let readyWindows: Int
+    private let firstFrame: Int64
     private var producer: Task<Void, Never>?
     private var finished = false
     private var stopped = false
@@ -78,13 +90,21 @@ actor ProductionPCMQueue {
     #endif
 
     init(frames: Range<Int64>, diagnostics: ProductionPlaybackDiagnostics,
-         prepare: @escaping @Sendable (Range<Int64>) async throws -> MixerPCMWindow,
+         initialWindowFrames: Int64 = Int64(MixerLiveTiming.sourceWindowFrames),
+         windowFrames: Int64 = Int64(MixerLiveTiming.sourceWindowFrames),
+         capacity: Int = MixerLiveTiming.sourcePrefetchWindows, readyWindows: Int? = nil,
+         prepare: @escaping @Sendable (Range<Int64>) async throws -> Window,
          failed: @escaping @Sendable (any Error) -> Void) {
+        firstFrame = frames.lowerBound
         nextFrame = frames.lowerBound
         end = frames.upperBound
         self.prepare = prepare
         self.failed = failed
         self.diagnostics = diagnostics
+        self.initialWindowFrames = initialWindowFrames
+        self.windowFrames = windowFrames
+        self.capacity = capacity
+        self.readyWindows = readyWindows ?? capacity
     }
 
     func start() {
@@ -100,11 +120,12 @@ actor ProductionPCMQueue {
         do {
             while nextFrame < end {
                 try Task.checkCancellation()
-                if windows.count >= MixerLiveTiming.sourcePrefetchWindows {
+                if windows.count >= capacity {
                     try await wait(for: .capacity)
                     continue
                 }
-                let frames = nextFrame..<min(end, nextFrame + Int64(MixerLiveTiming.sourceWindowFrames))
+                let width = nextFrame == firstFrame ? initialWindowFrames : windowFrames
+                let frames = nextFrame..<min(end, nextFrame + width)
                 let window = try await diagnostics.measureAsync(.source) { [prepare] in try await prepare(frames) }
                 try Task.checkCancellation()
                 guard window.frames == frames else { throw MixerFailure.discontinuousPCM }
@@ -112,7 +133,7 @@ actor ProductionPCMQueue {
                 diagnostics.preparedRawWindow(queued: windows.count)
                 nextFrame = frames.upperBound
                 signal(.input)
-                if windows.count >= MixerLiveTiming.sourcePrefetchWindows { signal(.ready) }
+                if windows.count >= readyWindows { signal(.ready) }
             }
         } catch {
             // Explicit stop cancels the producer; it is not a source failure.
@@ -123,7 +144,7 @@ actor ProductionPCMQueue {
         }
     }
 
-    func take() async throws -> MixerPCMWindow? {
+    func take() async throws -> Window? {
         while true {
             try Task.checkCancellation()
             if stopped { throw CancellationError() }
@@ -144,7 +165,7 @@ actor ProductionPCMQueue {
             try Task.checkCancellation()
             if stopped { throw CancellationError() }
             if let failure { throw failure }
-            if finished || windows.count >= MixerLiveTiming.sourcePrefetchWindows { return }
+            if finished || windows.count >= readyWindows { return }
             try await wait(for: .ready)
         }
     }
@@ -152,9 +173,9 @@ actor ProductionPCMQueue {
     private func needsWait(_ kind: WaitKind) -> Bool {
         guard !stopped, !finished, failure == nil else { return false }
         switch kind {
-        case .capacity: return windows.count >= MixerLiveTiming.sourcePrefetchWindows
+        case .capacity: return windows.count >= capacity
         case .input: return windows.isEmpty
-        case .ready: return windows.count < MixerLiveTiming.sourcePrefetchWindows
+        case .ready: return windows.count < readyWindows
         }
     }
 
@@ -214,6 +235,7 @@ final class ProductionMixPlayback: Sendable {
         var controls: MixerLiveControls
         var metering = MixerConsoleMetering()
         var failure: (any Error)?
+        var cycle: Range<Int64>?
     }
 
     let processor: MixerProcessor
@@ -240,6 +262,7 @@ final class ProductionMixPlayback: Sendable {
         state.withLock { $0.metering.resetPeaks(for: bus) }
     }
     func setControls(_ controls: MixerLiveControls) { state.withLock { $0.controls = controls } }
+    func setCycleRange(_ frames: Range<Int64>?) { state.withLock { $0.cycle = frames } }
     func cancel() { canceled.store(true, ordering: .releasing) }
     func invalidate(_ error: any Error) {
         state.withLock { if $0.failure == nil { $0.failure = error } }
@@ -252,24 +275,38 @@ final class ProductionMixPlayback: Sendable {
     }
 
     @concurrent
-    func play(output: AlignmentAudioPlayback,
+    func play(output: AlignmentAudioPlayback, startFrame: Int64? = nil,
               onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
         try check()
         try await runtime.withProductionConsumer(recipe: processor.recipe, model: model) { [self] consumer in
             try check()
-            try await playPrepared(consumer: consumer, output: output, onBufferDeadline: onBufferDeadline)
+            try await playPrepared(consumer: consumer, output: output, startFrame: startFrame,
+                                   onBufferDeadline: onBufferDeadline)
         }
     }
 
-    private func playPrepared(consumer: SupplementalClipConsumer, output: AlignmentAudioPlayback,
+    private func playPrepared(consumer: SupplementalClipConsumer, output: AlignmentAudioPlayback, startFrame: Int64?,
                               onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
         let recipe = processor.recipe
+        let first = (startFrame ?? recipe.programFrames.lowerBound) - Int64(recipe.policy.prerollFrames)
         let inputFrames = (recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames))..<recipe.programFrames.upperBound
-        let queue = ProductionPCMQueue(frames: inputFrames, diagnostics: diagnostics, prepare: { [self] frames in
+        let cache = ProductionCyclePCMCache(bounds: inputFrames) { [self] frames in
             try check()
             guard output.generation == outputGeneration else { throw CancellationError() }
             return try await runtime.productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
-        }, failed: { [self] in invalidate($0) })
+        }
+        func queueEnd(at frame: Int64) -> Int64 {
+            state.withLock { state in
+                state.cycle.map { frame < $0.upperBound ? $0.upperBound : inputFrames.upperBound } ?? inputFrames.upperBound
+            }
+        }
+        func makeQueue(from frame: Int64, to end: Int64) -> ProductionPCMQueue {
+            ProductionPCMQueue(frames: frame..<end, diagnostics: diagnostics, prepare: { [self] frames in
+                try await cache.window(frames, retaining: state.withLock { $0.cycle })
+            }, failed: { [self] in invalidate($0) })
+        }
+        var queuedEnd = queueEnd(at: first)
+        var queue = makeQueue(from: first, to: queuedEnd)
         await queue.start()
         var validation: Task<Void, Never>?
         do {
@@ -290,29 +327,57 @@ final class ProductionMixPlayback: Sendable {
                     invalidate(error)
                 }
             }
-            while let input = try await diagnostics.measureAsync(.sourceWait, operation: { try await queue.take() }) {
+            try await processor.beginPlaybackPass(at: first)
+            var cursor = PlaybackCycleCursor(frame: first, end: inputFrames.upperBound)
+            var expectedInput = first
+            var virtualInput = first
+            var input: MixerPCMWindow?
+            var segments: [PlaybackProgramTimeline.Segment] = [.init(playbackFrame: first, programFrame: first)]
+            while true {
                 try check()
-                var next = input.frames.lowerBound
-                while next < input.frames.upperBound {
-                    try check()
-                    if let failure = output.failure { throw failure }
-                    let end = min(input.frames.upperBound, next + Int64(MixerLiveTiming.processingBlockFrames))
-                    let lower = Int(next - input.frames.lowerBound)
-                    let channels = input.channels.mapValues { Array($0[lower..<(lower + Int(end - next))]) }
-                    let tracks = input.audioTracks.mapValues {
-                        $0.map { Array($0[lower..<(lower + Int(end - next))]) }
+                let cycle = state.withLock { $0.cycle }
+                cursor.prepare(cycle: cycle)
+                guard cursor.frame < cursor.end else { break }
+                if cursor.frame != expectedInput || cursor.frame == queuedEnd {
+                    await queue.stop()
+                    queuedEnd = queueEnd(at: cursor.frame)
+                    queue = makeQueue(from: cursor.frame, to: queuedEnd)
+                    input = nil
+                    await queue.start()
+                    if cursor.frame != expectedInput {
+                        try await processor.beginPlaybackPass(at: cursor.frame)
+                        segments.append(.init(playbackFrame: virtualInput, programFrame: cursor.frame))
                     }
-                    try await synchronizeControls()
-                    let block = MixerPCMWindow(frames: next..<end, channels: channels, audioTracks: tracks)
-                    let rendered = try await diagnostics.measureAsync(.dsp) { [processor] in try await processor.process(block) }
-                    state.withLock { $0.metering.append(rendered) }
-                    let final = end == recipe.programFrames.upperBound && processor.latencyFrames == 0 && processor.tailFrames == 0
-                    if rendered.frameCount > 0 {
-                        try enqueue(rendered, final: final, output: output, onBufferDeadline: onBufferDeadline)
-                    }
-                    next = end
-                    try await pace(output)
                 }
+                if input == nil || cursor.frame == input?.frames.upperBound {
+                    let activeQueue = queue
+                    input = try await diagnostics.measureAsync(.sourceWait) { try await activeQueue.take() }
+                }
+                guard let input, input.frames.contains(cursor.frame),
+                      let frames = cursor.next(maximumFrames: min(Int64(MixerLiveTiming.processingBlockFrames),
+                          input.frames.upperBound - cursor.frame), cycle: cycle) else {
+                    throw MixerFailure.discontinuousPCM
+                }
+                if let failure = output.failure { throw failure }
+                let lower = Int(frames.lowerBound - input.frames.lowerBound)
+                let channels = input.channels.mapValues { Array($0[lower..<(lower + frames.count)]) }
+                let tracks = input.audioTracks.mapValues {
+                    $0.map { Array($0[lower..<(lower + frames.count)]) }
+                }
+                try await synchronizeControls()
+                let block = MixerPCMWindow(frames: frames, channels: channels, audioTracks: tracks)
+                let rendered = try await diagnostics.measureAsync(.dsp) { [processor] in try await processor.process(block) }
+                state.withLock { $0.metering.append(rendered) }
+                let final = frames.upperBound == recipe.programFrames.upperBound
+                    && cycle?.upperBound != frames.upperBound && processor.latencyFrames == 0 && processor.tailFrames == 0
+                if rendered.frameCount > 0 {
+                    try enqueue(rendered, final: final, output: output, programSegments: segments,
+                                onBufferDeadline: onBufferDeadline)
+                    segments.removeAll(keepingCapacity: true)
+                }
+                virtualInput += Int64(frames.count)
+                expectedInput = frames.upperBound
+                try await pace(output)
             }
             while true {
                 try check()
@@ -322,12 +387,13 @@ final class ProductionMixPlayback: Sendable {
                 }) else { break }
                 state.withLock { $0.metering.append(rendered) }
                 let final = rendered.firstFrame + Int64(rendered.frameCount)
-                    == recipe.programFrames.upperBound + Int64(processor.tailFrames)
+                    == virtualInput + Int64(processor.tailFrames)
                 if rendered.frameCount > 0 {
                     try enqueue(rendered, final: final, output: output, onBufferDeadline: onBufferDeadline)
                 }
                 try await pace(output)
             }
+            try output.finishProduction(generation: outputGeneration)
             while !output.isFinished {
                 try check()
                 if let failure = output.failure { throw failure }
@@ -359,10 +425,11 @@ final class ProductionMixPlayback: Sendable {
     }
 
     private func enqueue(_ rendered: MixerPCMOutput, final: Bool, output: AlignmentAudioPlayback,
+                         programSegments: [PlaybackProgramTimeline.Segment] = [],
                          onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
         try diagnostics.measure(.enqueue) {
             try output.enqueueProduction(rendered, final: final, generation: outputGeneration,
-                diagnostics: diagnostics, onBufferDeadline: onBufferDeadline)
+                diagnostics: diagnostics, programSegments: programSegments, onBufferDeadline: onBufferDeadline)
         }
     }
 

@@ -146,11 +146,12 @@ final class EpisodeMixerPresentation {
             return
         }
         if model.listeningMode == .sourceAudition,
-           prior.episode(id)?.mix?.inputGains != episode.mix?.inputGains {
+           prior.episode(id)?.mix?.inputGains != episode.mix?.inputGains,
+           !model.hasStreamingSourcePlayback {
             model.stopAudition()
         }
         let changedTopology = prior.episode(id).map {
-            !EpisodeProcessingInputs($0).hasSameMixerTopology(as: EpisodeProcessingInputs(episode))
+            !EpisodeProcessingInputs($0).hasSameMixerTopology(as: EpisodeProcessingInputs(episode), allowingLiveBypass: true)
         } ?? true
         if changedTopology {
             model.stopAudition()
@@ -213,14 +214,18 @@ final class EpisodeMixerPresentation {
         }
     }
 
-    func changeInserts(_ bus: MixerBus, action: String, _ edit: @escaping ([AudioUnitSlot]) throws -> [AudioUnitSlot]) {
+    func changeInserts(_ bus: MixerBus, action: String, replacingInstances: Bool = true,
+                       _ edit: @escaping ([AudioUnitSlot]) throws -> [AudioUnitSlot]) {
         guard canEditMix, let state, let id = state.selectedEpisodeID, let document = state.store.document else { return }
         Task {
             do {
-                try await document.mixerTransactions.barrier(replacingInstances: true, episode: id) {
+                try await document.mixerTransactions.barrier(replacingInstances: replacingInstances, episode: id) {
                     guard state.canEdit, !self.isClosed else { throw MixerFailure.staleDependencies }
                     guard state.selectedEpisodeID == id else { throw MixerFailure.staleDependencies }
                     let edited = try edit(self.inserts(bus))
+                    guard replacingInstances || MixerInsertRack.hasSameProcessingState(edited, self.inserts(bus)) else {
+                        throw MixerFailure.invalidRecipe("live insert edits may only change bypass")
+                    }
                     let applied = state.store.applyMixerEdit(action) { model throws(DomainError) in
                         let mix = model.episode(id)?.mix ?? EpisodeMixState()
                         switch bus {

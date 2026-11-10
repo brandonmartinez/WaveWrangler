@@ -31,14 +31,42 @@ struct MixerInsertRackTests {
         #expect(try JSONDecoder().decode([AudioUnitSlot].self, from: JSONEncoder().encode(replaced)) == replaced)
     }
 
-    @Test func movesLeaveGapsAndSwapOccupiedRows() throws {
+    @Test func movesLeaveGapsAndReorderOccupiedRows() throws {
         let a = effect(), b = effect()
         let moved = try MixerInsertRack.moving(a.id, to: 3, in: [a, b])
         #expect(moved.map(\.id) == [b.id, a.id])
         #expect(moved.map(\.rackPosition) == [1, 3])
-        let swapped = try MixerInsertRack.moving(a.id, to: 1, in: moved)
-        #expect(swapped.map(\.id) == [a.id, b.id])
-        #expect(swapped.map(\.rackPosition) == [1, 3])
+        let reordered = try MixerInsertRack.moving(a.id, to: 1, in: moved)
+        #expect(reordered.map(\.id) == [a.id, b.id])
+        #expect(reordered.map(\.rackPosition) == [1, 3])
+    }
+
+    @Test func occupiedMovesShiftAllInterveningEffectsAndPreserveSparseRows() throws {
+        let a = effect(), b = effect(), c = effect(), d = effect()
+        let slots = try MixerInsertRack.adding(d, at: 63, to: [a, b, c])
+        let earlier = try MixerInsertRack.moving(d.id, to: 0, in: slots)
+        #expect(earlier.map(\.id) == [d.id, a.id, b.id, c.id])
+        #expect(earlier.map(\.rackPosition) == [0, 1, 2, 63])
+        #expect(MixerInsertRack.isValid(earlier))
+        let later = try MixerInsertRack.moving(d.id, to: 63, in: earlier)
+        #expect(later == slots)
+        #expect(try MixerInsertRack.moving(b.id, to: 1, in: slots) == slots)
+        let full = (0..<64).map { _ in effect() }
+        let fullMove = try MixerInsertRack.moving(full[63].id, to: 0, in: full)
+        #expect(fullMove.map(\.id) == [full[63].id] + full.prefix(63).map(\.id))
+        #expect(MixerInsertRack.isValid(fullMove))
+    }
+
+    @Test func liveBypassComparisonStillRejectsStateIdentityAndOrderChanges() throws {
+        let a = effect(), b = effect()
+        var bypassed = a
+        bypassed.bypassed = true
+        #expect(MixerInsertRack.hasSameProcessingState([a, b], [bypassed, b]))
+        #expect(!MixerInsertRack.hasSameProcessingState([a, b], [b, a]))
+        #expect(!MixerInsertRack.hasSameProcessingState([a], [b]))
+        bypassed.documentState = try PropertyListSerialization.data(fromPropertyList: ["gain": 1],
+            format: .binary, options: 0)
+        #expect(!MixerInsertRack.hasSameProcessingState([a], [bypassed]))
     }
 
     @Test func invalidPositionsCollisionsAndStaleEditsThrow() throws {

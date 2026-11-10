@@ -2,6 +2,18 @@ import Foundation
 
 /// Occupied rows stay in processing order; empty console rows never instantiate an Audio Unit.
 public enum MixerInsertRack {
+    public static func hasSameProcessingState(_ lhs: [AudioUnitSlot], _ rhs: [AudioUnitSlot]) -> Bool {
+        lhs.map { slot in
+            var value = slot
+            value.bypassed = false
+            return value
+        } == rhs.map { slot in
+            var value = slot
+            value.bypassed = false
+            return value
+        }
+    }
+
     public enum Failure: LocalizedError {
         case invalidPosition, occupiedPosition, missingSlot, invalidRack
 
@@ -71,16 +83,19 @@ public enum MixerInsertRack {
         return result
     }
 
-    /// Moving onto an occupied row swaps the effects; moving onto a blank leaves the source row blank.
+    /// Occupied destinations shift the intervening effects; blank destinations leave the source row blank.
     public static func moving(_ id: AudioUnitSlotID, to row: Int, in slots: [AudioUnitSlot]) throws -> [AudioUnitSlot] {
         guard (0..<EpisodeMixState.maximumInsertsPerBus).contains(row) else { throw Failure.invalidPosition }
         var result = try positioned(slots)
         guard let source = result.firstIndex(where: { $0.id == id }) else { throw Failure.missingSlot }
-        let sourceRow = result[source].rackPosition
-        if let target = result.firstIndex(where: { $0.rackPosition == row }) {
-            result[target].rackPosition = sourceRow
+        if let target = result.firstIndex(where: { $0.rackPosition == row }), source != target {
+            let rows = result.map(\.rackPosition)
+            let moved = result.remove(at: source)
+            result.insert(moved, at: target)
+            for index in result.indices { result[index].rackPosition = rows[index] }
+        } else {
+            result[source].rackPosition = row
         }
-        result[source].rackPosition = row
         result.sort { $0.rackPosition! < $1.rackPosition! }
         return result
     }

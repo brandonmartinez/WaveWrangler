@@ -4,18 +4,17 @@ import WWAlignPipeline
 import WWCore
 import WWMix
 
-/// Shared-cache diagnostic listening. Decoder work, refill, gains, and source warmup never await UI.
+/// Cached diagnostic listening with independent raw preparation and bounded device scheduling.
 final class RegularAudioPlayback: Sendable {
-    private struct Warm: Sendable {
-        let source: SourceID
-        let frames: Range<Int64>
-    }
+    private static let schedulingBlockFrames: Int64 = 2048
 
     private struct State {
         var enabled: Set<SourceID>
+        var inputGains: [RecordingInputGain]
         var unavailable: [SourceID: String] = [:]
-        var warm: Warm?
-        var warming: SourceID?
+        var preparedFirstWindow = false
+        var prepared: Set<SourceID> = []
+        var cycle: Range<Int64>?
         var failure: (any Error)?
     }
 
@@ -55,19 +54,23 @@ final class RegularAudioPlayback: Sendable {
         self.revealingCut = revealingCut
         self.timebase = timebase
         self.presentation = presentation
-        state = Mutex(State(enabled: Set(sources)))
+        state = Mutex(State(enabled: Set(sources), inputGains: episode.mix?.inputGains ?? []))
     }
 
     var unavailable: [SourceID: String] { state.withLock { $0.unavailable } }
     func setEnabled(_ sources: [SourceID]) { state.withLock { $0.enabled = Set(sources) } }
+    func setCycle(_ frames: Range<Int64>?) { state.withLock { $0.cycle = frames } }
+    func invalidate(_ error: any Error) {
+        state.withLock { $0.failure = error }
+        output.stop(ifCurrent: outputGeneration, preservingClock: true)
+    }
     func cancel() { canceled.store(true, ordering: .releasing) }
 
     func documentDidChange(_ updated: ShowDocumentModel) {
         guard !canceled.load(ordering: .acquiring) else { return }
         guard let current = updated.episode(episode),
               EpisodeMediaInputs(current) == media,
-              current.activeManualCuts == model.episode(episode)?.activeManualCuts,
-              current.mix?.inputGains == model.episode(episode)?.mix?.inputGains else {
+              current.activeManualCuts == model.episode(episode)?.activeManualCuts else {
             state.withLock { $0.failure = MixerFailure.staleDependencies }
             output.stop(ifCurrent: outputGeneration, preservingClock: true)
             return
@@ -75,6 +78,13 @@ final class RegularAudioPlayback: Sendable {
         if presentation != nil,
            current.audioArrangement?.insertionRegions != model.episode(episode)?.audioArrangement?.insertionRegions {
             state.withLock { $0.failure = MixerFailure.staleDependencies }
+            output.stop(ifCurrent: outputGeneration, preservingClock: true)
+            return
+        }
+        state.withLock { $0.inputGains = current.mix?.inputGains ?? [] }
+        do { try applyGains() }
+        catch {
+            state.withLock { $0.failure = error }
             output.stop(ifCurrent: outputGeneration, preservingClock: true)
         }
     }
@@ -90,16 +100,19 @@ final class RegularAudioPlayback: Sendable {
     private func applyGains() throws {
         let enabled = state.withLock { $0.enabled.subtracting($0.unavailable.keys) }
         let ready = output.preparedSources.subtracting(output.pendingSources)
+        try output.setRecordingInputGains(state.withLock { $0.inputGains }, generation: outputGeneration)
         try output.setGains(AlignmentTransportSelection.gains(prepared: ready, enabled: Array(enabled)),
             generation: outputGeneration)
     }
 
     @concurrent
     func play(schedule initial: AlignedAuditionSchedule,
+              bounds: Range<Int64>? = nil, repeatWhile: (@MainActor @Sendable () -> Bool)? = nil,
               onSourcesJoined: @escaping @MainActor @Sendable () -> Void,
               onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
         do {
-            try await run(schedule: initial, onSourcesJoined: onSourcesJoined, onBufferDeadline: onBufferDeadline)
+            try await run(schedule: initial, bounds: bounds ?? initial.firstFrame..<initial.endFrame,
+                repeatWhile: repeatWhile, onSourcesJoined: onSourcesJoined, onBufferDeadline: onBufferDeadline)
         } catch {
             output.stop(ifCurrent: outputGeneration, preservingClock: true)
             throw error
@@ -108,100 +121,150 @@ final class RegularAudioPlayback: Sendable {
 
     @concurrent
     private func run(schedule initial: AlignedAuditionSchedule,
+                     bounds: Range<Int64>, repeatWhile: (@MainActor @Sendable () -> Bool)?,
                      onSourcesJoined: @escaping @MainActor @Sendable () -> Void,
                      onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
-        var schedule = initial
-        var prepared = initialSources
-        var warmed: Set<SourceID> = []
-        var warmingTask: Task<Void, Never>?
-        defer { warmingTask?.cancel() }
-        var first = true
-        while let frames = schedule.next() {
+        var startup = initial
+        guard let firstWindow = startup.next(), bounds.contains(initial.firstFrame),
+              bounds.upperBound == initial.endFrame else { throw WaveformWindowError.invalidWindow }
+        let width = Int64(firstWindow.count)
+        let cache = SourceCyclePCMCache(bounds: bounds, width: width) { [self] sources, frames in
             try check()
-            var joining: SourceID?
-            if let warm = state.withLock({ $0.warm }) {
-                warmed.insert(warm.source)
-                let enabled = state.withLock { $0.enabled.contains(warm.source) }
-                if enabled, warm.frames.lowerBound <= frames.lowerBound, warm.frames.upperBound >= frames.upperBound {
-                    joining = warm.source
-                    state.withLock { $0.warm = nil }
-                    warmingTask = nil
-                } else if !enabled || warm.frames.upperBound < frames.upperBound {
-                    state.withLock { $0.warm = nil }
-                    warmingTask = nil
-                }
-            }
-            if state.withLock({ $0.warming == nil && $0.warm == nil }) { warmingTask = nil }
-            var requested = prepared + (joining.map { [$0] } ?? [])
-            let clips: [SourceID: AlignmentAudioClip]
-            while true {
-                do {
-                    clips = try await runtime.sourceAuditions(model: model, episode: episode,
-                        sources: requested, outputFrames: frames, applyingCuts: applyingCuts, revealingCut: revealingCut,
-                        timebase: timebase, presentation: presentation)
-                    prepared = requested
-                    break
-                } catch let error as AlignmentRuntime.AuditionSourceFailure {
-                    let enabled = state.withLock { $0.enabled.contains(error.source) }
-                    guard requested.contains(error.source), error.source == joining || !enabled else { throw error }
-                    state.withLock { $0.unavailable[error.source] = error.reason }
-                    try output.excludeSource(error.source, generation: outputGeneration)
-                    requested.removeAll { $0 == error.source }
-                    guard !requested.isEmpty else { throw error }
-                }
-            }
-            try check()
-            let meterSpeakers = meterReferences.mapValues { references in
-                Set(references.compactMap { reference -> SourceID? in
-                    guard let clip = clips[reference.sourceID], let channel = clip.sourceChannel,
-                          reference.resolvedChannel(channelCount: clip.sourceChannelCount) == channel else { return nil }
-                    return reference.sourceID
-                })
-            }
-            try output.enqueue(clips, startSeconds: Double(frames.lowerBound) / 48_000, first: first,
-                availableSources: Set(availableSources), final: frames.upperBound == schedule.endFrame,
-                generation: outputGeneration, meterSpeakers: meterSpeakers,
-                onSourcesJoined: onSourcesJoined, onBufferDeadline: onBufferDeadline)
-            first = false
-            try applyGains()
-            if warmingTask == nil, state.withLock({ $0.warm == nil }), schedule.nextFrame < schedule.endFrame,
-               output.bufferedSeconds >= schedule.maximumBufferedSeconds / 2 {
-                let enabled = state.withLock { $0.enabled }
-                let unavailable = self.unavailable
-                let candidates = availableSources.filter {
-                    !prepared.contains($0) && unavailable[$0] == nil && (!warmed.contains($0) || enabled.contains($0))
-                }
-                let start = schedule.nextFrame + AlignedAuditionSchedule.followingFrames
-                if let source = candidates.first(where: { enabled.contains($0) }) ?? candidates.first,
-                   start < schedule.endFrame {
-                    let range = start..<min(schedule.endFrame, start + AlignedAuditionSchedule.initialFrames)
-                    state.withLock { $0.warming = source }
-                    warmingTask = Task { [self] in
+            return try await runtime.sourceAuditions(model: model, episode: episode,
+                sources: sources, outputFrames: frames, applyingCuts: applyingCuts, revealingCut: revealingCut,
+                applyingInputGain: false, timebase: timebase, presentation: presentation)
+        }
+        func queueEnd(at frame: Int64) -> Int64 {
+            state.withLock { $0.cycle.flatMap { frame < $0.upperBound ? $0.upperBound : nil } ?? bounds.upperBound }
+        }
+        func makeQueue(from frame: Int64, to end: Int64) -> PlaybackPCMQueue<SourcePCMWindow> {
+            PlaybackPCMQueue(frames: frame..<end, diagnostics: ProductionPlaybackDiagnostics(),
+                initialWindowFrames: width, windowFrames: AlignedAuditionSchedule.followingFrames,
+                capacity: Int(ceil(initial.maximumBufferedSeconds / 0.5)), readyWindows: 1,
+                prepare: { [self] frames in
+                    var requested = state.withLock { state in
+                        let sources = state.preparedFirstWindow || state.cycle != nil ? availableSources : initialSources
+                        return sources.filter { state.unavailable[$0] == nil }
+                    }
+                    while true {
                         do {
-                            _ = try await runtime.sourceAuditions(model: model, episode: episode,
-                                sources: [source], outputFrames: range, applyingCuts: applyingCuts, revealingCut: revealingCut,
-                                timebase: timebase, presentation: presentation)
-                            try Task.checkCancellation()
-                            state.withLock { $0.warm = Warm(source: source, frames: range); $0.warming = nil }
-                        } catch {
+                            let window = try await cache.window(frames, sources: requested,
+                                retaining: state.withLock { $0.cycle })
                             state.withLock {
-                                $0.warming = nil
-                                if !(error is CancellationError) { $0.unavailable[source] = error.localizedDescription }
+                                $0.preparedFirstWindow = true
+                                $0.prepared.formUnion(requested)
                             }
+                            return window
+                        } catch let error as AlignmentRuntime.AuditionSourceFailure {
+                            let required = state.withLock { $0.enabled.contains(error.source) && $0.prepared.contains(error.source) }
+                            guard requested.contains(error.source),
+                                  !required && (!initialSources.contains(error.source)
+                                    || !state.withLock({ $0.enabled.contains(error.source) })) else { throw error }
+                            state.withLock { $0.unavailable[error.source] = error.reason }
+                            requested.removeAll { $0 == error.source }
+                            guard !requested.isEmpty else { throw error }
                         }
                     }
+                }, failed: { [self] error in state.withLock { $0.failure = error } })
+        }
+        var queuedEnd = queueEnd(at: initial.firstFrame)
+        var queue = makeQueue(from: initial.firstFrame, to: queuedEnd)
+        await queue.start()
+        var validation: Task<Void, Never>?
+        do {
+            try await queue.waitUntilReady()
+            validation = Task { [self] in
+                do {
+                    while true {
+                        try await Task.sleep(for: .milliseconds(250))
+                        try check()
+                        let requested = state.withLock { Array($0.prepared.subtracting($0.unavailable.keys)) }
+                        do {
+                            try await runtime.validateSourceAudition(model: model, episode: episode,
+                                sources: requested, timebase: timebase)
+                        } catch let error as AlignmentRuntime.AuditionSourceFailure {
+                            guard !state.withLock({ $0.enabled.contains(error.source) }) else { throw error }
+                            state.withLock { $0.unavailable[error.source] = error.reason }
+                            try output.excludeSource(error.source, generation: outputGeneration)
+                        }
+                    }
+                } catch is CancellationError {
+                } catch {
+                    state.withLock { $0.failure = error }
+                    output.stop(ifCurrent: outputGeneration, preservingClock: true)
                 }
             }
-            while output.bufferedSeconds >= schedule.maximumBufferedSeconds {
+            var cursor = PlaybackCycleCursor(frame: initial.firstFrame, end: initial.endFrame)
+            var expected = cursor.frame
+            var deviceFrame = cursor.frame
+            var input: SourcePCMWindow?
+            var first = true
+            while true {
+                try check()
+                let cycle = state.withLock { $0.cycle }
+                let prior = cursor.frame
+                cursor.prepare(cycle: cycle)
+                if cursor.frame < prior, let repeatWhile, !(await repeatWhile()) { break }
+                guard cursor.frame < cursor.end else { break }
+                if cursor.frame != expected || cursor.frame == queuedEnd {
+                    await queue.stop()
+                    queuedEnd = queueEnd(at: cursor.frame)
+                    queue = makeQueue(from: cursor.frame, to: queuedEnd)
+                    input = nil
+                    await queue.start()
+                }
+                if input == nil || cursor.frame == input?.frames.upperBound { input = try await queue.take() }
+                guard let input, input.frames.contains(cursor.frame),
+                      let frames = cursor.next(maximumFrames: min(Self.schedulingBlockFrames,
+                          input.frames.upperBound - cursor.frame), cycle: cycle) else {
+                    throw AlignmentTransportFailure.discontinuousWindow
+                }
+                let unavailable = self.unavailable
+                for source in output.preparedSources where unavailable[source] != nil {
+                    try output.excludeSource(source, generation: outputGeneration)
+                }
+                let slice = Int(frames.lowerBound - input.frames.lowerBound)..<Int(frames.upperBound - input.frames.lowerBound)
+                let clips = input.clips.filter { unavailable[$0.key] == nil }.mapValues { original in
+                    var clip = original
+                    clip.samples = Array(original.samples[slice])
+                    return clip
+                }
+                let meterSpeakers = meterReferences.mapValues { references in
+                    Set(references.compactMap { reference -> SourceID? in
+                        guard let clip = clips[reference.sourceID], let channel = clip.sourceChannel,
+                              reference.resolvedChannel(channelCount: clip.sourceChannelCount) == channel else { return nil }
+                        return reference.sourceID
+                    })
+                }
+                try check()
+                try output.enqueue(clips, startSeconds: Double(deviceFrame) / 48_000, first: first,
+                    availableSources: Set(availableSources), final: false, generation: outputGeneration,
+                    meterSpeakers: meterSpeakers, programFrame: frames.lowerBound,
+                    onSourcesJoined: onSourcesJoined, onBufferDeadline: onBufferDeadline)
+                first = false
+                try applyGains()
+                deviceFrame += Int64(frames.count)
+                expected = frames.upperBound
+                while output.bufferedSeconds >= Double(MixerLiveTiming.maximumScheduledAheadFrames) / 48_000 {
+                    try check()
+                    try applyGains()
+                    try await Task.sleep(for: .milliseconds(2))
+                }
+            }
+            try output.finishProduction(generation: outputGeneration)
+            while !output.isFinished {
                 try check()
                 try applyGains()
-                try await Task.sleep(for: .milliseconds(20))
+                try await Task.sleep(for: .milliseconds(5))
             }
-        }
-        while !output.isFinished {
-            try check()
-            try applyGains()
-            try await Task.sleep(for: .milliseconds(5))
+            validation?.cancel()
+            await validation?.value
+            await queue.stop()
+        } catch {
+            validation?.cancel()
+            await validation?.value
+            await queue.stop()
+            throw error
         }
     }
 }

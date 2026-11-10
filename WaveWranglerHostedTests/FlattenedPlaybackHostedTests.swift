@@ -253,12 +253,14 @@ struct FlattenedPlaybackHostedTests {
         })
         f.model.mixer.masterMuted = true
         try await wait("Muted controls must reach the running DSP without replacing cached source PCM") {
-            f.model.mixer.meters?.masterMeters.allSatisfy { $0.peak == 0 } == true || f.model.lastError != nil
+            f.model.mixer.consoleMeters.levels[.master]?.allSatisfy { $0.rmsDB == -.infinity } == true
+                || f.model.lastError != nil
         }
         try #require(f.model.lastError == nil)
         f.model.mixer.masterMuted = false
         try await wait("Unmute must restore the running DSP") {
-            f.model.mixer.meters?.masterMeters.contains { $0.peak > 0 } == true || f.model.lastError != nil
+            f.model.mixer.consoleMeters.levels[.master]?.contains { $0.rmsDB.isFinite } == true
+                || f.model.lastError != nil
         }
         #expect(f.model.lastError == nil)
         #expect(f.model.mixer.instanceRevision == revision)
