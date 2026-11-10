@@ -35,7 +35,8 @@ struct WorkspaceInspectorToggles: View {
             }
             .buttonStyle(.plain)
             .accessibilityLabel("Mixer")
-            .accessibilityValue(state.bottomPanePresented && state.bottomPaneContent == .mixer ? "Shown" : "Hidden")
+            .accessibilityValue(state.mixerPresentation.isDetached ? "In separate window"
+                : state.bottomPanePresented && state.bottomPaneContent == .mixer ? "Shown" : "Hidden")
             .accessibilityIdentifier("ww.mixer.toggle")
             .help("Show the production mixer in the bottom pane or focus its separate window")
             ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { activity in

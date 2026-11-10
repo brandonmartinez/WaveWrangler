@@ -12,12 +12,12 @@ struct ShowSchema10MigrationTests {
     @Test(arguments: 0..<10)
     func allOlderSchemasRequireConsentAndPreserveExactBackups(_ index: Int) throws {
         let bytes = Self.goldens[index]
-        #expect(ShowSchemaMigration.migratableSchemas == Set(1...10))
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: index + 1, minimum: 11)) {
+        #expect(ShowSchemaMigration.migratableSchemas == Set(1..<SchemaVersion.show))
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: index + 1, minimum: SchemaVersion.show)) {
             try coder.decode(bytes)
         }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(bytes)
-        #expect(upgraded.payload.schemaVersion == 11)
+        #expect(upgraded.payload.schemaVersion == SchemaVersion.show)
         #expect(upgraded.payload.episodes.allSatisfy { $0.productionRange == nil })
         let failures = index == 0
             ? ShowSchemaMigration.expectationFailures(original: bytes, migrated: upgraded.payload)
@@ -41,7 +41,7 @@ struct ShowSchema10MigrationTests {
         let bytes = try ShowSchema8MigrationTests().unchecked(old, schema: 10)
         let upgraded = try ShowSchemaMigration.decodeSchema10(bytes)
         var expected = old
-        expected.schemaVersion = 11
+        expected.schemaVersion = SchemaVersion.show
         #expect(upgraded.payload == expected)
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: bytes, migrated: expected).isEmpty)
         let rig = Rig(), key = DocumentKey.show(old.show.id), url = rig.url()

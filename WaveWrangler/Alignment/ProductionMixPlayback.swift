@@ -208,11 +208,11 @@ actor ProductionPCMQueue {
 }
 
 /// Only value snapshots cross from UI controls to the serial DSP producer. No main-actor hop is
-/// required to render, refill, or pace a block; UI meters read the latest snapshot independently.
+/// required to render, refill, or pace a block; UI meters consume summaries on the playback clock.
 final class ProductionMixPlayback: Sendable {
     private struct State {
         var controls: MixerLiveControls
-        var output: MixerPCMOutput?
+        var metering = MixerConsoleMetering()
         var failure: (any Error)?
     }
 
@@ -233,7 +233,12 @@ final class ProductionMixPlayback: Sendable {
         state = Mutex(State(controls: controls))
     }
 
-    var latestOutput: MixerPCMOutput? { state.withLock { $0.output } }
+    func meterSnapshot(through frame: Int64) -> MixerConsoleSnapshot {
+        state.withLock { $0.metering.read(through: frame) }
+    }
+    func resetMeterPeaks(for bus: MixerBusAddress) {
+        state.withLock { $0.metering.resetPeaks(for: bus) }
+    }
     func setControls(_ controls: MixerLiveControls) { state.withLock { $0.controls = controls } }
     func cancel() { canceled.store(true, ordering: .releasing) }
     func invalidate(_ error: any Error) {
@@ -300,7 +305,7 @@ final class ProductionMixPlayback: Sendable {
                     try await synchronizeControls()
                     let block = MixerPCMWindow(frames: next..<end, channels: channels, audioTracks: tracks)
                     let rendered = try await diagnostics.measureAsync(.dsp) { [processor] in try await processor.process(block) }
-                    state.withLock { $0.output = rendered }
+                    state.withLock { $0.metering.append(rendered) }
                     let final = end == recipe.programFrames.upperBound && processor.latencyFrames == 0 && processor.tailFrames == 0
                     if rendered.frameCount > 0 {
                         try enqueue(rendered, final: final, output: output, onBufferDeadline: onBufferDeadline)
@@ -315,7 +320,7 @@ final class ProductionMixPlayback: Sendable {
                 guard let rendered = try await diagnostics.measureAsync(.dsp, operation: { [processor] in
                     try await processor.finishNext(maximumFrames: MixerLiveTiming.processingBlockFrames)
                 }) else { break }
-                state.withLock { $0.output = rendered }
+                state.withLock { $0.metering.append(rendered) }
                 let final = rendered.firstFrame + Int64(rendered.frameCount)
                     == recipe.programFrames.upperBound + Int64(processor.tailFrames)
                 if rendered.frameCount > 0 {

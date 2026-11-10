@@ -146,11 +146,12 @@ struct ShowSchema8MigrationTests {
     }
 
     @Test func newerSchemaIsRefusedBeforeDecodingFutureOrCorruptState() {
-        let future = Data(#"{"format":"com.brandonmartinez.wavewrangler.show","schemaVersion":12,"payload":"future"}"#.utf8)
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 12, supported: SchemaVersion.show)) {
+        let version = SchemaVersion.show + 1
+        let future = Data("{\"format\":\"com.brandonmartinez.wavewrangler.show\",\"schemaVersion\":\(version),\"payload\":\"future\"}".utf8)
+        #expect(throws: PersistenceError.unknownNewerSchema(found: version, supported: SchemaVersion.show)) {
             try coder.decode(future)
         }
-        #expect(throws: PersistenceError.unknownNewerSchema(found: 12, supported: SchemaVersion.show)) {
+        #expect(throws: PersistenceError.unknownNewerSchema(found: version, supported: SchemaVersion.show)) {
             try ShowSchemaMigration.decodeUpgradingOlder(future)
         }
     }

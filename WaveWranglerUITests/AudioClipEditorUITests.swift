@@ -131,7 +131,7 @@ final class AudioClipEditorUITests: XCTestCase {
         XCTAssertTrue(controls.exists)
         XCTAssertTrue(app.descendants(matching: .any)["ww.controlBar.listeningMode"].isHittable)
         XCTAssertTrue(app.buttons["alignment.waveforms.transport.play"].isEnabled)
-        app.buttons["ww.mixer.detach"].click()
+        app.buttons["ww.bottomPane.detachMixer"].click()
         let mixer = app.windows["ww.mixer.window"]
         XCTAssertTrue(mixer.waitForExistence(timeout: 5))
         let mixerScreenshot = XCTAttachment(screenshot: mixer.screenshot())

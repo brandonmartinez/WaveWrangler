@@ -1891,7 +1891,7 @@ final class EpisodeAlignmentModel {
                         if let clock = audioPlayback.clock, audioPlayback.failure == nil {
                             isAuditioning = true
                             isPreparingAudition = false
-                            mixer.publishPlaybackMeters()
+                            mixer.publishPlaybackMeters(at: clock.playhead())
                             auditionLabel = "Playing the production mix; source audition choices are unchanged."
                             productionPlayheadSeconds = clock.playhead()
                             waveformPlayheadSeconds = waveformTime(atProgramTime: clock.playhead())

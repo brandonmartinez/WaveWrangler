@@ -30,6 +30,7 @@ final class EpisodeMixerPresentation {
     private var editorRevision: UInt64?
     private var editorWasVisible = false
     private var editorIsGeneric = false
+    let insertDragScope = UUID().uuidString
 
     init(state: ShowWindowState) { self.state = state }
 
@@ -38,6 +39,12 @@ final class EpisodeMixerPresentation {
     var episode: Episode? { state?.selectedEpisode }
     var mix: EpisodeMixState { episode?.mix ?? EpisodeMixState() }
     var canEdit: Bool { state?.canEdit == true && !isClosed }
+    var insertRowCount: Int {
+        let racks = (episode?.speakerAssignments ?? []).map { mix.state(for: $0.speakerID).inserts }
+            + (episode?.audioArrangement?.tracks ?? []).map { mix.state(for: $0.id).inserts }
+            + [mix.master.inserts]
+        return MixerInsertRack.rowCount(in: racks)
+    }
     var isDetached: Bool { detachedWindow != nil }
     var error: String? {
         state?.store.document?.mixerTransactions.error ?? state?.store.lastError.map(EpisodeSetupModel.describe)
@@ -56,17 +63,19 @@ final class EpisodeMixerPresentation {
 
     func showDocked() {
         guard let state, !isClosed else { return }
-        state.select(.alignment)
-        state.bottomPaneContent = .mixer
-        state.bottomPanePresented = true
         if let window = detachedWindow?.window {
             window.deminiaturize(nil)
             window.makeKeyAndOrderFront(nil)
+            return
         }
+        state.select(.alignment)
+        state.bottomPaneContent = .mixer
+        state.bottomPanePresented = true
     }
 
     func detach() {
         guard let state, episode != nil, controller != nil, !isClosed else { return }
+        if state.bottomPaneContent == .mixer { state.bottomPanePresented = false }
         if let existing = detachedWindow {
             existing.showWindow(nil)
             existing.window?.deminiaturize(nil)
@@ -79,7 +88,7 @@ final class EpisodeMixerPresentation {
         window.originatingState = state
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.contentMinSize = NSSize(width: 520, height: 360)
-        window.setContentSize(NSSize(width: 900, height: 500))
+        window.setContentSize(NSSize(width: 900, height: 650))
         window.tabbingMode = .disallowed
         window.setAccessibilityIdentifier("ww.mixer.window")
         let owner = MixerDetachedWindowController(window: window)
@@ -186,26 +195,28 @@ final class EpisodeMixerPresentation {
         }
     }
 
-    func changeInserts(_ bus: MixerBus, action: String, _ edit: @escaping ([AudioUnitSlot]) -> [AudioUnitSlot]) {
+    func changeInserts(_ bus: MixerBus, action: String, _ edit: @escaping ([AudioUnitSlot]) throws -> [AudioUnitSlot]) {
         guard canEdit, let state, let id = state.selectedEpisodeID, let document = state.store.document else { return }
         Task {
             do {
                 try await document.mixerTransactions.barrier(replacingInstances: true, episode: id) {
                     guard state.canEdit, !self.isClosed else { throw MixerFailure.staleDependencies }
+                    guard state.selectedEpisodeID == id else { throw MixerFailure.staleDependencies }
+                    let edited = try edit(self.inserts(bus))
                     let applied = state.store.applyMixerEdit(action) { model throws(DomainError) in
                         let mix = model.episode(id)?.mix ?? EpisodeMixState()
                         switch bus {
                         case .speaker(let speaker):
                             var strip = mix.state(for: speaker)
-                            strip.inserts = edit(strip.inserts)
+                            strip.inserts = edited
                             return try model.settingSpeakerMix(strip, in: id)
                         case .audioTrack(let track):
                             var strip = mix.state(for: track)
-                            strip.inserts = edit(strip.inserts)
+                            strip.inserts = edited
                             return try model.settingAudioTrackMix(strip, in: id)
                         case .master:
                             var master = mix.master
-                            master.inserts = edit(master.inserts)
+                            master.inserts = edited
                             return try model.settingMasterMix(master, in: id)
                         }
                     }

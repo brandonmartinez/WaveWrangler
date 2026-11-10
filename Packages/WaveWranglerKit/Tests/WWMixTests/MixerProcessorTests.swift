@@ -51,6 +51,29 @@ struct MixFixture {
 
 @Suite("Shared mixer processing", .serialized)
 struct MixerProcessorTests {
+    @Test func routeMetersExcludePrerollAndFollowCommonMasterLatency() async throws {
+        let f = MixFixture(), track = AudioTrack(name: "Stereo meter test")
+        var episode = f.episode
+        episode.audioArrangement = .init(tracks: [track])
+        episode.mix = .init(speakers: [.init(speaker: f.speaker, pan: -1)])
+        let recipe = try f.recipe(episode, frames: 0..<8, policy: .init(prerollFrames: 4))
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]],
+            masterUnits: [generated(.identity, channels: 2, latency: 3)], audioTrackUnits: [[]])
+        var samples = [Float](repeating: 0, count: 12)
+        samples[3] = 100
+        samples[4] = 0.5
+        let output = try await processor.process(.init(frames: -4..<8,
+            channels: [recipe.routes[0].reference: samples],
+            audioTracks: [track.id: [samples, samples.map { -$0 }]]))
+        #expect(output.firstFrame == 0 && output.frameCount == 5)
+        let speaker = try #require(output.speakerMeters[f.speaker])
+        let stereo = try #require(output.audioTrackMeters[track.id])
+        #expect(speaker.peak == 0.5 && !speaker.clipped)
+        #expect(abs(speaker.rms - Float(0.5 / sqrt(5))) < 0.000_001)
+        #expect(stereo.count == 2 && stereo.allSatisfy { $0 == speaker })
+        #expect(output.masterMeters[0].peak == 1 && output.masterMeters[1].peak == 0.5)
+    }
+
     @Test(arguments: [false, true], [false, true])
     func speechGateIsSampleClockedThroughLatencySeekPrerollAndFlush(seeking: Bool, restricted: Bool) async throws {
         let f = MixFixture(), track = AudioTrack(name: "Unaffected music")

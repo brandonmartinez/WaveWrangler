@@ -1399,10 +1399,10 @@ UI-test launch arguments (Debug builds; synthetic data only): `-WWUITestResetPre
 `-WWUITestLibraryFixture lib100|empty`, `-WWUITestOpenShow <name>` with `-WWUITestShowEpisodes <n>`, and
 `-WWForceReduceMotion YES`.
 
-### Mixer model and persistence (schemas 9-11)
+### Mixer model and persistence (schemas 9-12)
 
 `WWCore.Episode.mix` holds optional `EpisodeMixState`; absence is neutral:
-0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-10 shows
+0 dB input/speaker/Master gain, centered pan, and no inserts. Schema 1-11 shows
 require the existing consented C5 migration with an exact-byte backup. Migration
 changes no timing, transcripts, cuts, assignments, or history. Older-schema
 payloads carrying mix state are refused, even when the state is neutral; newer
@@ -1451,6 +1451,24 @@ refused. Limits are 16 MiB per slot, 64 MiB per episode, 64 inserts per bus,
 64 levels of state nesting, and 1024 UTF-8 bytes per diagnostic string. State
 numbers must be finite. No discovery result, live unit, editor, or observer is
 serialized.
+
+Schema 12 adds optional zero-based `AudioUnitSlot.rackPosition`. Absence means
+the legacy array index, so migration preserves IDs, effect order, bypass and
+exact state bytes. Positions must be strictly increasing in processing order,
+unique within the bus, and in 0...63. Positional edits first materialize legacy
+positions. Removal leaves a gap; adding to a blank backfills that exact row.
+Moving onto an occupied row swaps effects, while moving onto a blank leaves
+the original row empty. Replacement keeps the row but creates a fresh effect
+identity/default state. `MixerInsertRack` centralizes these operations and
+rejects stale targets or collisions. Earlier schemas cannot carry positions;
+schema 11 requires consent and an exact-byte C5 backup before upgrading.
+
+Every strip, including Master and empty audio tracks, displays the furthest
+occupied row across the episode plus one blank row. With no effects this is
+one clickable blank, not a fixed-height bank of unused slots. Interior gaps
+persist across Save, reopen and Undo/Redo; unused trailing rows collapse.
+The trailing row after position 63 remains visible but disabled: the existing
+64-position/effect limit is not increased. Empty rows never become DSP nodes.
 
 #### Supplemental audio domain and source purpose (schema 10)
 
@@ -1671,6 +1689,26 @@ cache must not block Play Mix. Pending timing edits and unverified media inputs
 (including reset/Redo in another window) still block playback; the mixer displays
 that failure, and a valid retry clears the prior playback error.
 
+`MixerConsoleMetering` receives meter-only summaries from every production DSP
+block, rather than sampling the last block or retaining PCM on the UI. A
+playback-clock read admits only intervals whose end frame has been heard.
+Peak attack takes the maximum of every admitted interval; RMS integrates
+sample energy/count over a trailing 14,400-frame (300 ms) window, including a
+proportional boundary interval. It does not average block RMS amplitudes.
+The sample-peak marker decays at 20 dB/second; the numerical peak and overload
+(`peak > 1`) latch until clicked or a new playback begins. Stopped displays
+decay without changing the document. Pending summaries are capped at 128;
+if display delivery stalls, oldest intervals coalesce with peak and energy
+preserved and appear only when that whole interval has been heard. No output
+buffering, source reads, render-actor main-thread hops or media scans are added.
+The meter scale is -60...0 dBFS, with separate RMS bars and a sample-peak marker.
+Route meter samples also follow common Master insert latency, without moving
+the route's audio tap or changing the rendered audio. Discarded preroll and
+latency-fill samples never enter audible-output meters. Display animation
+pauses when empty or after the stopped meter decay completes.
+These are unweighted digital sample meters, not A-weighting, LUFS, true-peak,
+or an acoustic/device-output measurement.
+
 `SupplementalClipScheduler` is the separate asynchronous non-realtime adapter,
 not part of `MixerProcessor`'s effect graph. One `NativeSourcePreparation` actor
 owns an exclusively allocated runtime cache root. Repeated/overlapping clip IDs
@@ -1890,6 +1928,40 @@ gateway, mutation, hook, or thread token. Its regression scans the actual
 `AdaptiveAudioPCMCache` and injects forbidden probes into that same source.
 
 #### Docked/detached mixer and document barriers
+
+The mixer is a bank of adjacent fixed-width 144-point console strips, with
+Master pinned to the right of horizontal scrolling and one shared vertical
+scroll for aligned insert rows and controls. A full-width name block, existing
+speaker appearance (including episode overrides) or track icon, and temporary
+Solo/Mute controls identify each strip. Source/channel details and actionable
+Primary warnings are available from the identity button, not repeated prose
+in the strip. Only speakers expose recording input gain and mono pan; audio
+tracks expose stereo balance. Master reserves alignment space without
+inventing input/pan/solo controls.
+
+The main toolbar remains the only mixer transport. Docked content has no
+duplicate title, Play/Stop or Pop Out row; the pane's segmented picker hides
+its visible label and its toolbar owns detachment. Detaching closes the
+docked mixer pane. Clicking the main Mixer toolbar control while detached
+focuses that window without reopening a placeholder. Reattach explicitly
+restores the docked pane and its existing split height.
+
+Input gain and pan/balance are vertical-drag dials. Output uses a vertical
+piecewise-dB fader with unity at 60% travel and the existing -96...+24 dB range;
+the bottom is finite attenuation, not negative infinity. Numeric entry remains
+available. Shift-drag gives fine adjustment, arrow keys and accessibility
+adjustment step the value, and double-click resets a control to zero. A drag
+ends one Undo coalescing interval. Generic AU parameter fields and recording
+input gain outside the mixer retain their existing field/slider behavior.
+
+Insert pills expose power, settings and a replacement/actions menu on hover
+or keyboard focus; context menus provide the same actions without hover.
+Option-click toggles bypass, double-click opens settings, Return opens the
+focused pill and Space toggles bypass. Same-strip dragging is scoped to the
+originating presentation and episode; cross-strip moving/cloning is not
+implemented. Move Earlier/Later provides a keyboard-accessible alternative.
+All edits retain the existing capture/replacement barrier and error reporting;
+insert changes remain playback restart boundaries, not promised hot swaps.
 
 `ShowWindowState.mixerPresentation` owns presentation only. Both `MixerView`
 surfaces bind `state.alignmentModel.mixer`; detaching constructs no audio engine,

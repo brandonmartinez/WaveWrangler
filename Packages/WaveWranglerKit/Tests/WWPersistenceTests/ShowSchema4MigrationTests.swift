@@ -16,7 +16,7 @@ struct ShowSchema4MigrationTests {
         #expect(upgraded.revision == 7)
         #expect(upgraded.payload.show.title == "Schema 4 golden")
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: upgraded.payload).isEmpty)
-        #expect(ShowSchemaMigration.steps.map(\.fromSchema) == Array(1...10))
+        #expect(ShowSchemaMigration.steps.map(\.fromSchema) == Array(1..<SchemaVersion.show))
     }
 
     @Test func markersAndSourceBoundTextRoundTripAndCannotBeMislabeledAsSchema4() throws {
