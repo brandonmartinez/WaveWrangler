@@ -108,6 +108,32 @@ struct MixerHostedTests {
         #expect(abs(canvas.bounds.width - 740) < 0.001 && abs(canvas.bounds.height - 870) < 0.001)
     }
 
+    @Test func visibleNativeEditorFollowsWindowResizesWithoutAnExplicitLayoutRequest() async throws {
+        let editor = NSViewController()
+        editor.view = NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 500))
+        editor.preferredContentSize = editor.view.frame.size
+        let host = MixerNativeEditorHost(editor: editor)
+        let window = EpisodeAuxiliaryWindow(contentViewController: host)
+        window.styleMask = [.titled, .closable, .resizable]
+        defer { window.close() }
+        host.configure(window, available: NSSize(width: 1000, height: 700))
+        window.makeKeyAndOrderFront(nil)
+        for size in [NSSize(width: 400, height: 250), NSSize(width: 960, height: 600),
+                     NSSize(width: 640, height: 400)] {
+            window.setContentSize(size)
+            try await wait("native editor fills \(size)") {
+                let viewport = host.view.bounds
+                let actual = editor.view.convert(editor.view.bounds, to: host.view)
+                return abs(viewport.width - size.width) < 1 && abs(viewport.height - size.height) < 1
+                    && abs(actual.minX - viewport.minX) < 1 && abs(actual.minY - viewport.minY) < 1
+                    && abs(actual.maxX - viewport.maxX) < 1 && abs(actual.maxY - viewport.maxY) < 1
+            }
+        }
+        let insets = host.scrollView.contentInsets
+        #expect(insets.top == 0 && insets.bottom == 0 && insets.left == 0 && insets.right == 0)
+        #expect(host.editorSize == NSSize(width: 800, height: 500))
+    }
+
     @Test func nativeStateDictionaryOrderingDoesNotRewriteUnchangedSerializedBytes() throws {
         let state: [String: Any] = ["name": "Synthetic", "opaque": Data([1, 2, 3]), "value": 2.5]
         let xml = try PropertyListSerialization.data(fromPropertyList: state, format: .xml, options: 0)
@@ -187,6 +213,92 @@ struct MixerHostedTests {
                 if let error = $0 { continuation.resume(throwing: error) } else { continuation.resume() }
             }
         }
+    }
+
+    @Test(arguments: [Int64(48_000), -96_000])
+    func parameterEditorsWorkBeforePlaybackWhenEpisodeDoesNotIncludeZero(firstFrame: Int64) async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let originalBytes = try f.files.map { try Data(contentsOf: $0) }
+        let presentation = owner(f).state.mixerPresentation
+        let slot = try appleSlot()
+        try insert(slot, into: f)
+        try #require(f.document.store.apply("Set Episode Boundaries") { model throws(DomainError) in
+            try model.settingProductionRange(.init(start: .absolute(frame: firstFrame),
+                end: .absolute(frame: firstFrame + 48_000)), in: f.model.episodeID)
+        })
+        try await save(f.document)
+        let before = f.document.store.model
+        let hasInitialProcessor = f.model.mixer.processor != nil
+        let initiallyPlaying = f.model.canStopAudition
+        #expect(!hasInitialProcessor && !initiallyPlaying)
+        presentation.openEditor(slot, generic: true)
+        try await wait(presentation.error ?? "generic editor before playback") {
+            presentation.editorWindow != nil || presentation.error != nil
+        }
+        try #require(presentation.error == nil, "\(presentation.error ?? "")")
+        let parameter = try #require(presentation.parameters.first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 1000
+        })
+        let preparedFrames = f.model.mixer.processor?.recipe.programFrames
+        let changedModelOnOpen = f.document.store.model != before
+        let startedPlaybackOnOpen = f.model.canStopAudition
+        #expect(preparedFrames == firstFrame..<(firstFrame + 1))
+        #expect(!changedModelOnOpen && !startedPlaybackOnOpen)
+        presentation.setParameter(parameter, value: 1000)
+        try await wait { presentation.parameters.first { $0.address == parameter.address }?.value == 1000 }
+        presentation.requestCloseEditor()
+        try await wait { presentation.editorWindow == nil }
+        try await save(f.document)
+        f.model.mixer.invalidatePreparedInstance()
+        presentation.openEditor(slot)
+        try await wait(presentation.error ?? "native editor before playback") {
+            presentation.editorWindow != nil || presentation.error != nil
+        }
+        try #require(presentation.error == nil, "\(presentation.error ?? "")")
+        let restoredValue = presentation.parameters.first { $0.address == parameter.address }?.value
+        let startedPlaybackOnReopen = f.model.canStopAudition
+        #expect(restoredValue == 1000 && !startedPlaybackOnReopen)
+        presentation.requestCloseEditor()
+        try await wait { presentation.editorWindow == nil }
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originalBytes)
+    }
+
+    @Test(arguments: [-6.0, 6.0])
+    func recordingInputGainIsAppliedExactlyOnceInMixAndSpeakerListening(gainDB: Double) async throws {
+        let f = try await ready()
+        defer { f.close() }
+        let before = f.document.store.model
+        let originalBytes = try f.files.map { try Data(contentsOf: $0) }
+        let episode = try #require(before.episode(f.model.episodeID))
+        let primary = try #require(episode.speakerAssignments.first?.primary)
+        let frames: Range<Int64> = 0..<512
+        let raw = try await f.runtime.sourceAuditions(model: before, episode: episode.id,
+            sources: [primary.sourceID], outputFrames: frames, applyingInputGain: false)
+        let original = try #require(raw[primary.sourceID]?.samples)
+        try #require(original.contains { abs($0) > 0.001 })
+        try #require(f.document.store.apply("Set Recording Input Gain") { model throws(DomainError) in
+            try model.settingInputGain(gainDB, for: primary, in: episode.id)
+        })
+        try await save(f.document)
+        let gained = f.document.store.model
+        let multiplier = Float(pow(10, gainDB / 20))
+        for timebase in [AlignmentRuntime.AuditionTimebase.acceptedTimeline, .sourceTime] {
+            let clips = try await f.runtime.sourceAuditions(model: gained, episode: episode.id,
+                sources: [primary.sourceID], outputFrames: frames, applyingCuts: false, timebase: timebase)
+            let samples = try #require(clips[primary.sourceID]?.samples)
+            let error = zip(samples, original).map { abs($0 - $1 * multiplier) }.max() ?? .infinity
+            #expect(samples.count == original.count && error < 0.00001)
+        }
+        _ = try await f.model.mixer.prepare(programFrames: frames)
+        let input = try await f.model.mixer.preparePCM(frames)
+        let inputSamples = try #require(input.channels[primary])
+        #expect(inputSamples == original, "Production admission must not bake the gain a second time.")
+        let output = try await f.model.mixer.renderPrepared(input)
+        let left = try #require(output.channels.first)
+        let mixError = zip(left, original).map { abs($0 - $1 * multiplier / sqrt(2)) }.max() ?? .infinity
+        #expect(left.count == original.count && mixError < 0.00001)
+        #expect(try f.files.map { try Data(contentsOf: $0) } == originalBytes)
     }
 
     @Test func dockDetachReattachUsesOneOriginatingRuntimeAndNoImplicitPlayback() async throws {

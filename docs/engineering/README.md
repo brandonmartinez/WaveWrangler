@@ -1689,8 +1689,11 @@ sample-clocked 480-frame (10 ms) linear-amplitude ramps, continuous across chunk
 Stereo clips retain both unity channels at center; balance attenuates only the
 opposite side and never folds stereo into mono. Temporary production Solo spans
 both typed speaker and audio-track routes, independent of diagnostic source Solo.
-Track meters are separate L/R prepared-PCM meters. Recording input gain occurs
-once on dialogue only; supplemental assets cannot acquire such a gain entry.
+Track meters are separate L/R prepared-PCM meters. Recording input gain applies
+once in both production mixing and speaker/source listening (including original
+source-time audition). Production admission leaves samples ungained for the mixer;
+diagnostic listening applies the same recording/channel gain when preparing PCM.
+Supplemental assets cannot acquire such a gain entry.
 Mix edits never enter estimators, ASR, raw waveform cache keys, or original files.
 Production playback uses the runtime's verified accepted map and authorized source
 admission, not decoded waveform presentation tiles. A cold or cleared waveform
@@ -2001,7 +2004,12 @@ fit at a usable width instead fit the window width and scroll vertically.
 Late preferred-size and native-view frame requests update the host's size and
 aspect ratio. Even a programmatic resize outside that ratio preserves the
 complete plugin canvas rather than stretching or cropping it.
+Ordinary window frame changes invalidate host layout, and automatic scroll-view
+content insets are disabled so the plugin fills the aspect-fitted content area.
 Plugin constraints cannot impose a fixed size on the resizable host window.
+Opening either editor clears the originating insert's hover/focus controls.
+Cold editor preparation uses the first frame inside the resolved Episode Start/End,
+not an assumed frame zero, and does not start playback.
 
 Cut/program-view reprojection only advances an existing waveform snapshot's
 generation. If startup reprojection cancels the initial source load before any

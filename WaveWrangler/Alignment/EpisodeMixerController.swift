@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import WWCommonEdit
 import WWCore
 import WWMix
 
@@ -53,6 +54,18 @@ final class EpisodeMixerController {
         self.episodeID = episodeID
         self.runtime = runtime
         document.mixerTransactions.register(self)
+    }
+
+    func prepareForEditing() async throws {
+        guard let model = document?.store.model, let episode = model.episode(episodeID) else {
+            throw MixerFailure.staleDependencies
+        }
+        let composition = try await runtime.programComposition(model: model, episode: episodeID)
+        let production = try EpisodeProductionProjection(episode: episode, composition: composition)
+        guard let frames = production.episodeFrames, !frames.isEmpty else {
+            throw MixerFailure.invalidRecipe("the episode is empty")
+        }
+        _ = try await prepare(programFrames: frames.lowerBound..<(frames.lowerBound + 1))
     }
 
     func prepare(programFrames: Range<Int64>, policy: MixerRenderPolicy = .init()) async throws -> MixerRecipe {

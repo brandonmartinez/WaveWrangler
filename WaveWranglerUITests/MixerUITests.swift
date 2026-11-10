@@ -159,6 +159,9 @@ final class MixerUITests: XCTestCase {
         app.menuItems["Generic Parameters"].click()
         let editor = app.windows["ww.mixer.editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(mixer.staticTexts["\(pill.identifier).name"].waitForExistence(timeout: 5),
+                      "Opening generic parameters must restore the insert name without another pointer movement.")
+        XCTAssertFalse(actions.exists)
         let value = editor.textFields["ww.mixer.parameter.0"]
         XCTAssertTrue(value.waitForExistence(timeout: 10), app.debugDescription)
         value.click()
@@ -256,6 +259,8 @@ final class MixerUITests: XCTestCase {
         movedHighpass.doubleClick()
         let editor = app.windows["ww.mixer.editor"]
         XCTAssertTrue(editor.waitForExistence(timeout: 15))
+        XCTAssertTrue(mixer.staticTexts["\(highpassID).name"].waitForExistence(timeout: 5),
+                      "Opening the native editor must clear the insert's hover and keyboard-focus controls.")
         editor.buttons[XCUIIdentifierCloseWindow].click()
         XCTAssertTrue(wait { !editor.exists })
     }

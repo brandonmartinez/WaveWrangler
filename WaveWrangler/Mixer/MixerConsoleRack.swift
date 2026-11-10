@@ -119,17 +119,19 @@ private struct MixerConsoleInsert: View {
             HStack(spacing: 3) {
                 if missing { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
                 Text(compactName).lineLimit(1).truncationMode(.tail)
+                    .accessibilityIdentifier("\(identifier).name")
                 Spacer(minLength: 0)
                 Image(systemName: slot.bypassed ? "power" : "chevron.down").font(.system(size: 8))
             }
             .font(.system(size: 11, weight: .medium)).padding(.horizontal, 7)
             .opacity(expanded ? 0 : 1)
+            .accessibilityHidden(expanded)
             HStack(spacing: 0) {
                 Button { bypass() } label: { Image(systemName: "power").frame(width: 27, height: 24) }
                     .accessibilityLabel(slot.bypassed ? "Enable \(name)" : "Bypass \(name)")
                     .accessibilityIdentifier("\(identifier).bypass").focused($focus, equals: .power)
                 Button {
-                    if NSEvent.modifierFlags.contains(.option) { bypass() } else { presentation.openEditor(slot) }
+                    if NSEvent.modifierFlags.contains(.option) { bypass() } else { openEditor() }
                 } label: {
                     Image(systemName: "slider.horizontal.3").frame(maxWidth: .infinity, minHeight: 24)
                 }
@@ -142,6 +144,7 @@ private struct MixerConsoleInsert: View {
             }
             .buttonStyle(.plain).opacity(expanded ? 1 : 0)
             .allowsHitTesting(expanded)
+            .accessibilityHidden(!expanded)
         }
         .frame(height: 24)
         .foregroundStyle(slot.bypassed ? .secondary : .primary)
@@ -152,11 +155,11 @@ private struct MixerConsoleInsert: View {
         .onHover { hovered = $0 }
         .background { MixerOptionClick(action: bypass) }
         .onTapGesture(count: 2) {
-            if NSEvent.modifierFlags.contains(.option) { bypass() } else { presentation.openEditor(slot) }
+            if NSEvent.modifierFlags.contains(.option) { bypass() } else { openEditor() }
         }
 
         .focusable().focused($focus, equals: .pill)
-        .onKeyPress(.return) { presentation.openEditor(slot); return .handled }
+        .onKeyPress(.return) { openEditor(); return .handled }
         .onKeyPress(.space) { bypass(); return .handled }
         .draggable(payload)
         .contextMenu { actions }
@@ -164,7 +167,7 @@ private struct MixerConsoleInsert: View {
         .accessibilityLabel("\(name), insert \(row + 1)\(slot.bypassed ? ", bypassed" : "")\(missing ? ", not installed" : "")")
         .accessibilityIdentifier(identifier)
         .accessibilityAction(named: Text("Toggle bypass")) { bypass() }
-        .accessibilityAction(named: Text("Open editor")) { presentation.openEditor(slot) }
+        .accessibilityAction(named: Text("Open editor")) { openEditor() }
         .help("\(name). \(diagnostics) Option-click to enable or bypass. Double-click for settings. Drag to move within this strip.")
     }
 
@@ -176,8 +179,8 @@ private struct MixerConsoleInsert: View {
 
     @ViewBuilder private var actions: some View {
         Button(slot.bypassed ? "Enable" : "Bypass") { bypass() }
-        Button("Open Editor") { presentation.openEditor(slot) }
-        Button("Generic Parameters") { presentation.openEditor(slot, generic: true) }
+        Button("Open Editor") { openEditor() }
+        Button("Generic Parameters") { openEditor(generic: true) }
             .accessibilityIdentifier("\(identifier).generic")
         Divider()
         Menu("Replace Effect") {
@@ -198,6 +201,12 @@ private struct MixerConsoleInsert: View {
         }.accessibilityIdentifier("\(identifier).remove")
         Divider()
         Text(diagnostics)
+    }
+
+    private func openEditor(generic: Bool = false) {
+        hovered = false
+        focus = nil
+        presentation.openEditor(slot, generic: generic)
     }
 
     private func move(to row: Int) {

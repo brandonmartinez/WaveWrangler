@@ -28,6 +28,8 @@ final class MixerNativeEditorHost: NSViewController {
         scrollView.hasHorizontalScroller = false
         scrollView.autohidesScrollers = true
         scrollView.scrollerStyle = .overlay
+        scrollView.automaticallyAdjustsContentInsets = false
+        scrollView.contentInsets = NSEdgeInsets()
         scrollView.documentView = canvas
         root.addSubview(scrollView)
         editor.view.autoresizingMask = []
@@ -114,6 +116,11 @@ final class MixerNativeEditorHost: NSViewController {
 
     private final class HostView: NSView {
         weak var host: MixerNativeEditorHost?
+        override var isFlipped: Bool { true }
+        override func setFrameSize(_ newSize: NSSize) {
+            super.setFrameSize(newSize)
+            needsLayout = true
+        }
         override func layout() {
             super.layout()
             host?.layoutEditor()

@@ -246,7 +246,7 @@ final class EpisodeMixerPresentation {
                         if case .failed = controller.state { return true }
                         return false
                     }() {
-                        _ = try await controller.prepare(programFrames: 0..<1)
+                        try await controller.prepareForEditing()
                     }
                     guard let processor = controller.processor else { throw MixerFailure.staleDependencies }
                     let revision = controller.instanceRevision
@@ -342,7 +342,7 @@ final class EpisodeMixerPresentation {
             self.dismissEditorsAfterCapture()
             self.model?.stopAudition()
             try await controller.discardUncapturedEditorState()
-            _ = try await controller.prepare(programFrames: 0..<1)
+            try await controller.prepareForEditing()
         }
     }
 
