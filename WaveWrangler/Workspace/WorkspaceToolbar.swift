@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import WWOrganizer
 
@@ -7,8 +8,11 @@ struct WorkspaceInspectorToggles: View {
     var body: some View {
         HStack(spacing: 2) {
             Button {
-                if state.reviewPresentation.isDetached { state.reviewPresentation.detach() }
-                else { state.reviewPanelPresented.toggle() }
+                if NSEvent.modifierFlags.contains(.option) || state.reviewPresentation.isDetached {
+                    state.reviewPresentation.detach()
+                } else {
+                    state.reviewPanelPresented.toggle()
+                }
             } label: {
                 Image(systemName: "rectangle.bottomthird.inset.filled")
                     .frame(width: 24, height: 24)
@@ -23,9 +27,11 @@ struct WorkspaceInspectorToggles: View {
             .accessibilityIdentifier("ww.review.toggle")
             .help(state.reviewPresentation.isDetached
                 ? "Show the detached Transcript & Review window"
-                : "\(state.reviewPanelPresented ? "Hide" : "Show") the resizable bottom review list")
+                : "\(state.reviewPanelPresented ? "Hide" : "Show") the resizable bottom review list. Option-click to open in a separate window.")
             Button {
-                if state.bottomPanePresented, state.bottomPaneContent == .mixer, !state.mixerPresentation.isDetached {
+                if NSEvent.modifierFlags.contains(.option) {
+                    state.mixerPresentation.detach()
+                } else if state.bottomPanePresented, state.bottomPaneContent == .mixer, !state.mixerPresentation.isDetached {
                     state.bottomPanePresented = false
                 } else {
                     state.mixerPresentation.showDocked()
@@ -37,7 +43,7 @@ struct WorkspaceInspectorToggles: View {
             .accessibilityLabel("Mixer")
             .accessibilityValue(state.bottomPanePresented && state.bottomPaneContent == .mixer ? "Shown" : "Hidden")
             .accessibilityIdentifier("ww.mixer.toggle")
-            .help("Show the production mixer in the bottom pane or focus its separate window")
+            .help("Show the production mixer in the bottom pane or focus its separate window. Option-click to open in a separate window.")
             ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { activity in
                 let active = state.inspectorPresented && state.workspaceInspector == activity
                 Button {

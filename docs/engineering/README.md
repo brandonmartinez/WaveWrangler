@@ -307,6 +307,9 @@ existing cleanup model, selected review, phrase/speaker/status filters, cut acti
 Undo/Redo; it does not copy the show or start playback. **Reattach** returns the same review state
 to the bottom pane. Closing only the auxiliary window leaves the episode open; closing the
 originating editor or deleting its episode closes that editor's detached review.
+Option-clicking the workspace Review or Mixer button opens its separate window directly,
+without first showing the bottom pane; if already detached, it focuses the existing window.
+Ordinary clicks retain their toggle/focus behavior.
 Clicking a current filler row centers its automatic focus view three ordinary zoom-out steps
 wider than the old close-up (1.25x per step), capped by the available timeline. Repeated row
 selection does not progressively zoom out. Explicit Zoom to word/cut commands keep their closer
