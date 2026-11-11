@@ -6,7 +6,7 @@ import WWMix
 /// Bounded numeric evidence only; never retains audio, source identifiers, paths, or vendor state.
 final class ProductionPlaybackDiagnostics: Sendable {
     enum Stage: String, CaseIterable, Sendable {
-        case source, sourceWait, validation, controls, dsp, enqueue, refillWait, wakeDelay
+        case source, sourceWait, validation, controls, dsp, enqueue, refillWait, wakeDelay, deviceClock
     }
 
     struct Timing: Sendable {

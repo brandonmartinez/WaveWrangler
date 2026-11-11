@@ -378,13 +378,12 @@ final class ProductionMixPlayback: Sendable {
                 let final = frames.upperBound == recipe.programFrames.upperBound
                     && cycle?.upperBound != frames.upperBound && processor.latencyFrames == 0 && processor.tailFrames == 0
                 if rendered.frameCount > 0 {
-                    try enqueue(rendered, final: final, output: output, programSegments: segments,
+                    try await enqueue(rendered, final: final, output: output, programSegments: segments,
                                 onBufferDeadline: onBufferDeadline)
                     segments.removeAll(keepingCapacity: true)
                 }
                 virtualInput += Int64(frames.count)
                 expectedInput = frames.upperBound
-                try await pace(output)
             }
             while true {
                 try check()
@@ -396,9 +395,8 @@ final class ProductionMixPlayback: Sendable {
                 let final = rendered.firstFrame + Int64(rendered.frameCount)
                     == virtualInput + Int64(processor.tailFrames)
                 if rendered.frameCount > 0 {
-                    try enqueue(rendered, final: final, output: output, onBufferDeadline: onBufferDeadline)
+                    try await enqueue(rendered, final: final, output: output, onBufferDeadline: onBufferDeadline)
                 }
-                try await pace(output)
             }
             try output.finishProduction(generation: outputGeneration)
             while !output.isFinished {
@@ -435,17 +433,16 @@ final class ProductionMixPlayback: Sendable {
 
     private func enqueue(_ rendered: MixerPCMOutput, final: Bool, output: AlignmentAudioPlayback,
                          programSegments: [PlaybackProgramTimeline.Segment] = [],
-                         onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
+                         onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
+        let waiter = ProductionPlaybackRefill.Waiter()
         try diagnostics.measure(.enqueue) {
             try output.enqueueProduction(rendered, final: final, generation: outputGeneration,
-                diagnostics: diagnostics, programSegments: programSegments, onBufferDeadline: onBufferDeadline)
+                diagnostics: diagnostics, programSegments: programSegments, capacityWaiter: waiter,
+                onBufferDeadline: onBufferDeadline)
         }
-    }
-
-    private func pace(_ output: AlignmentAudioPlayback) async throws {
         try check()
-        if let released = try await diagnostics.measureAsync(.refillWait, operation: { [outputGeneration] in
-            try await output.waitForProductionCapacity(generation: outputGeneration)
+        if let released = try await diagnostics.measureAsync(.refillWait, operation: {
+            try await output.waitForProductionCapacity(waiter)
         }) {
             diagnostics.recordWakeDelay(since: released, requested: .zero)
         }

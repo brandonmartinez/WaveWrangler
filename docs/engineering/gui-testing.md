@@ -499,6 +499,18 @@ captured independently. Evidence is under
 `.build/playback-clock-manual-followup-audio.log`. No further playback was
 initiated.
 
+Production append and refill registration now share one output-queue operation
+and one device-clock observation. A reservation can complete before its
+continuation is installed; stop and cancellation still finish it exactly once.
+The producer waits on that reservation without querying the device clock again.
+Numeric diagnostics now time device-clock queries separately from enqueue work.
+The rendered horizon and live source-admission checks are unchanged.
+The combined-operation revision passed the startup, flattened-playback, and
+32-second live-edit suites on `ww-ui-1`: 19 test methods passed, two opt-in
+diagnostics skipped. Evidence is
+`.build/playback-combined-20261111-vm-result/result.xcresult`; as above, this
+used scratch metadata without Thread Performance Checker injection.
+
 The same suite has a separately gated
 `fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable
 `WW_EPISODE_SOAK_TESTS=1` only on a ready, leased VM and set

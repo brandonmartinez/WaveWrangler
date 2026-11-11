@@ -100,6 +100,35 @@ struct FlattenedPlaybackHostedTests {
         #expect(deadlines == 0)
     }
 
+    @Test func combinedAppendRegistersCapacityBeforeWaitingAndStopCannotLoseItsResume() async throws {
+        let output = AlignmentAudioPlayback()
+        defer { output.stop() }
+        let generation = output.generation
+        let first = ProductionPlaybackRefill.Waiter()
+        func append(_ frame: Int, waiter: ProductionPlaybackRefill.Waiter) throws {
+            try output.enqueueProduction(.init(firstFrame: Int64(frame),
+                channels: Array(repeating: Array(repeating: 0.1, count: MixerLiveTiming.processingBlockFrames), count: 2)),
+                final: false, generation: generation, capacityWaiter: waiter) {}
+        }
+        try append(0, waiter: first)
+        #expect(try await output.waitForProductionCapacity(first) == nil)
+        for frame in stride(from: MixerLiveTiming.processingBlockFrames,
+                            through: MixerLiveTiming.maximumScheduledAheadFrames,
+                            by: MixerLiveTiming.processingBlockFrames) {
+            try append(frame, waiter: .init())
+        }
+        let blocked = ProductionPlaybackRefill.Waiter()
+        let next = ((MixerLiveTiming.maximumScheduledAheadFrames / MixerLiveTiming.processingBlockFrames) + 1)
+            * MixerLiveTiming.processingBlockFrames
+        try append(next, waiter: blocked)
+        #expect(blocked.isPending)
+        output.stop()
+        await #expect(throws: CancellationError.self) {
+            try await output.waitForProductionCapacity(blocked)
+        }
+        #expect(throws: CancellationError.self) { try append(next, waiter: .init()) }
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_PLAYER_STOP_DIAGNOSTIC"] == "1",
         "Opt-in bounded AVFAudio completion and shutdown diagnostic; generated silence only."),
         .timeLimit(.minutes(3)))

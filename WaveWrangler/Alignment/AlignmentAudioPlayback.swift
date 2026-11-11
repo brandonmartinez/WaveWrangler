@@ -170,11 +170,15 @@ final class AlignmentAudioPlayback: @unchecked Sendable {
     func enqueueProduction(_ output: MixerPCMOutput, final: Bool, generation: UInt64? = nil,
                            diagnostics: ProductionPlaybackDiagnostics? = nil,
                            programSegments: [PlaybackProgramTimeline.Segment] = [],
+                           capacityWaiter: ProductionPlaybackRefill.Waiter? = nil,
                            onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
         try queue.sync {
             if let generation, sessionGeneration != generation { throw CancellationError() }
-            try graph.enqueueProduction(output, final: final, diagnostics: diagnostics,
+            let remaining = try graph.enqueueProduction(output, final: final, diagnostics: diagnostics,
                 programSegments: programSegments, onBufferDeadline: onBufferDeadline)
+            if let capacityWaiter {
+                graph.waitForProductionCapacity(capacityWaiter, bufferedSeconds: remaining)
+            }
         }
     }
 
@@ -188,16 +192,17 @@ final class AlignmentAudioPlayback: @unchecked Sendable {
 
     func waitForProductionCapacity(generation: UInt64) async throws -> ContinuousClock.Instant? {
         let waiter = ProductionPlaybackRefill.Waiter()
+        try queue.sync {
+            guard sessionGeneration == generation else { throw CancellationError() }
+            graph.waitForProductionCapacity(waiter, bufferedSeconds: graph.bufferedSeconds)
+        }
+        return try await waitForProductionCapacity(waiter)
+    }
+
+    func waitForProductionCapacity(_ waiter: ProductionPlaybackRefill.Waiter) async throws -> ContinuousClock.Instant? {
         return try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { continuation in
                 waiter.install(continuation)
-                queue.async { [self] in
-                    guard sessionGeneration == generation else {
-                        waiter.finish(.failure(CancellationError()))
-                        return
-                    }
-                    graph.waitForProductionCapacity(waiter)
-                }
             }
         } onCancel: {
             waiter.finish(.failure(CancellationError()))
@@ -271,6 +276,8 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     init(queue: DispatchQueue) { self.queue = queue }
 
     private var elapsedAudioSeconds: Double? {
+        let started = productionDiagnostics?.begin(.deviceClock)
+        defer { if let started { productionDiagnostics?.end(.deviceClock, since: started) } }
         if let productionPlayer, let time = productionPlayer.lastRenderTime,
            let player = productionPlayer.playerTime(forNodeTime: time), player.isSampleTimeValid {
             return Double(player.sampleTime) / player.sampleRate
@@ -384,7 +391,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         }
     }
 
-    func waitForProductionCapacity(_ waiter: ProductionPlaybackRefill.Waiter) {
+    func waitForProductionCapacity(_ waiter: ProductionPlaybackRefill.Waiter, bufferedSeconds: Double) {
         if let failure {
             waiter.finish(.failure(failure))
         } else if productionPlayer == nil {
@@ -407,7 +414,8 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         }
     }
 
-    private func validateQueueAppend(startSeconds: Double) throws {
+    @discardableResult
+    private func validateQueueAppend(startSeconds: Double) throws -> Double? {
         if let failure { throw failure }
         guard let clock else { throw AlignmentTransportFailure.discontinuousWindow }
         let elapsed = elapsedAudioSeconds
@@ -420,6 +428,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             if let elapsed { reportUnderrun(elapsed: elapsed) }
             throw AlignmentTransportFailure.bufferDeadline
         }
+        return elapsed
     }
 
     private func reportUnderrun(elapsed: Double) {
@@ -501,10 +510,11 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
 
     /// Only pre-rendered stereo reaches the device graph. No vendor code or Swift task is called
     /// from the output callback; the serial mixer worker owns persistent effect state.
+    @discardableResult
     func enqueueProduction(_ output: MixerPCMOutput, final: Bool,
                            diagnostics: ProductionPlaybackDiagnostics?,
                            programSegments: [PlaybackProgramTimeline.Segment] = [],
-                           onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws {
+                           onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws -> Double {
         if let failure { throw failure }
         let clip = try Self.validateProduction(output)
         let format = try clip.makeFormat()
@@ -526,15 +536,16 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             productionPlayer = player
         }
         productionDiagnostics = diagnostics
-        for programSegment in programSegments {
-            let heardFrame = readClock().map { Int64(($0.playhead() * Double(MixerRecipe.sampleRate)).rounded(.down)) }
-            programTimeline.append(programSegment, heardFrame: heardFrame)
-        }
         guard let productionPlayer else { throw MixerFailure.incompletePCM }
         var scheduled = productionBuffer
         try scheduled.append(output, final: final)
-        if clock != nil {
-            try validateQueueAppend(startSeconds: start)
+        let elapsed = try clock == nil ? nil : validateQueueAppend(startSeconds: start)
+        for programSegment in programSegments {
+            let heardFrame = clock.map {
+                Int64((($0.startSeconds + min(max(0, elapsed ?? 0), $0.duration))
+                    * Double(MixerRecipe.sampleRate)).rounded(.down))
+            }
+            programTimeline.append(programSegment, heardFrame: heardFrame)
         }
         let finished = PlaybackCompletion(1)
         completion = finished
@@ -554,6 +565,9 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
                 duration: Double(scheduled.frameCount) / Double(MixerRecipe.sampleRate), startedAt: clock.startedAt)
         }
         if clock != nil { watch(final: final, deadline: onBufferDeadline) }
+        guard let clock else { return 0 }
+        if let elapsed { return max(0, clock.duration - elapsed) }
+        return max(0, clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow)
     }
 
     func finishProduction() {
