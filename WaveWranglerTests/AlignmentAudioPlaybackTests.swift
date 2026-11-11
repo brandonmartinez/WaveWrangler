@@ -7,6 +7,17 @@ import WWMix
 @MainActor
 @Suite("Alignment audio playback foundations")
 struct AlignmentAudioPlaybackTests {
+    @Test func watchdogTargetsLowWaterAndVerifiesExhaustionWithoutBusyPolling() {
+        #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: nil) == 0.005)
+        #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: .nan) == 0.005)
+        #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: 1) == 0.05)
+        #expect(abs(AlignmentPlaybackWatchdog.delay(bufferedSeconds: 0.225) - 0.025) < 0.000_001)
+        #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: 0.2) == 0.05)
+        #expect(abs(AlignmentPlaybackWatchdog.delay(bufferedSeconds: 0.025) - 0.02) < 0.000_001)
+        #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: 0.005) == 0.005)
+        #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: 0) == 0.005)
+    }
+
     @Test func productionPrefillIncludesLatencyShortenedBlocksAndKeepsTheControlHorizonBounded() throws {
         var buffer = AlignmentProductionBuffer()
         try buffer.append(productionOutput(first: -4, frames: 384), final: false)

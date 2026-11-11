@@ -523,6 +523,21 @@ skips) and 19 focused headless tests. Evidence uses
 `.build/playback-snapshot-unit.log`. The pure cycle mapping now lives alongside
 the clock so the unhosted output-adapter tests compile the same value type.
 
+The output watchdog now arms a one-shot check toward the refill low-water
+boundary or the scheduled end, with a 50 ms maximum snapshot-refresh interval.
+Missing startup clocks and the last 5 ms retry at 5 ms. Appends update the armed
+deadline; generation guards reject canceled-session events. Every refill or
+starvation decision still uses a fresh device observation, never wall-clock
+extrapolation. Final completion cancels the monitor, and starvation reuses its
+observed terminal clock instead of acquiring the engine lock again.
+Twenty focused headless tests and the same VM selection passed (20 methods,
+two opt-in skips), including true starvation, stop/restart, dense transcript
+layout, and sustained live editing. Evidence is
+`.build/playback-watchdog-unit.log` and
+`.build/playback-watchdog-20261111-vm-result/result.xcresult`. This reduces
+scheduled polling, not the configured reserve, and does not qualify native
+device latency or resolve the separate graphics hang.
+
 The same suite has a separately gated
 `fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable
 `WW_EPISODE_SOAK_TESTS=1` only on a ready, leased VM and set

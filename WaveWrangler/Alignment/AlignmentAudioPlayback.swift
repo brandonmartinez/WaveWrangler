@@ -39,6 +39,15 @@ struct AlignmentPlaybackSnapshot: Sendable {
     }
 }
 
+enum AlignmentPlaybackWatchdog {
+    static func delay(bufferedSeconds: Double?) -> Double {
+        guard let bufferedSeconds, bufferedSeconds.isFinite else { return 0.005 }
+        let lowWater = Double(MixerLiveTiming.refillLowWaterFrames) / Double(MixerRecipe.sampleRate)
+        let boundary = bufferedSeconds > lowWater ? bufferedSeconds - lowWater : bufferedSeconds - 0.005
+        return min(0.05, max(0.005, boundary))
+    }
+}
+
 private final class AlignmentPlaybackSnapshotStore: Sendable {
     private let state = Mutex(AlignmentPlaybackSnapshot())
     var value: AlignmentPlaybackSnapshot { state.withLock { $0 } }
@@ -411,17 +420,38 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private func watch(final: Bool, deadline: @escaping @MainActor @Sendable () -> Void) {
         finalBuffer = final
         onDeadline = deadline
-        guard monitor == nil else { return }
-        let timer = DispatchSource.makeTimerSource(queue: queue)
-        timer.schedule(deadline: .now() + .milliseconds(5), repeating: .milliseconds(5))
-        timer.setEventHandler { [weak self] in self?.checkDeadline() }
-        monitor = timer
-        timer.resume()
+        if monitor == nil {
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            let expected = generation
+            timer.setEventHandler { [weak self] in
+                guard let self, self.generation == expected else { return }
+                self.checkDeadline()
+            }
+            monitor = timer
+            timer.resume()
+        }
+        scheduleDeadlineCheck()
+    }
+
+    private func scheduleDeadlineCheck(retryingClock: Bool = false) {
+        guard let monitor else { return }
+        let buffered = retryingClock ? nil : clock.map {
+            max(0, $0.startSeconds + $0.duration - $0.playhead())
+        }
+        monitor.schedule(deadline: .now() + AlignmentPlaybackWatchdog.delay(bufferedSeconds: buffered),
+                         leeway: .milliseconds(1))
     }
 
     private func checkDeadline() {
-        defer { publishSnapshot() }
-        guard let scheduled = clock, let elapsed = elapsedAudioSeconds else { return }
+        var retryingClock = false
+        defer {
+            publishSnapshot()
+            scheduleDeadlineCheck(retryingClock: retryingClock)
+        }
+        guard let scheduled = clock, let elapsed = elapsedAudioSeconds else {
+            retryingClock = true
+            return
+        }
         updateClock(elapsed: elapsed)
         if productionPlayer != nil {
             let remaining = max(0, scheduled.duration - elapsed)
@@ -433,10 +463,14 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
                 productionRefill.consumed(bufferedSeconds: remaining)
             }
         }
+        if finalBuffer, completion.isFinished {
+            monitor?.cancel()
+            monitor = nil
+        }
         guard !finalBuffer, failure == nil, elapsed >= scheduled.duration else { return }
         reportUnderrun(elapsed: elapsed)
         let callback = onDeadline
-        let stopped = readClock()
+        let stopped = clock
         stop(refillFailure: AlignmentTransportFailure.bufferDeadline)
         clock = stopped
         failure = .bufferDeadline
