@@ -7,6 +7,57 @@ import WWMix
 @MainActor
 @Suite("Alignment audio playback foundations")
 struct AlignmentAudioPlaybackTests {
+    @Test func productionPoolReusesOnlyPlayedBuffersAndPreservesExactStereo() throws {
+        let pool = try AlignmentProductionBufferPool()
+        let original = try pool.prepare(productionOutput(first: 0, frames: MixerLiveTiming.processingBlockFrames))
+        let pending = try pool.prepare(productionOutput(first: 512, frames: MixerLiveTiming.processingBlockFrames))
+        #expect(original.buffer !== pending.buffer)
+        #expect(pool.count == 2)
+        original.completion.finish()
+        let channels = Array(repeating: Float(1.5), count: MixerLiveTiming.processingBlockFrames)
+        let changed = MixerPCMOutput(firstFrame: 1024, channels: [channels, channels.map { -$0 }])
+        var reused = try pool.prepare(changed)
+        #expect(reused.buffer === original.buffer)
+        #expect(reused.completion !== original.completion)
+        #expect(!reused.completion.isFinished && !pending.completion.isFinished)
+        let data = try #require(reused.buffer.floatChannelData)
+        #expect(Array(UnsafeBufferPointer(start: data[0], count: channels.count)) == channels)
+        #expect(Array(UnsafeBufferPointer(start: data[1], count: channels.count)) == channels.map { -$0 })
+        let untouched = try #require(pending.buffer.floatChannelData)
+        #expect(untouched[0][0] == 0.1 && untouched[1][0] == 0.1)
+        for _ in 0..<100 {
+            reused.completion.finish()
+            reused = try pool.prepare(changed)
+            #expect(reused.buffer === original.buffer)
+        }
+        #expect(pool.count == 2 && !reused.completion.isFinished)
+    }
+
+    @Test func productionPoolBoundsStorageAndRetiresOldSessionCompletions() throws {
+        let pool = try AlignmentProductionBufferPool()
+        let block = productionOutput(first: 0, frames: MixerLiveTiming.processingBlockFrames)
+        var leases: [AlignmentProductionBufferPool.Lease] = []
+        for _ in 0..<AlignmentProductionBufferPool.maximumCount {
+            leases.append(try pool.prepare(block))
+        }
+        #expect(throws: AlignmentTransportFailure.self) { try pool.prepare(block) }
+        #expect(pool.count == AlignmentProductionBufferPool.maximumCount)
+        leases[0].completion.finish()
+        let reused = try pool.prepare(block)
+        #expect(reused.buffer === leases[0].buffer && !reused.completion.isFinished)
+        let restarted = try AlignmentProductionBufferPool()
+        let current = try restarted.prepare(block)
+        leases[1].completion.finish()
+        #expect(current.buffer !== leases[1].buffer)
+        #expect(!current.completion.isFinished && !reused.completion.isFinished)
+        let partial = try restarted.prepare(.init(firstFrame: 512, channels: [[0.25], [-0.5]]))
+        #expect(partial.buffer.frameLength == 1 && restarted.count == 1)
+        #expect(throws: MixerFailure.self) {
+            try restarted.prepare(.init(firstFrame: 0, channels: [[.nan], [0]]))
+        }
+        #expect(restarted.count == 1)
+    }
+
     @Test func watchdogTargetsLowWaterAndVerifiesExhaustionWithoutBusyPolling() {
         #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: nil) == 0.005)
         #expect(AlignmentPlaybackWatchdog.delay(bufferedSeconds: .nan) == 0.005)

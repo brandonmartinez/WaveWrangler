@@ -99,6 +99,7 @@ struct AlignmentPlaybackClock: Sendable {
 
 enum AlignmentTransportFailure: LocalizedError, Sendable {
     case bufferDeadline
+    case outputBuffersUnavailable
     case discontinuousWindow
     case unverifiedProductionTiming
 
@@ -106,6 +107,8 @@ enum AlignmentTransportFailure: LocalizedError, Sendable {
         switch self {
         case .bufferDeadline:
             "Verified audio could not be prepared before the scheduled buffer ran out"
+        case .outputBuffersUnavailable:
+            "The audio device has not released enough playback buffers. Stop playback and try again."
         case .discontinuousWindow:
             "The next audio window does not continue the shared transport clock"
         case .unverifiedProductionTiming:
@@ -287,14 +290,75 @@ final class AlignmentAudioPlayback: @unchecked Sendable {
     }
 }
 
-/// Every mutable field and AVFAudio object is confined to the output queue, including timer events.
-private final class PlaybackCompletion: Sendable {
+final class PlaybackCompletion: Sendable {
     let remaining: Atomic<Int>
     init(_ count: Int) { remaining = Atomic(count) }
     func finish() { remaining.wrappingSubtract(1, ordering: .releasing) }
     var isFinished: Bool { remaining.load(ordering: .acquiring) == 0 }
 }
 
+/// Queue-owned PCM storage. Only the lease's completion token crosses into the device callback.
+final class AlignmentProductionBufferPool {
+    struct Lease {
+        let buffer: AVAudioPCMBuffer
+        let completion = PlaybackCompletion(1)
+    }
+
+    static var maximumCount: Int {
+        // One scheduled horizon plus bounded headroom for device-completion delivery.
+        2 * ((MixerLiveTiming.maximumPreparedControlFrames + MixerLiveTiming.processingBlockFrames - 1)
+            / MixerLiveTiming.processingBlockFrames)
+    }
+    let format: AVAudioFormat
+    private var leases: [Lease] = []
+    var count: Int { leases.count }
+
+    init() throws {
+        guard let format = AVAudioFormat(standardFormatWithSampleRate: Double(MixerRecipe.sampleRate), channels: 2)
+        else { throw MixerFailure.incompletePCM }
+        self.format = format
+        leases.reserveCapacity(Self.maximumCount)
+    }
+
+    func prepare(_ output: MixerPCMOutput) throws -> Lease {
+        try Self.validate(output)
+        // Short cycle, latency, and tail packets must not consume full-block pool slots.
+        let pooled = output.frameCount == MixerLiveTiming.processingBlockFrames
+        let reusable = pooled ? leases.firstIndex(where: { $0.completion.isFinished }) : nil
+        let buffer: AVAudioPCMBuffer
+        if let reusable {
+            buffer = leases[reusable].buffer
+        } else {
+            guard !pooled || leases.count < Self.maximumCount else {
+                throw AlignmentTransportFailure.outputBuffersUnavailable
+            }
+            guard let allocated = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(output.frameCount))
+            else { throw MixerFailure.incompletePCM }
+            buffer = allocated
+        }
+        guard let data = buffer.floatChannelData else { throw MixerFailure.incompletePCM }
+        buffer.frameLength = AVAudioFrameCount(output.frameCount)
+        for channel in 0..<2 {
+            output.channels[channel].withUnsafeBufferPointer {
+                if let base = $0.baseAddress { data[channel].update(from: base, count: output.frameCount) }
+            }
+        }
+        let lease = Lease(buffer: buffer)
+        if let reusable { leases[reusable] = lease }
+        else if pooled { leases.append(lease) }
+        return lease
+    }
+
+    static func validate(_ output: MixerPCMOutput) throws {
+        guard output.channels.count == 2, output.frameCount > 0,
+              output.frameCount <= MixerRecipe.maximumWindowFrames,
+              output.channels.allSatisfy({ $0.count == output.frameCount && $0.allSatisfy(\.isFinite) }) else {
+            throw MixerFailure.incompletePCM
+        }
+    }
+}
+
+/// Every mutable field and AVFAudio object is confined to the output queue, including timer events.
 private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private(set) var programTimeline = PlaybackProgramTimeline()
     private let queue: DispatchQueue
@@ -307,6 +371,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private var listeningGains: [SourceID: Float] = [:]
     private var source: AVAudioSourceNode?
     private var productionPlayer: AVAudioPlayerNode?
+    private var productionBuffers: AlignmentProductionBufferPool?
     private var productionBuffer = AlignmentProductionBuffer()
     private var productionDiagnostics: ProductionPlaybackDiagnostics?
     private var lastProductionAppend: ContinuousClock.Instant?
@@ -404,6 +469,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         if let source, engine.attachedNodes.contains(source) { engine.detach(source) }
         source = nil
         productionBuffer = AlignmentProductionBuffer()
+        productionBuffers = nil
         productionDiagnostics = nil
         lastProductionAppend = nil
         clock = terminal
@@ -593,11 +659,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     static func validateProduction(_ output: MixerPCMOutput) throws -> AlignmentAudioClip {
-        guard output.channels.count == 2, output.frameCount > 0,
-              output.frameCount <= MixerRecipe.maximumWindowFrames,
-              output.channels.allSatisfy({ $0.count == output.frameCount && $0.allSatisfy(\.isFinite) }) else {
-            throw MixerFailure.incompletePCM
-        }
+        try AlignmentProductionBufferPool.validate(output)
         return AlignmentAudioClip(sampleRate: Double(MixerRecipe.sampleRate),
             samples: output.channels.flatMap { $0 }, channelCount: 2)
     }
@@ -611,30 +673,24 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
                            onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws -> Double {
         defer { publishSnapshot() }
         if let failure { throw failure }
-        let clip = try Self.validateProduction(output)
-        let format = try clip.makeFormat()
-        guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(output.frameCount)),
-              let data = buffer.floatChannelData else { throw MixerFailure.incompletePCM }
-        buffer.frameLength = AVAudioFrameCount(output.frameCount)
-        for channel in 0..<2 {
-            output.channels[channel].withUnsafeBufferPointer {
-                if let base = $0.baseAddress { data[channel].update(from: base, count: output.frameCount) }
-            }
-        }
         let start = Double(output.firstFrame) / Double(MixerRecipe.sampleRate)
         if productionPlayer == nil {
+            try AlignmentProductionBufferPool.validate(output)
             stop()
             clearPlayers()
+            let buffers = try AlignmentProductionBufferPool()
             let player = AVAudioPlayerNode()
             engine.attach(player)
-            engine.connect(player, to: engine.mainMixerNode, format: format)
+            engine.connect(player, to: engine.mainMixerNode, format: buffers.format)
             productionPlayer = player
+            productionBuffers = buffers
         }
         productionDiagnostics = diagnostics
-        guard let productionPlayer else { throw MixerFailure.incompletePCM }
+        guard let productionPlayer, let productionBuffers else { throw MixerFailure.incompletePCM }
         var scheduled = productionBuffer
         try scheduled.append(output, final: final)
         let elapsed = try clock == nil ? nil : validateQueueAppend(startSeconds: start)
+        let lease = try productionBuffers.prepare(output)
         if let elapsed { updateClock(elapsed: elapsed) }
         for programSegment in programSegments {
             let heardFrame = clock.map {
@@ -643,9 +699,9 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             }
             programTimeline.append(programSegment, heardFrame: heardFrame)
         }
-        let finished = PlaybackCompletion(1)
+        let finished = lease.completion
         completion = finished
-        productionPlayer.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in finished.finish() }
+        productionPlayer.scheduleBuffer(lease.buffer, completionCallbackType: .dataPlayedBack) { _ in finished.finish() }
         productionBuffer = scheduled
         lastProductionAppend = .now
         if clock == nil, scheduled.isReady, let first = scheduled.firstFrame {

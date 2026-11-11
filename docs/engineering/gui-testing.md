@@ -538,6 +538,29 @@ layout, and sustained live editing. Evidence is
 scheduled polling, not the configured reserve, and does not qualify native
 device latency or resolve the separate graphics hang.
 
+Production output now caches its 48 kHz stereo format per session and copies
+planar samples directly, without constructing a flattened clip first. A
+queue-owned pool reuses full 512-frame PCM buffers only after their
+`.dataPlayedBack` token completes. Its limit is 50 buffers (200 KiB of sample
+storage), derived from two rounded control horizons; pool exhaustion fails
+explicitly rather than growing or recycling active storage. Short cycle,
+latency, and tail packets retain exact independent allocations, as do
+larger accepted adapter packets. Each reuse gets a fresh atomic completion
+token, and stop discards the pool so late callbacks cannot release a new
+session's buffers. Device callbacks still only decrement an atomic counter.
+
+Twenty-two focused headless tests passed, including bit-exact planar copies,
+100 reuses without another PCM allocation, in-flight exclusion, exhaustion,
+short packets, and retired-session completions. The same VM regression passed
+(20 methods, two opt-in skips), followed by all six persistent-cycle methods
+(10 parameterized runs), covering source and production wrap, live cycle
+changes, disable, and normal completion. Evidence is
+`.build/playback-buffers-unit.log`,
+`.build/playback-buffers-20261111-vm-result/result.xcresult`, and
+`.build/playback-buffers-cycle-vm-result/cycles.xcresult`. These establish
+correctness and storage reuse, not a measured improvement in physical-device
+enqueue latency or whole-show reliability.
+
 The same suite has a separately gated
 `fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable
 `WW_EPISODE_SOAK_TESTS=1` only on a ready, leased VM and set
