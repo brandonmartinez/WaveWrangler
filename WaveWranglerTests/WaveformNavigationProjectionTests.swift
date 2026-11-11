@@ -4,6 +4,34 @@ import WWCore
 
 @Suite("Waveform silhouette and scroll projection")
 struct WaveformNavigationProjectionTests {
+    @Test func denseCutProjectionPreservesMeasuredBinsAndBoundarySemantics() throws {
+        let edits: [ManualEpisodeCut] = (0..<100).map { index in
+            let start = Int64(index) * 432_000 + 48_000
+            return ManualEpisodeCut(alignmentRevision: 1,
+                startFrame: start, endFrame: start + 9_600)
+        }
+        let cuts = try ManualCutTimeline(cuts: edits)
+        let projection = AudioTimelineProjection(cuts: cuts)
+        let epoch = RecordingEpochID()
+        let bins = (0..<100_000).map {
+            stroke(Double($0) * 0.009...Double($0 + 1) * 0.009,
+                amplitude: 0.5, epoch: epoch)
+        }
+        let start = ContinuousClock.now
+        let result = projection.project(bins)
+        print("CUT_WAVEFORM_PROJECTION bins=\(bins.count) cuts=\(edits.count) elapsed=\(start.duration(to: .now))")
+        #expect(result == AlignmentWaveformProjection.applyingCuts(cuts, to: bins))
+        for edit in edits {
+            for time in [edit.alignedStart, edit.alignedEnd] {
+                for range in [time...time, (time - 0.01)...time, time...(time + 0.01)] {
+                    let boundary = [stroke(range, amplitude: 0.5, epoch: epoch)]
+                    #expect(projection.project(boundary)
+                        == AlignmentWaveformProjection.applyingCuts(cuts, to: boundary))
+                }
+            }
+        }
+    }
+
     @Test func zoomButtonsStepInOppositeDirectionsAndClamp() {
         #expect(AlignmentWaveformProjection.steppedZoomDuration(duration: 10, maximum: 30, zoomIn: true) == 8)
         #expect(AlignmentWaveformProjection.steppedZoomDuration(duration: 8, maximum: 30, zoomIn: false) == 10)

@@ -145,6 +145,14 @@ Production always collapses **all** active cuts. There is deliberately no
 `revealing:` argument. Keep Show cut's existing review prescription separate;
 showing/hiding must not reproject saved anchors, change pins, or ripple twice.
 
+`AudioTimelineProjection` indexes immutable cut ends, cumulative removed duration,
+and sorted dialogue boundaries once per presentation snapshot. Projecting each
+measured waveform bin searches only the relevant cuts and interior boundaries;
+it does not rebuild or scan the full edit history for every stroke. Closed-range
+endpoints, signed time, insertion affinity, and expanded-cut review retain their
+existing semantics. These derived indexes are neither serialized nor source
+authorization, and equality remains based on authoritative geometry.
+
 ## Insertions and placement edits
 
 - Dialogue region anchors use the merged cut map, including placement boundaries

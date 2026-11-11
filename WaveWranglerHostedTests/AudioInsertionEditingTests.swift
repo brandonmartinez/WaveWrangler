@@ -9,6 +9,54 @@ import WWTimeMap
 struct AudioInsertionEditingTests {
     private let rate: Int64 = 48_000
 
+    @Test func indexedCutGeometryMatchesFullScanWithInsertionsAndExpandedReview() throws {
+        let f = try AudioInsertionTestFixture()
+        let cuts: [ManualEpisodeCut] = (0..<100).map { index in
+            let start = Int64(index) * 38_400 + 4_800
+            return ManualEpisodeCut(alignmentRevision: 1, startFrame: start, endFrame: start + 9_600)
+        }
+        let regions = [
+            AudioInsertionRegion(anchor: .programOrigin(frame: 0), durationFrames: rate),
+            AudioInsertionRegion(anchor: try f.anchor(40 * rate), durationFrames: 2 * rate),
+        ]
+        let program = try ProgramTimeline(episode: f.episode(regions: regions, cuts: cuts),
+            dialogueFrames: f.coverage)
+        let boundaries = program.dialogueSpans.flatMap {
+            [Double($0.originalFrames.lowerBound) / 48_000, Double($0.originalFrames.upperBound) / 48_000]
+        }
+        for expanded in [nil, cuts[50]] {
+            let visible = try ManualCutTimeline(cuts: cuts.filter { $0.id != expanded?.id })
+            let projection = AudioTimelineProjection(cuts: visible, program: program, expanded: expanded)
+            func forward(_ time: Double, following: Bool) -> Double {
+                let base = program.cuts.editedTime(forAlignedTime: time)
+                let restored = expanded.map { time > $0.alignedStart && time <= $0.alignedEnd } ?? false
+                let shift = program.insertions.filter {
+                    let boundary = Double($0.baseFrame) / 48_000
+                    return following || restored ? boundary <= base : boundary < base
+                }.reduce(0.0) { $0 + Double($1.region.durationFrames) / 48_000 }
+                return visible.editedTime(forAlignedTime: time) + shift
+            }
+            let points = stride(from: -1.0, through: 101, by: 0.137).map { $0 }
+                + cuts.flatMap { [$0.alignedStart, $0.alignedEnd] }
+            for time in points {
+                #expect(projection.editedTime(forAlignedTime: time) == forward(time, following: true))
+                for width in [0.0, 0.01, 1.0] {
+                    let range = time...(time + width)
+                    let expected = visible.keptAlignedRanges(in: range).flatMap { kept in
+                        let splits = [kept.lowerBound]
+                            + boundaries.filter { $0 > kept.lowerBound && $0 < kept.upperBound }.sorted()
+                            + [kept.upperBound]
+                        return zip(splits, splits.dropFirst()).map { $0...$1 }
+                    }
+                    #expect(projection.originalRanges(in: range) == expected)
+                    let lower = forward(time, following: true)
+                    #expect(projection.displayRange(forOriginalRange: range)
+                        == lower...max(lower, forward(time + width, following: false)))
+                }
+            }
+        }
+    }
+
     @Test func introRetargetsFortySecondBedWithIndependentTenSecondLeadIn() throws {
         let f = try AudioInsertionTestFixture()
         let bed = f.clip(at: .programOrigin(frame: 0), duration: 40 * rate)

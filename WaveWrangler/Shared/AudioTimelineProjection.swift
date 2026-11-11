@@ -12,6 +12,57 @@ struct AudioTimelineProjection: Sendable, Equatable {
     private let dialogue: [ProgramDialogueSpan]
     private let insertions: [ProgramInsertion]
     private let usesProgram: Bool
+    private let cutGeometry: CutGeometry
+    private let canonicalCutGeometry: CutGeometry
+    private let dialogueBoundaries: [Double]
+
+    private struct CutGeometry: Sendable {
+        let ranges: [ClosedRange<Double>]
+        let ends: [Double]
+        let removedBefore: [Double]
+
+        init(_ cuts: ManualCutTimeline) {
+            ranges = cuts.removals.map { Double($0.lowerBound) / 48_000...Double($0.upperBound) / 48_000 }
+            ends = ranges.map(\.upperBound)
+            var totals = [0.0]
+            var removed = 0.0
+            for range in ranges {
+                removed += range.upperBound - range.lowerBound
+                totals.append(removed)
+            }
+            removedBefore = totals
+        }
+
+        func editedTime(_ time: Double) -> Double {
+            let index = AudioTimelineProjection.firstIndex(in: ends) { $0 > time }
+            let partial = index < ranges.count ? max(0, time - ranges[index].lowerBound) : 0
+            return time - (removedBefore[index] + partial)
+        }
+
+        func keptRanges(in range: ClosedRange<Double>) -> [ClosedRange<Double>] {
+            var result: [ClosedRange<Double>] = []
+            var cursor = range.lowerBound
+            let first = AudioTimelineProjection.firstIndex(in: ends) { $0 > cursor }
+            for span in ranges[first...] {
+                if span.lowerBound > range.upperBound { break }
+                if span.lowerBound > cursor { result.append(cursor...min(span.lowerBound, range.upperBound)) }
+                cursor = max(cursor, span.upperBound)
+                if cursor > range.upperBound { break }
+            }
+            if cursor <= range.upperBound { result.append(cursor...range.upperBound) }
+            return result
+        }
+    }
+
+    private static func firstIndex(in sorted: [Double], where predicate: (Double) -> Bool) -> Int {
+        var lower = 0, upper = sorted.count
+        while lower < upper {
+            let middle = lower + (upper - lower) / 2
+            if predicate(sorted[middle]) { upper = middle } else { lower = middle + 1 }
+        }
+        return lower
+    }
+
     private struct Opening: Sendable, Equatable {
         let original: Range<Int64>
         let programSeam: Int64
@@ -25,6 +76,11 @@ struct AudioTimelineProjection: Sendable, Equatable {
         dialogue = program?.dialogueSpans ?? []
         insertions = program?.insertions ?? []
         usesProgram = program != nil
+        cutGeometry = CutGeometry(cuts)
+        canonicalCutGeometry = CutGeometry(program?.cuts ?? cuts)
+        dialogueBoundaries = (program?.dialogueSpans ?? []).flatMap {
+            [Double($0.originalFrames.lowerBound) / 48_000, Double($0.originalFrames.upperBound) / 48_000]
+        }.sorted()
         var restored: [Range<Int64>] = []
         if let program, expanded != nil {
             for removal in program.cuts.removals {
@@ -67,8 +123,8 @@ struct AudioTimelineProjection: Sendable, Equatable {
     }
 
     private func forward(_ time: Double, followingInsertions: Bool) -> Double {
-        guard usesProgram else { return cuts.editedTime(forAlignedTime: time) }
-        let base = canonicalCuts.editedTime(forAlignedTime: time)
+        guard usesProgram else { return cutGeometry.editedTime(time) }
+        let base = canonicalCutGeometry.editedTime(time)
         let restoredEndpoint = openings.contains {
             time > Double($0.original.lowerBound) / 48_000 && time <= Double($0.original.upperBound) / 48_000
         }
@@ -76,7 +132,7 @@ struct AudioTimelineProjection: Sendable, Equatable {
             let boundary = Double($0.baseFrame) / 48_000
             return followingInsertions || restoredEndpoint ? boundary <= base : boundary < base
         }.reduce(0) { $0 + Double($1.region.durationFrames) / 48_000 }
-        return cuts.editedTime(forAlignedTime: time) + shift
+        return cutGeometry.editedTime(time) + shift
     }
 
     func displayTime(forProgramTime time: Double) -> Double {
@@ -222,11 +278,11 @@ struct AudioTimelineProjection: Sendable, Equatable {
     }
 
     func originalRanges(in range: ClosedRange<Double>) -> [ClosedRange<Double>] {
-        let boundaries = dialogue.flatMap { [Double($0.originalFrames.lowerBound) / 48_000,
-                                             Double($0.originalFrames.upperBound) / 48_000] }
-        return cuts.keptAlignedRanges(in: range).flatMap { kept in
-            let splits = [kept.lowerBound] + boundaries.filter { $0 > kept.lowerBound && $0 < kept.upperBound }.sorted()
-                + [kept.upperBound]
+        return cutGeometry.keptRanges(in: range).flatMap { kept in
+            let first = Self.firstIndex(in: dialogueBoundaries) { $0 > kept.lowerBound }
+            let last = Self.firstIndex(in: dialogueBoundaries) { $0 >= kept.upperBound }
+            let interior = first < last ? Array(dialogueBoundaries[first..<last]) : []
+            let splits = [kept.lowerBound] + interior + [kept.upperBound]
             return zip(splits, splits.dropFirst()).map { $0...$1 }
         }
     }
