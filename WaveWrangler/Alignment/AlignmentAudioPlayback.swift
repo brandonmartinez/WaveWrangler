@@ -357,18 +357,18 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     private func checkDeadline() {
-        if productionPlayer != nil, let clock, let elapsed = elapsedAudioSeconds {
-            let remaining = max(0, clock.duration - elapsed)
+        guard let scheduled = clock, let elapsed = elapsedAudioSeconds else { return }
+        if productionPlayer != nil {
+            let remaining = max(0, scheduled.duration - elapsed)
             if !finalBuffer {
                 productionDiagnostics?.recordBufferedFrames(Int64((remaining * Double(MixerRecipe.sampleRate)).rounded(.down)))
             }
             // Detect exhaustion before waking a producer: starvation is not available capacity.
-            if finalBuffer || elapsed < clock.duration {
+            if finalBuffer || elapsed < scheduled.duration {
                 productionRefill.consumed(bufferedSeconds: remaining)
             }
         }
-        guard !finalBuffer, failure == nil, let scheduled = clock,
-              let elapsed = elapsedAudioSeconds, elapsed >= scheduled.duration else { return }
+        guard !finalBuffer, failure == nil, elapsed >= scheduled.duration else { return }
         reportUnderrun(elapsed: elapsed)
         let callback = onDeadline
         let stopped = readClock()
@@ -411,6 +411,9 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         if let failure { throw failure }
         guard let clock else { throw AlignmentTransportFailure.discontinuousWindow }
         let elapsed = elapsedAudioSeconds
+        let remaining = elapsed.map { max(0, clock.duration - $0) }
+            ?? max(0, clock.startedAt.addingTimeInterval(clock.duration).timeIntervalSinceNow)
+        productionDiagnostics?.recordBufferedFrames(Int64((remaining * Double(MixerRecipe.sampleRate)).rounded(.down)))
         do {
             try Self.validateAppend(to: clock, startSeconds: startSeconds, playedSeconds: elapsed)
         } catch AlignmentTransportFailure.bufferDeadline {
@@ -531,7 +534,6 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         var scheduled = productionBuffer
         try scheduled.append(output, final: final)
         if clock != nil {
-            diagnostics?.recordBufferedFrames(Int64((bufferedSeconds * Double(MixerRecipe.sampleRate)).rounded(.down)))
             try validateQueueAppend(startSeconds: start)
         }
         let finished = PlaybackCompletion(1)

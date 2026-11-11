@@ -106,21 +106,42 @@ public struct SupplementalClipScheduler: Sendable {
             }
             let envelope = try AudioEnvelopeEvaluator(envelope: occurrence.clip.envelope,
                 durationFrames: Int64(occurrence.programFrames.count))
+            let support = occurrence.clip.trim.startFrame..<occurrence.clip.trim.endFrame
+            let outputOffset = occurrence.clip.outputWindow?.offsetFrames ?? 0
+            let firstOutput = first - occurrence.programFrames.lowerBound + outputOffset
+            let endOutput = end - occurrence.programFrames.lowerBound + outputOffset
+            let sourceEnd = try NominalPCMRenderer.sourceFrames(sampleRate: occurrence.asset.sampleRate,
+                support: support, outputFrames: firstOutput..<endOutput).upperBound
+            var prepared: PreparedSourceWindow?
             var next = first
             while next < end {
                 try Task.checkCancellation()
                 let upper = min(end, next + Int64(NominalPCMRenderer.maximumOutputFrames))
                 let local = next - occurrence.programFrames.lowerBound
-                let origin = local + (occurrence.clip.outputWindow?.offsetFrames ?? 0)
-                let samples = try await NominalPCMRenderer.render(sampleRate: occurrence.asset.sampleRate,
-                    support: occurrence.clip.trim.startFrame..<occurrence.clip.trim.endFrame,
-                    outputFrames: origin..<(origin + upper - next), channels: occurrence.sourceChannels
-                ) { [preparation] range, channels in
-                    let window = try await preparation.readWindow(range,
+                let origin = local + outputOffset
+                let outputFrames = origin..<(origin + upper - next)
+                let needed = try NominalPCMRenderer.sourceFrames(sampleRate: occurrence.asset.sampleRate,
+                    support: support, outputFrames: outputFrames)
+                let containsNeeded = prepared.map {
+                    $0.range.lowerBound <= needed.lowerBound && $0.range.upperBound >= needed.upperBound
+                } ?? false
+                if !containsNeeded {
+                    let limit = preparation.configuration.maximumWindowFrames
+                    guard needed.count <= limit else { throw NativeSourcePreparationFailure.invalidRange }
+                    // Retain only this occurrence's bounded native window, never a cross-read access grant.
+                    prepared = try await preparation.readWindow(
+                        needed.lowerBound..<min(sourceEnd, needed.lowerBound + Int64(limit)),
                         expectedFormat: source.snapshot.interpretation, admission: source.admission)
+                }
+                guard let window = prepared else { throw MixerFailure.incompletePCM }
+                let samples = try await NominalPCMRenderer.render(sampleRate: occurrence.asset.sampleRate,
+                    support: support, outputFrames: outputFrames, channels: occurrence.sourceChannels
+                ) { range, channels in
+                    guard range.lowerBound >= window.range.lowerBound, range.upperBound <= window.range.upperBound
+                    else { throw MixerFailure.incompletePCM }
                     return channels.map { channel in
-                        let start = channel * window.range.count
-                        return Array(window.samples[start..<(start + window.range.count)])
+                        let start = channel * window.range.count + Int(range.lowerBound - window.range.lowerBound)
+                        return Array(window.samples[start..<(start + range.count)])
                     }
                 }
 
@@ -134,6 +155,7 @@ public struct SupplementalClipScheduler: Sendable {
                 }
                 next = upper
             }
+            try await source.admission.validateCurrentAccess()
         }
         try Task.checkCancellation()
         guard tracks.values.allSatisfy({ $0.allSatisfy({ $0.allSatisfy(\.isFinite) }) }) else {

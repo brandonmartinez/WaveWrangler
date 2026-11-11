@@ -10,10 +10,23 @@ import WWSources
 @testable import WWMix
 
 private final class SupplementalAccess: Sendable {
-    private let allowed = Mutex(true)
-    func revoke() { allowed.withLock { $0 = false } }
+    private struct State {
+        var allowed = true
+        var checks = 0
+        var revokeAt: Int?
+    }
+    private let state = Mutex(State())
+    var validationCount: Int { state.withLock { $0.checks } }
+    func revoke() { state.withLock { $0.allowed = false } }
+    func revoke(afterAdditionalValidations count: Int) {
+        state.withLock { $0.revokeAt = $0.checks + count }
+    }
     func validate() throws {
-        guard allowed.withLock({ $0 }) else { throw NativeSourcePreparationFailure.notAuthorized }
+        try state.withLock {
+            $0.checks += 1
+            if let revokeAt = $0.revokeAt, $0.checks >= revokeAt { $0.allowed = false }
+            guard $0.allowed else { throw NativeSourcePreparationFailure.notAuthorized }
+        }
     }
 }
 
@@ -34,12 +47,13 @@ private struct SupplementalFixture {
     }
 
     init(rate: Int = 44_100, frames: Int = 441, channels: Int = 2,
-         storage: Int64 = 1 << 30, codec: UInt32 = kAudioFormatLinearPCM) async throws {
+         storage: Int64 = 1 << 30, codec: UInt32 = kAudioFormatLinearPCM,
+         containerType: UInt32 = kAudioFileCAFType) async throws {
         root = FileManager.default.temporaryDirectory.appendingPathComponent("ww-f4-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         let originals = root.appendingPathComponent("originals", isDirectory: true)
         try FileManager.default.createDirectory(at: originals, withIntermediateDirectories: true)
-        url = originals.appendingPathComponent("generated.caf")
+        url = originals.appendingPathComponent(containerType == kAudioFileM4AType ? "generated.m4a" : "generated.caf")
         var client = AudioStreamBasicDescription(mSampleRate: Double(rate), mFormatID: kAudioFormatLinearPCM,
             mFormatFlags: kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked,
             mBytesPerPacket: UInt32(channels * 2), mFramesPerPacket: 1, mBytesPerFrame: UInt32(channels * 2),
@@ -49,7 +63,7 @@ private struct SupplementalFixture {
             mBytesPerPacket: 0, mFramesPerPacket: 0, mBytesPerFrame: 0,
             mChannelsPerFrame: UInt32(channels), mBitsPerChannel: 0, mReserved: 0)
         var created: ExtAudioFileRef?
-        try #require(ExtAudioFileCreateWithURL(url as CFURL, kAudioFileCAFType, &format, nil, 0, &created) == noErr)
+        try #require(ExtAudioFileCreateWithURL(url as CFURL, containerType, &format, nil, 0, &created) == noErr)
         let file = try #require(created)
         var layout = AudioChannelLayout()
         layout.mChannelLayoutTag = channels == 1 ? kAudioChannelLayoutTag_Mono : kAudioChannelLayoutTag_Stereo
@@ -109,6 +123,50 @@ private struct SupplementalFixture {
 
 @Suite("Supplemental clip production", .serialized)
 struct SupplementalClipTests {
+    @Test(arguments: [44_100, 48_000, 192_000], [false, true])
+    func producerWindowsBatchNativeReadsWithoutChangingFadeOrSeekSamples(_ rate: Int, compressed: Bool) async throws {
+        let f = try await SupplementalFixture(rate: rate, frames: rate * 2,
+            codec: compressed ? kAudioFormatAppleLossless : kAudioFormatLinearPCM,
+            containerType: compressed ? kAudioFileM4AType : kAudioFileCAFType)
+        defer { try? f.remove() }
+        var clip = f.clip()
+        clip.envelope = .init(points: [.init(frame: 0, amplitude: 1), .init(frame: 96_000, amplitude: 0)])
+        let scheduler = try await f.scheduler(f.episode(clips: [clip]))
+        let consumer = try await scheduler.makeConsumer()
+        let before = f.permission.validationCount
+        let started = ContinuousClock.now
+        let whole = try #require(try await consumer.read(0..<48_000)[f.track.id])
+        let elapsed = started.duration(to: .now)
+        let checks = f.permission.validationCount - before
+        print("WW_SUPPLEMENTAL_WINDOW rate=\(rate) compressed=\(compressed) frames=48000 accessChecks=\(checks) elapsed=\(elapsed)")
+        #expect(checks <= (rate == 192_000 ? 9 : 3),
+                "Admission should bracket bounded native windows, not every 4096-frame render chunk.")
+        var pieces = [[Float](), [Float]()]
+        for range: Range<Int64> in [0..<17, 17..<4097, 4097..<32_003, 32_003..<48_000] {
+            let window = try #require(try await consumer.read(range)[f.track.id])
+            for channel in 0..<2 { pieces[channel] += window[channel] }
+        }
+        #expect(pieces == whole)
+        #expect(try await consumer.read(4_093..<4_101)[f.track.id] == whole.map { Array($0[4_093..<4_101]) })
+        f.permission.revoke()
+        await #expect(throws: NativeSourcePreparationFailure.notAuthorized) {
+            try await consumer.read(48_000..<96_000)
+        }
+        await consumer.release()
+    }
+
+    @Test func batchedNativeReadStillRefusesAccessRevokedBeforeReturningRenderedPCM() async throws {
+        let f = try await SupplementalFixture(rate: 48_000, frames: 48_000)
+        defer { try? f.remove() }
+        let scheduler = try await f.scheduler(f.episode())
+        let consumer = try await scheduler.makeConsumer()
+        f.permission.revoke(afterAdditionalValidations: 3)
+        await #expect(throws: NativeSourcePreparationFailure.notAuthorized) {
+            try await consumer.read(0..<48_000)
+        }
+        await consumer.release()
+    }
+
     @Test func nonseekableOverBudgetWorkingSetRefusesBeforeSchedulerBecomesReady() async throws {
         let first = try await SupplementalFixture(rate: 48_000, storage: 30_000, codec: kAudioFormatAppleLossless)
         defer { try? first.remove() }

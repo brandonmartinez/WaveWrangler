@@ -12,30 +12,43 @@ public enum NominalPCMRenderer {
     public static let version = 1
     public static let maximumOutputFrames = 4096
 
+    /// Exact native coverage, including sinc support, for batching a caller's source reads.
+    /// This only computes bounds; rendering remains limited to `maximumOutputFrames`.
+    public static func sourceFrames(
+        sampleRate: Int, support: Range<Int64>, outputFrames: Range<Int64>
+    ) throws -> Range<Int64> {
+        guard (8_000...192_000).contains(sampleRate), support.lowerBound >= 0, !support.isEmpty,
+              support.upperBound <= Int64(sampleRate) * 86_400,
+              outputFrames.lowerBound >= 0, !outputFrames.isEmpty else { throw NominalPCMFailure.invalidRequest }
+        let rate = Int64(sampleRate)
+        guard outputFrames.upperBound <= ((support.upperBound - support.lowerBound) * 48_000 + rate - 1) / rate
+        else { throw NominalPCMFailure.invalidRequest }
+        let identity = sampleRate == 48_000
+        let scale = min(1, 48_000 / Double(sampleRate))
+        let halfTaps = identity ? 0 : Int(ceil(Double(KaiserSincKernel.m2Candidate.halfWidth) / scale))
+        let first = (support.lowerBound * 48_000 + outputFrames.lowerBound * rate) / 48_000
+        let last = (support.lowerBound * 48_000 + (outputFrames.upperBound - 1) * rate) / 48_000
+        let lower = max(support.lowerBound, first - Int64(halfTaps) + (identity ? 0 : 1))
+        return lower..<min(support.upperBound, last + Int64(halfTaps) + 1)
+    }
+
     @concurrent
     public static func render(
         sampleRate: Int, support: Range<Int64>, outputFrames: Range<Int64>, channels: [Int],
         samples provideSamples: @Sendable (Range<Int64>, [Int]) async throws -> [[Float]]
     ) async throws -> [[Float]] {
-        guard (8_000...192_000).contains(sampleRate), support.lowerBound >= 0, !support.isEmpty,
-              support.upperBound <= Int64(sampleRate) * 86_400,
-              outputFrames.lowerBound >= 0, !outputFrames.isEmpty,
+        guard outputFrames.lowerBound >= 0, !outputFrames.isEmpty,
               outputFrames.count <= maximumOutputFrames,
               !channels.isEmpty, channels.count <= 2, Set(channels).count == channels.count,
               channels.allSatisfy({ (0..<64).contains($0) }) else { throw NominalPCMFailure.invalidRequest }
         let rate = Int64(sampleRate)
         func position(_ frame: Int64) -> Int64 { support.lowerBound * 48_000 + frame * rate }
-        guard outputFrames.upperBound <= ((support.upperBound - support.lowerBound) * 48_000 + rate - 1) / rate
-        else { throw NominalPCMFailure.invalidRequest }
+        let need = try sourceFrames(sampleRate: sampleRate, support: support, outputFrames: outputFrames)
         try Task.checkCancellation()
         let identity = sampleRate == 48_000
         let scale = min(1, 48_000 / Double(sampleRate))
         let kernel = KaiserSincKernel.m2Candidate
         let halfTaps = identity ? 0 : Int(ceil(Double(kernel.halfWidth) / scale))
-        let first = position(outputFrames.lowerBound) / 48_000
-        let last = position(outputFrames.upperBound - 1) / 48_000
-        let lower = max(support.lowerBound, first - Int64(halfTaps) + (identity ? 0 : 1))
-        let need = lower..<min(support.upperBound, last + Int64(halfTaps) + 1)
         let samples = try await provideSamples(need, channels)
         try Task.checkCancellation()
         guard samples.count == channels.count, samples.allSatisfy({ $0.count == need.count }) else {

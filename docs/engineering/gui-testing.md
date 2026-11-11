@@ -400,6 +400,105 @@ FocusState and QoS runtime warnings, so this is not warning-free qualification.
 The collected result and log use
 `.build/playback-transcript-cuts-ww-ui-1-final-clock-and-stop`.
 
+### Supplemental-source starvation during actual-show playback
+
+A separately authorized local reproduction on November 11, 2026 captured a
+different failure: all five raw source windows drained at about 14 seconds.
+One-second preparation windows took 1.419 seconds most recently, with a
+1.522-second maximum. The earlier unprofiled report stopped near 20 seconds
+with the same empty-raw-queue signature. The bounded stack capture pointed to
+supplemental native-window admission and verification, not primarily envelope
+evaluation. Profiling can perturb timing; these are not matched wall-time
+benchmarks. Evidence uses `.build/reported-underrun-profile-20261111-1227`.
+
+The supplemental scheduler now reuses a bounded native PCM window across its
+4,096-frame resampling chunks within one read and clip occurrence. Coverage
+comes from the renderer's exact source-phase and sinc-support calculation.
+Every native read still goes through witnessed decoding, format checks, and
+live admission before and after the read. Access is checked again after the
+occurrence is rendered. Nothing is retained between scheduler reads; the
+configured native-window bound, storage cap, consumer retention, live mixer
+controls, and 250 ms rendered reserve are unchanged.
+
+A one-second generated 44.1/48 kHz clip previously performed 24 live access
+checks; it now performs three. At 192 kHz it performs nine, spanning four
+bounded native reads rather than enlarging the configured limit. PCM and
+lossless M4A cases preserve fade samples bit-for-bit across arbitrary chunks
+and seeks, reject subsequent revocation, and reject revocation at final
+delivery. The focused renderer, supplemental scheduler, native preparation,
+and envelope suites passed with two optional MP3 cases skipped because no
+encoder was configured. The previously documented supplemental-placement
+fixture that requests playback outside Episode Start/End remains excluded;
+an initial run still reproduced that unrelated failure.
+
+Generated one-second 44.1/48 kHz timings improved only from 149-162 ms to
+127-136 ms with the fixture's cheap admission callback; those measurements
+do not establish real-show throughput. Local build and focused results are
+under `.build/supplemental-batching-{app-build,qualified}.log`.
+
+The authorized updated-app capture (build `20261111173358066`) did not qualify
+the intro fix: the automated clock edit displayed zero but did not commit the
+seek, and playback advanced from the restored position near 81 seconds to
+97.550 seconds. It stopped after 798,656 consumed frames (16.639 seconds).
+Unlike the original starvation, all five raw windows were still queued:
+preparation last/max were 484/767 ms, source wait max was 0.025 ms, DSP
+last/max were 8.150/56.831 ms, and enqueue last/max were 3.971/58.470 ms.
+This is the separate rendered-output exhaustion signature, not evidence that
+the intro now passes. The profile includes repeated waits inside AVFAudio's
+`lastRenderTime` engine lock on the output queue. Evidence is under
+`.build/supplemental-batching-{profile.txt,audio.log,sampler.log}`. Actual
+playback reliability remains unqualified; no further actual-show playback is
+authorized by that completed attempt.
+
+After the user requested reopening and manually controlling Play, a second
+60-second capture recorded three underruns with four or five raw windows still
+queued. Source-wait maxima stayed below 0.020 ms, while enqueue maxima reached
+23-66 ms. The output queue repeatedly slept inside
+`AVAudioNodeImplBase::GetAttachAndEngineLock` when reading `lastRenderTime`.
+Those captures are `.build/supplemental-batching-manual-{profile.txt,audio.log}`.
+They do not establish three identical start positions.
+
+The output graph now samples the device clock once per watchdog tick for both
+refill and deadline decisions, and once per append for both diagnostics and
+validation. Previously each operation requested it twice. This removes
+redundant engine-lock acquisitions without caching device time, changing the
+deadline rules, moving work into the audio callback, or enlarging the reserve.
+
+VM `ww-ui-1` (Virtualization.framework, macOS 27, four vCPUs) passed the focused
+flattened-playback and 32-second sustained live-edit regression with dirty
+`81be3fc2` plus these changes: nine test methods passed, one opt-in completion
+diagnostic skipped; the parameterized playback method exercised both source
+and production modes. The sustained run completed in 32.067 seconds with
+8,970 minimum buffered frames, three native inserts, dense transcript layout,
+live edits, verified saves, and source-integrity checks. Its result is
+`.build/playback-clock-vm-result.xcresult/result.xcresult`, with the guest copy at
+`~/ww-uitest-runs/playback-source-clock-33dfae7f-20261111/result.xcresult`.
+As in the earlier checker investigation, only the scratch `.xctestrun` omitted
+Thread Performance Checker injection; repository checker settings were not
+changed. This is functional VM evidence, not actual-show or physical-device
+performance qualification.
+
+The combined editing build `20261111180850080` was subsequently reopened for
+an explicitly approved, user-controlled 60-second actual-show capture. Two
+underruns occurred during sampling, at 13:11:14 and 13:11:27 on November 11,
+2026. Both retained four raw windows; source-wait maxima were 0.021/0.019 ms,
+DSP maxima were 12.744/14.344 ms, and enqueue maxima were 62.452/25.764 ms.
+The profile still contains output-queue waits inside `lastRenderTime` from
+both watchdog and append validation. Removing duplicate queries did not
+eliminate this sampled output-exhaustion failure.
+
+A later replay remained active at Episode Time 1:00.562 and was manually stopped
+at 1:05.229 to bound playback. The user confirmed that this replay started at
+zero and remained audibly uninterrupted. A follow-up audio-log read through
+13:12:59 contained only the two earlier underruns. This qualifies a bounded
+intro replay, not whole-show reliability or elimination of the sampled
+failure. The contrast is consistent with profiling perturbation but does not
+prove that sampling caused the failures; the exact final replay start was not
+captured independently. Evidence is under
+`.build/playback-clock-manual-{profile.txt,audio.log,sampler.log}` and
+`.build/playback-clock-manual-followup-audio.log`. No further playback was
+initiated.
+
 The same suite has a separately gated
 `fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable
 `WW_EPISODE_SOAK_TESTS=1` only on a ready, leased VM and set
