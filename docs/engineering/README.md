@@ -504,9 +504,38 @@ five-second tile path; a cold adaptive tile can still dominate preparation.
 The immutable default sinc prototype is shared between renders and never built for
 identity-only plans; samples, render recipes and historical DSP qualification are
 unchanged. Stop clears scheduled audio but retains the compatible paused transport
-graph, reducing repeated engine/node setup. Each restart still has the existing
-100 ms scheduling lead: these changes do **not** promise gapless cycles or measured
-physical audio latency.
+graph, reducing repeated engine/node setup. Explicit Stop/Play still has the
+100 ms source-audition scheduling lead; cycle boundaries no longer restart it.
+
+Production Mix and Source Audition retain ungained PCM for the active cycle in
+memory and reuse their running output graph across wraps. Production also retains
+its processing instance, effect history, and latency compensation. Live gain,
+listening selection, and production bypass remain independent of cached PCM.
+The cycle cache retains intersecting raw tiles plus the current decode tile;
+its memory use grows with cycle duration and source count. Moving or disabling
+the cycle releases obsolete tiles as preparation advances. Periodic witnessed
+source/accepted-map verification continues even when every loop sample is cached;
+a cache entry never authorizes media access.
+
+Raw preparation remains ahead of playback, including the five-second adaptive
+startup policy, but device scheduling uses 512-frame production processing blocks
+and 2048-frame source buffers within the same 4096-frame control horizon rather
+than queuing seconds of source audio. Unchanged source gains do not repeatedly
+read meters or rewrite output-node properties while the scheduler paces. The
+device clock is monotonic; a separate program-position mapping wraps the playhead
+and leaves meters, pending source joins, and completion in device time. Cycle
+playback starts at the current playhead, not automatically at the cycle start.
+An enabled or newly added cycle catches playback at its end, including when
+playback began before the cycle. A cycle already wholly behind the queued
+playback frontier does not rewind the transport. Changes take effect beyond the
+short already-scheduled device horizon, not retroactively within rendered audio.
+Disabling a cycle continues toward the episode end, without rebuilding the mix.
+Explicit nonrepeating selection auditions remain bounded and do not inherit an
+enabled global cycle. Original source-time Solo retains its no-cut,
+no-accepted-map-activation behavior.
+Source audition has also shown an intermittent buffer underrun during the
+dense-transcript main-actor stress regression, despite successful isolated
+reruns. Persistent cycling does not establish underrun-free playback under load.
 
 The opt-in synthetic listening benchmark exercises generated 48 kHz PCM, identity
 and +100 ppm maps, two audible tracks, multiple windows and three cycles. Its useful
@@ -533,7 +562,8 @@ hits across three four-second cycles. Serial macOS VM hosted regressions also
 exercise three real model playback cycles, synchronous Stop, live unmute/Solo
 without restarting the shared clock, and the actual producer-deadline callback
 with synthetic recordings. Those are functional checks, not measurements of full
-app admission, physical output startup, or gapless cycles. More simultaneous
+app admission or physical output startup. These historical measurements predate
+persistent cycling and do not establish acoustic gaplessness. More simultaneous
 drifting tracks and cold adaptive tiles are not covered by this two-track timing
 acceptance.
 
@@ -1479,7 +1509,8 @@ the legacy array index, so migration preserves IDs, effect order, bypass and
 exact state bytes. Positions must be strictly increasing in processing order,
 unique within the bus, and in 0...63. Positional edits first materialize legacy
 positions. Removal leaves a gap; adding to a blank backfills that exact row.
-Moving onto an occupied row swaps effects, while moving onto a blank leaves
+Moving onto an occupied row inserts the effect there and shifts intervening
+effects through the existing occupied rows; moving onto a blank leaves
 the original row empty. Replacement keeps the row but creates a fresh effect
 identity/default state. `MixerInsertRack` centralizes these operations and
 rejects stale targets or collisions. Earlier schemas cannot carry positions;
@@ -1705,7 +1736,10 @@ both typed speaker and audio-track routes, independent of diagnostic source Solo
 Track meters are separate L/R prepared-PCM meters. Recording input gain applies
 once in both production mixing and speaker/source listening (including original
 source-time audition). Production admission leaves samples ungained for the mixer;
-diagnostic listening applies the same recording/channel gain when preparing PCM.
+streaming diagnostic listening keeps ungained PCM and applies the current
+recording/channel gain in a per-source output gain stage. Source selection/mute
+remains separate, and meters compose both gains. Short standalone diagnostics
+still apply recording gain when preparing PCM.
 Supplemental assets cannot acquire such a gain entry.
 Mix edits never enter estimators, ASR, raw waveform cache keys, or original files.
 Production playback uses the runtime's verified accepted map and authorized source
@@ -1977,6 +2011,7 @@ scroll for aligned insert rows and controls. Non-master strips use a native
 legacy-style horizontal scrollbar whenever they overflow, independent of the
 system's overlay-scrollbar preference; it stays below the shared vertical viewport
 in short panes and hides when every strip fits.
+Track strips remain left-aligned when the viewport has spare horizontal space.
 A full-width name block, existing
 speaker appearance (including episode overrides) or track icon, and temporary
 Solo/Mute controls identify each strip. Source/channel details and actionable
@@ -2022,15 +2057,25 @@ or keyboard focus; context menus provide the same actions without hover.
 Option-click toggles bypass, double-click opens settings, Return opens the
 focused pill and Space toggles bypass. Same-strip dragging is scoped to the
 originating presentation and episode; cross-strip moving/cloning is not
-implemented. Move Earlier/Later provides a keyboard-accessible alternative.
+implemented. Native local drag-session identities validate the originating strip
+before accepting a move; copy and outside-app operations are disabled. The visible
+grip remains draggable while hover actions are expanded. Dropping onto an occupied
+row reorders without duplicating effects. Move Earlier/Later provides a
+keyboard-accessible alternative.
 Blank insert rows retain the plus/add affordance and accessible insert-position
 label, without visible "Empty" text.
 Pills prefer the loaded Audio Unit's optional `audioUnitShortName`; otherwise
 they omit an exact installed manufacturer prefix from the product name. Discovery
 never instantiates an effect just to get a short name. Full product names remain
 in accessibility labels, tooltips, menus, editor titles, and saved slots.
-All edits retain the existing capture/replacement barrier and error reporting;
-insert changes remain playback restart boundaries, not promised hot swaps.
+All edits retain the existing capture barrier and error reporting. Production
+bypass uses the nonreplacing barrier, keeps the native editor and processing
+instance, and crossfades over 480 samples between a warm wet path and
+latency-matched dry PCM. Live graphs reserve effect latency even while bypassed;
+frozen offline bypass retains its zero-latency dry behavior. Gain and source
+recording-gain edits update the active transport without restarting it.
+Adding, removing, replacing, and reordering inserts remain playback restart
+boundaries, not promised hot swaps.
 
 `ShowWindowState.mixerPresentation` owns presentation only. Both `MixerView`
 surfaces bind `state.alignmentModel.mixer`; detaching constructs no audio engine,

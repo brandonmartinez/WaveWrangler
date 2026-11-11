@@ -467,6 +467,7 @@ final class EpisodeAlignmentModel {
     @ObservationIgnored private var auditionGeneration: UInt64 = 0
     @ObservationIgnored private var transportTask: Task<Void, Never>?
     @ObservationIgnored private var sourcePlayback: RegularAudioPlayback?
+    var hasStreamingSourcePlayback: Bool { sourcePlayback != nil }
     @ObservationIgnored private var transportProgressTask: Task<Void, Never>?
     @ObservationIgnored private var auditionStopTask: Task<Void, Never>?
     @ObservationIgnored private var auditionUsesOriginalTime = false
@@ -1873,8 +1874,8 @@ final class EpisodeAlignmentModel {
         listeningMode = .productionMix
         isPreparingAudition = true
         auditionLabel = "Preparing the production mix."
-        let requestedRange = interval ?? (listening.cycleEnabled ? listening.cycleRange : nil)
-        let loops = repeating ?? (listening.cycleEnabled && requestedRange != nil)
+        let requestedRange = interval
+        let permitsCycle = repeating != false
         transportTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -1900,16 +1901,25 @@ final class EpisodeAlignmentModel {
                 let last = min(end, interval?.upperBound ?? end)
                 let schedule = try AlignedAuditionSchedule(startSeconds: start, endSeconds: last)
                 let frames = schedule.firstFrame..<schedule.endFrame
-                _ = try await mixer.prepare(programFrames: frames)
+                let bounds = requestedRange == nil ? extent : frames
+                _ = try await mixer.prepare(programFrames: bounds)
                 guard generation == auditionGeneration else { throw CancellationError() }
                 productionTimeline = timeline
                 let prepared = try mixer.makePlayback(output: audioPlayback)
+                @MainActor func currentCycle() throws -> Range<Int64>? {
+                    let range = repeating == true ? requestedRange
+                        : (permitsCycle && listening.cycleEnabled ? listening.cycleRange : nil)
+                    return try productionCycleFrames(range, within: bounds)
+                }
+                prepared.setCycleRange(try currentCycle())
                 transportProgressTask = Task { [weak self] in
                     while let self, generation == auditionGeneration, !Task.isCancelled {
+                        do { prepared.setCycleRange(try currentCycle()) }
+                        catch { prepared.invalidate(error); return }
                         if let clock = audioPlayback.clock, audioPlayback.failure == nil {
                             isAuditioning = true
                             isPreparingAudition = false
-                            mixer.publishPlaybackMeters(at: clock.playhead())
+                            mixer.publishPlaybackMeters(at: audioPlayback.linearClock?.playhead() ?? clock.playhead())
                             auditionLabel = "Playing the production mix; source audition choices are unchanged."
                             productionPlayheadSeconds = clock.playhead()
                             waveformPlayheadSeconds = waveformTime(atProgramTime: clock.playhead())
@@ -1919,7 +1929,7 @@ final class EpisodeAlignmentModel {
                         catch { return }
                     }
                 }
-                try await prepared.play(output: audioPlayback) { [weak self] in
+                try await prepared.play(output: audioPlayback, startFrame: schedule.firstFrame) { [weak self] in
                     guard let self, generation == auditionGeneration else { return }
                     stopAudition()
                     let error = AlignmentTransportFailure.bufferDeadline
@@ -1934,9 +1944,6 @@ final class EpisodeAlignmentModel {
                 auditionPlayheadSeconds = waveformPlayheadSeconds
                 auditionLabel = "Production mix reached the end of the selected program."
                 transportTask = nil
-                if loops, listening.cycleEnabled, listening.cycleRange == requestedRange {
-                    playProductionMix(interval: requestedRange, repeating: true)
-                }
             } catch {
                 guard generation == auditionGeneration else { return }
                 stopPlayback(updatePlayhead: true)
@@ -1949,8 +1956,19 @@ final class EpisodeAlignmentModel {
         }
     }
 
+    private func productionCycleFrames(_ range: ClosedRange<Double>?, within bounds: Range<Int64>) throws -> Range<Int64>? {
+        guard let range else { return nil }
+        guard let first = presentationTimeline.programTime(forDisplayTime: range.lowerBound),
+              let last = presentationTimeline.programTime(forDisplayTime: range.upperBound) else {
+            throw ManualCutReviewFailure(reason: "The production cycle includes review-only removed audio.")
+        }
+        let lower = max(bounds.lowerBound, try AudioClipEditorModel.programFrame(first))
+        let upper = min(bounds.upperBound, try AudioClipEditorModel.programFrame(last))
+        return lower < upper ? lower..<upper : nil
+    }
+
     func playEnabledTracks(interval: ClosedRange<Double>? = nil, repeatInterval: Bool? = nil,
-                           repeatWhile: (() -> Bool)? = nil, applyingCuts: Bool = true) {
+                           repeatWhile: (@MainActor @Sendable () -> Bool)? = nil, applyingCuts: Bool = true) {
         listening.usesProductionMix = false
         adoptCachedPresentation()
         let sourceTimeTrack = sourceTimeSoloTrack
@@ -1980,8 +1998,8 @@ final class EpisodeAlignmentModel {
             auditionLabel = "No enabled track has accepted timing. Set timing manually or enable a timed track."
             return
         }
-        let requestedRange = interval ?? (listening.cycleEnabled ? listening.cycleRange : nil)
-        let loops = repeatInterval ?? (listening.cycleEnabled && requestedRange != nil)
+        let requestedRange = interval
+        let permitsCycle = interval == nil && repeatInterval != false
         let auditionBounds = usesCuts || sourceTimeTrack != nil ? waveformAuditionBounds : manualCutBounds ?? waveformAuditionBounds
         let sourceTimeEnd = sourceTimeTrack.map { Double($0.envelope.totalFrames) / Double($0.envelope.sampleRate) }
         let timelineEnd = sourceTimeEnd ?? timelineEnd(for: Set(enabled), applyingCuts: usesCuts)
@@ -2027,12 +2045,31 @@ final class EpisodeAlignmentModel {
                 presentation: usesCuts && audioEditor.hasArrangement ? presentationTimeline : nil)
             sourcePlayback = prepared
             document.store.registerListening(prepared)
+            let lower = requestedRange == nil
+                ? Int64(floor(max(-86_400, sourceTimeTrack == nil ? auditionBounds.lowerBound : 0) * rate))
+                : schedule.firstFrame
+            let bounds = lower..<schedule.endFrame
+            @MainActor func currentSourceCycle() throws -> Range<Int64>? {
+                let range = repeatInterval == true ? requestedRange
+                    : (permitsCycle && listening.cycleEnabled ? listening.cycleRange : nil)
+                guard let range else { return nil }
+                let first = requestedRange == nil && !usesCuts && sourceTimeTrack == nil
+                    ? cutTimeline.alignedTime(forEditedTime: range.lowerBound) : range.lowerBound
+                let last = requestedRange == nil && !usesCuts && sourceTimeTrack == nil
+                    ? cutTimeline.alignedTime(forEditedTime: range.upperBound) : range.upperBound
+                let cycle = try AlignedAuditionSchedule(startSeconds: first, endSeconds: last)
+                let lo = max(bounds.lowerBound, cycle.firstFrame)
+                let hi = min(bounds.upperBound, cycle.endFrame)
+                return lo < hi ? lo..<hi : nil
+            }
             auditionLabel = sourceTimeTrack.map { "Preparing original source-time audition of \($0.name). No alignment is assumed or saved." }
                 ?? ("Preparing timed tracks for live listening at the displayed map revision…"
                     + (omitted == 0 ? "" : " \(omitted) enabled untimed \(omitted == 1 ? "track is" : "tracks are") excluded."))
             auditionPlayheadSeconds = usesCuts || sourceTimeTrack != nil ? start : cutTimeline.editedTime(forAlignedTime: start)
             transportProgressTask = Task { [weak self] in
                 while let self, generation == auditionGeneration, !Task.isCancelled {
+                    do { prepared.setCycle(try currentSourceCycle()) }
+                    catch { prepared.invalidate(error); return }
                     if let clock = audioPlayback.clock, audioPlayback.failure == nil {
                         isAuditioning = true
                         isPreparingAudition = false
@@ -2044,12 +2081,14 @@ final class EpisodeAlignmentModel {
                         sourceMetersUpdatedAt = Date()
                         followPlayheadIfNeeded()
                     }
-                    do { try await Task.sleep(for: .milliseconds(100)) }
+                    do { try await Task.sleep(for: .milliseconds(50)) }
                     catch { return }
                 }
             }
             do {
-                try await prepared.play(schedule: schedule, onSourcesJoined: { [weak self] in
+                prepared.setCycle(try currentSourceCycle())
+                try await prepared.play(schedule: schedule, bounds: bounds, repeatWhile: repeatWhile,
+                    onSourcesJoined: { [weak self] in
                     guard let self, generation == auditionGeneration else { return }
                     refreshTransportGains()
                 }, onBufferDeadline: { [weak self] in
@@ -2076,15 +2115,9 @@ final class EpisodeAlignmentModel {
             stopPlayback(updatePlayhead: true)
             transportTask = nil
             waveformPlayheadSeconds = auditionPlayheadSeconds
-            if loops, (repeatWhile?() ?? (listening.cycleEnabled && listening.cycleRange == requestedRange)),
-               document.store.model.hasSameMediaInputs(as: snapshot, in: episodeID) {
-                playEnabledTracks(interval: requestedRange, repeatInterval: true,
-                                  repeatWhile: repeatWhile, applyingCuts: applyingCuts)
-            } else {
-                waveformPlayheadSeconds = usesCuts || sourceTimeTrack != nil ? end : cutTimeline.editedTime(forAlignedTime: end)
-                auditionLabel = sourceTimeTrack != nil ? "Finished original source-time audition. No timing was applied." : requestedRange == nil
-                    ? "Playback reached the end of the available timeline." : "Finished selection audition."
-            }
+            waveformPlayheadSeconds = usesCuts || sourceTimeTrack != nil ? end : cutTimeline.editedTime(forAlignedTime: end)
+            auditionLabel = sourceTimeTrack != nil ? "Finished original source-time audition. No timing was applied." : requestedRange == nil
+                ? "Playback reached the end of the available timeline." : "Finished selection audition."
         }
     }
 

@@ -11,6 +11,79 @@ import WWPersistence
 @MainActor
 @Suite("Document-bound mixer integration (synthetic and Apple units)", .serialized)
 struct MixerHostedTests {
+    @Test func sourceGainChangesKeepTheTransportClock() async throws {
+        let f = try await ready(durationSeconds: 12)
+        defer { f.close() }
+        let presentation = owner(f).state.mixerPresentation
+        let reference = try #require(f.document.store.model.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
+        f.model.playEnabledTracks(interval: 0...10, repeatInterval: false)
+        try await wait { f.model.isAuditioning && f.model.playbackClockForTesting != nil }
+        let clock = try #require(f.model.playbackClockForTesting)
+        for gain in [24.0, -12, -96, 0] {
+            try #require(f.document.store.setRecordingInputGain(gain, reference: reference, in: f.model.episodeID))
+            try await Task.sleep(for: .milliseconds(150))
+            let current = try #require(f.model.playbackClockForTesting)
+            let playing = f.model.isAuditioning
+            let error = presentation.error
+            #expect(playing && error == nil)
+            #expect(current.startedAt == clock.startedAt && current.playhead() >= clock.playhead())
+        }
+        f.model.stopAudition()
+    }
+
+    @Test func liveGainAndBypassKeepProcessorAndEditorAndCapturePreservesBypass() async throws {
+        let f = try await ready(durationSeconds: 12)
+        defer { f.close() }
+        let presentation = owner(f).state.mixerPresentation
+        let slot = try appleSlot()
+        try insert(slot, into: f)
+        try await save(f.document)
+        f.model.load()
+        f.model.playProductionMix(interval: 0...10)
+        try await wait { f.model.isAuditioning || f.model.lastError != nil }
+        try #require(f.model.isAuditioning)
+        presentation.openEditor(slot, generic: true)
+        try await wait { (presentation.editorWindow != nil && !f.document.mixerTransactions.isBusy) || presentation.error != nil }
+        try #require(presentation.error == nil)
+        let processor = try #require(f.model.mixer.processor)
+        let editor = try #require(presentation.editorWindow)
+        let revision = f.model.mixer.instanceRevision
+        let clock = try #require(f.model.playbackClockForTesting)
+        let reference = try #require(f.document.store.model.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
+        try #require(f.document.store.setRecordingInputGain(6, reference: reference, in: f.model.episodeID))
+        presentation.setFader(-6, bus: .master)
+        for bypassed in [true, false, true] {
+            presentation.changeInserts(.master, action: "Bypass Audio Unit", replacingInstances: false) { slots in
+                var result = slots
+                result[0].bypassed = bypassed
+                return result
+            }
+            try await wait { presentation.mix.master.inserts.first?.bypassed == bypassed
+                && !f.document.mixerTransactions.isBusy }
+            try await f.model.mixer.synchronizeControls()
+            let playing = f.model.isAuditioning
+            let error = presentation.error
+            #expect(playing && error == nil)
+            #expect(f.model.mixer.processor === processor && f.model.mixer.instanceRevision == revision)
+            #expect(presentation.editorWindow === editor)
+            #expect(f.model.playbackClockForTesting?.startedAt == clock.startedAt)
+        }
+        let parameter = try #require(try await processor.parameters(slot: slot.id).first {
+            $0.writable && $0.minimum < 1000 && $0.maximum > 1000
+        })
+        try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
+        try await save(f.document)
+        let savedBypass = f.document.verifiedModel?.episode(f.model.episodeID)?.mix?.master.inserts.first?.bypassed
+        #expect(savedBypass == true, "Capturing a native editor must not overwrite live host bypass.")
+        presentation.requestCloseEditor()
+        try await wait { presentation.editorWindow == nil && !f.document.mixerTransactions.isBusy }
+        f.model.stopAudition()
+        f.document.undoManager?.undo()
+        f.document.undoManager?.redo()
+        let restoredBypass = presentation.mix.master.inserts.first?.bypassed
+        #expect(restoredBypass == true)
+    }
+
     @Test func sourceMetersFollowHeardBuffersGainsAndCancellationWithoutReadingAhead() throws {
         let first = SourceID(), second = SourceID(), speaker = SpeakerID()
         let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1))

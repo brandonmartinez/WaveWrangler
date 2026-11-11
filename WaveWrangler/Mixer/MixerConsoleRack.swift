@@ -1,11 +1,26 @@
 import AppKit
+import CoreTransferable
 import SwiftUI
+import UniformTypeIdentifiers
 import WWCore
 import WWMix
+
+private struct MixerInsertDrag: Codable, Hashable, Sendable, Identifiable, Transferable {
+    static let type = UTType(exportedAs: "com.brandonmartinez.wavewrangler.mixer-insert", conformingTo: .data)
+    let scope: String
+    let slot: AudioUnitSlotID
+    var id: Self { self }
+
+    static var transferRepresentation: some TransferRepresentation {
+        CodableRepresentation(contentType: type).visibility(.ownProcess)
+    }
+}
 
 struct MixerConsoleRack: View {
     @Bindable var presentation: EpisodeMixerPresentation
     let bus: MixerBus
+    @State private var targetedRow: Int?
+    @State private var targetedAfter = false
     private var slots: [AudioUnitSlot] { presentation.inserts(bus) }
     private var canEdit: Bool {
         presentation.canEditMix && presentation.state?.store.document?.mixerTransactions.isBusy != true
@@ -17,7 +32,7 @@ struct MixerConsoleRack: View {
     var body: some View {
         VStack(spacing: 4) {
             ForEach(0..<presentation.insertRowCount, id: \.self) { row in
-                Group {
+                ZStack {
                     if let slot = slot(at: row) {
                         MixerConsoleInsert(presentation: presentation, bus: bus, slot: slot, row: row)
                     } else {
@@ -48,14 +63,35 @@ struct MixerConsoleRack: View {
                     }
                 }
                 .frame(height: 24)
-                .dropDestination(for: String.self) { payloads, _ in
-                    guard canEdit, row < EpisodeMixState.maximumInsertsPerBus, payloads.count == 1,
-                          let payload = payloads.first,
-                          let slot = slots.first(where: { dragPayload($0) == payload }) else { return false }
-                    presentation.changeInserts(bus, action: "Move Audio Unit") {
-                        try MixerInsertRack.moving(slot.id, to: row, in: $0)
+                .contentShape(Rectangle())
+                .overlay(alignment: targetedAfter ? .bottom : .top) {
+                    if targetedRow == row {
+                        Rectangle().fill(Color.accentColor).frame(height: 2).allowsHitTesting(false)
                     }
-                    return true
+                }
+                .dropDestination(for: MixerInsertDrag.self,
+                                 isEnabled: canEdit && row < EpisodeMixState.maximumInsertsPerBus) { items, _ in
+                    guard items.count == 1, let item = items.first,
+                          item.scope == presentation.insertDragOrigin(for: bus),
+                          slots.contains(where: { $0.id == item.slot }) else { return }
+                    presentation.changeInserts(bus, action: "Move Audio Unit") {
+                        try MixerInsertRack.moving(item.slot, to: row, in: $0)
+                    }
+                }
+                .dropConfiguration { session in
+                    DropConfiguration(operation: source(in: session) == nil ? .forbidden : .move)
+                }
+                .onDropSessionUpdated { session in
+                    switch session.phase {
+                    case .entering, .active:
+                        guard let source = source(in: session),
+                              let index = slots.firstIndex(where: { $0.id == source.id }) else { return }
+                        targetedAfter = slot(at: row) != nil
+                            && MixerInsertRack.position(of: source, at: index) < row
+                        targetedRow = row
+                    default:
+                        if targetedRow == row { targetedRow = nil }
+                    }
                 }
             }
         }
@@ -67,8 +103,19 @@ struct MixerConsoleRack: View {
     private func slot(at row: Int) -> AudioUnitSlot? {
         slots.enumerated().first { MixerInsertRack.position(of: $0.element, at: $0.offset) == row }?.element
     }
-    private func dragPayload(_ slot: AudioUnitSlot) -> String {
-        "\(presentation.insertDragScope)|\(presentation.episode?.id.description ?? "")|\(bus.identifier)|\(slot.id)"
+
+    private func source(in session: DropSession) -> AudioUnitSlot? {
+        guard canEdit, session.itemsCount == 1,
+              let items = session.localSession?.draggedItemIDs(for: MixerInsertDrag.self),
+              items.count == 1, let source = items.first,
+              source.scope == presentation.insertDragOrigin(for: bus) else { return nil }
+        return slots.first { $0.id == source.slot }
+    }
+}
+
+private extension EpisodeMixerPresentation {
+    func insertDragOrigin(for bus: MixerBus) -> String {
+        "\(insertDragScope)|\(episode?.id.description ?? "")|\(bus.identifier)"
     }
 }
 
@@ -110,41 +157,47 @@ private struct MixerConsoleInsert: View {
         }
         return "Not loaded."
     }
-    private var payload: String {
-        "\(presentation.insertDragScope)|\(presentation.episode?.id.description ?? "")|\(bus.identifier)|\(slot.id)"
+    private var payload: MixerInsertDrag {
+        MixerInsertDrag(scope: presentation.insertDragOrigin(for: bus), slot: slot.id)
     }
 
     var body: some View {
-        ZStack {
-            HStack(spacing: 3) {
-                if missing { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
-                Text(compactName).lineLimit(1).truncationMode(.tail)
-                    .accessibilityIdentifier("\(identifier).name")
-                Spacer(minLength: 0)
-                Image(systemName: slot.bypassed ? "power" : "chevron.down").font(.system(size: 8))
-            }
-            .font(.system(size: 11, weight: .medium)).padding(.horizontal, 7)
-            .opacity(expanded ? 0 : 1)
-            .accessibilityHidden(expanded)
-            HStack(spacing: 0) {
-                Button { bypass() } label: { Image(systemName: "power").frame(width: 27, height: 24) }
-                    .accessibilityLabel(slot.bypassed ? "Enable \(name)" : "Bypass \(name)")
-                    .accessibilityIdentifier("\(identifier).bypass").focused($focus, equals: .power)
-                Button {
-                    if NSEvent.modifierFlags.contains(.option) { bypass() } else { openEditor() }
-                } label: {
-                    Image(systemName: "slider.horizontal.3").frame(maxWidth: .infinity, minHeight: 24)
+        HStack(spacing: 0) {
+            Image(systemName: "line.3.horizontal").font(.system(size: 8))
+                .frame(width: 14, height: 24).contentShape(Rectangle())
+                .accessibilityLabel("Reorder \(name)")
+                .accessibilityIdentifier("\(identifier).drag")
+            ZStack {
+                HStack(spacing: 3) {
+                    if missing { Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange) }
+                    Text(compactName).lineLimit(1).truncationMode(.tail)
+                        .accessibilityIdentifier("\(identifier).name")
+                    Spacer(minLength: 0)
+                    Image(systemName: slot.bypassed ? "power" : "chevron.down").font(.system(size: 8))
                 }
-                .accessibilityLabel("Open \(name) editor").accessibilityIdentifier("\(identifier).editor")
-                .focused($focus, equals: .editor)
-                Menu { actions } label: { Image(systemName: "chevron.down").frame(width: 25, height: 24) }
-                    .menuStyle(.borderlessButton).menuIndicator(.hidden)
-                    .accessibilityLabel("Actions for \(name)").accessibilityIdentifier("\(identifier).actions")
-                    .focused($focus, equals: .actions)
+                .font(.system(size: 11, weight: .medium)).padding(.horizontal, 7)
+                .opacity(expanded ? 0 : 1)
+                .accessibilityHidden(expanded)
+                HStack(spacing: 0) {
+                    Button { bypass() } label: { Image(systemName: "power").frame(width: 27, height: 24) }
+                        .accessibilityLabel(slot.bypassed ? "Enable \(name)" : "Bypass \(name)")
+                        .accessibilityIdentifier("\(identifier).bypass").focused($focus, equals: .power)
+                    Button {
+                        if NSEvent.modifierFlags.contains(.option) { bypass() } else { openEditor() }
+                    } label: {
+                        Image(systemName: "slider.horizontal.3").frame(maxWidth: .infinity, minHeight: 24)
+                    }
+                    .accessibilityLabel("Open \(name) editor").accessibilityIdentifier("\(identifier).editor")
+                    .focused($focus, equals: .editor)
+                    Menu { actions } label: { Image(systemName: "chevron.down").frame(width: 25, height: 24) }
+                        .menuStyle(.borderlessButton).menuIndicator(.hidden)
+                        .accessibilityLabel("Actions for \(name)").accessibilityIdentifier("\(identifier).actions")
+                        .focused($focus, equals: .actions)
+                }
+                .buttonStyle(.plain).opacity(expanded ? 1 : 0)
+                .allowsHitTesting(expanded)
+                .accessibilityHidden(!expanded)
             }
-            .buttonStyle(.plain).opacity(expanded ? 1 : 0)
-            .allowsHitTesting(expanded)
-            .accessibilityHidden(!expanded)
         }
         .frame(height: 24)
         .foregroundStyle(slot.bypassed ? .secondary : .primary)
@@ -161,7 +214,10 @@ private struct MixerConsoleInsert: View {
         .focusable().focused($focus, equals: .pill)
         .onKeyPress(.return) { openEditor(); return .handled }
         .onKeyPress(.space) { bypass(); return .handled }
-        .draggable(payload)
+        .draggable(MixerInsertDrag.self, item: payload)
+        .dragConfiguration(DragConfiguration(
+            operationsWithinApp: .init(allowCopy: false, allowMove: true),
+            operationsOutsideApp: .init(allowCopy: false)))
         .contextMenu { actions }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(name), insert \(row + 1)\(slot.bypassed ? ", bypassed" : "")\(missing ? ", not installed" : "")")
@@ -216,7 +272,7 @@ private struct MixerConsoleInsert: View {
         }
     }
     private func bypass() {
-        presentation.changeInserts(bus, action: "Bypass Audio Unit") { slots in
+        presentation.changeInserts(bus, action: "Bypass Audio Unit", replacingInstances: false) { slots in
             guard let index = slots.firstIndex(where: { $0.id == slot.id }) else { throw MixerInsertRack.Failure.missingSlot }
             var result = slots
             result[index].bypassed.toggle()

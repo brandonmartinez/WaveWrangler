@@ -158,8 +158,13 @@ final class NativeAudioUnit: @unchecked Sendable {
     private let shortName: String?
     private var observer: AUParameterObserverToken?
     private var sampleTime: Double = 0
+    let supportsLiveBypass: Bool
+    private var bypassed: Bool
+    private var wetGain: GainRamp
+    private var dryDelays: [FrameDelay]
 
-    static func load(_ slot: AudioUnitSlot, channels: Int, policy: MixerRenderPolicy) async throws -> NativeAudioUnit {
+    static func load(_ slot: AudioUnitSlot, channels: Int, policy: MixerRenderPolicy,
+                     supportsLiveBypass: Bool = false) async throws -> NativeAudioUnit {
         try Task.checkCancellation()
         guard slot.isValid else { throw MixerFailure.state(slot.id, "invalid portable slot") }
         var d = AudioComponentDescription(componentType: slot.component.type, componentSubType: slot.component.subtype,
@@ -185,13 +190,18 @@ final class NativeAudioUnit: @unchecked Sendable {
             request.complete(.failure(CancellationError()))
         }
         try Task.checkCancellation()
-        return try NativeAudioUnit(slot: slot, unit: box.unit, channels: channels, policy: policy)
+        return try NativeAudioUnit(slot: slot, unit: box.unit, channels: channels, policy: policy,
+                                  supportsLiveBypass: supportsLiveBypass)
     }
 
-    init(slot: AudioUnitSlot, unit: AUAudioUnit, channels: Int, policy: MixerRenderPolicy) throws {
+    init(slot: AudioUnitSlot, unit: AUAudioUnit, channels: Int, policy: MixerRenderPolicy,
+         supportsLiveBypass: Bool = false) throws {
         self.slot = slot
         self.unit = unit
         self.channels = channels
+        self.supportsLiveBypass = supportsLiveBypass
+        bypassed = slot.bypassed
+        wetGain = GainRamp(slot.bypassed ? 0 : 1)
         shortName = unit.audioUnitShortName
         includesTail = policy.tail == .includeReported
         func formatFailure(_ reason: String) -> MixerFailure {
@@ -257,20 +267,22 @@ final class NativeAudioUnit: @unchecked Sendable {
             throw formatFailure("The effect changed the enabled buses during allocation.")
         }
         unit.reset()
-        // Host bypass is an explicit zero-latency dry path; no claim about a vendor's bypass behavior.
-        let latency = slot.bypassed ? 0 : unit.latency * Double(MixerRecipe.sampleRate)
+        // Live graphs retain compensation across bypass; frozen offline bypass stays zero-latency.
+        let skipsTiming = slot.bypassed && !supportsLiveBypass
+        let latency = skipsTiming ? 0 : unit.latency * Double(MixerRecipe.sampleRate)
         guard latency.isFinite, latency >= 0, latency <= Double(policy.maximumLatencyFrames),
               abs(latency - latency.rounded()) < 0.000_1 else {
             unit.deallocateRenderResources()
             throw MixerFailure.latencyLimit
         }
-        let tail = slot.bypassed ? 0 : unit.tailTime * Double(MixerRecipe.sampleRate)
+        let tail = skipsTiming ? 0 : unit.tailTime * Double(MixerRecipe.sampleRate)
         guard tail.isFinite, tail >= 0,
               policy.tail == .truncate || tail <= Double(policy.maximumTailFrames) else {
             unit.deallocateRenderResources()
             throw MixerFailure.tailLimit
         }
         latencyFrames = Int(latency.rounded())
+        dryDelays = (0..<channels).map { _ in FrameDelay(frames: Int(latency.rounded())) }
         tailFrames = Int(min(ceil(tail), Double(policy.maximumTailFrames)))
         input = pullInput
         output = outputBuffer
@@ -290,9 +302,15 @@ final class NativeAudioUnit: @unchecked Sendable {
     }
 
     var status: MixerUnitStatus {
-        .init(slot: slot.id, shortName: shortName, loadedInProcess: unit.isLoadedInProcess, bypassed: slot.bypassed,
+        .init(slot: slot.id, shortName: shortName, loadedInProcess: unit.isLoadedInProcess, bypassed: bypassed,
             channels: channels, latencyFrames: latencyFrames, tailFrames: tailFrames,
             parameterRevision: revision.value.load(ordering: .relaxed))
+    }
+
+    func setBypassed(_ value: Bool) throws {
+        guard value == bypassed || supportsLiveBypass else { throw MixerFailure.staleDependencies }
+        bypassed = value
+        wetGain.set(value ? 0 : 1)
     }
 
     func parameters() throws -> [MixerParameter] {
@@ -332,7 +350,8 @@ final class NativeAudioUnit: @unchecked Sendable {
         let frames = samples.first?.count ?? 0
         guard samples.count == channels, frames > 0, frames <= MixerRecipe.blockFrames,
               samples.allSatisfy({ $0.count == frames }) else { throw MixerFailure.incompletePCM }
-        if slot.bypassed { return samples }
+        if bypassed && !supportsLiveBypass { return samples }
+        let dry = supportsLiveBypass ? samples.indices.map { dryDelays[$0].process(samples[$0]) } : []
         try verifyTiming()
         guard let inputChannels = input.buffer.floatChannelData else { throw MixerFailure.incompletePCM }
         input.buffer.frameLength = AVAudioFrameCount(frames)
@@ -372,7 +391,7 @@ final class NativeAudioUnit: @unchecked Sendable {
         sampleTime += Double(frames)
         let buffers = UnsafeMutableAudioBufferListPointer(output.mutableAudioBufferList)
         guard buffers.count == channels else { throw MixerFailure.incompletePCM }
-        return try buffers.map { buffer in
+        var result = try buffers.map { buffer in
             guard buffer.mNumberChannels == 1, buffer.mDataByteSize >= frames * MemoryLayout<Float>.stride,
                   let data = buffer.mData?.assumingMemoryBound(to: Float.self) else {
                 throw MixerFailure.incompletePCM
@@ -382,6 +401,15 @@ final class NativeAudioUnit: @unchecked Sendable {
             guard result.allSatisfy(\.isFinite) else { throw MixerFailure.nonfinitePCM }
             return result
         }
+        if supportsLiveBypass {
+            for frame in 0..<frames {
+                let wet = wetGain.next()
+                for channel in 0..<channels {
+                    result[channel][frame] = result[channel][frame] * wet + dry[channel][frame] * (1 - wet)
+                }
+            }
+        }
+        return result
     }
 
     private func verifyTiming() throws {

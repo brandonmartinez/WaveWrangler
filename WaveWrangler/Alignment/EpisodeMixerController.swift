@@ -108,7 +108,7 @@ final class EpisodeMixerController {
             }
             let recipe = try await runtime.mixerRecipe(model: model, episode: episodeID,
                 programFrames: programFrames, policy: policy)
-            let loaded = try await MixerProcessor.load(recipe: recipe)
+            let loaded = try await MixerProcessor.load(recipe: recipe, livePlayback: true)
             let statuses = await loaded.unitStatuses()
             try Task.checkCancellation()
             guard self.generation == generation,
@@ -211,6 +211,8 @@ final class EpisodeMixerController {
             controls.audioTracks[route.track] = live
         }
         controls.masterGainDB = mix.master.gainDB
+        controls.bypassedSlots = Set((mix.speakers.flatMap(\.inserts)
+            + (mix.audioTracks ?? []).flatMap(\.inserts) + mix.master.inserts).filter(\.bypassed).map(\.id))
         controls.mutedSpeakers = mutedSpeakers
         controls.soloedSpeakers = soloedSpeakers
         controls.mutedAudioTracks = mutedAudioTracks
@@ -446,16 +448,21 @@ final class EpisodeMixerController {
         let byID = Dictionary(uniqueKeysWithValues: try slots.filter {
             try !Self.sameNativeState(nativeStateBaseline?[$0.id]?.documentState, $0.documentState, slot: $0.id)
         }.map { ($0.id, $0) })
+        func mergingState(_ slot: AudioUnitSlot) -> AudioUnitSlot {
+            var result = slot
+            if let captured = byID[slot.id] { result.documentState = captured.documentState }
+            return result
+        }
         for index in mix.speakers.indices {
-            mix.speakers[index].inserts = mix.speakers[index].inserts.map { byID[$0.id] ?? $0 }
+            mix.speakers[index].inserts = mix.speakers[index].inserts.map(mergingState)
         }
         if var tracks = mix.audioTracks {
             for index in tracks.indices {
-                tracks[index].inserts = tracks[index].inserts.map { byID[$0.id] ?? $0 }
+                tracks[index].inserts = tracks[index].inserts.map(mergingState)
             }
             mix.audioTracks = tracks
         }
-        mix.master.inserts = mix.master.inserts.map { byID[$0.id] ?? $0 }
+        mix.master.inserts = mix.master.inserts.map(mergingState)
         let captured = mix
         if captured != originalMix {
             guard document.store.applyMixerCapture(coalescing: key, { (model: ShowDocumentModel) throws(DomainError) in
@@ -565,11 +572,13 @@ final class EpisodeMixerController {
             return "the verified media snapshot changed"
         }
         let mix = episode.mix ?? EpisodeMixState()
-        guard mix.master.inserts == expectedMix.master.inserts,
+        guard MixerInsertRack.hasSameProcessingState(mix.master.inserts, expectedMix.master.inserts),
               recipe.routes.allSatisfy({
-                  mix.state(for: $0.speaker).inserts == expectedMix.state(for: $0.speaker).inserts
+                  MixerInsertRack.hasSameProcessingState(mix.state(for: $0.speaker).inserts,
+                                                        expectedMix.state(for: $0.speaker).inserts)
               }), recipe.audioTracks.allSatisfy({
-                  mix.state(for: $0.track).inserts == expectedMix.state(for: $0.track).inserts
+                  MixerInsertRack.hasSameProcessingState(mix.state(for: $0.track).inserts,
+                                                        expectedMix.state(for: $0.track).inserts)
               }) else { return "document insert state changed outside the prepared instance" }
         return nil
     }

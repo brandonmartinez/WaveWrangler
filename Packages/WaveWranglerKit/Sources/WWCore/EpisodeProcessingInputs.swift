@@ -48,12 +48,15 @@ public struct EpisodeProcessingInputs: Sendable, Equatable {
     }
 
     /// Native-state capture is required before replacing program inputs or insert chains, not live levels.
-    public func hasSameMixerTopology(as other: Self) -> Bool {
+    public func hasSameMixerTopology(as other: Self, allowingLiveBypass: Bool = false) -> Bool {
+        func same(_ lhs: [AudioUnitSlot], _ rhs: [AudioUnitSlot]) -> Bool {
+            allowingLiveBypass ? MixerInsertRack.hasSameProcessingState(lhs, rhs) : lhs == rhs
+        }
         let speakers = Set(mix.speakers.map(\.speaker) + other.mix.speakers.map(\.speaker))
         let tracks = Set((mix.audioTracks ?? []).map(\.track) + (other.mix.audioTracks ?? []).map(\.track))
-        return hasSameProgramInputs(as: other) && mix.master.inserts == other.mix.master.inserts
-            && speakers.allSatisfy { mix.state(for: $0).inserts == other.mix.state(for: $0).inserts }
-            && tracks.allSatisfy { mix.state(for: $0).inserts == other.mix.state(for: $0).inserts }
+        return hasSameProgramInputs(as: other) && same(mix.master.inserts, other.mix.master.inserts)
+            && speakers.allSatisfy { same(mix.state(for: $0).inserts, other.mix.state(for: $0).inserts) }
+            && tracks.allSatisfy { same(mix.state(for: $0).inserts, other.mix.state(for: $0).inserts) }
     }
 }
 
