@@ -1,8 +1,33 @@
 import Foundation
 import Testing
+import WWMix
 
 @Suite("Production playback diagnostics")
 struct ProductionPlaybackDiagnosticsTests {
+    @Test func lowWaterDiagnosticsCountCrossingsRatherThanEveryClockObservation() throws {
+        let diagnostics = ProductionPlaybackDiagnostics()
+        #expect(diagnostics.snapshot.minimumBufferedFrames == nil)
+        for frames: Int64 in [12_000, 10_000, 9_600, 9_000, 10_000, 9_599, 8_000] {
+            diagnostics.recordBufferedFrames(frames)
+        }
+        #expect(diagnostics.snapshot.minimumBufferedFrames == 8_000)
+        #expect(diagnostics.snapshot.lowWaterCrossings == 2)
+        let report = try #require(diagnostics.takeUnderrunReport(
+            scheduledFrames: 100_000, consumedFrames: 100_100, appendGap: .milliseconds(210)))
+        #expect(report.contains("minBufferedFrames=8000 lowWaterCrossings=2"))
+    }
+
+    @Test func underrunIncludesProcessorExecutionAndWaitStagesWithoutInventingAnAttribution() throws {
+        let processor = MixerProcessingDiagnostics()
+        let diagnostics = ProductionPlaybackDiagnostics(processor: processor)
+        let report = try #require(diagnostics.takeUnderrunReport(
+            scheduledFrames: 0, consumedFrames: 0, appendGap: .zero))
+        for stage in MixerProcessingDiagnostics.Stage.allCases {
+            #expect(report.contains("\(stage.rawValue)(n=0,lastMs=0.000,maxMs=0.000,activeMs=0.000)"))
+        }
+        #expect(report.contains("minBufferedFrames=unobserved"))
+    }
+
     @Test func timingsKeepSeparateCompletedAndInFlightStagesWithoutAnEventHistory() throws {
         let diagnostics = ProductionPlaybackDiagnostics()
         let start = ContinuousClock.now
@@ -36,7 +61,7 @@ struct ProductionPlaybackDiagnosticsTests {
         let report = try #require(diagnostics.takeUnderrunReport(
             scheduledFrames: 96_000, consumedFrames: 96_512, appendGap: .milliseconds(102),
             at: start.advanced(by: .milliseconds(99))))
-        #expect(report.contains("WWAUDIO_UNDERRUN v=1 scheduledFrames=96000 consumedFrames=96512 appendGapMs=102.000"))
+        #expect(report.contains("WWAUDIO_UNDERRUN v=2 scheduledFrames=96000 consumedFrames=96512 appendGapMs=102.000"))
         #expect(report.contains("rawQueued=0 rawPrepared=0"))
         #expect(report.contains("dsp(n=0,lastMs=0.000,maxMs=0.000,activeMs=99.000)"))
         #expect(diagnostics.takeUnderrunReport(

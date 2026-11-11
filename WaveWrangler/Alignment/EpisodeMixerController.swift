@@ -47,6 +47,7 @@ final class EpisodeMixerController {
     @ObservationIgnored var waitForEditorObservationTick: (@MainActor () async throws -> Duration)?
     @ObservationIgnored var observationParameterRevisions: [AudioUnitSlotID: UInt64]?
     var pendingStateOperations: Int { operations.pending }
+    var playbackDiagnosticsForTesting: ProductionPlaybackDiagnostics? { playback?.diagnosticsForTesting }
     #endif
 
     init(document: ShowDocument, episodeID: EpisodeID, runtime: AlignmentRuntime) {

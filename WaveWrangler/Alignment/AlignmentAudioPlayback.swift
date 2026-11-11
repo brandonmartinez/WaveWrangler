@@ -158,6 +158,25 @@ final class AlignmentAudioPlayback: @unchecked Sendable {
         }
     }
 
+    func waitForProductionCapacity(generation: UInt64) async throws -> ContinuousClock.Instant? {
+        let waiter = ProductionPlaybackRefill.Waiter()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                waiter.install(continuation)
+                queue.async { [self] in
+                    guard sessionGeneration == generation else {
+                        waiter.finish(.failure(CancellationError()))
+                        return
+                    }
+                    graph.waitForProductionCapacity(waiter)
+                }
+            }
+        } onCancel: {
+            waiter.finish(.failure(CancellationError()))
+            self.queue.async { self.graph.cancelProductionWaiter(waiter) }
+        }
+    }
+
     func enqueue(_ clips: [SourceID: AlignmentAudioClip], startSeconds: Double, first: Bool,
                  availableSources: Set<SourceID>, final: Bool, generation: UInt64? = nil,
                  meterSpeakers: [SpeakerID: Set<SourceID>] = [:],
@@ -199,6 +218,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private var productionBuffer = AlignmentProductionBuffer()
     private var productionDiagnostics: ProductionPlaybackDiagnostics?
     private var lastProductionAppend: ContinuousClock.Instant?
+    private let productionRefill = ProductionPlaybackRefill()
     private var transportSampleRate: Double?
     private var transportHostTime: UInt64?
     private var monitor: DispatchSourceTimer?
@@ -248,12 +268,13 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         return transportSources.pending(at: playhead)
     }
 
-    func stop(preservingClock: Bool = false) {
+    func stop(preservingClock: Bool = false, refillFailure: any Error = CancellationError()) {
         let terminal: AlignmentPlaybackClock? = if preservingClock, let current = readClock() {
             AlignmentPlaybackClock(startSeconds: current.startSeconds,
                 duration: max(0, current.playhead() - current.startSeconds), startedAt: current.startedAt)
         } else { nil }
         generation &+= 1
+        productionRefill.stop(throwing: refillFailure)
         monitor?.cancel()
         monitor = nil
         onDeadline = nil
@@ -296,12 +317,22 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     private func checkDeadline() {
+        if productionPlayer != nil, let clock, let elapsed = elapsedAudioSeconds {
+            let remaining = max(0, clock.duration - elapsed)
+            if !finalBuffer {
+                productionDiagnostics?.recordBufferedFrames(Int64((remaining * Double(MixerRecipe.sampleRate)).rounded(.down)))
+            }
+            // Detect exhaustion before waking a producer: starvation is not available capacity.
+            if finalBuffer || elapsed < clock.duration {
+                productionRefill.consumed(bufferedSeconds: remaining)
+            }
+        }
         guard !finalBuffer, failure == nil, let scheduled = clock,
               let elapsed = elapsedAudioSeconds, elapsed >= scheduled.duration else { return }
         reportUnderrun(elapsed: elapsed)
         let callback = onDeadline
         let stopped = readClock()
-        stop()
+        stop(refillFailure: AlignmentTransportFailure.bufferDeadline)
         clock = stopped
         failure = .bufferDeadline
         let stoppedGeneration = generation
@@ -311,6 +342,21 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
                 self?.clearTerminalClock(generation: stoppedGeneration)
             }
         }
+    }
+
+    func waitForProductionCapacity(_ waiter: ProductionPlaybackRefill.Waiter) {
+        if let failure {
+            waiter.finish(.failure(failure))
+        } else if productionPlayer == nil {
+            // Latency compensation can consume input blocks before the first output exists.
+            waiter.finish(.success(nil))
+        } else {
+            productionRefill.register(waiter, bufferedSeconds: bufferedSeconds)
+        }
+    }
+
+    func cancelProductionWaiter(_ waiter: ProductionPlaybackRefill.Waiter) {
+        productionRefill.cancel(waiter)
     }
 
     private func clearTerminalClock(generation expected: UInt64) {
@@ -419,7 +465,10 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         guard let productionPlayer else { throw MixerFailure.incompletePCM }
         var scheduled = productionBuffer
         try scheduled.append(output, final: final)
-        if clock != nil { try validateQueueAppend(startSeconds: start) }
+        if clock != nil {
+            diagnostics?.recordBufferedFrames(Int64((bufferedSeconds * Double(MixerRecipe.sampleRate)).rounded(.down)))
+            try validateQueueAppend(startSeconds: start)
+        }
         if final {
             let finished = PlaybackCompletion(1)
             completion = finished

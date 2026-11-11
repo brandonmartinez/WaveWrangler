@@ -46,6 +46,7 @@ public actor MixerProcessor {
     public nonisolated let recipe: MixerRecipe
     public nonisolated let latencyFrames: Int
     public nonisolated let tailFrames: Int
+    public nonisolated let diagnostics = MixerProcessingDiagnostics()
     private let speakerUnits: [[NativeAudioUnit]]
     private let audioTrackUnits: [[NativeAudioUnit]]
     private let masterUnits: [NativeAudioUnit]
@@ -163,7 +164,7 @@ public actor MixerProcessor {
     public func captureDocumentState(slot: AudioUnitSlotID,
                                     cancellation: MixerStateCaptureCancellation? = nil) throws -> AudioUnitSlot {
         try cancellation?.check()
-        let captured = try unit(slot).capture()
+        let captured = try diagnostics.measure(.stateCapture) { try unit(slot).capture() }
         try cancellation?.check()
         return captured
     }
@@ -171,6 +172,8 @@ public actor MixerProcessor {
     /// Authoritative Save/Undo/close capture: no suspension between units. Background observers
     /// must still periodically capture every unit to detect opaque edits without notifications.
     public func captureDocumentStates() throws -> [AudioUnitSlot] {
+        let start = diagnostics.begin(.stateCapture)
+        defer { diagnostics.end(.stateCapture, since: start) }
         let captured = try allUnits.map { try $0.capture() }
         guard captured.reduce(0, { $0 + ($1.documentState?.count ?? 0) }) <= EpisodeMixState.maximumDocumentStateBytes else {
             throw MixerFailure.invalidRecipe("combined captured document state exceeds the episode budget")
@@ -178,7 +181,8 @@ public actor MixerProcessor {
         return captured
     }
 
-    public func setLiveControls(_ controls: MixerLiveControls) throws {
+    public func setLiveControls(_ controls: MixerLiveControls, submittedAt: ContinuousClock.Instant? = nil) throws {
+        if let submittedAt { diagnostics.end(.controlsWait, since: submittedAt) }
         try ensureActive()
         guard Set(controls.inputGainDB.keys) == Set(recipe.routes.map(\.reference)),
               Set(controls.speakers.keys) == Set(recipe.routes.map(\.speaker)),
@@ -230,7 +234,8 @@ public actor MixerProcessor {
     }
 
     /// Includes real, authorized preroll if requested by policy. Never pad a missing program input.
-    public func process(_ window: MixerPCMWindow) throws -> MixerPCMOutput {
+    public func process(_ window: MixerPCMWindow, submittedAt: ContinuousClock.Instant? = nil) throws -> MixerPCMOutput {
+        if let submittedAt { diagnostics.end(.processWait, since: submittedAt) }
         try ensureActive()
         try Task.checkCancellation()
         guard flushRemaining == nil, window.frames.lowerBound == nextInput,
@@ -262,7 +267,9 @@ public actor MixerProcessor {
     }
 
     /// Drain latency and the declared tail in bounded windows. Call until nil; no device/file output.
-    public func finishNext(maximumFrames: Int = MixerRecipe.maximumWindowFrames) throws -> MixerPCMOutput? {
+    public func finishNext(maximumFrames: Int = MixerRecipe.maximumWindowFrames,
+                           submittedAt: ContinuousClock.Instant? = nil) throws -> MixerPCMOutput? {
+        if let submittedAt { diagnostics.end(.processWait, since: submittedAt) }
         if let failure { throw failure }
         if terminal { return nil }
         try Task.checkCancellation()
@@ -307,8 +314,14 @@ public actor MixerProcessor {
     }
     private static func amplitude(_ db: Double) -> Float { Float(pow(10, db / 20)) }
 
+    private func render(_ input: [[Float]], through unit: NativeAudioUnit) throws -> [[Float]] {
+        try diagnostics.measure(.unitRender) { try unit.render(input) }
+    }
+
     private func render(channels: [ChannelReference: [Float]], audioTracks: [AudioTrackID: [[Float]]],
                         count: Int) throws -> MixerPCMOutput {
+        let start = diagnostics.begin(.render)
+        defer { diagnostics.end(.render, since: start) }
         let firstFrame = recipe.programFrames.lowerBound + emitted
         var output = [[Float](), [Float]()]
         output[0].reserveCapacity(count)
@@ -331,7 +344,7 @@ public actor MixerProcessor {
                     } ?? true
                     mono[frame] = (allowed ? source[offset + frame] : 0) * inputGains[index].next()
                 }
-                for unit in speakerUnits[index] { mono = try unit.render([mono])[0] }
+                for unit in speakerUnits[index] { mono = try render([mono], through: unit)[0] }
                 mono = delays[index].process(mono)
                 var meter = [Float](repeating: 0, count: blockCount)
                 for frame in 0..<blockCount {
@@ -348,7 +361,7 @@ public actor MixerProcessor {
             for (index, route) in recipe.audioTracks.enumerated() {
                 guard let input = audioTracks[route.track] else { throw MixerFailure.incompletePCM }
                 var stereo = input.map { Array($0[offset..<(offset + blockCount)]) }
-                for unit in audioTrackUnits[index] { stereo = try unit.render(stereo) }
+                for unit in audioTrackUnits[index] { stereo = try render(stereo, through: unit) }
                 for channel in 0..<2 {
                     stereo[channel] = audioTrackDelays[index][channel].process(stereo[channel])
                     for frame in 0..<blockCount {
@@ -360,7 +373,7 @@ public actor MixerProcessor {
                     trackMeters[index][channel] += audioTrackMeterDelays[index][channel].process(stereo[channel]).dropFirst(skip)
                 }
             }
-            for unit in masterUnits { sum = try unit.render(sum) }
+            for unit in masterUnits { sum = try render(sum, through: unit) }
             for frame in 0..<blockCount {
                 let gain = masterGain.next()
                 let left = sum[0][frame] * gain, right = sum[1][frame] * gain

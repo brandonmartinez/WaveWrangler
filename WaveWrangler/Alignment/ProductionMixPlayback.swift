@@ -222,7 +222,11 @@ final class ProductionMixPlayback: Sendable {
     private let outputGeneration: UInt64
     private let state: Mutex<State>
     private let canceled = Atomic<Bool>(false)
-    private let diagnostics = ProductionPlaybackDiagnostics()
+    private let diagnostics: ProductionPlaybackDiagnostics
+
+    #if DEBUG
+    var diagnosticsForTesting: ProductionPlaybackDiagnostics { diagnostics }
+    #endif
 
     init(processor: MixerProcessor, runtime: AlignmentRuntime, model: ShowDocumentModel,
          controls: MixerLiveControls, outputGeneration: UInt64) {
@@ -230,6 +234,7 @@ final class ProductionMixPlayback: Sendable {
         self.runtime = runtime
         self.model = model
         self.outputGeneration = outputGeneration
+        diagnostics = ProductionPlaybackDiagnostics(processor: processor.diagnostics)
         state = Mutex(State(controls: controls))
     }
 
@@ -304,7 +309,9 @@ final class ProductionMixPlayback: Sendable {
                     }
                     try await synchronizeControls()
                     let block = MixerPCMWindow(frames: next..<end, channels: channels, audioTracks: tracks)
-                    let rendered = try await diagnostics.measureAsync(.dsp) { [processor] in try await processor.process(block) }
+                    let rendered = try await diagnostics.measureAsync(.dsp) { [processor] in
+                        try await processor.process(block, submittedAt: .now)
+                    }
                     state.withLock { $0.metering.append(rendered) }
                     let final = end == recipe.programFrames.upperBound && processor.latencyFrames == 0 && processor.tailFrames == 0
                     if rendered.frameCount > 0 {
@@ -318,7 +325,7 @@ final class ProductionMixPlayback: Sendable {
                 try check()
                 try await synchronizeControls()
                 guard let rendered = try await diagnostics.measureAsync(.dsp, operation: { [processor] in
-                    try await processor.finishNext(maximumFrames: MixerLiveTiming.processingBlockFrames)
+                    try await processor.finishNext(maximumFrames: MixerLiveTiming.processingBlockFrames, submittedAt: .now)
                 }) else { break }
                 state.withLock { $0.metering.append(rendered) }
                 let final = rendered.firstFrame + Int64(rendered.frameCount)
@@ -355,7 +362,9 @@ final class ProductionMixPlayback: Sendable {
 
     private func synchronizeControls() async throws {
         let controls = state.withLock { $0.controls }
-        try await diagnostics.measureAsync(.controls) { [processor] in try await processor.setLiveControls(controls) }
+        try await diagnostics.measureAsync(.controls) { [processor] in
+            try await processor.setLiveControls(controls, submittedAt: .now)
+        }
     }
 
     private func enqueue(_ rendered: MixerPCMOutput, final: Bool, output: AlignmentAudioPlayback,
@@ -367,13 +376,12 @@ final class ProductionMixPlayback: Sendable {
     }
 
     private func pace(_ output: AlignmentAudioPlayback) async throws {
-        let horizon = Double(MixerLiveTiming.maximumScheduledAheadFrames) / Double(MixerRecipe.sampleRate)
-        while output.bufferedSeconds > horizon {
-            try check()
-            if let failure = output.failure { throw failure }
-            let start = ContinuousClock.now
-            try await Task.sleep(for: .milliseconds(2))
-            diagnostics.recordWakeDelay(since: start, requested: .milliseconds(2))
+        try check()
+        if let released = try await diagnostics.measureAsync(.refillWait, operation: { [outputGeneration] in
+            try await output.waitForProductionCapacity(generation: outputGeneration)
+        }) {
+            diagnostics.recordWakeDelay(since: released, requested: .zero)
         }
+        try check()
     }
 }

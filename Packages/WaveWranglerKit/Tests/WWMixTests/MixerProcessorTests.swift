@@ -51,6 +51,24 @@ struct MixFixture {
 
 @Suite("Shared mixer processing", .serialized)
 struct MixerProcessorTests {
+    @Test func playbackSubmissionsAndCapturesPopulateSeparateExecutionDiagnostics() async throws {
+        let f = MixFixture()
+        let recipe = try f.recipe(frames: 0..<512)
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]],
+            masterUnits: [generated(.identity, channels: 2)])
+        try await processor.setLiveControls(MixerLiveControls(recipe: recipe), submittedAt: .now)
+        _ = try await processor.process(.init(frames: 0..<512,
+            channels: [recipe.routes[0].reference: Array(repeating: 0.1, count: 512)]), submittedAt: .now)
+        _ = try await processor.captureDocumentStates()
+        let snapshot = processor.diagnostics.snapshot
+        #expect(snapshot[.controlsWait]?.count == 1)
+        #expect(snapshot[.processWait]?.count == 1)
+        #expect(snapshot[.render]?.count == 1)
+        #expect(snapshot[.unitRender]?.count == 1)
+        #expect(snapshot[.stateCapture]?.count == 1)
+        #expect(snapshot.values.allSatisfy { $0.started == nil })
+    }
+
     @Test func routeMetersExcludePrerollAndFollowCommonMasterLatency() async throws {
         let f = MixFixture(), track = AudioTrack(name: "Stereo meter test")
         var episode = f.episode
@@ -512,7 +530,9 @@ struct MixerProcessorTests {
         #expect(after.channels[0][0] < before.channels[0][block - 1])
         #expect(abs(after.channels[0][479] - Float(0.5 / sqrt(2) * pow(10, -12.0 / 20))) < 0.000_001)
         #expect(after.firstFrame == Int64(block))
-        #expect(MixerLiveTiming.maximumPreparedControlFrames <= MixerRecipe.sampleRate / 10)
+        #expect(MixerLiveTiming.maximumScheduledAheadFrames == MixerRecipe.sampleRate / 4)
+        #expect(MixerLiveTiming.maximumPreparedControlFrames == 12_512)
+        #expect(MixerLiveTiming.refillLowWaterFrames == 9_600)
         #expect(MixerLiveTiming.processingBlockFrames == 512)
     }
 

@@ -478,7 +478,7 @@ struct SupplementalClipTests {
         let solo = try await processor.process(.init(frames: 1024..<1536, channels: [:],
             audioTracks: input.mapValues { $0.map { Array($0[1024..<1536]) } }))
         #expect(solo.channels[1][511] != 0)
-        #expect(MixerLiveTiming.maximumPreparedControlFrames == 4608)
+        #expect(MixerLiveTiming.maximumPreparedControlFrames == 12_512)
         #expect(processor.recipe.audioTracks[0].strip.gainDB == 0)
     }
 }

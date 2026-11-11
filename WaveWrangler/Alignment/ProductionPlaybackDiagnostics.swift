@@ -1,11 +1,12 @@
 import Foundation
 import OSLog
 import Synchronization
+import WWMix
 
 /// Bounded numeric evidence only; never retains audio, source identifiers, paths, or vendor state.
 final class ProductionPlaybackDiagnostics: Sendable {
     enum Stage: String, CaseIterable, Sendable {
-        case source, sourceWait, validation, controls, dsp, enqueue, wakeDelay
+        case source, sourceWait, validation, controls, dsp, enqueue, refillWait, wakeDelay
     }
 
     struct Timing: Sendable {
@@ -19,6 +20,8 @@ final class ProductionPlaybackDiagnostics: Sendable {
         let timings: [Stage: Timing]
         let queuedRawWindows: Int
         let preparedRawWindows: Int
+        let minimumBufferedFrames: Int64?
+        let lowWaterCrossings: Int
     }
 
     private struct State {
@@ -26,10 +29,16 @@ final class ProductionPlaybackDiagnostics: Sendable {
         var queuedRawWindows = 0
         var preparedRawWindows = 0
         var reportedUnderrun = false
+        var minimumBufferedFrames: Int64?
+        var lowWaterCrossings = 0
+        var belowLowWater = false
     }
 
     private static let logger = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "AudioPlayback")
     private let state = Mutex(State())
+    private let processor: MixerProcessingDiagnostics?
+
+    init(processor: MixerProcessingDiagnostics? = nil) { self.processor = processor }
 
     func begin(_ stage: Stage, at now: ContinuousClock.Instant = .now) -> ContinuousClock.Instant {
         state.withLock { $0.timings[stage]?.started = now }
@@ -76,10 +85,21 @@ final class ProductionPlaybackDiagnostics: Sendable {
 
     func rawQueueChanged(count: Int) { state.withLock { $0.queuedRawWindows = count } }
 
+    func recordBufferedFrames(_ frames: Int64) {
+        state.withLock {
+            let frames = max(0, frames)
+            $0.minimumBufferedFrames = min($0.minimumBufferedFrames ?? frames, frames)
+            let below = frames <= MixerLiveTiming.refillLowWaterFrames
+            if below && !$0.belowLowWater { $0.lowWaterCrossings += 1 }
+            $0.belowLowWater = below
+        }
+    }
+
     var snapshot: Snapshot {
         state.withLock {
             Snapshot(timings: $0.timings, queuedRawWindows: $0.queuedRawWindows,
-                     preparedRawWindows: $0.preparedRawWindows)
+                     preparedRawWindows: $0.preparedRawWindows,
+                     minimumBufferedFrames: $0.minimumBufferedFrames, lowWaterCrossings: $0.lowWaterCrossings)
         }
     }
 
@@ -96,7 +116,8 @@ final class ProductionPlaybackDiagnostics: Sendable {
             guard !$0.reportedUnderrun else { return nil }
             $0.reportedUnderrun = true
             return Snapshot(timings: $0.timings, queuedRawWindows: $0.queuedRawWindows,
-                            preparedRawWindows: $0.preparedRawWindows)
+                            preparedRawWindows: $0.preparedRawWindows,
+                            minimumBufferedFrames: $0.minimumBufferedFrames, lowWaterCrossings: $0.lowWaterCrossings)
         }
         guard let captured else { return nil }
         let stages = Stage.allCases.map { stage in
@@ -104,7 +125,14 @@ final class ProductionPlaybackDiagnostics: Sendable {
             let active = timing.started.map { max(.zero, $0.duration(to: now)) } ?? .zero
             return "\(stage.rawValue)(n=\(timing.count),lastMs=\(Self.milliseconds(timing.last)),maxMs=\(Self.milliseconds(timing.longest)),activeMs=\(Self.milliseconds(active)))"
         }.joined(separator: " ")
-        return "WWAUDIO_UNDERRUN v=1 scheduledFrames=\(scheduledFrames) consumedFrames=\(consumedFrames) appendGapMs=\(Self.milliseconds(appendGap)) rawQueued=\(captured.queuedRawWindows) rawPrepared=\(captured.preparedRawWindows) \(stages)"
+        let processorTimings = processor?.snapshot ?? [:]
+        let processorStages = MixerProcessingDiagnostics.Stage.allCases.map { stage in
+            guard let timing = processorTimings[stage] else { return "\(stage.rawValue)(n=0)" }
+            let active = timing.started.map { max(.zero, $0.duration(to: now)) } ?? .zero
+            return "\(stage.rawValue)(n=\(timing.count),lastMs=\(Self.milliseconds(timing.last)),maxMs=\(Self.milliseconds(timing.longest)),activeMs=\(Self.milliseconds(active)))"
+        }.joined(separator: " ")
+        let minimum = captured.minimumBufferedFrames.map(String.init) ?? "unobserved"
+        return "WWAUDIO_UNDERRUN v=2 scheduledFrames=\(scheduledFrames) consumedFrames=\(consumedFrames) appendGapMs=\(Self.milliseconds(appendGap)) rawQueued=\(captured.queuedRawWindows) rawPrepared=\(captured.preparedRawWindows) minBufferedFrames=\(minimum) lowWaterCrossings=\(captured.lowWaterCrossings) \(stages) \(processorStages)"
     }
 
     private static func milliseconds(_ duration: Duration) -> String {

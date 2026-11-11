@@ -18,7 +18,8 @@ struct AlignmentAudioPlaybackTests {
         #expect(buffer.endFrame == -4 + buffer.frameCount)
         #expect(buffer.frameCount >= MixerLiveTiming.startupBufferedFrames)
         #expect(buffer.frameCount + Int64(MixerLiveTiming.startLeadFrames) <= MixerLiveTiming.maximumPreparedControlFrames)
-        #expect(MixerLiveTiming.maximumPreparedControlFrames <= MixerRecipe.sampleRate / 10)
+        #expect(MixerLiveTiming.maximumScheduledAheadFrames == 12_000)
+        #expect(MixerLiveTiming.maximumPreparedControlFrames == 12_512)
     }
 
     @Test func shortFinalProductionAndDiscontinuousOrOverflowingPacketsAreExplicit() throws {

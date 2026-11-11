@@ -9,6 +9,23 @@ import WWMix
 @MainActor
 @Suite("Aligned listening startup, cycles and live unmute (synthetic only)", .serialized)
 struct AlignmentListeningStartupHostedTests {
+    @Test func capacityBeforeTheFirstOutputAllowsEffectLatencyPrimingButRejectsStaleGenerations() async throws {
+        let playback = AlignmentAudioPlayback()
+        defer { playback.stop() }
+        let generation = playback.generation
+        for _ in 0..<4 {
+            let release = try await playback.waitForProductionCapacity(generation: generation)
+            #expect(release == nil)
+        }
+        #expect(playback.clock == nil && playback.failure == nil)
+        playback.stop()
+        await #expect(throws: CancellationError.self) {
+            try await playback.waitForProductionCapacity(generation: generation)
+        }
+        let release = try await playback.waitForProductionCapacity(generation: playback.generation)
+        #expect(release == nil)
+    }
+
     @Test func staleProducerCannotAppendMuteOrStopANewerPlayback() throws {
         let playback = AlignmentAudioPlayback()
         defer { playback.stop() }
@@ -42,7 +59,8 @@ struct AlignmentListeningStartupHostedTests {
         }
         let clock = try #require(playback.clock)
         #expect(clock.startSeconds == 0)
-        #expect(clock.duration == Double(MixerLiveTiming.startupBufferedFrames) / Double(MixerRecipe.sampleRate))
+        let roundedPrefill = ((MixerLiveTiming.startupBufferedFrames + block - 1) / block) * block
+        #expect(clock.duration == Double(roundedPrefill) / Double(MixerRecipe.sampleRate))
         #expect(failures == 0)
         playback.stop()
         try playback.enqueueProduction(output(-3, 10), final: true) { failures += 1 }
@@ -67,6 +85,50 @@ struct AlignmentListeningStartupHostedTests {
         #expect(playback.clock == nil)
         try await Task.sleep(for: .milliseconds(100))
         #expect(failures == 1)
+    }
+
+    @Test func lowWaterRefillSurvivesAHundredMillisecondProducerPauseAndDrainsTheFinalBuffer() async throws {
+        let playback = AlignmentAudioPlayback()
+        defer { playback.stop() }
+        let generation = playback.generation
+        let count = MixerLiveTiming.maximumScheduledAheadFrames + MixerLiveTiming.processingBlockFrames
+        let diagnostics = ProductionPlaybackDiagnostics()
+        var failures = 0
+        let first = MixerPCMOutput(firstFrame: 0,
+            channels: Array(repeating: Array(repeating: Float(0), count: count), count: 2))
+        try playback.enqueueProduction(first, final: false, generation: generation, diagnostics: diagnostics) { failures += 1 }
+        let release = try await playback.waitForProductionCapacity(generation: generation)
+        #expect(release != nil)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(playback.failure == nil && failures == 0)
+        #expect(playback.bufferedSeconds > 0)
+        let last = MixerPCMOutput(firstFrame: Int64(count),
+            channels: Array(repeating: Array(repeating: Float(0), count: count), count: 2))
+        try playback.enqueueProduction(last, final: true, generation: generation, diagnostics: diagnostics) { failures += 1 }
+        try await wait("The refilled final buffer must drain normally") { playback.isFinished }
+        #expect(failures == 0 && playback.failure == nil)
+        #expect(diagnostics.snapshot.minimumBufferedFrames != nil)
+        #expect(diagnostics.snapshot.lowWaterCrossings >= 1)
+    }
+
+    @Test func capacityWaitCancellationAndStaleGenerationCannotDisturbNewPlayback() async throws {
+        let playback = AlignmentAudioPlayback()
+        defer { playback.stop() }
+        let generation = playback.generation
+        let output = MixerPCMOutput(firstFrame: 0,
+            channels: Array(repeating: Array(repeating: Float(0), count: 48_000), count: 2))
+        try playback.enqueueProduction(output, final: false, generation: generation, onBufferDeadline: {})
+        let canceled = Task { try await playback.waitForProductionCapacity(generation: generation) }
+        canceled.cancel()
+        await #expect(throws: CancellationError.self) { try await canceled.value }
+        let stopped = Task { try await playback.waitForProductionCapacity(generation: generation) }
+        playback.stop()
+        try playback.enqueueProduction(output, final: true, generation: playback.generation, onBufferDeadline: {})
+        await #expect(throws: CancellationError.self) { try await stopped.value }
+        await #expect(throws: CancellationError.self) {
+            try await playback.waitForProductionCapacity(generation: generation)
+        }
+        #expect(playback.failure == nil && playback.clock != nil)
     }
 
     private func wait(_ reason: @autoclosure () -> String, until ready: () -> Bool) async throws {
