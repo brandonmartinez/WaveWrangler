@@ -977,7 +977,7 @@ struct AlignmentWaveformView: View {
                 } else {
                     model.playSelection(context: context)
                 }
-            }, cleanup: cleanup)
+            }, cleanup: cleanup, isBlocked: processingOperation != nil)
     }
 
     @ViewBuilder

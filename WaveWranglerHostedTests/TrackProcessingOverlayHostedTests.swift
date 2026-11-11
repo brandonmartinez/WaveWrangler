@@ -7,6 +7,44 @@ import WWCore
 @MainActor
 @Suite("Blocking track progress and cancellation", .serialized)
 struct TrackProcessingOverlayHostedTests {
+    @Test func floatingSelectionToolsDisappearForTheEntireBlockedInterval() async throws {
+        let listening = EpisodeListeningState()
+        listening.select(from: 1, to: 2, within: 0...10)
+        listening.selectionToolsPresented = true
+        let operation = TrackProcessingOperation(kind: .waveforms, title: "Preparing waveforms",
+            detail: "Updating synthetic cut geometry.", fraction: nil, canCancel: true)
+        var cancellations = 0
+        func content(blocked: Bool) -> some View {
+            VStack(spacing: 0) {
+                Color.clear.frame(height: 60)
+                Color.clear
+                    .anchorPreference(key: AudioTimelineToolbarAnchor.self, value: .bounds) { $0 }
+                    .modifier(TrackProcessingPresentation(operation: blocked ? operation : nil,
+                        cancel: { cancellations += 1 }))
+            }
+            .modifier(AudioTimelineFloatingToolbar(listening: listening, start: 0, duration: 10,
+                play: { _ in }, isBlocked: blocked))
+        }
+        let host = HostedTimelineWindow(width: 520, height: 240, content: content(blocked: false))
+        defer { host.close() }
+        try await host.settle()
+        #expect(host.controlFrames.count >= 4)
+        host.view.rootView = content(blocked: true)
+        try await host.settle()
+        #expect(host.controlFrames.isEmpty, "Selection tools must disappear before the progress overlay's grace expires.")
+        try await Task.sleep(for: .seconds(1))
+        try await host.settle()
+        #expect(host.controlFrames.count == 1, "Only Cancel may float above blocked tracks.")
+        let cancel = try cancelFrame(in: host)
+        try await host.click(CGPoint(x: cancel.midX, y: cancel.midY))
+        #expect(cancellations == 1)
+        try host.capture("Cut preparation without floating selection tools")
+        host.view.rootView = content(blocked: false)
+        try await host.settle()
+        #expect(host.controlFrames.count >= 4 && listening.selection == 1...2,
+            "Finishing preparation must preserve the selection and restore its tools.")
+    }
+
     private func cancelFrame<Content: View>(in host: HostedTimelineWindow<Content>) throws -> CGRect {
         let frames = host.controlFrames.filter { $0.width < 100 && $0.height >= 16 }
         try #require(frames.count == 1, "Expected one Cancel control, got \(host.controlFrames)")

@@ -15,10 +15,11 @@ struct AudioTimelineFloatingToolbar: ViewModifier {
     let duration: Double
     let play: (Double) -> Void
     var cleanup: EpisodeCleanupModel?
+    var isBlocked = false
 
     func body(content: Content) -> some View {
         content.overlayPreferenceValue(AudioTimelineToolbarAnchor.self) { anchor in
-            if let anchor, listening.selectionToolsPresented {
+            if let anchor, listening.selectionToolsPresented, !isBlocked {
                 GeometryReader { geometry in
                     let track = geometry[anchor]
                     let height = AudioTimelineSelectionToolbar.height(

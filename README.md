@@ -140,6 +140,11 @@ timing. Up to eight bounded measured tiles and their projected strokes are cache
 adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
 episode, source, or verified alignment clears them.
 
+Blocking audio, timing, transcription, or waveform preparation hides the floating
+selection tools immediately, even before the progress panel appears. Cancel stays
+available when safe; finishing preparation restores the tools without discarding
+the selection.
+
 **Fill Space** fits visible waveforms vertically and adapts to resizing, layout changes, and
 collapsed groups. Waveforms stay at least 64 points tall; if the tracks and their actual headers
 or independent Ungrouped rows cannot fit, vertical scrolling remains available. Fitted heights
