@@ -32,30 +32,6 @@ struct PlaybackCycleCursor {
     }
 }
 
-/// Device scheduling stays monotonic; only the displayed program position wraps.
-struct PlaybackProgramTimeline: Sendable {
-    struct Segment: Sendable {
-        let playbackFrame: Int64
-        let programFrame: Int64
-    }
-    private(set) var segments: [Segment] = []
-
-    mutating func append(_ segment: Segment, heardFrame: Int64?) {
-        if let last = segments.last,
-           last.programFrame - last.playbackFrame == segment.programFrame - segment.playbackFrame { return }
-        segments.append(segment)
-        if let heardFrame, let index = segments.lastIndex(where: { $0.playbackFrame <= heardFrame }), index > 0 {
-            segments.removeFirst(index)
-        }
-    }
-
-    func programSeconds(at playbackSeconds: Double) -> Double {
-        let frame = playbackSeconds * Double(MixerRecipe.sampleRate)
-        guard let segment = segments.last(where: { Double($0.playbackFrame) <= frame }) else { return playbackSeconds }
-        return playbackSeconds + Double(segment.programFrame - segment.playbackFrame) / Double(MixerRecipe.sampleRate)
-    }
-}
-
 /// Retain ungained cycle tiles and the current decode tile, never rendered/frozen controls.
 actor ProductionCyclePCMCache {
     private var tiles: [Int64: MixerPCMWindow] = [:]

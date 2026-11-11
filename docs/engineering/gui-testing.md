@@ -511,6 +511,18 @@ diagnostics skipped. Evidence is
 `.build/playback-combined-20261111-vm-result/result.xcresult`; as above, this
 used scratch metadata without Thread Performance Checker injection.
 
+UI progress now reads one immutable snapshot containing the linear clock,
+cycle mapping, and transport failure. Snapshot reads take only their own short
+mutex, never the output queue or AVFAudio engine lock. The output owner publishes
+on scheduling, device observations, stop, and deadline cleanup; UI extrapolation
+remains clamped to scheduled audio. Source-meter and pending-source summaries
+also reuse the owner's observed clock instead of acquiring another device time.
+The snapshot revision passed the same VM selection (20 methods, two opt-in
+skips) and 19 focused headless tests. Evidence uses
+`.build/playback-snapshot-20261111-vm-result/result.xcresult` and
+`.build/playback-snapshot-unit.log`. The pure cycle mapping now lives alongside
+the clock so the unhosted output-adapter tests compile the same value type.
+
 The same suite has a separately gated
 `fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable
 `WW_EPISODE_SOAK_TESTS=1` only on a ready, leased VM and set

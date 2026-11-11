@@ -129,6 +129,23 @@ struct FlattenedPlaybackHostedTests {
         #expect(throws: CancellationError.self) { try append(next, waiter: .init()) }
     }
 
+    @Test func readingPublishedClocksDoesNotQueryTheDeviceAndStopClearsTheSnapshot() throws {
+        let output = AlignmentAudioPlayback()
+        defer { output.stop() }
+        let diagnostics = ProductionPlaybackDiagnostics()
+        try output.enqueueProduction(.init(firstFrame: 0, channels: [[0.1], [-0.1]]),
+                                     final: false, diagnostics: diagnostics) {}
+        let before = diagnostics.snapshot.timings[.deviceClock]?.count ?? 0
+        for _ in 0..<100 {
+            #expect(output.snapshot.clock == nil)
+            #expect(output.linearClock == nil)
+            #expect(output.failure == nil)
+        }
+        #expect((diagnostics.snapshot.timings[.deviceClock]?.count ?? 0) == before)
+        output.stop()
+        #expect(output.snapshot.linearClock == nil && output.snapshot.failure == nil)
+    }
+
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_PLAYER_STOP_DIAGNOSTIC"] == "1",
         "Opt-in bounded AVFAudio completion and shutdown diagnostic; generated silence only."),
         .timeLimit(.minutes(3)))

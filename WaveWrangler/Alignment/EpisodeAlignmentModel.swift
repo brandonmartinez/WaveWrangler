@@ -1916,10 +1916,11 @@ final class EpisodeAlignmentModel {
                     while let self, generation == auditionGeneration, !Task.isCancelled {
                         do { prepared.setCycleRange(try currentCycle()) }
                         catch { prepared.invalidate(error); return }
-                        if let clock = audioPlayback.clock, audioPlayback.failure == nil {
+                        let playback = audioPlayback.snapshot
+                        if let clock = playback.clock, playback.failure == nil {
                             isAuditioning = true
                             isPreparingAudition = false
-                            mixer.publishPlaybackMeters(at: audioPlayback.linearClock?.playhead() ?? clock.playhead())
+                            mixer.publishPlaybackMeters(at: playback.linearClock?.playhead() ?? clock.playhead())
                             auditionLabel = "Playing the production mix; source audition choices are unchanged."
                             productionPlayheadSeconds = clock.playhead()
                             waveformPlayheadSeconds = waveformTime(atProgramTime: clock.playhead())
@@ -2070,7 +2071,8 @@ final class EpisodeAlignmentModel {
                 while let self, generation == auditionGeneration, !Task.isCancelled {
                     do { prepared.setCycle(try currentSourceCycle()) }
                     catch { prepared.invalidate(error); return }
-                    if let clock = audioPlayback.clock, audioPlayback.failure == nil {
+                    let playback = audioPlayback.snapshot
+                    if let clock = playback.clock, playback.failure == nil {
                         isAuditioning = true
                         isPreparingAudition = false
                         transportUnavailable = prepared.unavailable

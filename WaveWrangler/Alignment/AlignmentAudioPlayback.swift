@@ -27,6 +27,48 @@ struct AlignmentAudioClip: Sendable {
     }
 }
 
+struct AlignmentPlaybackSnapshot: Sendable {
+    var linearClock: AlignmentPlaybackClock?
+    var programTimeline = PlaybackProgramTimeline()
+    var failure: AlignmentTransportFailure?
+
+    var clock: AlignmentPlaybackClock? {
+        guard var result = linearClock else { return nil }
+        result.programTimeline = programTimeline
+        return result
+    }
+}
+
+private final class AlignmentPlaybackSnapshotStore: Sendable {
+    private let state = Mutex(AlignmentPlaybackSnapshot())
+    var value: AlignmentPlaybackSnapshot { state.withLock { $0 } }
+    func publish(_ snapshot: AlignmentPlaybackSnapshot) { state.withLock { $0 = snapshot } }
+}
+
+/// Device scheduling stays monotonic; only the displayed program position wraps.
+struct PlaybackProgramTimeline: Sendable {
+    struct Segment: Sendable {
+        let playbackFrame: Int64
+        let programFrame: Int64
+    }
+    private(set) var segments: [Segment] = []
+
+    mutating func append(_ segment: Segment, heardFrame: Int64?) {
+        if let last = segments.last,
+           last.programFrame - last.playbackFrame == segment.programFrame - segment.playbackFrame { return }
+        segments.append(segment)
+        if let heardFrame, let index = segments.lastIndex(where: { $0.playbackFrame <= heardFrame }), index > 0 {
+            segments.removeFirst(index)
+        }
+    }
+
+    func programSeconds(at playbackSeconds: Double) -> Double {
+        let frame = playbackSeconds * Double(MixerRecipe.sampleRate)
+        guard let segment = segments.last(where: { Double($0.playbackFrame) <= frame }) else { return playbackSeconds }
+        return playbackSeconds + Double(segment.programFrame - segment.playbackFrame) / Double(MixerRecipe.sampleRate)
+    }
+}
+
 struct AlignmentPlaybackClock: Sendable {
     let startSeconds: Double
     let duration: Double
@@ -109,21 +151,21 @@ struct AlignmentProductionBuffer {
 final class AlignmentAudioPlayback: @unchecked Sendable {
     private let queue = DispatchQueue(label: "com.wavewrangler.audio-output", qos: .userInitiated)
     private let graph: AlignmentAudioPlaybackGraph
+    private let snapshots: AlignmentPlaybackSnapshotStore
     private var sessionGeneration: UInt64 = 0
 
-    init() { graph = AlignmentAudioPlaybackGraph(queue: queue) }
+    init() {
+        let snapshots = AlignmentPlaybackSnapshotStore()
+        self.snapshots = snapshots
+        graph = AlignmentAudioPlaybackGraph(queue: queue, snapshots: snapshots)
+    }
     deinit { queue.sync { graph.stop() } }
 
-    var clock: AlignmentPlaybackClock? {
-        queue.sync {
-            guard var clock = graph.readClock() else { return nil }
-            clock.programTimeline = graph.programTimeline
-            return clock
-        }
-    }
-    var linearClock: AlignmentPlaybackClock? { queue.sync { graph.readClock() } }
+    var snapshot: AlignmentPlaybackSnapshot { snapshots.value }
+    var clock: AlignmentPlaybackClock? { snapshot.clock }
+    var linearClock: AlignmentPlaybackClock? { snapshot.linearClock }
     var bufferedSeconds: Double { queue.sync { graph.bufferedSeconds } }
-    var failure: AlignmentTransportFailure? { queue.sync { graph.failure } }
+    var failure: AlignmentTransportFailure? { snapshot.failure }
     var isFinished: Bool { queue.sync { graph.isFinished } }
     var generation: UInt64 { queue.sync { sessionGeneration } }
     var preparedSources: Set<SourceID> { queue.sync { graph.preparedSources } }
@@ -247,6 +289,7 @@ private final class PlaybackCompletion: Sendable {
 private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private(set) var programTimeline = PlaybackProgramTimeline()
     private let queue: DispatchQueue
+    private let snapshots: AlignmentPlaybackSnapshotStore
     private let engine = AVAudioEngine()
     private var players: [SourceID: AVAudioPlayerNode] = [:]
     private var inputGainNodes: [SourceID: AVAudioUnitEQ] = [:]
@@ -273,7 +316,14 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     private(set) var clock: AlignmentPlaybackClock?
     var isFinished: Bool { finalBuffer && completion.isFinished }
 
-    init(queue: DispatchQueue) { self.queue = queue }
+    init(queue: DispatchQueue, snapshots: AlignmentPlaybackSnapshotStore) {
+        self.queue = queue
+        self.snapshots = snapshots
+    }
+
+    private func publishSnapshot() {
+        snapshots.publish(.init(linearClock: clock, programTimeline: programTimeline, failure: failure))
+    }
 
     private var elapsedAudioSeconds: Double? {
         let started = productionDiagnostics?.begin(.deviceClock)
@@ -290,11 +340,16 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     func readClock() -> AlignmentPlaybackClock? {
-        if failure == nil, let prior = clock, let elapsed = elapsedAudioSeconds, elapsed >= 0 {
+        if let elapsed = elapsedAudioSeconds { updateClock(elapsed: elapsed) }
+        publishSnapshot()
+        return clock
+    }
+
+    private func updateClock(elapsed: Double) {
+        if failure == nil, let prior = clock, elapsed >= 0 {
             clock = AlignmentPlaybackClock(startSeconds: prior.startSeconds, duration: prior.duration,
                 startedAt: prior.startedAt, audioPosition: elapsed, sampledAt: Date())
         }
-        return clock
     }
 
     var bufferedSeconds: Double {
@@ -305,12 +360,13 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
 
     var preparedSources: Set<SourceID> { transportSources.prepared }
     var pendingSources: Set<SourceID> {
-        guard let clock = readClock() else { return [] }
+        guard let clock else { return [] }
         let playhead = clock.playhead()
         return transportSources.pending(at: playhead)
     }
 
     func stop(preservingClock: Bool = false, refillFailure: any Error = CancellationError()) {
+        defer { publishSnapshot() }
         let terminal: AlignmentPlaybackClock? = if preservingClock, let current = readClock() {
             AlignmentPlaybackClock(startSeconds: current.startSeconds,
                 duration: max(0, current.playhead() - current.startSeconds), startedAt: current.startedAt)
@@ -364,7 +420,9 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     private func checkDeadline() {
+        defer { publishSnapshot() }
         guard let scheduled = clock, let elapsed = elapsedAudioSeconds else { return }
+        updateClock(elapsed: elapsed)
         if productionPlayer != nil {
             let remaining = max(0, scheduled.duration - elapsed)
             if !finalBuffer {
@@ -411,6 +469,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             guard let self, self.generation == expected else { return }
             self.clock = nil
             self.failure = nil
+            self.publishSnapshot()
         }
     }
 
@@ -450,6 +509,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     func play(_ clip: AlignmentAudioClip, startSeconds: Double) throws {
+        defer { publishSnapshot() }
         stop()
         clearPlayers()
         let format = try clip.makeFormat()
@@ -492,7 +552,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
     }
 
     func readSourceMeters() -> MixerConsoleSnapshot {
-        guard let clock = readClock(), transportSampleRate == Double(MixerRecipe.sampleRate) else {
+        guard let clock, transportSampleRate == Double(MixerRecipe.sampleRate) else {
             return MixerConsoleSnapshot()
         }
         return sourceMetering.read(through: Int64((clock.playhead() * Double(MixerRecipe.sampleRate)).rounded(.down)))
@@ -515,6 +575,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
                            diagnostics: ProductionPlaybackDiagnostics?,
                            programSegments: [PlaybackProgramTimeline.Segment] = [],
                            onBufferDeadline: @escaping @MainActor @Sendable () -> Void) throws -> Double {
+        defer { publishSnapshot() }
         if let failure { throw failure }
         let clip = try Self.validateProduction(output)
         let format = try clip.makeFormat()
@@ -540,6 +601,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         var scheduled = productionBuffer
         try scheduled.append(output, final: final)
         let elapsed = try clock == nil ? nil : validateQueueAppend(startSeconds: start)
+        if let elapsed { updateClock(elapsed: elapsed) }
         for programSegment in programSegments {
             let heardFrame = clock.map {
                 Int64((($0.startSeconds + min(max(0, elapsed ?? 0), $0.duration))
@@ -562,7 +624,8 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
                 startedAt: Date().addingTimeInterval(lead))
         } else if let clock {
             self.clock = AlignmentPlaybackClock(startSeconds: clock.startSeconds,
-                duration: Double(scheduled.frameCount) / Double(MixerRecipe.sampleRate), startedAt: clock.startedAt)
+                duration: Double(scheduled.frameCount) / Double(MixerRecipe.sampleRate), startedAt: clock.startedAt,
+                audioPosition: clock.audioPosition, sampledAt: clock.sampledAt)
         }
         if clock != nil { watch(final: final, deadline: onBufferDeadline) }
         guard let clock else { return 0 }
@@ -618,6 +681,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
         onSourcesJoined: @escaping @MainActor @Sendable () -> Void,
         onBufferDeadline: @escaping @MainActor @Sendable () -> Void
     ) throws {
+        defer { publishSnapshot() }
         let representative = try Self.validateTransport(clips)
         let format = try representative.makeFormat()
         var buffers: [SourceID: AVAudioPCMBuffer] = [:]

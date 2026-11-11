@@ -66,6 +66,19 @@ struct AlignmentAudioPlaybackTests {
         #expect(clock.playhead(at: start.addingTimeInterval(10)) == 28)
     }
 
+    @Test func publishedClockSnapshotKeepsCycleAndLinearPositionsConsistent() throws {
+        let start = Date(timeIntervalSinceReferenceDate: 100)
+        var timeline = PlaybackProgramTimeline()
+        timeline.append(.init(playbackFrame: 48_000, programFrame: 0), heardFrame: nil)
+        let snapshot = AlignmentPlaybackSnapshot(linearClock: .init(startSeconds: 0, duration: 3,
+            startedAt: start, audioPosition: 1.25, sampledAt: start), programTimeline: timeline)
+        let now = start.addingTimeInterval(0.25)
+        #expect(snapshot.linearClock?.playhead(at: now) == 1.5)
+        #expect(snapshot.clock?.playhead(at: now) == 0.5)
+        #expect(snapshot.linearClock?.playhead(at: start.addingTimeInterval(10)) == 3)
+        #expect(snapshot.clock?.playhead(at: start.addingTimeInterval(10)) == 2)
+    }
+
     @Test func transportRejectsInconsistentWindowsBeforeOpeningAnAudioDevice() throws {
         let a = SourceID(), b = SourceID()
         let clip = AlignmentAudioClip(sampleRate: 48_000, samples: [0.1, -0.1])
