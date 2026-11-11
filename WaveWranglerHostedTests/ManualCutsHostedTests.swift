@@ -1,5 +1,7 @@
 import AppKit
 import Foundation
+import Observation
+import Synchronization
 import Testing
 import WWCore
 import WWPersistence
@@ -8,6 +10,54 @@ import WWPersistence
 @MainActor
 @Suite("Manual cut production listening and waveform path", .serialized)
 struct ManualCutsHostedTests {
+    @Test func unexpandedPresentationDoesNotObserveUnrelatedDocumentEdits() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 6)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let revision = try #require(episode.alignment?.acceptedRevision)
+        let cuts = (0..<100).map {
+            ManualEpisodeCut(alignmentRevision: revision,
+                startFrame: Int64($0) * 2400, endFrame: Int64($0) * 2400 + 480)
+        }
+        try #require(f.document.store.apply("Synthetic dense cuts", { model throws(DomainError) in
+            try model.settingCleanup(EpisodeCleanup(manualCuts: cuts), in: episode.id)
+        }))
+        f.model.synchronizeWaveforms()
+        try await wait { !f.model.isLoadingWaveforms && f.model.audioEditor.composition != nil }
+        let projection = f.model.presentationTimeline
+        let changed = Mutex(false)
+        withObservationTracking {
+            _ = f.model.presentationTimeline
+        } onChange: {
+            changed.withLock { $0 = true }
+        }
+        try #require(f.document.store.apply("Change monitoring gain", { model throws(DomainError) in
+            try model.settingMasterMix(MasterMixState(gainDB: -1), in: episode.id)
+        }))
+        let mixInvalidatedGeometry = changed.withLock { $0 }
+        let unchangedProjection = f.model.presentationTimeline == projection
+        #expect(!mixInvalidatedGeometry && unchangedProjection)
+        f.model.listening.expandedManualCutID = cuts[0].id
+        let expansionObserved = changed.withLock { $0 }
+        #expect(expansionObserved, "The fast unexpanded path must retain its expansion dependency.")
+        changed.withLock { $0 = false }
+        withObservationTracking {
+            _ = f.model.presentationTimeline
+        } onChange: {
+            changed.withLock { $0 = true }
+        }
+        var updatedCuts = cuts
+        updatedCuts[0] = ManualEpisodeCut(id: cuts[0].id, alignmentRevision: revision,
+            startFrame: 0, endFrame: 960)
+        try #require(f.document.store.apply("Adjust expanded cut", { model throws(DomainError) in
+            try model.settingCleanup(EpisodeCleanup(manualCuts: updatedCuts), in: episode.id)
+        }))
+        let cutEditObserved = changed.withLock { $0 }
+        #expect(cutEditObserved, "Expanded geometry must still observe document cut edits.")
+    }
+
     @Test func removedAudioAuditionsExplicitlyLeaveProductionMixAndKeepOtherCuts() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 6)
         defer { f.close() }

@@ -983,6 +983,20 @@ struct AlignmentWaveformView: View {
     @ViewBuilder
     private func transcriptStrip(for track: AlignmentWaveformTrack, speaker: SpeakerID? = nil) -> some View {
         if let cleanup {
+            TranscriptStrip(model: model, cleanup: cleanup, track: track, speaker: speaker,
+                headerWidth: headerWidth, showTranscript: showTranscript)
+        }
+    }
+
+    private struct TranscriptStrip: View {
+        @Bindable var model: EpisodeAlignmentModel
+        @Bindable var cleanup: EpisodeCleanupModel
+        let track: AlignmentWaveformTrack
+        let speaker: SpeakerID?
+        let headerWidth: CGFloat
+        let showTranscript: () -> Void
+
+        var body: some View {
             ForEach(cleanup.plan?.lanes.filter {
                 $0.primary.sourceID == track.id && (speaker == nil || $0.speaker == speaker)
             } ?? []) { lane in

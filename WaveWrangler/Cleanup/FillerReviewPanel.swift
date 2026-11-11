@@ -27,13 +27,33 @@ struct FillerReviewRow: Identifiable, Equatable {
     var duration: String { String(format: "%.2f s", end - start) }
 }
 
+struct FillerReviewInputs: Equatable {
+    let media: EpisodeMediaInputs?
+    let cleanup: EpisodeCleanup?
+    let speakerNames: [SpeakerID: String]
+}
+
 extension EpisodeCleanupModel {
     var reviewRows: [FillerReviewRow] {
+        // Cache hits must still subscribe views to readiness and identity changes.
+        _ = plan
+        _ = identities
         let generation = state.store.modelGeneration
         if let reviewRowsSnapshot, reviewRowsSnapshot.generation == generation { return reviewRowsSnapshot.rows }
+        let inputs = FillerReviewInputs(media: episode.map { EpisodeMediaInputs($0, includingWorkingRange: true) },
+            cleanup: episode?.cleanup,
+            speakerNames: Dictionary(uniqueKeysWithValues: state.store.model.speakers.map { ($0.id, $0.name) }))
+        // Readiness and live identities also invalidate this snapshot through their setters.
+        if let cached = reviewRowsSnapshot, cached.inputs == inputs {
+            reviewRowsSnapshot = (generation, inputs, cached.rows)
+            return cached.rows
+        }
+        let cutsByMarker = Dictionary(activeManualCuts.compactMap { cut -> (UUID, ManualEpisodeCut)? in
+            cut.markerID.map { ($0, cut) }
+        }, uniquingKeysWith: { first, _ in first })
         let rows = fillerReviews.map { review in
             let issue = fillerIssue(review)
-            let cut = cut(for: review)
+            let cut = cutsByMarker[review.id]
             let category: FillerReviewFilter = issue != nil ? .inactive : cut != nil ? .cut
                 : review.decision == .rejected ? .rejected : review.decision == .pending ? .pending : .reviewed
             return FillerReviewRow(id: review.id, speakerID: review.speaker,
@@ -47,7 +67,8 @@ extension EpisodeCleanupModel {
             if $0.speaker != $1.speaker { return $0.speaker.localizedStandardCompare($1.speaker) == .orderedAscending }
             return $0.id.uuidString < $1.id.uuidString
         }
-        reviewRowsSnapshot = (generation, rows)
+        reviewRowsPreparationCount += 1
+        reviewRowsSnapshot = (generation, inputs, rows)
         return rows
     }
 

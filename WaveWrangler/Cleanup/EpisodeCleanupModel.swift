@@ -25,7 +25,8 @@ final class EpisodeCleanupModel {
     @ObservationIgnored private(set) weak var workspaceAlignment: EpisodeAlignmentModel?
     var plan: PrimaryCleanupPlan? { didSet { reviewRowsSnapshot = nil } }
     var identities: [SourceID: String] = [:] { didSet { reviewRowsSnapshot = nil } }
-    @ObservationIgnored var reviewRowsSnapshot: (generation: UInt64, rows: [FillerReviewRow])?
+    @ObservationIgnored var reviewRowsSnapshot: (generation: UInt64, inputs: FillerReviewInputs, rows: [FillerReviewRow])?
+    @ObservationIgnored var reviewRowsPreparationCount = 0
     @ObservationIgnored var pendingReviewFocus: UUID?
     var windowStart = 0.0 {
         didSet { if oldValue != windowStart { scheduleWaveforms() } }
@@ -92,9 +93,12 @@ final class EpisodeCleanupModel {
     @ObservationIgnored var isEditingFillerReview = false
     @ObservationIgnored var fillerPublicationGeneration: UInt64?
     @ObservationIgnored var fillerWordIndexGeneration: UInt64?
+    @ObservationIgnored var fillerIndexedTranscripts: [SpeakerTranscript] = []
     @ObservationIgnored var fillerTranscriptIndex: [UUID: SpeakerTranscript] = [:]
     @ObservationIgnored var fillerActiveTranscriptIDs: Set<UUID> = []
     @ObservationIgnored var fillerWordIndex: [UUID: [UUID: TranscriptWord]] = [:]
+    @ObservationIgnored var fillerTranscriptPreparationCount = 0
+    @ObservationIgnored var fillerWordPreparationCount = 0
     var isBusy = false
     var isRefreshing = false
     var transcriptionStatus: CleanupTranscriptionStatus?
@@ -125,7 +129,8 @@ final class EpisodeCleanupModel {
     @ObservationIgnored private var scheduledDuration = 0.0
     @ObservationIgnored private var playbackAppliesCuts = true
     @ObservationIgnored private var reviewGeneration: UInt64?
-    @ObservationIgnored private var repetitionReviews: [UUID: Set<UUID>] = [:]
+    @ObservationIgnored private var repetitionReviews: [UUID: (words: [TranscriptWord], ids: Set<UUID>)] = [:]
+    @ObservationIgnored private(set) var repetitionPreparationCount = 0
 
     static let repetitionReviewExplanation =
         "Long repetitive output may be hallucinated or genuine speech. Listen to verify. Raw text and timing are unchanged; this is not evidence of silence."
@@ -193,14 +198,16 @@ final class EpisodeCleanupModel {
     }
 
     func uncertainWordIDs(for lane: CleanupSpeakerLane) -> Set<UUID> {
-        guard let transcript = transcript(for: lane) else { return [] }
         if reviewGeneration != state.store.modelGeneration {
-            repetitionReviews = [:]
+            let activeIDs = Set((episode?.cleanup?.transcripts ?? []).map(\.id))
+            repetitionReviews = repetitionReviews.filter { activeIDs.contains($0.key) }
             reviewGeneration = state.store.modelGeneration
         }
-        if let cached = repetitionReviews[transcript.id] { return cached }
+        guard let transcript = transcript(for: lane) else { return [] }
+        if let cached = repetitionReviews[transcript.id], cached.words == transcript.words { return cached.ids }
         let ids = TranscriptRepetitionReview.suspectWordIDs(in: transcript.words)
-        repetitionReviews[transcript.id] = ids
+        repetitionReviews[transcript.id] = (transcript.words, ids)
+        repetitionPreparationCount += 1
         return ids
     }
 

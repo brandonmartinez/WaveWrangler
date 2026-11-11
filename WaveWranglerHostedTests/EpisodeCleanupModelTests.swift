@@ -1,6 +1,8 @@
 import AppKit
 import Foundation
+import Observation
 import SwiftUI
+import Synchronization
 import Testing
 import WWCore
 import WWPersistence
@@ -423,6 +425,175 @@ struct EpisodeCleanupModelTests {
         return model
     }
 
+    @Test func visibleFillersUseStrictProjectedOverlapAndExcludeCollapsedIntervals() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let lane = try #require(model.plan?.lanes.first)
+        let review = try #require(model.fillerReviews.first)
+        var cleanup = try #require(model.episode?.cleanup)
+        cleanup.manualCuts = [ManualEpisodeCut(alignmentRevision: 1, startFrame: 0, endFrame: 48_000)]
+        model.state.store.replaceLoadedModel(try model.state.store.model.settingCleanup(cleanup, in: model.episodeID))
+        model.synchronizeCutTimeline()
+        let range = try #require(model.displayRange(start: review.bounds.alignedStart, end: review.bounds.alignedEnd))
+        try #require(abs(range.lowerBound - 1) < 0.000_000_001
+            && abs(range.upperBound - 1.2) < 0.000_000_001)
+        for (start, duration, visible) in [
+            (range.lowerBound - 0.5, 0.5, false),
+            (range.upperBound, 0.5, false),
+            (range.lowerBound - 0.25, 0.5, true),
+            (range.lowerBound + 0.1, 0.5, true),
+        ] {
+            model.windowStart = start
+            model.windowDuration = duration
+            let ids = model.visibleFillers(for: lane).map(\.id)
+            #expect(ids == (visible ? [review.id] : []))
+        }
+        cleanup.manualCuts = (cleanup.manualCuts ?? []) + [ManualEpisodeCut(alignmentRevision: 1,
+            startFrame: 96_000, endFrame: 105_600)]
+        model.state.store.replaceLoadedModel(try model.state.store.model.settingCleanup(cleanup, in: model.episodeID))
+        model.synchronizeCutTimeline()
+        model.windowStart = 0
+        model.windowDuration = 10
+        let row = model.reviewRows.first { $0.id == review.id }
+        let validUnlinkedReview = row?.issue == nil && row?.cutID == nil
+        let visible = model.visibleFillers(for: lane).map(\.id)
+        #expect(validUnlinkedReview && visible.isEmpty, "A fully collapsed interval has no visible marker.")
+    }
+
+    @Test func transcriptReviewCachesReuseMixerEditsEqualLoadsAndNavigation() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let lane = try #require(model.plan?.lanes.first)
+        let rows = model.reviewRows
+        let uncertain = model.uncertainWordIDs(for: lane)
+        func preparations() -> [Int] {
+            [model.reviewRowsPreparationCount, model.fillerTranscriptPreparationCount,
+             model.fillerWordPreparationCount, model.repetitionPreparationCount]
+        }
+        let before = preparations()
+        try #require(before == [1, 1, 1, 1])
+        for index in 1...10 {
+            try #require(model.state.store.apply("Change monitoring gain", { document throws(DomainError) in
+                try document.settingMasterMix(MasterMixState(gainDB: -Double(index)), in: model.episodeID)
+            }))
+            model.playhead = Double(index) / 4
+            model.selectedWord = model.episode?.cleanup?.transcripts.first?.words.first
+            model.listening.selection = 2...2.2
+            let currentRows = model.reviewRows
+            let currentUncertain = model.uncertainWordIDs(for: lane)
+            #expect(currentRows == rows && currentUncertain == uncertain)
+        }
+        var renamedEpisode = model.state.store.model
+        renamedEpisode.episodes[0].title = "Title only"
+        model.state.store.replaceLoadedModel(renamedEpisode)
+        _ = model.reviewRows
+        _ = model.uncertainWordIDs(for: lane)
+        model.state.store.replaceLoadedModel(model.state.store.model)
+        _ = model.reviewRows
+        _ = model.uncertainWordIDs(for: lane)
+        let after = preparations()
+        #expect(after == before, "Unrelated publications must not redo transcript/review preparation")
+
+        renamedEpisode.speakers[0].name = "Renamed host"
+        model.state.store.replaceLoadedModel(renamedEpisode)
+        let renamedRows = model.reviewRows
+        let rowPreparations = model.reviewRowsPreparationCount
+        #expect(renamedRows.first?.speaker == "Renamed host" && rowPreparations == before[0] + 1)
+        _ = model.uncertainWordIDs(for: lane)
+        let otherPreparations = Array(preparations().dropFirst())
+        #expect(otherPreparations == Array(before.dropFirst()))
+    }
+
+    @Test func sameIDWordChangesRebuildOnlyAffectedIndexesAndReadinessAlwaysInvalidatesRows() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let lane = try #require(model.plan?.lanes.first)
+        let originalPlan = model.plan
+        let original = model.state.store.model
+        let originalIdentities = model.identities
+        _ = model.reviewRows
+        _ = model.uncertainWordIDs(for: lane)
+        var changed = original
+        changed.episodes[0].cleanup?.transcripts[0].words[0].text = "Changed same-ID word"
+        model.state.store.replaceLoadedModel(changed)
+        let invalid = model.reviewRows.first?.issue != nil
+        _ = model.uncertainWordIDs(for: lane)
+        let preparations = [model.reviewRowsPreparationCount, model.fillerTranscriptPreparationCount,
+            model.fillerWordPreparationCount, model.repetitionPreparationCount]
+        #expect(invalid && preparations == [2, 2, 2, 2])
+        model.state.store.replaceLoadedModel(original)
+        let restored = model.reviewRows.first?.issue == nil
+        #expect(restored)
+        let generation = model.state.store.modelGeneration
+        model.plan = nil
+        let withoutPlan = model.reviewRows.first?.issue != nil
+        model.plan = originalPlan
+        let withPlan = model.reviewRows.first?.issue == nil
+        model.identities = [:]
+        let withoutIdentity = model.reviewRows.first?.issue != nil
+        model.identities = originalIdentities
+        let withIdentity = model.reviewRows.first?.issue == nil
+        let sameGeneration = model.state.store.modelGeneration == generation
+        #expect(withoutPlan && withPlan && withoutIdentity && withIdentity && sameGeneration)
+    }
+
+    @Test func cachedReviewRowsKeepReadinessAndIdentityObservation() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        _ = model.reviewRows
+        let identities = model.identities
+        let changed = Mutex(false)
+        withObservationTracking {
+            _ = model.reviewRows
+        } onChange: {
+            changed.withLock { $0 = true }
+        }
+        model.identities = [:]
+        let identityObserved = changed.withLock { $0 }
+        #expect(identityObserved)
+        model.identities = identities
+        _ = model.reviewRows
+        changed.withLock { $0 = false }
+        withObservationTracking {
+            _ = model.reviewRows
+        } onChange: {
+            changed.withLock { $0 = true }
+        }
+        model.plan = nil
+        let readinessObserved = changed.withLock { $0 }
+        #expect(readinessObserved)
+    }
+
+    @Test func movingTranscriptToHistoryUpdatesActiveMembershipEvenWhenCombinedIndexIsUnchanged() throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        model.decideFiller(review.id, decision: .reviewed)
+        let initiallyActive = model.reviewRows.first?.issue == nil
+        try #require(initiallyActive)
+        let indexPreparations = model.fillerTranscriptPreparationCount
+        let wordPreparations = model.fillerWordPreparationCount
+        var moved = model.state.store.model
+        let transcripts = moved.episodes[0].cleanup?.transcripts
+        moved.episodes[0].cleanup?.transcriptHistory = transcripts
+        moved.episodes[0].cleanup?.transcripts = []
+        model.state.store.replaceLoadedModel(moved)
+        let retainedJudgment = model.reviewRows.first?.issue == nil
+        #expect(retainedJudgment, "Exact history may retain an explicit human judgment")
+        moved.episodes[0].cleanup?.fillerReviews?[0].decision = .pending
+        model.state.store.replaceLoadedModel(moved)
+        let inactiveProposal = model.reviewRows.first?.issue != nil
+        let currentIndexPreparations = model.fillerTranscriptPreparationCount
+        let currentWordPreparations = model.fillerWordPreparationCount
+        #expect(inactiveProposal, "A pending proposal cannot become active merely because its words remain indexed")
+        #expect(currentIndexPreparations == indexPreparations && currentWordPreparations == wordPreparations)
+    }
+
     @Test func findingCandidatesIsIdempotentAndReviewNeverChangesRawTextOrTiming() throws {
         let model = try fillerFixture()
         defer { model.cancel() }
@@ -615,6 +786,8 @@ struct EpisodeCleanupModelTests {
         let saved = model.state.store.model
         let adjusted = try #require(model.fillerReviews.first)
         let lane = try #require(model.plan?.lanes.first)
+        let initiallyActive = model.reviewRows.first?.issue == nil
+        try #require(initiallyActive)
         let mutations: [(inout SpeakerTranscript) -> Void] = [
             { $0.id = UUID() }, { $0.model = "new recipe" }, { $0.words[0].text = "UH" },
             { $0.words[0].alignedStart = 1.999 }, { $0.sourceIdentity = String(repeating: "b", count: 64) },
@@ -625,6 +798,8 @@ struct EpisodeCleanupModelTests {
             mutate(&replacement.episodes[0].cleanup!.transcripts[0])
             model.state.store.replaceLoadedModel(replacement)
             #expect(model.fillerIssue(adjusted) != nil)
+            let inactiveCachedRow = model.reviewRows.first?.issue != nil
+            #expect(inactiveCachedRow)
             #expect(model.visibleFillers(for: lane).isEmpty)
             model.setFillerBounds(review.id, start: 1.98, end: 2.22)
             #expect(model.state.store.model == replacement && model.error != nil)
@@ -808,6 +983,9 @@ struct EpisodeCleanupModelTests {
         let mutations: [(inout Episode) -> Void] = [
             { $0.cleanup?.workingRange?.tracksOut = 2.1 },
             { $0.speakerAssignments[0].primary = ChannelReference(sourceID: review.primary.sourceID, statedChannel: 1) },
+            { $0.speakerAssignments[0].primaryConfirmation = .provisional },
+            { $0.sources[1].role = .backup },
+            { $0.sources[1].roleConfirmation = .provisional },
             {
                 let old = $0.alignment!.maps[0]
                 $0.alignment?.maps.append(.init(revision: 2, derivedFrom: 1, inputs: old.inputs, map: old.map))
@@ -815,11 +993,15 @@ struct EpisodeCleanupModelTests {
             },
         ]
         let lane = try #require(model.plan?.lanes.first)
+        let initiallyActive = model.reviewRows.first?.issue == nil
+        try #require(initiallyActive)
         for mutate in mutations {
             var changed = saved
             mutate(&changed.episodes[0])
             model.state.store.replaceLoadedModel(changed)
             #expect(model.fillerIssue(review) != nil)
+            let inactiveCachedRow = model.reviewRows.first?.issue != nil
+            #expect(inactiveCachedRow)
             #expect(model.visibleFillers(for: lane).isEmpty)
             #expect(model.fillerAuditionRange(review, context: 0.5) == nil)
             model.selectFiller(review.id)
@@ -828,6 +1010,8 @@ struct EpisodeCleanupModelTests {
                     "An inactive historical selection cannot silently seed a new manual interval")
             model.state.store.replaceLoadedModel(saved)
             #expect(model.fillerIssue(review) == nil)
+            let restoredCachedRow = model.reviewRows.first?.issue == nil
+            #expect(restoredCachedRow)
             #expect(model.fillerReviews.first == review)
         }
     }

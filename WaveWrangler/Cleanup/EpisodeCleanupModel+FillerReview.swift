@@ -16,11 +16,13 @@ extension EpisodeCleanupModel {
         let current = Set(reviewRows.lazy.filter {
             $0.speakerID == lane.speaker && $0.issue == nil && $0.cutID == nil
         }.map(\.id))
+        let projection = cutTimeline
+        let start = windowStart, end = start + visibleDuration
         return fillerReviews.filter {
-            current.contains($0.id)
-                && displayRange(start: $0.bounds.alignedStart, end: $0.bounds.alignedEnd).map {
-                    $0.upperBound > windowStart && $0.lowerBound < windowStart + visibleDuration
-                } == true
+            guard current.contains($0.id) else { return false }
+            let lo = projection.editedTime(forAlignedTime: $0.bounds.alignedStart)
+            let hi = projection.editedTime(forAlignedTime: $0.bounds.alignedEnd)
+            return hi > lo && hi > start && lo < end
         }
     }
 
@@ -49,9 +51,17 @@ extension EpisodeCleanupModel {
             if fillerWordIndexGeneration != state.store.modelGeneration {
                 let active = episode?.cleanup?.transcripts ?? []
                 fillerActiveTranscriptIDs = Set(active.map(\.id))
-                fillerTranscriptIndex = Dictionary(uniqueKeysWithValues:
-                    (active + (episode?.cleanup?.transcriptHistory ?? [])).map { ($0.id, $0) })
-                fillerWordIndex = [:]
+                let transcripts = active + (episode?.cleanup?.transcriptHistory ?? [])
+                if fillerIndexedTranscripts != transcripts {
+                    let index = Dictionary(uniqueKeysWithValues: transcripts.map { ($0.id, $0) })
+                    fillerWordIndex = fillerWordIndex.filter {
+                        guard let current = index[$0.key], let prior = fillerTranscriptIndex[$0.key] else { return false }
+                        return current.words == prior.words
+                    }
+                    fillerTranscriptIndex = index
+                    fillerIndexedTranscripts = transcripts
+                    fillerTranscriptPreparationCount += 1
+                }
                 fillerWordIndexGeneration = state.store.modelGeneration
             }
             guard (review.retainsUserJudgment || fillerActiveTranscriptIDs.contains(transcriptID)),
@@ -62,6 +72,7 @@ extension EpisodeCleanupModel {
             if let word = review.word {
                 if fillerWordIndex[transcriptID] == nil {
                     fillerWordIndex[transcriptID] = Dictionary(uniqueKeysWithValues: transcript.words.map { ($0.id, $0) })
+                    fillerWordPreparationCount += 1
                 }
                 guard fillerWordIndex[transcriptID]?[word.id] == word else {
                     return "Captured word changed. Original review retained; no automatic reassociation."

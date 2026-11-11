@@ -244,9 +244,13 @@ final class EpisodeAlignmentModel {
     }
     private(set) var cutTimeline = ManualCutTimeline.unedited
     var presentationTimeline: AudioTimelineProjection {
-        AudioTimelineProjection(cuts: cutTimeline,
+        let expandedID = listening.expandedManualCutID
+        let expanded = expandedID.flatMap { id in
+            document?.store.model.episode(episodeID)?.activeManualCuts.first { $0.id == id }
+        }
+        return AudioTimelineProjection(cuts: cutTimeline,
             program: audioEditor.composition?.timeline,
-            expanded: document?.store.model.episode(episodeID)?.activeManualCuts.first { $0.id == listening.expandedManualCutID })
+            expanded: expanded)
     }
     private var appliedPresentation = AudioTimelineProjection()
     private var needsInitialProgramAdoption = false

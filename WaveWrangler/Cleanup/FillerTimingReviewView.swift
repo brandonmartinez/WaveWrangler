@@ -17,14 +17,16 @@ struct FillerTimingOverlay: View {
 
     var body: some View {
         GeometryReader { geometry in
+            let projection = model.cutTimeline
             ZStack(alignment: .topLeading) {
                 if reviews.count > max(40, Int(geometry.size.width / 8)) {
-                    denseOverview(size: geometry.size)
+                    denseOverview(size: geometry.size, projection: projection)
                 } else {
-                    let neighbors = neighborDistances(width: geometry.size.width)
+                    let neighbors = neighborDistances(width: geometry.size.width, projection: projection)
                     ForEach(reviews) { review in
                         FillerTimingRegionView(model: model, review: review, size: geometry.size,
                             start: model.windowStart, duration: model.visibleDuration,
+                            projection: projection,
                             neighborDistance: neighbors[review.id] ?? .infinity)
                             .zIndex(model.selectedFillerID == review.id ? 1 : 0)
                     }
@@ -47,9 +49,9 @@ struct FillerTimingOverlay: View {
         }
     }
 
-    private func neighborDistances(width: Double) -> [UUID: Double] {
+    private func neighborDistances(width: Double, projection: AudioTimelineProjection) -> [UUID: Double] {
         let positions = reviews.map {
-            (id: $0.id, time: model.cutTimeline.editedTime(forAlignedTime: $0.bounds.alignedStart))
+            (id: $0.id, time: projection.editedTime(forAlignedTime: $0.bounds.alignedStart))
         }.sorted { $0.time < $1.time }
         return Dictionary(uniqueKeysWithValues: positions.indices.map { index in
             let left = index > 0 ? positions[index].time - positions[index - 1].time : .infinity
@@ -58,12 +60,12 @@ struct FillerTimingOverlay: View {
         })
     }
 
-    private func denseOverview(size: CGSize) -> some View {
+    private func denseOverview(size: CGSize, projection: AudioTimelineProjection) -> some View {
         ZStack(alignment: .topLeading) {
             Canvas { context, _ in
                 for review in reviews {
-                    let lo = max(0, (model.cutTimeline.editedTime(forAlignedTime: review.bounds.alignedStart) - model.windowStart) / model.visibleDuration * size.width)
-                    let hi = min(size.width, (model.cutTimeline.editedTime(forAlignedTime: review.bounds.alignedEnd) - model.windowStart) / model.visibleDuration * size.width)
+                    let lo = max(0, (projection.editedTime(forAlignedTime: review.bounds.alignedStart) - model.windowStart) / model.visibleDuration * size.width)
+                    let hi = min(size.width, (projection.editedTime(forAlignedTime: review.bounds.alignedEnd) - model.windowStart) / model.visibleDuration * size.width)
                     let color: Color = review.decision == .rejected ? .secondary
                         : review.decision == .reviewed ? .green : .orange
                     for x in hi - lo >= 36 ? [lo, hi] : [lo] {
@@ -78,7 +80,7 @@ struct FillerTimingOverlay: View {
             Text("Zoom in to review \(reviews.count) filler intervals")
                 .font(.caption2).padding(3).background(.regularMaterial)
                 .allowsHitTesting(false)
-            Color.clear.contentShape(denseHitArea(size: size)).onTapGesture { point in
+            Color.clear.contentShape(denseHitArea(size: size, projection: projection)).onTapGesture { point in
                 let time = model.cutTimeline.alignedTime(forEditedTime:
                     model.windowStart + point.x / max(1, size.width) * model.visibleDuration)
                 if let closest = reviews.min(by: {
@@ -106,11 +108,11 @@ struct FillerTimingOverlay: View {
         .allowsHitTesting(model.listening.effectiveTool != .move && model.listening.effectiveTool != .automation)
     }
 
-    private func denseHitArea(size: CGSize) -> Path {
+    private func denseHitArea(size: CGSize, projection: AudioTimelineProjection) -> Path {
         var path = Path()
         for review in reviews {
-            let lo = max(0, (model.cutTimeline.editedTime(forAlignedTime: review.bounds.alignedStart) - model.windowStart) / model.visibleDuration * size.width - 3)
-            let hi = min(size.width, (model.cutTimeline.editedTime(forAlignedTime: review.bounds.alignedEnd) - model.windowStart) / model.visibleDuration * size.width + 3)
+            let lo = max(0, (projection.editedTime(forAlignedTime: review.bounds.alignedStart) - model.windowStart) / model.visibleDuration * size.width - 3)
+            let hi = min(size.width, (projection.editedTime(forAlignedTime: review.bounds.alignedEnd) - model.windowStart) / model.visibleDuration * size.width + 3)
             path.addRect(CGRect(x: lo, y: 0, width: max(1, hi - lo), height: size.height))
         }
         return path
@@ -123,6 +125,7 @@ private struct FillerTimingRegionView: View {
     let size: CGSize
     let start: Double
     let duration: Double
+    let projection: AudioTimelineProjection
     var neighborDistance: Double = .infinity
     @State private var dragOrigin: FillerTimingBounds?
     @State private var dragTime: Double?
@@ -139,7 +142,7 @@ private struct FillerTimingRegionView: View {
         review.decision == .rejected ? .secondary : review.decision == .reviewed ? .green : .orange
     }
     private func x(_ time: Double) -> Double {
-        (model.cutTimeline.editedTime(forAlignedTime: time) - start) / duration * size.width
+        (projection.editedTime(forAlignedTime: time) - start) / duration * size.width
     }
 
     var body: some View {
@@ -203,7 +206,7 @@ private struct FillerTimingRegionView: View {
 
     @ViewBuilder
     private func handle(_ edge: FillerTimingEdge, time: Double) -> some View {
-        let displayTime = model.cutTimeline.editedTime(forAlignedTime: time)
+        let displayTime = projection.editedTime(forAlignedTime: time)
         if dragEdge == edge || (displayTime >= start && displayTime <= start + duration) {
             let frame = handleFrame(edge, time: time)
             AudioTimelineBoundaryControl(

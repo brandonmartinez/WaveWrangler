@@ -8,8 +8,9 @@ struct ManualCutMarkers: View {
     var body: some View {
         GeometryReader { geometry in
             let expandedID = model.expandedManualCut?.id
+            let projection = model.cutTimeline
             ForEach(model.activeManualCuts) { cut in
-                let time = model.cutTimeline.editedTime(forAlignedTime: cut.alignedStart)
+                let time = projection.editedTime(forAlignedTime: cut.alignedStart)
                 let x = (time - model.windowStart) / model.visibleDuration * geometry.size.width
                 let select = {
                     selectContext()
