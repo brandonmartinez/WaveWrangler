@@ -51,7 +51,7 @@ actor AlignmentRuntime {
     let pipeline: AlignmentPipeline
     private let showID: ShowID
     private let accessStore: any DeviceAccessStore
-    private var sourceAccess: AlignmentSourceAccess { AlignmentSourceAccess(store: accessStore) }
+    nonisolated private var sourceAccess: AlignmentSourceAccess { AlignmentSourceAccess(store: accessStore) }
     private let access: SourceAccessContext
     private let mediaInspector: SourceMediaInspector
     private var sourceByEpoch: [EpisodeID: [RecordingEpochID: AlignmentSource]] = [:]
@@ -1229,7 +1229,8 @@ actor AlignmentRuntime {
         return qualified.waveform
     }
 
-    private func supplementalAdmission(_ id: SourceID, episode: Episode) async throws -> SupplementalAdmission {
+    @concurrent
+    nonisolated private func supplementalAdmission(_ id: SourceID, episode: Episode) async throws -> SupplementalAdmission {
         guard episode.source(id)?.purpose == .supplementalAudio else { throw MixerFailure.staleDependencies }
         guard let store = accessStore as? any DeviceAccessSnapshotStore else {
             throw NativeSourcePreparationFailure.notAuthorized
@@ -1256,7 +1257,8 @@ actor AlignmentRuntime {
         return .init(read: read, generation: snapshot.mutationGeneration)
     }
 
-    private func validateSupplementalAccess(_ admission: WaveformSourceAdmission, snapshot: DeviceAccessSnapshot) async throws {
+    @concurrent
+    nonisolated private func validateSupplementalAccess(_ admission: WaveformSourceAdmission, snapshot: DeviceAccessSnapshot) async throws {
         guard let store = accessStore as? any DeviceAccessSnapshotStore,
               try await store.snapshot(for: admission.key) == snapshot else {
             throw NativeSourcePreparationFailure.notAuthorized
@@ -1835,7 +1837,9 @@ actor AlignmentRuntime {
     }
 
     /// Recording-only admission. Assets share the access ledger but never receive recording work grants.
-    private func resolveSources(_ records: [SourceRecord]) async throws -> [AlignmentSource] {
+    /// Bookmark and File Provider metadata I/O must not occupy the actor that produces raw PCM.
+    @concurrent
+    nonisolated private func resolveSources(_ records: [SourceRecord]) async throws -> [AlignmentSource] {
         var values: [AlignmentSource] = []
         let evaluator = SourceAvailabilityEvaluator(context: access)
         for source in records.filter(\.isRecording) {

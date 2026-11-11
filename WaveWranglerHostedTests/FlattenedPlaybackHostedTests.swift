@@ -7,6 +7,7 @@ import Testing
 import WWAlignPipeline
 import WWCore
 import WWMix
+import WWSources
 @testable import WaveWrangler
 
 @MainActor
@@ -18,8 +19,9 @@ struct FlattenedPlaybackHostedTests {
         try #require(condition(), Comment(rawValue: reason()))
     }
 
-    private func fixture() async throws -> AlignmentWaveformRetentionHostedTests.Fixture {
-        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 16)
+    private func fixture(sourceIO: (any SourceIO)? = nil) async throws -> AlignmentWaveformRetentionHostedTests.Fixture {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(
+            cleanupPrimaries: 2, durationSeconds: 16, sourceIO: sourceIO)
         f.model.placeGroupsAtSourceTime()
         try await wait(f.model.lastError ?? f.model.waveformMessage) {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
@@ -353,6 +355,26 @@ struct FlattenedPlaybackHostedTests {
         #expect(checks.load(ordering: .relaxed) >= 3)
     }
 
+    @Test func synchronousBookmarkRevalidationDoesNotOccupyTheSourceProducerActor() async throws {
+        let io = BlockingPlaybackBookmarkIO()
+        let f = try await fixture(sourceIO: io)
+        defer { f.close() }
+        defer { io.release.signal() }
+        let model = f.document.store.model
+        let recipe = try await f.runtime.mixerRecipe(model: model, episode: f.model.episodeID,
+                                                   programFrames: 0..<192_000)
+        io.stage.store(1, ordering: .relaxed)
+        let validation = Task { try await f.runtime.validateProduction(recipe: recipe, model: model) }
+        try await wait("Source revalidation must reach the deliberately blocked bookmark resolver") {
+            io.stage.load(ordering: .relaxed) >= 2
+        }
+        _ = await f.runtime.productionRecipeConstructionCount
+        #expect(io.stage.load(ordering: .relaxed) == 2,
+                "The producer actor must remain available while synchronous source I/O is blocked")
+        io.release.signal()
+        try await validation.value
+    }
+
     @Test func preparedPCMDoesNotBakeLiveMixControlsOrRebuildForAFaderEdit() async throws {
         let f = try await fixture()
         defer { f.close() }
@@ -391,4 +413,26 @@ struct FlattenedPlaybackHostedTests {
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
         f.model.stopAudition()
     }
+}
+
+private final class BlockingPlaybackBookmarkIO: SourceIO {
+    let stage = Atomic<Int>(0)
+    let release = DispatchSemaphore(value: 0)
+    private let system = SystemSourceIO()
+
+    var provenance: ObservationProvenance { system.provenance }
+    func metadata(at url: URL) -> MetadataResult { system.metadata(at: url) }
+    func listItems(under directory: URL) -> DirectoryListing { system.listItems(under: directory) }
+    func makeReadOnlyBookmark(for url: URL) throws -> Data { try system.makeReadOnlyBookmark(for: url) }
+    func resolveBookmark(_ data: Data) -> BookmarkResolution {
+        if stage.compareExchange(expected: 1, desired: 2, ordering: .relaxed).exchanged {
+            _ = release.wait(timeout: .now() + 2)
+            stage.store(3, ordering: .relaxed)
+        }
+        return system.resolveBookmark(data)
+    }
+    func startAccessingSecurityScope(_ url: URL) -> Bool { system.startAccessingSecurityScope(url) }
+    func stopAccessingSecurityScope(_ url: URL) { system.stopAccessingSecurityScope(url) }
+    func requestDownload(of url: URL) throws { try system.requestDownload(of: url) }
+    func downloadFraction(of url: URL) async -> Knowledge<Double> { await system.downloadFraction(of: url) }
 }

@@ -33,7 +33,7 @@ struct AlignmentWaveformRetentionHostedTests {
     func fixture(cleanupPrimaries: Int = 0, durationSeconds: Int = 40,
                  pauses: [Range<Double>] = [], extraSources: Int = 0,
                  targetStepSeconds: Double = 0, extraGroups: Int = 0,
-                 sourceFiles: [URL]? = nil) async throws -> Fixture {
+                 sourceFiles: [URL]? = nil, sourceIO: (any SourceIO)? = nil) async throws -> Fixture {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let referenceEpoch = RecordingEpoch(label: "Reference")
@@ -81,7 +81,7 @@ struct AlignmentWaveformRetentionHostedTests {
         }
         let initial = ShowDocumentModel(show: Show(title: "Retention fixture"), speakers: speakers, episodes: [episode])
         let accessStore = FileDeviceAccessStore(fileURL: folder.appendingPathComponent("access.json"))
-        let io = SystemSourceIO()
+        let io: any SourceIO = sourceIO ?? SystemSourceIO()
         let decoder = SourceDecoder(access: SourceAccessContext(io: io))
         if let sourceFiles { try #require(sourceFiles.count == episode.sources.count) }
         var files: [URL] = []

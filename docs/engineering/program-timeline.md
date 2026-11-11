@@ -227,6 +227,14 @@ does not reset/reanalyze recordings or invalidate original transcript/word/sourc
 waveform partitions. Nonempty arrangement recipes require the complete composition;
 the legacy speaker-only initializer cannot silently omit clips or insertions.
 
+Recording resolution and supplemental-source admission/revalidation perform
+synchronous bookmark and File Provider metadata work in `@concurrent`,
+nonisolated methods. A separate validation task alone is insufficient: blocking
+I/O on `AlignmentRuntime` would still prevent its raw PCM producer from advancing.
+Device-record/generation checks, local residency, raw witnesses, decoder format,
+and before/after access verification remain required. This changes execution
+isolation, not authorization lifetime, verification frequency, or rendered reserve.
+
 ## Exact envelopes and the additive schema-10 shape
 
 Ordinary integer `frame`/`amplitude` point bytes and initializer behavior are
