@@ -327,10 +327,23 @@ divider position cannot clip the controls. At short window heights the bottom pa
 before the 64-point track viewport or fixed controls; undersized temporary pane heights are not
 written over a valid saved divider preference. Pan/zoom event capture stays confined to the tracks.
 
-`reviewRows` caches source/timing issue classification by model generation and is invalidated when
-the verified plan or source identities change. Panning/playhead updates do not revalidate hundreds of
-reviews. Waveform filler markers reuse the same classification snapshot rather than rechecking every
-adaptive region for every playhead update; source/plan evidence still invalidates it.
+`reviewRows` caches source/timing issue classification by cleanup content, canonical media/timing
+inputs (including working range), and speaker names. Document generation gates dependency checks;
+mixer edits and equal document loads do not discard unchanged rows. Verified-plan and live-source
+identity setters invalidate the snapshot even without a document publication. Filler transcript
+indexes track exact active/history content and active membership separately; unchanged per-transcript
+word dictionaries survive other transcript edits. Repetition analysis is keyed by the actual words,
+not only transcript IDs, and retained only for current transcripts. Same-ID word changes cannot reuse
+stale results. Panning/playhead updates do not revalidate hundreds of reviews. A focused transcript
+strip owns these model reads instead of deriving transcript state eagerly in the transport-updating
+parent. Existing off-main word-index preparation and viewport geometry caching remain in place.
+Waveform filler markers reuse the review classification snapshot; all existing source authorization,
+captured-word, accepted-map, channel, and source-frame validation still runs when dependencies change.
+Marker filtering and drawing share one immutable timeline projection per pass rather than rebuilding
+it for each interval or boundary. The unexpanded presentation path observes the expansion ID, cut
+timeline, and program composition without scanning document cuts or subscribing geometry to unrelated
+mixer edits. Expanded cuts still observe their saved interval. Pointer/drag actions resolve the live
+projection at event time; rendering snapshots never become edit-time authority.
 Table selection defers navigation to the next main-actor turn to avoid reentering native
 table delegates; a newer row request supersedes an older one. Row navigation centers/zooms the
 interval, expands any collapsed parent groups and scrolls its source into view. Auto Cut and Restore
@@ -1780,14 +1793,22 @@ consumers when input arrives, and startup when the queue is full or the final sh
 program is complete. End, source failure, and stop release blocked waiters; stop
 joins in-flight preparation before retirement and never restarts that queue.
 This removes raw-refill polling without weakening source authorization or
-verification. Output pacing still uses bounded 2 ms checks of the device-owned
-buffered horizon; it has no safe queue-owned consumption notification.
-The processed scheduling horizon is 4096 frames
-plus at most one in-flight block: at most 4608 frames / 96 ms of prepared audio,
-not seconds of producer buffering. Before starting the device clock, production
-queues at least 2048 verified output frames (or the complete final short program).
+verification. Output pacing uses a cancellation-safe output-queue waiter rather
+than 2 ms producer-task polling. Above the 12,000-frame high watermark, the
+producer suspends until the existing 5 ms audio-clock watchdog observes at most
+9,600 frames / 200 ms remaining. This is native-clock-observed signaling, not a
+realtime render callback; it batches refill work without running vendor code on
+the output queue. Stop, failure, and cancellation release waiters, and generation
+checks reject stale producers.
+Capacity remains available before the first output packet: effect-latency
+compensation may consume multiple input blocks without emitting PCM. Transport
+generation checks still reject a stopped producer during this priming stage.
+The post-production processed scheduling target is 12,000 frames / 250 ms
+plus at most one in-flight block: at most 12,512 frames / 260.67 ms of prepared
+audio, not seconds of producer buffering. Before starting the device clock,
+production queues at least 9,952 verified output frames (or the complete final short program).
 The 2048-frame start lead plus this prefill and any one-block rounding still fit
-the same 4608-frame bound. No underrun deadline runs while the initial buffer is
+the same 12,512-frame bound. No underrun deadline runs while the initial buffer is
 being prepared. This absorbs cold Audio Unit startup work without adding seconds
 of pre-rendered control latency; real missed deadlines after startup still stop
 explicitly and preserve the clock long enough for the handler to retain the playhead.
@@ -1799,7 +1820,7 @@ The UI independently polls progress and prepared meters, so transcript layout,
 accessibility work, and other UI stalls do not hold up audio refill or its watchdog.
 The generated responsiveness assertion changes a fader after source preparation,
 observes its ramp on the very next block's first sample without resetting the
-processor, and verifies the horizon stays below 100 ms.
+processor, and verifies the 250 ms target plus one-block rounding bound.
 Effects render on the serial worker, not in the hardware callback. This is
 **buffered monitoring**, not a claim of immediate/hardware-input low-latency
 processing: audible control response includes that bounded prepared horizon,
@@ -1807,13 +1828,22 @@ the 10 ms ramp, scheduling jitter, and device latency. Meters describe prepared
 PCM, not a sample-synchronized hardware tap. Missed deadlines stop explicitly
 instead of scheduling substitute silence.
 
-Production underruns emit one `WWAUDIO_UNDERRUN v=1` error in the
+Production underruns emit one `WWAUDIO_UNDERRUN v=2` error in the
 `com.brandonmartinez.wavewrangler` / `AudioPlayback` unified-log category.
 The bounded per-playback snapshot contains scheduled/consumed frame counts,
-time since the last scheduled packet, raw queue occupancy, and last/maximum/
+time since the last scheduled packet, raw queue occupancy, minimum observed
+rendered reserve, low-watermark crossings, and last/maximum/
 in-flight timings for source preparation, waiting for raw PCM, source verification,
-control publication, DSP, and output scheduling. Producer wake delay excludes
-the requested pacing sleep. The output queue captures this evidence before
+control publication, DSP submission, output scheduling, and refill waiting.
+Processor diagnostics separately measure control/process actor submission waits,
+render execution, aggregate per-unit render calls, and document-state capture.
+The aggregate unit timing does not identify a particular plugin, and submission
+wait includes executor scheduling rather than proving vendor contention.
+Processor counters cover the processing instance's lifetime, including any work
+before this playback; buffer and producer counters are playback-specific.
+Producer wake delay measures resumption after the low-watermark signal, excluding
+the intentional capacity wait. Reserve observations exclude final draining,
+which normally reaches zero. The output queue captures this evidence before
 stopping the graph or waiting for the UI handler; late enqueues use the same
 one-shot report. No audio, source identifiers, paths, or vendor state is retained
 in diagnostics, and no per-block log/event history is collected.

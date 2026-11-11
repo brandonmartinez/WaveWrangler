@@ -60,7 +60,8 @@ generated 48-second originals. Its accepted map has one smooth adaptive segment
 over the first 40 seconds and 4,096 short segments in the final eight seconds:
 recording-sized metadata does not turn the played interval into thousands of
 tiny stretch operations. The run starts with cold adaptive audio tiles and
-crosses at least seven five-second tiles without increasing playback buffers.
+crosses at least seven five-second tiles using the configured 250 ms
+post-production scheduling target and 200 ms refill low watermark.
 
 Two speaker inserts and one master insert use native Apple Lowpass units.
 A generic editor remains active with normal observation timing while explicit
@@ -77,8 +78,8 @@ The completion deadline is 60 seconds beyond the selected playback duration,
 separate from setup waits;
 there is no per-cold-window one-second performance gate.
 
-Record the bounded numeric `SUSTAINED_PRODUCTION` summary and actual executed
-test identities/counts. Repeat with two or three fresh fixtures for qualification
+Record the bounded numeric `SUSTAINED_PRODUCTION` and `PRODUCTION_RESERVE`
+summaries and actual executed test identities/counts. Repeat with two or three fresh fixtures for qualification
 evidence. Retain the `FlattenedPlaybackHostedTests` negative controls for
 intentional queue starvation, refusal of externally changed sources, and
 stop/stale-producer invalidation. Existing deterministic queue and control
@@ -88,6 +89,152 @@ These are VM functional regression results, not supported physical-hardware
 performance qualification.
 
 #### Full 15-minute episode soak
+
+For a self-contained synthetic stress run, enable
+`WW_SYNTHETIC_EPISODE_SOAK_TESTS=1` and select
+`SustainedProductionPlaybackHostedTests/fifteenMinuteSyntheticEpisodeWithStockCompressionEQEditingAndSaves()`.
+This generates two distinct 920-second, 8 kHz mono originals using the existing
+fixture generator and processes them at the production 48 kHz rate. It does
+not download speech or inspect user media, and it is not equivalent to the
+external-speech qualification below. It runs the same 900-second episode,
+six stock inserts, live edits, periodic verified saves, cold adaptive tiles,
+layout work, and persistence/Undo/source-integrity checks.
+
+Minute progress includes cumulative minimum buffer reserve, maximum render,
+processor-submission wait, source wait, and refill wake delay. Resource summaries
+report cumulative CPU seconds and process-lifetime peak RSS in MiB for the
+application/test-host process, not out-of-process Audio Units or the entire VM.
+Use the start/end readings to separate fixture setup from playback CPU.
+Two simultaneous four-vCPU guest runs stay within the eight-vCPU budget, but
+intentionally include shared-host contention; label that load in the evidence.
+
+For the persisted-transcript/cut variant, enable `WW_TRANSCRIPT_CUT_SOAK_TESTS=1`
+and select
+`SustainedProductionPlaybackHostedTests/fifteenMinuteTranscribedSyntheticEpisodeWithRandomCuts()`.
+It saves 4,500 synthetic timed words and detects 100 filler suggestions per
+Primary across the original 900-second window. Using `WW_TRANSCRIPT_CUT_SEED`
+(an unsigned integer, default `7`), it samples exactly 50 suggestions per track
+without replacement and applies the ordinary review cut action. The 100
+nonoverlapping 200 ms removals ripple across both tracks, leaving 50 unapplied
+suggestions per track and **880 seconds of actual edited playback**, not 900.
+The real alignment window receives the persisted cleanup model and renders its
+transcripts and overlays. The original 40,000-word layout workload is retained,
+with additional layouts of both cut-projected transcripts. All six effects,
+live edits, observation, saves, cold tiles, Undo/Redo, and immutable-source checks
+remain enabled. Setup verifies witnessed transcript validity, proposal-to-cut
+bindings, per-track counts, removal geometry, shortened episode bounds, and
+saved-state round trips before playback. Logs include the seed and selected
+aligned frame positions. Compare CPU per played second, not only total CPU,
+against the uncut 900-second baseline. Edit and layout loops are cadence-driven,
+so retain their completed operation counts: additional window rendering can
+reduce those counts while increasing total CPU. This is a combined stress
+comparison, not an isolated measurement of per-cut rendering cost. A
+`PRODUCTION_RESERVE` summary alone is not a pass; require the final test result
+after persistence, Undo/Redo, and recall checks, and preserve post-playback
+window/graphics stalls separately from audio underruns.
+
+#### Controlled transcript UI comparison
+
+Enable `WW_TRANSCRIPT_UI_COMPARISON_TESTS=1` and select
+`SustainedProductionPlaybackHostedTests/controlledTranscriptUIComparison(_:)`
+on a ready, leased VM. Its three serialized arguments are `none`, `transcript`,
+and `cuts`: no persisted transcript, 4,500 persisted words/100 suggestions per
+track without cuts, and the same transcript fixture with 50 randomly chosen
+cuts applied per track. Each case creates fresh synthetic originals, six stock
+inserts and cold adaptive tiles, shows the full episode viewport, and plays
+exactly 60 seconds. Cut cases contain real removed audio; they are not
+sample-identical to the uncut cases. Compare before/after within each case.
+
+The comparison excludes the separate 40,000-word/layout-burst workload. It
+requires six explicit and six normally observed native parameter edits on the
+same program-time schedule, two verified saves at seconds 15 and 45, live
+mute/unmute, positive nonfinal reserve, full completion, Undo/Redo, parameter
+recall, unchanged cleanup/timing, and byte-identical originals. Keep operation
+counts: normal editor polling/capture is still cadence-driven.
+
+`TRANSCRIPT_UI_RESPONSIVENESS` reports main-actor wakeup delay beyond a 20 ms
+sleep (p95 and maximum, at most 10,000 samples) and the longest completed
+parameter operation. This is scheduling/operation latency, not event-to-photon
+or audible-control latency. CPU and peak RSS retain the app/test-host-only
+meaning above. Use the same guest, build configuration, worker count, seed,
+viewport, and shared-host load for before/after comparisons; repeated runs are
+needed before treating small timing differences as significant. Preserve
+setup failures and graphics stalls rather than including incomplete cases
+in performance averages. Allow 300 seconds per argument and a 15-minute lease.
+The fixture awaits editor-state disposal before closing the document and
+deleting synthetic files, including on failure. Disposal happens after all
+save/recall assertions and never substitutes for them. A failed processor can
+no longer leave asynchronous document capture racing fixture deletion or
+presenting a teardown error dialog over the next argument.
+
+A development comparison on one four-vCPU/16-GiB VM (Debug, one worker, seed 7)
+completed all three cases twice per build. The repeat pair, without concurrent
+local builds, measured:
+
+| Case | App CPU-seconds/program-second, before / after | Main-actor p95 excess wakeup delay, before / after |
+|---|---|---|
+| No transcript | 0.658 / 0.616 | 14.1 / 13.1 ms |
+| Persisted transcripts | 0.885 / 0.675 | 23.3 / 14.2 ms |
+| Transcripts with applied cuts | 1.338 / 1.287 | 200.3 / 136.1 ms |
+
+The baseline retained diagnostic instrumentation but used the previous global
+cache invalidation and inline transcript UI. Every case completed the fixed
+12 edits and two saves, plus post-playback checks; cadence-driven captures are
+not fixed (the repeat cut case completed 204 before and 251 after). This is
+limited dirty-tree VM evidence, not an exact-commit or physical-device
+qualification. Long tails remain: the optimized repeat cut case's maximum
+main-actor delay was 1.618 s and longest parameter operation was 2.820 s.
+Positive reserve does not diagnose the original user's underrun or resolve the
+separately observed graphics-IPC stall.
+
+The optimized full seed-7 cut soak also completed 880 program seconds with
+325 parameter edits, 3,247 captures, 15 verified saves, 180 adaptive tiles,
+5,928 injected layout bursts, and all final persistence/Undo/Redo/recall checks.
+Minimum nonfinal reserve was 5,813 frames (121.1 ms); the longest DSP render was
+118.54 ms. This confirms completion under that stress workload, not elimination
+of long rendering outliers or an operation-matched speedup.
+
+**Projection-stall follow-up.** A warmed 50 Hz cut-playback profile identified
+repeated presentation-projection construction and per-cut Observation reads:
+623 inclusive main-thread samples passed through `presentationTimeline` out of
+2,240 main-thread samples. Nested stack counts are not additive CPU percentages.
+The unexpanded path now avoids scanning saved cuts or observing unrelated
+document publications; render/filter passes reuse one immutable projection.
+Expanded-cut changes remain observed, and pointer/drag handlers read live
+geometry rather than a render-time snapshot.
+
+A subsequent unprofiled comparison reused the preserved pre-fix build and the
+final fixed build on the same warmed VM, with no concurrent build or profiler:
+
+| Case | App CPU-seconds/program-second, before / after | Main-actor p95 delay, before / after | Longest control completion, before / after |
+|---|---|---|---|
+| No transcript | 0.712 / 0.507 | 13.9 / 9.5 ms | 0.285 / 0.194 s |
+| Persisted transcripts | 0.750 / 0.747 | 14.7 / 14.0 ms | 0.290 / 0.317 s |
+| Transcripts with applied cuts | 1.256 / 1.368 | 98.7 / 88.2 ms | 2.063 / 1.213 s |
+
+Both builds passed all three cases and final checks, with 12 scheduled edits
+and two verified saves per case. Cut captures were 275 before and 296 after.
+Cut maximum main-actor delay increased from 1.485 to 1.679 s; minimum reserve
+remained positive at 9,113 / 8,719 frames. An earlier unprofiled fixed run also
+passed all cases, with cut p95 delay 76.2 ms and longest control 1.104 s.
+These bounded runs support removal of redundant work and improved observed
+control responsiveness, not reduced total CPU or elimination of long stalls.
+The final focused run passed 75 tests across six suites, including unexpanded
+and expanded Observation dependencies, strict projected viewport overlap,
+collapsed intervals, source identity, and failed-controller fixture disposal.
+
+Preserve the unsuccessful diagnostics separately. A cold overloaded run
+underran, then blocked in an AppKit error dialog during fixture teardown;
+awaited disposal now has a focused regression. A sampled fixed run still
+underran in its cut case (332 ms append gap and zero reserve). Sampling may
+perturb scheduling, but its causal role is unproven. A later guest-disk-full
+attempt is invalid benchmark evidence; archived task-owned results allowed
+the matched comparison and final regression run above to complete normally.
+The separate preserved graphics hang blocked in Core Animation IPC and
+paravirtual GPU cleanup. It was not reproduced or fixed by this change.
+Neither passing comparisons nor positive reserve diagnose the original user's
+underrun. No new full-length soak was run after this projection fix; the
+880-second result above qualifies the preceding cache optimization.
 
 The same suite has a separately gated
 `fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable
