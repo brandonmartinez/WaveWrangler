@@ -13,6 +13,29 @@ import WWTimeMap
 @MainActor
 @Suite("Episode cleanup window state", .serialized)
 struct EpisodeCleanupModelTests {
+    @Test(arguments: [-2.0, -1.75, 4.0])
+    func applyingACutRewindsWithContextAndClampsToTheSignedTimeline(start: Double) throws {
+        let base = try fillerFixture()
+        defer { base.cancel() }
+        let document = ShowDocument()
+        defer { document.updateChangeCount(.changeCleared); document.close() }
+        var snapshot = base.state.store.model
+        snapshot.episodes[0].cleanup?.workingRange = nil
+        document.store.replaceLoadedModel(snapshot)
+        let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
+        model.plan = base.plan
+        model.identities = base.identities
+        defer { model.cancel() }
+        model.listening.select(from: start, to: start + 0.1, within: model.bounds)
+        model.playhead = 20
+        try #require(model.canApplyManualCut)
+        model.applyManualCut()
+        #expect(model.error == nil && model.activeManualCuts.count == 1, "\(model.error ?? "")")
+        #expect(model.playhead == max(model.bounds.lowerBound, start - 0.5))
+        #expect(!model.isPlaying && !model.isPreparingPlayback,
+            "Applying a cut positions the next continuation without unexpectedly starting audio.")
+    }
+
     private func fixture() -> EpisodeCleanupModel {
         let episode = Episode(title: "A",
             alignment: EpisodeAlignment(maps: [TimeMapVersion(revision: 1,

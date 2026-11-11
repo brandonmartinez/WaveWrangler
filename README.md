@@ -506,6 +506,9 @@ as document edits.
 
 **Auto Cut** on a row applies that row's current boundaries through the existing, undoable
 cross-track cut action. It does not run a new detector or silently cut other suggestions.
+After a new manual or review cut, the playhead moves half a second before its
+displayed seam, clamped to the timeline start. Playback stays stopped; continuing
+from there lets you hear the edit with context.
 **Restore** recovers a cut. Minus/plus on a row or marker toolbar contracts/expands both edges
 by 10 ms; independent handle dragging and 1 ms arrow-key adjustments remain available.
 Resizing an already-cut row adjusts the same shared cut and its linked marker as one Undo step.

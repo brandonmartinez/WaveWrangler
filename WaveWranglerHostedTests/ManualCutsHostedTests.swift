@@ -122,6 +122,8 @@ struct ManualCutsHostedTests {
         let choices = cleanup.listening.playback
         cleanup.applyManualCut()
         try #require(cleanup.error == nil, "\(cleanup.error ?? "")")
+        #expect(f.model.waveformPlayheadSeconds == 0.5 && cleanup.playhead == 0.5,
+            "Continue from half a second before the new join, not from the former transport position.")
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try await wait { f.document.verifiedModel == f.document.store.model }
         let edited = f.document.store.model

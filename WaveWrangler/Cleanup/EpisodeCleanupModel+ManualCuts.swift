@@ -154,6 +154,7 @@ extension EpisodeCleanupModel {
         listening.selectionToolsPresented = true
         listening.selection = nil
         listening.selectedTranscriptText = nil
+        seek(to: cutTimeline.editedTime(forAlignedTime: cut.alignedStart) - 0.5)
         message = "Cut applied across every aligned track, including hidden and muted tracks. Undo or Restore cut recovers the original audio."
     }
 
