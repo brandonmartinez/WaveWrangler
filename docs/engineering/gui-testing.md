@@ -233,8 +233,172 @@ the matched comparison and final regression run above to complete normally.
 The separate preserved graphics hang blocked in Core Animation IPC and
 paravirtual GPU cleanup. It was not reproduced or fixed by this change.
 Neither passing comparisons nor positive reserve diagnose the original user's
-underrun. No new full-length soak was run after this projection fix; the
-880-second result above qualifies the preceding cache optimization.
+underrun. At this checkpoint, no new full-length soak had completed after the
+projection fix; the 880-second result above qualifies the preceding cache
+optimization. The later native checker-control qualification is recorded below.
+
+**Post-merge graphics investigation.** The buffered-rendering, transcript
+benchmark, cache/projection, and qualification changes were published and
+reconciled with live playback cycles in `dd55dedb`. Focused merged regressions
+reported 140 passes, two skips, and zero failures. A package run separately
+retained the unchanged supplemental-clip fixture failure that requests playback
+outside Episode Start/End; excluding that fixture, 58 mixer tests and six
+insert-rack tests passed.
+
+Two warmed seed-23 retries on VM2 alone failed before the original graphics
+hang's post-playback phase, after 213.6 and 338.5 wall seconds. Both recorded real
+underruns without an active profiler, preceded by Core Audio overload messages.
+The second recorded five queued raw windows, a 0.135 ms maximum source wait, a
+201.4 ms append gap, and an enqueue operation still active after 198.7 ms. Guest memory
+counters collected afterward showed no compression or swapping; these
+observations do not identify the stalled operation or diagnose the original
+user's failure.
+
+Shorter three-case retries exposed another test-harness teardown race. A
+stall-triggered sample showed `ShowDocument.close()` presenting a windowless
+AppKit error dialog, while the guest WindowServer sample showed ordinary event
+waits, not the original paravirtual-GPU cleanup stack. `exercise` had closed its
+last window in a synchronous defer before the outer runner awaited disposal of
+the failed mixer. The document now retains that window until awaited mixer
+disposal and document close; the failed-controller regression also opens a real
+window and verifies it closes before synthetic-file cleanup completes.
+
+With that test-only ordering correction and phase breadcrumbs, the focused
+failure-disposal regression passed and all three seed-23 comparison cases
+completed their final save, Undo/Redo, recall, original-byte integrity, and
+disposal checks. Minimum rendered reserves were 8,581 / 8,605 / 8,627 frames for
+no transcript / transcript / applied cuts. This is bounded dirty-tree evidence,
+not a full-soak pass or matched performance comparison: 60 program seconds took
+90.9 / 96.3 / 94.9 wall seconds, and the no-transcript probe recorded a 30.8 s
+main-actor delay. The original Core Animation/paravirtual-GPU hang remains
+unreproduced and unresolved; no production graphics workaround was applied.
+
+Two separately approved native-GPU diagnostic attempts on macOS 27.2
+(`26B123`, versus guest macOS 27.0 `26A428`) failed before reaching that graphics
+phase. The first failed after 29.632 test seconds. Both reported replacement of
+the live processor after one explicit parameter edit, without a playback or
+editing error; neither triggered the stall watchdog's stack capture. The second
+attempt traced revision 102 changing to 103 through
+`EpisodeMixerController.load` and its serialized `prepare` operation. That
+asynchronous stack identifies the replacement but not the original preparation
+caller. Neither attempt qualifies native playback or establishes a graphics
+cause. Artifacts are under `.build/playback-graphics-native-33dfae7f` and
+`.build/playback-graphics-native-instance-trace`.
+
+Temporary DEBUG-only entry hooks and a sustained-test trace captured requested
+frame ranges and synchronous callers before the operation queue lost that
+context. They were diagnostic instrumentation, not a production fix, and were
+removed after establishing the clock-focus caller.
+
+**Clock-focus transport restarts.** Two further approved native diagnostics
+isolated the early processor replacement. `prepare-origin` failed after 28.203
+test seconds with a second full-program preparation, not the one-frame
+`prepareForEditing` path. `transport-origin` captured its synchronous origin:
+`EpisodeClockDisplay` focus loss called `seekDisplayClock`, then
+`seekEnabledTracks`, `playTransport`, and `playProductionMix`. The second
+transport request had no explicit interval or repeat setting, unlike the test's
+initial `0...880`, nonrepeating request.
+
+The clock can gain native focus automatically and retain its initial draft
+while playback advances. Opening the effect editor then blurred that unedited
+field, sought the stale time, and restarted playback. The clock and shared
+seconds transport now distinguish user text edits from automatic display
+updates. Focus loss seeks only an edited draft; Return explicitly submits once,
+so a subsequent focus loss does not resubmit it. Existing seek validation and
+error reporting are retained.
+
+A focused VM regression first reproduced the stale seek from 2 seconds back to
+the unedited 1-second draft. After the fix, all 12
+`AudioTimelineControlsTests` passed, including edited focus loss, explicit
+Return, and no duplicate submission. The owned-window test helper now sends
+Return directly to that window and requires its native field editor as first
+responder; app-level event routing had instead sent Return to another key
+window in the new tests. The earlier Return failures are not evidence of a
+production keyboard-routing bug. Baseline and passing results are preserved in
+`.build/playback-transcript-cuts-ww-ui-1-clock-baseline.xcresult` and
+`.build/playback-transcript-cuts-ww-ui-1-clock-fixed-owned-return.xcresult`.
+
+Before that fix, a separate seed-23, three-case VM1 comparison using the
+preparation-entry trace also passed every final check. Minimum reserves were
+7,737 / 8,633 / 8,599 frames; 60 program seconds took
+92.275 / 94.147 / 94.501 wall seconds. No unexpected preparation occurred in
+that run. The two native traces are under
+`.build/playback-graphics-native-prepare-origin` and
+`.build/playback-graphics-native-transport-origin`. The proven clock restart is
+distinct from the original paravirtual-GPU hang and the two VM underruns;
+fixing it alone does not establish their cause.
+
+**Native shutdown and checker controls.** The next approved native seed-23
+run, `clock-focus-fixed`, retained the original processor through at least
+840 program seconds, 1,135 parameter edits, 5,958 captures, and 14 saves.
+Its latest minimum reserve was 8,462 frames. At natural completion, however,
+the main actor entered `AlignmentAudioPlayback.stop()` and stalled inside
+`AVAudioPlayerNode.stop`, through `AVAEDispatchQueueTimer::CancelTimer` and
+Thread Performance Checker's `libRPAC` semaphore interposer. Two samples
+captured CPU-active backtrace symbolization; the second labeled the executing
+queue `TPC issue queue`. The test exceeded its 1,100-second allowance without
+reaching final checks. This is not the original Core Animation/paravirtual-GPU
+IPC stack and is not a full-soak pass. Artifacts are under
+`.build/playback-graphics-native-clock-focus-fixed`. WindowServer sampling was
+unavailable because noninteractive sudo required authentication.
+
+The opt-in
+`FlattenedPlaybackHostedTests.generatedPlayerCompletionStopDiagnostic()`
+isolates AVFAudio with generated silence, without mixer effects or transcript
+layout. Enable `WW_PLAYER_STOP_DIAGNOSTIC=1` only for an explicitly authorized,
+leased diagnostic. Defaults are 512 immutable 512-frame buffers at 48 kHz.
+`WW_PLAYER_STOP_CALLBACKS=0` omits played-back callbacks;
+`WW_PLAYER_STOP_PAUSE_FIRST=0` stops the player before pausing the engine.
+The test reports whether `libRPAC` is actually loaded, completion counts,
+player sample time, and stop latency. Buffer-count/frame overrides are bounded
+by the test and are diagnostic controls, not equivalent real-time workloads.
+
+Native controls completed all 512 played-back callbacks before stopping:
+
+| Thread Performance Checker | Stop order | Player stop |
+| --- | --- | --- |
+| Injected | Pause engine, stop player | 1.891 s |
+| Absent, verified from loaded images | Pause engine, stop player | 36.189 ms |
+| Loaded, verified from loaded images | Stop player, pause engine | 1.869 s |
+
+The instrumented baseline xcresult also records an internal priority-inversion
+warning: a User-interactive thread waiting on Default-QoS work. These controls
+establish checker amplification for the short test, not the cause of the
+full-length stall. Reversing stop order did not meaningfully help; production
+stop ordering and per-buffer completion semantics remain unchanged.
+The checker-off control changes only a scratch xctestrun's `libRPAC` injection,
+not the project scheme or production behavior.
+Artifacts use the native tags `player-stop-512-frame-control`,
+`player-stop-512-no-tpc-control`, and `player-stop-512-player-first`.
+An earlier compressed control with 80,000 one-frame buffers delivered no
+played-back callbacks before its 30-second deadline and then took 13.320 s
+to stop. That failed diagnostic is not valid audible-completion qualification
+or evidence that production playback accumulates those buffers.
+
+A full seed-23 native checker-off control then completed all 880 program
+seconds in 880.718 wall seconds; the complete test took 913.736 s and exited
+successfully. It retained an 8,445-frame minimum render reserve, completed 598
+explicit and 598 observed parameter edits, 6,286 captures, 33,403 layout
+iterations, and 15 in-playback saves. All final recipe-count, adaptive-tile,
+verified-save, Undo/Redo, parameter-recall, original-byte integrity, and disposal
+checks passed. The xcresult contains no runtime warnings, and the watchdog
+needed no captures. Evidence is under
+`.build/playback-graphics-native-clock-focus-fixed-no-tpc-control`.
+The original audio-output implementation was unchanged, and the scheme's
+checker remains enabled. This strengthens the evidence for diagnostic influence
+on the native completion stall; it does not prove that the original VM GPU hang
+or independent VM underruns are fixed. The successful run included the temporary
+entry tracing, which was subsequently removed without changing transport logic.
+
+After removing that tracing, a fresh build passed 28 tests across the clock
+controls, flattened playback, persistent cycles, and failed-fixture disposal
+suites on VM1 in 80.627 s (42 executions including parameterized cases).
+Thread Performance Checker remained enabled. The no-callback shutdown control
+also completed its generated stream and stopped in 27.332 ms on that guest;
+this is not a matched comparison with the native controls. The xcresult retains
+FocusState and QoS runtime warnings, so this is not warning-free qualification.
+The collected result and log use
+`.build/playback-transcript-cuts-ww-ui-1-final-clock-and-stop`.
 
 The same suite has a separately gated
 `fifteenMinuteEpisodeWithStockCompressionEQEditingAndSaves()` test. Enable

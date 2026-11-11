@@ -1,5 +1,7 @@
 import AppKit
+import AVFAudio
 import Foundation
+import MachO
 import Synchronization
 import Testing
 import WWAlignPipeline
@@ -96,6 +98,78 @@ struct FlattenedPlaybackHostedTests {
         let stillStopped = output.clock == nil
         #expect(stillStopped)
         #expect(deadlines == 0)
+    }
+
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_PLAYER_STOP_DIAGNOSTIC"] == "1",
+        "Opt-in bounded AVFAudio completion and shutdown diagnostic; generated silence only."),
+        .timeLimit(.minutes(3)))
+    func generatedPlayerCompletionStopDiagnostic() async throws {
+        let environment = ProcessInfo.processInfo.environment
+        let callbacks = environment["WW_PLAYER_STOP_CALLBACKS"] != "0"
+        let pauseFirst = environment["WW_PLAYER_STOP_PAUSE_FIRST"] != "0"
+        let count = try #require(Int(environment["WW_PLAYER_STOP_BUFFER_COUNT"] ?? "512"))
+        let frames = try #require(UInt32(environment["WW_PLAYER_STOP_BUFFER_FRAMES"] ?? "512"))
+        try #require(count > 0 && count <= 80_000 && frames > 0 && frames <= 512
+            && Double(count) * Double(frames) / 48_000 <= 60)
+        let playbackSeconds = Double(count) * Double(frames) / 48_000
+        let completed = Atomic<Int>(0)
+        let queue = DispatchQueue(label: "com.wavewrangler.test-player-stop", qos: .userInitiated)
+        let engine = AVAudioEngine()
+        let player = AVAudioPlayerNode()
+        let format = try #require(AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2))
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames))
+        buffer.frameLength = frames
+        let channels = try #require(buffer.floatChannelData)
+        for channel in 0..<2 {
+            for frame in 0..<Int(frames) { channels[channel][frame] = 0 }
+        }
+        let checkerLoaded = (0..<_dyld_image_count()).contains { index in
+            _dyld_get_image_name(index).map { String(cString: $0).hasSuffix("/libRPAC.dylib") } ?? false
+        }
+        let start = ContinuousClock.now
+        print("PLAYER_STOP_DIAGNOSTIC begin callbacks=\(callbacks) pauseFirst=\(pauseFirst) buffers=\(count) frames=\(frames) threadChecker=\(checkerLoaded)")
+        try queue.sync {
+            engine.attach(player)
+            engine.connect(player, to: engine.mainMixerNode, format: format)
+            for _ in 0..<count {
+                if callbacks {
+                    player.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in
+                        completed.wrappingAdd(1, ordering: .releasing)
+                    }
+                } else {
+                    player.scheduleBuffer(buffer)
+                }
+            }
+            try engine.start()
+            player.play()
+        }
+        defer { queue.sync { player.stop(); engine.stop() } }
+        print("PLAYER_STOP_DIAGNOSTIC scheduled elapsed=\(start.duration(to: .now))")
+        let deadline = ContinuousClock.now.advanced(by: .seconds(playbackSeconds + 10))
+        if callbacks {
+            while completed.load(ordering: .acquiring) < count, ContinuousClock.now < deadline {
+                try await Task.sleep(for: .milliseconds(5))
+            }
+        } else {
+            try await Task.sleep(for: .seconds(playbackSeconds + 0.15))
+        }
+        let finishedCount = completed.load(ordering: .acquiring)
+        let state = queue.sync {
+            let time = player.lastRenderTime.flatMap { player.playerTime(forNodeTime: $0) }
+            return "engineRunning=\(engine.isRunning) playerPlaying=\(player.isPlaying) playerFrames=\(time?.sampleTime.description ?? "nil")"
+        }
+        print("PLAYER_STOP_DIAGNOSTIC stopping completed=\(finishedCount) \(state) elapsed=\(start.duration(to: .now))")
+        let stopping = ContinuousClock.now
+        queue.sync {
+            if pauseFirst { engine.pause() }
+            player.stop()
+            print("PLAYER_STOP_DIAGNOSTIC playerStopped elapsed=\(stopping.duration(to: .now))")
+            if !pauseFirst { engine.pause() }
+            engine.detach(player)
+            engine.stop()
+        }
+        print("PLAYER_STOP_DIAGNOSTIC end stopElapsed=\(stopping.duration(to: .now)) total=\(start.duration(to: .now)) completed=\(completed.load(ordering: .acquiring))")
+        if callbacks { #expect(finishedCount == count) }
     }
 
     @Test(arguments: [false, true])

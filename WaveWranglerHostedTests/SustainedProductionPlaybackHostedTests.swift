@@ -91,6 +91,8 @@ struct SustainedProductionPlaybackHostedTests {
             try model.settingMasterMix(MasterMixState(inserts: [slot]), in: f.model.episodeID)
         }))
         try await saveAndVerify(f.document)
+        let owner = MixerHostedTests().owner(f)
+        owner.showWindow(nil)
         let controller = f.model.mixer
         _ = try await controller.prepare(programFrames: 0..<48_000)
         try await controller.beginEditorObservation(coalescing: "teardown.fixture")
@@ -101,7 +103,8 @@ struct SustainedProductionPlaybackHostedTests {
         let closed = f.document.mixerTransactions.isClosed
         let retainedProcessor = controller.processor != nil
         let retainedFolder = FileManager.default.fileExists(atPath: f.folder.path)
-        #expect(closed && !retainedProcessor && !retainedFolder)
+        let visibleWindow = owner.window?.isVisible == true
+        #expect(closed && !retainedProcessor && !retainedFolder && !visibleWindow)
     }
 
     @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_PRODUCTION_TIMING_TESTS"] == "1",
@@ -296,8 +299,11 @@ struct SustainedProductionPlaybackHostedTests {
 
     private func discardFixture(_ f: AlignmentWaveformRetentionHostedTests.Fixture) async throws {
         // Assertions and verified saves precede disposal; a failed processor cannot be captured on close.
+        print("PLAYBACK_FIXTURE_DISPOSAL phase=discard-editor-state")
         try await f.model.mixer.discardUncapturedEditorState()
+        print("PLAYBACK_FIXTURE_DISPOSAL phase=close-document")
         f.close()
+        print("PLAYBACK_FIXTURE_DISPOSAL phase=complete")
     }
 
     private func exercise(_ f: AlignmentWaveformRetentionHostedTests.Fixture, episodeSoak: Bool,
@@ -351,8 +357,8 @@ struct SustainedProductionPlaybackHostedTests {
         }
         try #require(inserted)
         try await saveAndVerify(f.document)
+        // The document closes its window after awaited mixer disposal, including on failure.
         let owner = MixerHostedTests().owner(f)
-        defer { owner.close() }
         var transcripts: [SpeakerTranscript] = []
         if transcriptMode != .none {
             let cleanup = EpisodeCleanupModel(state: owner.state, episodeID: episode.id, runtime: f.runtime)
@@ -496,8 +502,12 @@ struct SustainedProductionPlaybackHostedTests {
             let playbackError = f.model.lastError
             let editingError = presentation.error
             let sameInstance = controller.processor === processor && controller.instanceRevision == revision
+            let instanceDetail = "Live processor changed: originalRevision=\(revision) "
+                + "currentRevision=\(controller.instanceRevision) "
+                + "processorRetained=\(controller.processor === processor) "
+                + "explicitEdits=\(explicitEdits) observedEdits=\(observedEdits)"
             try #require(playbackError == nil && editingError == nil && sameInstance,
-                Comment(rawValue: playbackError ?? editingError ?? "Live processor was replaced"))
+                Comment(rawValue: playbackError ?? editingError ?? instanceDetail))
             let position = playhead()
             if position >= nextEdit, position < programSeconds - 2,
                !comparison || explicitEdits + observedEdits < 12 {
@@ -605,6 +615,7 @@ struct SustainedProductionPlaybackHostedTests {
         let stopped = !f.model.canStopAudition
         let sameInstance = controller.processor === processor && controller.instanceRevision == revision
         let unitCount = controller.unitStatuses.count
+        print("PLAYBACK_FINAL_CHECK phase=recipe-count")
         let constructionCount = await f.runtime.productionRecipeConstructionCount
         try #require(stopped && error == nil && presentationError == nil,
             Comment(rawValue: error ?? presentationError ?? "Production exceeded its real-time completion deadline"))
@@ -623,32 +634,38 @@ struct SustainedProductionPlaybackHostedTests {
         } else {
             #expect(lateLayouts > 0 && layouts > 0 && coveredWords > 0 && layoutTime > .zero)
         }
+        print("PLAYBACK_FINAL_CHECK phase=adaptive-tiles")
         let states = await f.runtime.coordinator.states()
         let tileCount = states.values.compactMap(\.key).filter {
             $0.asset.kind == "ww.adaptive-audio-pcm"
         }.count
         #expect(tileCount >= Int(ceil(programSeconds / 5)),
             "Playback must prepare cold adaptive tiles across the full episode.")
+        print("PLAYBACK_FINAL_CHECK phase=post-playback-save")
         try await saveAndVerify(f.document)
         let edited = f.document.store.model
         undo.endUndoGrouping()
         let changed = edited != initial
         try #require(changed)
+        print("PLAYBACK_FINAL_CHECK phase=undo")
         undo.undo()
         try await wait("Undo restored the complete pre-playback document") {
             f.document.store.model == initial && controller.processor == nil
                 && !f.document.mixerTransactions.isBusy
         }
+        print("PLAYBACK_FINAL_CHECK phase=redo")
         undo.redo()
         try await wait("Redo restored the captured live edits") {
             f.document.store.model == edited && !f.document.mixerTransactions.isBusy
         }
+        print("PLAYBACK_FINAL_CHECK phase=recall")
         try await saveAndVerify(f.document)
         _ = try await controller.prepare(programFrames: 0..<1)
         let recalledParameters = try await controller.processor?.parameters(slot: slots[2].id)
         let recalledValue = recalledParameters?.first { $0.address == parameter.address }?.value
         let recalled = try #require(recalledValue)
         #expect(abs(recalled - finalValue) < 0.1)
+        print("PLAYBACK_FINAL_CHECK phase=source-integrity")
         let unchangedTiming = f.document.store.model.episode(episode.id)?.alignment == timing
         let unchangedCleanup = f.document.store.model.episode(episode.id)?.cleanup == initialCleanup
         let unchangedOriginals = try f.files.map { try Data(contentsOf: $0) } == originals

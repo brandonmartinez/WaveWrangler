@@ -42,6 +42,7 @@ struct EpisodeClockDisplay: View {
     @Binding var clock: EpisodeClock
     var configuration = ControlBarConfiguration()
     @State private var draft = ""
+    @State private var draftChanged = false
     @FocusState private var editing: Bool
     @Environment(\.colorScheme) private var colorScheme
 
@@ -109,17 +110,25 @@ struct EpisodeClockDisplay: View {
             .fixedSize()
             .disabled(!model.listening.usesProductionMix)
             .accessibilityIdentifier("ww.controlBar.clock")
-            TextField(title, text: $draft)
+            TextField(title, text: Binding(get: { draft }, set: { value in
+                if draft != value {
+                    draft = value
+                    draftChanged = true
+                }
+            }))
                 .font(.system(size: 21, weight: .medium, design: .monospaced))
                 .monospacedDigit()
                 .multilineTextAlignment(.center)
                 .textFieldStyle(.plain)
                 .frame(width: 175)
                 .focused($editing)
-                .onSubmit { editing = false }
+                .onSubmit {
+                    commitDraft()
+                    editing = false
+                }
                 .onChange(of: editing) { _, focused in
                     if !focused {
-                        model.seekDisplayClock(draft, clock: clock)
+                        if draftChanged { commitDraft() }
                         draft = displayed
                     }
                 }
@@ -150,5 +159,11 @@ struct EpisodeClockDisplay: View {
         .help("Enter signed HH:MM:SS.mmm or seconds in the selected clock. Changing clocks never moves audio.")
         .onAppear { draft = displayed }
         .onChange(of: displayed) { _, value in if !editing { draft = value } }
+    }
+
+    private func commitDraft() {
+        draftChanged = false
+        model.seekDisplayClock(draft, clock: clock)
+        draft = displayed
     }
 }

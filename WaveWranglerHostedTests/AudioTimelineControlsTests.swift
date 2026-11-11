@@ -217,6 +217,88 @@ struct AudioTimelineControlsTests {
         try host.capture("Shared transport with real native controls")
     }
 
+    @Test func transportClockFocusLossDoesNotSeekOrResubmitAnUneditedDraft() async throws {
+        var sought: [Double] = []
+        func content(_ position: Double) -> some View {
+            AudioTimelineTransport(prefix: "test.clock", isPlaying: true, isPreparing: false,
+                canPlay: true, canNavigate: true, playhead: position, status: "Playing",
+                back: {}, playPause: {}, stop: {}, forward: {}, seek: { sought.append($0) })
+        }
+        let host = HostedTimelineWindow(width: 700, height: 84, content: content(1))
+        defer { host.close() }
+        try await host.settle()
+        let field = try #require(host.descendants.compactMap { $0 as? NSTextField }.first { $0.isEditable })
+        field.selectText(nil)
+        try await host.settle()
+        host.view.rootView = content(2)
+        try await host.settle()
+        try #require(host.window.makeFirstResponder(host.window))
+        try await host.settle()
+        #expect(sought.isEmpty && field.stringValue == "2.000")
+
+        field.selectText(nil)
+        try await host.settle()
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.selectAll(nil)
+        editor.insertText("1.500", replacementRange: editor.selectedRange())
+        try await host.settle()
+        try await host.returnKey()
+        #expect(sought == [1.5])
+        host.view.rootView = content(2.5)
+        try #require(host.window.makeFirstResponder(host.window))
+        try await host.settle()
+        #expect(sought == [1.5] && field.stringValue == "2.500")
+    }
+
+    @Test func episodeClockFocusLossOnlyCommitsChangedDraftsAndReturnStillSeeks() async throws {
+        let f = try await MixerHostedTests().ready()
+        defer { f.close() }
+        f.model.seekEnabledTracks(to: 1)
+        let host = HostedTimelineWindow(width: 240, height: 100,
+            content: EpisodeClockDisplay(model: f.model, clock: .constant(.episode)))
+        defer { host.close() }
+        try await host.settle()
+        let field = try #require(host.descendants.compactMap { $0 as? NSTextField }.first { $0.isEditable })
+        field.selectText(nil)
+        try await host.settle()
+        try #require(field.stringValue == "00:00:01.000")
+
+        f.model.waveformPlayheadSeconds = 2
+        try await host.settle()
+        try #require(host.window.makeFirstResponder(host.window))
+        try await host.settle()
+        let afterUneditedFocusLoss = f.model.waveformPlayheadSeconds
+        #expect(afterUneditedFocusLoss == 2,
+            "Losing automatic clock focus must not seek back to a stale, unedited draft.")
+        #expect(field.stringValue == "00:00:02.000")
+
+        field.selectText(nil)
+        try await host.settle()
+        let editor = try #require(field.currentEditor() as? NSTextView)
+        editor.selectAll(nil)
+        editor.insertText("1.500", replacementRange: editor.selectedRange())
+        try await host.settle()
+        try #require(host.window.makeFirstResponder(host.window))
+        try await host.settle()
+        let afterEditedFocusLoss = f.model.waveformPlayheadSeconds
+        #expect(afterEditedFocusLoss == 1.5, "Leaving an edited clock still commits the requested seek.")
+        #expect(field.stringValue == "00:00:01.500")
+
+        field.selectText(nil)
+        try await host.settle()
+        f.model.waveformPlayheadSeconds = 3
+        try await host.settle()
+        try await host.returnKey()
+        let afterExplicitReturn = f.model.waveformPlayheadSeconds
+        #expect(afterExplicitReturn == 1.5,
+            "Return is an explicit seek even when the focused draft has not changed.")
+        f.model.waveformPlayheadSeconds = 2.5
+        try #require(host.window.makeFirstResponder(host.window))
+        try await host.settle()
+        let afterSubmittedFocusLoss = f.model.waveformPlayheadSeconds
+        #expect(afterSubmittedFocusLoss == 2.5, "Focus loss must not commit an already submitted draft again.")
+    }
+
     @Test func cleanupWorkspaceReceivesGraphicalMarkerZoomAndPlaybackInput() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }
@@ -482,6 +564,7 @@ final class HostedTimelineWindow<Content: View> {
     }
 
     func returnKey() async throws {
+        try #require(window.firstResponder is NSTextView, "Return must target the owned window's field editor.")
         for kind in [NSEvent.EventType.keyDown, .keyUp] {
             let event = try #require(
                 NSEvent.keyEvent(
@@ -490,7 +573,7 @@ final class HostedTimelineWindow<Content: View> {
                     windowNumber: window.windowNumber,
                     context: nil, characters: "\r", charactersIgnoringModifiers: "\r",
                     isARepeat: false, keyCode: 36))
-            NSApp.sendEvent(event)
+            window.sendEvent(event)
         }
         try await settle()
     }

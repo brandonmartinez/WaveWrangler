@@ -27,6 +27,7 @@ struct AudioTimelineTransport: View {
     var showsJumps = true
 
     @State private var timeDraft = ""
+    @State private var timeDraftChanged = false
     @FocusState private var editingTime: Bool
     private var jumpDescription: String { jumpSeconds == 1 ? "1 second" : "\(jumpSeconds) seconds" }
 
@@ -91,15 +92,26 @@ struct AudioTimelineTransport: View {
                         .foregroundStyle(.secondary)
                     TextField(
                         coordinateLabel != nil ? "Program seconds" : isEdited ? "Edited seconds" : "Aligned seconds",
-                        text: $timeDraft
+                        text: Binding(get: { timeDraft }, set: { value in
+                            if timeDraft != value {
+                                timeDraft = value
+                                timeDraftChanged = true
+                            }
+                        })
                     )
                     .textFieldStyle(.roundedBorder).monospacedDigit()
                     .frame(width: 104)
                     .focused($editingTime)
                     .disabled(!canNavigate)
-                    .onSubmit { editingTime = false }
+                    .onSubmit {
+                        commitTime()
+                        editingTime = false
+                    }
                     .onChange(of: editingTime) { _, focused in
-                        if !focused { commitTime() }
+                        if !focused {
+                            if timeDraftChanged { commitTime() }
+                            updateTime()
+                        }
                     }
                     .accessibilityIdentifier("\(prefix).playhead")
                     .accessibilityLabel(
@@ -124,6 +136,7 @@ struct AudioTimelineTransport: View {
     private func updateTime() { timeDraft = String(format: "%.3f", playhead) }
 
     private func commitTime() {
+        timeDraftChanged = false
         guard let value = Double(timeDraft.trimmingCharacters(in: .whitespacesAndNewlines)),
             value.isFinite
         else {
