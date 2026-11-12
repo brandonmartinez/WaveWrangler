@@ -8,6 +8,34 @@ host requires a specific hardware-dependent reason and approval.
 
 Native macOS multitrack podcast preparation: local audio processing, referenced media, cloud canonical projects.
 
+## License and third-party software
+
+WaveWrangler's first-party source is available under the [MIT License](LICENSE).
+MIT permits commercial distribution, including paid builds; charging for a build
+does not change the license of the published source. Third-party components retain
+their own licenses and copyright notices, not WaveWrangler's MIT copyright notice.
+The bundled Whisper/ggml notices are preserved in
+[`upstream/LICENSE`](Packages/WaveWranglerKit/Sources/WWWhisperNative/upstream/LICENSE)
+and [`WhisperCPULICENSE.txt`](WaveWrangler/WhisperCPULICENSE.txt).
+Downloaded models retain their own licenses.
+
+The planned MP3 export integration is approved to use an **unmodified,
+encoder-only LAME library**, called through a WaveWrangler-owned wrapper.
+LAME is not bundled yet. When integrated, pin the upstream release and source
+checksum, preserve its LGPL license and notices, and distribute the corresponding
+source and build instructions. Include the notices in the source distribution
+and expose them in the app through About or a third-party licenses window.
+
+Open application source and attribution alone are not the complete LGPL
+compliance requirements. The shipped integration must also provide a usable
+way to rebuild/relink with a modified library, or a qualifying replaceable shared
+library mechanism. Verify that path against the exact upstream license and the
+released macOS signing/library-validation configuration. Do not modify LAME,
+include its separately licensed decoder, or impose terms that override its
+required user rights. App Store terms, signing, sandbox behavior, and source
+availability require a separate release review before any App Store submission;
+the choice of MIT or an unmodified library is not automatic store clearance.
+
 ## Library and episode editors
 
 Select a show in **Library** to browse and manage its episodes. Create, rename, reorder, or delete
