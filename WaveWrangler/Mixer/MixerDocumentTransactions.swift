@@ -101,6 +101,7 @@ final class MixerDocumentTransactions {
     /// Hide native editors before capture so no UI knob can race the document operation.
     func barrier(
         replacingInstances: Bool = false,
+        capturingAllLoadedState: Bool = false,
         episode: EpisodeID? = nil,
         _ operation: @escaping @MainActor () async throws -> Void
     ) async throws {
@@ -112,13 +113,16 @@ final class MixerDocumentTransactions {
             let affectedStates = states.filter { episode == nil || $0.selectedEpisodeID == episode }
             let presentations = affectedStates.map(\.mixerPresentation)
             let controllers = liveControllers.filter { episode == nil || $0.episodeID == episode }
-            let observing = controllers.map { ($0, $0.editorObservationKey) }
+            // Edited instances must capture before an authoritative capture invalidates idle replicas.
+            let observing = controllers.sorted { $0.hasObservedState && !$1.hasObservedState }
+                .map { ($0, $0.editorObservationKey) }
             presentations.forEach { $0.hideEditorsForBarrier() }
             defer { isBusy = false; isInsideBarrier = false }
             do {
                 for controller in controllers { await controller.suspendEditorObservation() }
-                for (controller, key) in observing where controller.hasObservedState {
-                    try await controller.captureAndPersist(coalescing: key)
+                for (controller, key) in observing
+                    where controller.hasObservedState || (capturingAllLoadedState && controller.processor != nil) {
+                    try await controller.captureAndPersist(coalescing: key, authoritative: capturingAllLoadedState)
                 }
                 document?.store.endCoalescing()
                 if replacingInstances {

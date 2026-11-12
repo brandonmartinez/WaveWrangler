@@ -391,14 +391,15 @@ final class EpisodeMixerController {
 
     var hasObservedState: Bool { nativeStateBaseline != nil && processor != nil }
 
-    func captureAndPersist(coalescing key: String?) async throws {
+    func captureAndPersist(coalescing key: String?, authoritative: Bool = false) async throws {
         try await operations.run { [self] in
             try Task.checkCancellation()
-            try await captureState(coalescing: key)
+            try await captureState(coalescing: key, authoritative: authoritative)
         }
     }
 
-    private func captureState(coalescing key: String?, slot: AudioUnitSlotID? = nil) async throws {
+    private func captureState(coalescing key: String?, slot: AudioUnitSlotID? = nil,
+                              authoritative: Bool = false) async throws {
         try validateCurrent()
         guard let processor else { throw MixerFailure.staleDependencies }
         try await establishNativeStateBaseline()
@@ -417,7 +418,7 @@ final class EpisodeMixerController {
         try Task.checkCancellation()
         guard generation == self.generation else { throw CancellationError() }
         guard expectedMix == expectedAtCapture else { throw stale("another capture replaced the expected mix") }
-        try publishCapturedStates(slots, complete: slot == nil, coalescing: key)
+        try publishCapturedStates(slots, complete: slot == nil, coalescing: key, authoritative: authoritative)
         for slot in slots { capturedParameterRevisions[slot.id] = revisions[slot.id] }
         let statuses = await processor.unitStatuses()
         guard generation == self.generation else { throw CancellationError() }
@@ -474,7 +475,7 @@ final class EpisodeMixerController {
     }
 
     private func publishCapturedStates(_ slots: [AudioUnitSlot], complete: Bool,
-                                       coalescing key: String?) throws {
+                                       coalescing key: String?, authoritative: Bool = false) throws {
         try validateCurrent()
         guard let document else { throw MixerFailure.staleDependencies }
         guard let episode = document.store.model.episode(episodeID) else { throw MixerFailure.staleDependencies }
@@ -494,7 +495,7 @@ final class EpisodeMixerController {
             throw MixerFailure.invalidRecipe("combined captured document state exceeds the episode budget")
         }
         let byID = Dictionary(uniqueKeysWithValues: try slots.filter {
-            try !Self.sameNativeState(nativeStateBaseline?[$0.id]?.documentState, $0.documentState, slot: $0.id)
+            try authoritative || !Self.sameNativeState(nativeStateBaseline?[$0.id]?.documentState, $0.documentState, slot: $0.id)
         }.map { ($0.id, $0) })
         func mergingState(_ slot: AudioUnitSlot) -> AudioUnitSlot {
             var result = slot

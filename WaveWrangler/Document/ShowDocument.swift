@@ -25,6 +25,7 @@ import WWPersistence
 final class ShowDocument: NSDocument {
     let store: ShowDocumentStore
     lazy var mixerTransactions = MixerDocumentTransactions(document: self)
+    lazy var exportJobs = EpisodeExportService(document: self)
     private var libraryController: NSWindowController?
     weak var libraryWindow: NSWindow?
     let status = DocumentStatusModel()

@@ -1895,6 +1895,7 @@ final class EpisodeAlignmentModel {
     /// Production is the default transport mode. Source Solo/Mute and comparison layouts never
     /// change its recipe. Source Audition explicitly opts into diagnostic original listening.
     func playProductionMix(interval: ClosedRange<Double>? = nil, repeating: Bool? = nil) {
+        guard !refusePlaybackDuringExport() else { return }
         let startup = ProductionPlaybackStartup()
         listening.usesProductionMix = true
         adoptCachedPresentation()
@@ -2012,6 +2013,7 @@ final class EpisodeAlignmentModel {
 
     func playEnabledTracks(interval: ClosedRange<Double>? = nil, repeatInterval: Bool? = nil,
                            repeatWhile: (@MainActor @Sendable () -> Bool)? = nil, applyingCuts: Bool = true) {
+        guard !refusePlaybackDuringExport() else { return }
         listening.usesProductionMix = false
         adoptCachedPresentation()
         let sourceTimeTrack = sourceTimeSoloTrack
@@ -2219,6 +2221,7 @@ final class EpisodeAlignmentModel {
     }
 
     func compareAlignedAtPlayhead() {
+        guard !refusePlaybackDuringExport() else { return }
         guard let document, let track = selectedWaveform, canCompareAligned,
               !canStopAudition, waveformPlayheadSeconds.isFinite,
               (-86_400...86_400).contains(waveformPlayheadSeconds)
@@ -3481,6 +3484,9 @@ final class EpisodeAlignmentModel {
         _ clip: AlignmentRuntime.AuditionClip, startSeconds: Double? = nil,
         automaticallyStop: Bool = true
     ) throws {
+        guard document?.exportJobs.isRunning != true else {
+            throw MixerFailure.invalidRecipe("Playback is unavailable while this show's export is running.")
+        }
         stopPlayback(updatePlayhead: false)
         listeningMode = .sourceAudition
         let start = startSeconds ?? auditionStartSeconds
@@ -3494,6 +3500,14 @@ final class EpisodeAlignmentModel {
                 stopAudition()
             }
         }
+    }
+
+    private func refusePlaybackDuringExport() -> Bool {
+        guard document?.exportJobs.isRunning == true else { return false }
+        let message = "Playback is unavailable while this show's export is running."
+        lastError = message
+        auditionLabel = message
+        return true
     }
 
     private func refreshTransportGains() {

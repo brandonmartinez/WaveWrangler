@@ -1,6 +1,6 @@
-# Export codec foundation
+# Export codecs and production jobs
 
-`WWExport` is independent of the document and mixer. It accepts already converted,
+`WWExport` is independent of the document and mixer. Its `ExportEncoder` accepts already converted,
 interleaved Float32 PCM in bounded blocks (1...16384 frames, finite). Float WAV
 preserves finite over-range values; integer/lossy codecs require [-1, 1].
 It does not open source recordings, mix, resample, downmix, normalize,
@@ -20,8 +20,8 @@ AAC VBR is deliberately not exposed. The system AAC encoder rejected all tested
 88.2/96 kHz combinations (mono -66567, stereo -50); those rates are rejected up
 front. WAV rejects output above RIFF's 4 GiB limit;
 RF64 is not implemented. MP3 rejects 88.2/96 kHz rather than silently converting.
-The later job layer must decide conversion, headroom and clipping policy explicitly;
-normalization Off can preserve levels exactly through floating-point WAV.
+The job layer below makes conversion and headroom policy explicit;
+normalization Off preserves levels through floating-point WAV.
 MP3 CBR below 64 kbps is rejected because its MPEG-1 frame cannot consistently
 hold the Xing/LAME gapless/seek tag at these rates and channel counts.
 
@@ -77,6 +77,99 @@ WAV uses RIFF LIST/INFO INAM/IART/IPRD/ICMT/ICOP/IGNR/ICRD, restricted to ASCII
 for interoperability. Artwork and episode numbers are explicitly rejected for
 WAV, not silently discarded. A later UI must communicate that limitation.
 
+## Document-owned production jobs
+
+The app links `WWExport`. One observable `ShowDocument.exportJobs`
+(`EpisodeExportService`, MainActor) owns the job for every window on that show.
+Call:
+
+```swift
+let result = try await document.exportJobs.run(
+    episode: episodeID, runtime: runtime,
+    userSelectedDirectory: selectedFolder, deliveries: selections)
+```
+
+`selections` contains `EpisodeExportDelivery(filename:settings:)` values, with
+optional publication overrides, title/album overrides, integer-WAV dither and
+confirmed omissions. Before submitting, call
+`ExportMetadataAdapter.preview(resolved, delivery:)` using
+`try model.resolvedPublication(for: episodeID)`. Present its omissions and copy
+only explicitly accepted omissions into `confirmedOmissions`. The backend
+refuses unconfirmed omissions. It resolves defaults again from the frozen
+snapshot; a concurrent metadata change cannot silently reuse obsolete consent.
+An export-only empty string or `.none` artwork suppresses inheritance without
+changing the show. Private Notes are never copied.
+
+WAV can be selected even when the show has Unicode text, artwork or an episode
+number: unsupported fields become explicit omissions, not silently stripped tags
+or an impossible format choice. Publisher, language, website, explicit-content
+flag, season and episode type currently have no qualified codec mappings and
+also require omission confirmation. Original artwork between 8 and 10 MiB
+requires smaller export-only artwork or explicit omission; no automatic
+recompression or truncation occurs.
+
+The service exposes `isRunning`, typed `state`, `progress`, `lastResult` and async
+`cancel()`. Setup errors throw and set failed/canceled state. Once the package job
+starts, its result reports typed failure/cancellation, committed files and
+cleanup errors; `succeeded` requires both a successful job and successful cleanup.
+Always inspect `published`, even on failure: a later publication can fail after
+an earlier file was committed.
+
+Before freezing, the mixer barrier dismisses native editors, captures
+authoritative `fullStateForDocument` for all loaded instances (including those
+without an editor-observation baseline), stops only this document's registered
+transports and retires its live effects. New playback is gated while exporting.
+Export uses `AlignmentRuntime.renderProductionOffline` and independent offline
+effect instances. It includes persistent production edits, routing, gains,
+inserts, cuts, fades and clips, never transient Solo/Mute/listening controls.
+Missing effects and unavailable, unauthorized or stale sources fail explicitly.
+Only resolved Episode Start through Episode End is rendered on the signed
+48 kHz production grid. No effect tail is appended; extend Episode End to keep
+decay. Document equality, media verification and source admission are checked
+during rendering/conversion and before every publication.
+
+### Package job contract and conversion
+
+For non-app integration, create one `ExportJob` actor per document and call
+`run(_:isCurrent:render:progress:)`. An `ExportJobRequest` requires an explicitly
+selected destination folder, all protected locations, the production frame
+range and 1...16 distinct `ExportDelivery` values. The renderer callback is
+invoked once and receives a bounded sink `(firstFrame, stereo)`. Its output is
+provisional until the renderer returns and currency succeeds: use the existing
+production renderer rather than a second mixer or arbitrary source reader.
+
+The sink writes finite, contiguous stereo Float32 to a private mode-0600 disk
+intermediate within a unique mode-0700 directory on the destination volume.
+Memory stays bounded by the production window and converter buffers, not episode
+duration. Deliveries are processed sequentially from that intermediate. Mono is
+the arithmetic average `(left + right) / 2`, not a selected channel or an
+unattenuated sum. Rate conversion follows the 48 kHz mix, drains EOF, and emits
+the nearest whole number of frames for the requested rate and episode duration.
+`ExportDither.none` is default; `.tpdf` adds triangular one-LSB dither before
+16/24-bit integer quantization. It is rejected for floating/lossy formats.
+
+Normalization is Off. Float32 WAV preserves finite over-unity values. Conversion
+overs and integer/lossy overload fail with an actionable headroom error; there
+is no automatic clipping, gain adjustment or substitute silence. Full decoded
+verification precedes publication of *any* delivery. Published receipts report
+both encoder-input and decoded frame counts; lossy padding is not represented as
+an exact production duration.
+
+Preflight checks extensions, normalized/case-insensitive filename collisions,
+protected paths, directory aliases/symlinks, existing entries (including hardlinks),
+RIFF limits and a conservative disk budget for intermediate plus all outputs and
+remux overhead. Existing files are always refused. Folder security scope spans
+the job and cleanup. Destination/staging identities are rechecked; per-file
+`renameatx_np(RENAME_EXCL)` is the commit point, with no overwrite race or unsafe
+rollback. Cancellation/failure cleans owned artifacts and reports cleanup errors;
+replaced staging is preserved, not followed. No original media is opened by this
+layer.
+
+The phase-4 seam is `ExportIntermediate.convert(delivery:sink:)`: delivery-layout
+measurement, gain/limiting and decoded-over checks can consume the disk PCM
+without rerendering effects. No loudness algorithm, export sheet/menu/toolbar,
+license UI or end-to-end VM qualification is included in this backend phase.
+
 ## LAME provenance and rebuilding/relinking
 
 LAME 3.100, <https://lame.sourceforge.io/>, is distributed under the GNU Library
@@ -123,7 +216,7 @@ python3 scripts/check-lame-source.py
 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 swift test \
   --package-path Packages/WaveWranglerKit \
   --scratch-path .build/lame-relink --jobs 2 --filter WWExportTests
-# Once the application phase links WWExport, rebuild the application too:
+# Rebuild the linked application too:
 WW_JOBS=2 WW_DERIVED_DATA="$PWD/.build/LameRelinkDerivedData" scripts/build.sh Debug
 ```
 
@@ -154,6 +247,12 @@ Tests generate tones, encode/reopen/decode every exposed rate/channel/PCM
 representation, cover AAC bitrates and MP3 CBR/VBR, check PCM sample precision,
 signal energy, metadata/artwork roundtrips, invalid options/audio/destinations,
 terminal lifecycle, cleanup and truncated-output rejection. No GUI tests are used.
+Job tests additionally exercise the real production renderer, multi-format
+single-render output, signed origins, duration/downmix, 16/24-bit TPDF,
+cancellation/staleness, overload, collisions/partial publication, protected paths
+and replaced-staging cleanup refusal. Unhosted `ExportMetadataAdapterTests`
+qualify inheritance, export-only overrides and explicit omission confirmation.
+These do not replace later document/native-editor/transport VM qualification.
 Every CBR MP3 audio packet must carry the selected bitrate. AAC's measured audio
 bitrate is qualified within 5% of each selected target over two seconds of generated
 signal; nominal bitrate is not an exact short-file size promise.

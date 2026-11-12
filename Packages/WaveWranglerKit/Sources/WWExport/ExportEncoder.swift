@@ -1,4 +1,5 @@
 import AVFoundation
+import Darwin
 import Foundation
 import WWLameNative
 
@@ -9,6 +10,7 @@ public actor ExportEncoder {
     public let settings: ExportSettings
     private let metadata: ExportMetadata
     private let directory: URL
+    private let directoryIdentity: stat
     private let output: URL
     private let writer: CodecWriter
     private var frames: Int64 = 0
@@ -27,6 +29,10 @@ public actor ExportEncoder {
         let directory = stagingDirectory.appendingPathComponent("ww-export-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
                                                attributes: [.posixPermissions: 0o700])
+        var identity = stat()
+        guard lstat(directory.path, &identity) == 0, identity.st_mode & S_IFMT == S_IFDIR else {
+            throw ExportFailure.destination("Cannot inspect the newly created encoder staging directory")
+        }
         let output = directory.appendingPathComponent("encoded.\(settings.codec.fileExtension)")
         do {
             writer = try CodecWriter(url: output, settings: settings, metadata: metadata)
@@ -37,6 +43,7 @@ public actor ExportEncoder {
         self.settings = settings
         self.metadata = metadata
         self.directory = directory
+        directoryIdentity = identity
         self.output = output
     }
 
@@ -120,6 +127,16 @@ public actor ExportEncoder {
         writer.abort()
         state = .canceled
         if !disposed {
+            var current = stat()
+            if lstat(directory.path, &current) != 0 {
+                guard errno == ENOENT else { throw ExportFailure.destination("Cannot inspect encoder staging for cleanup") }
+                disposed = true
+                return
+            }
+            guard current.st_dev == directoryIdentity.st_dev, current.st_ino == directoryIdentity.st_ino,
+                  current.st_mode & S_IFMT == S_IFDIR else {
+                throw ExportFailure.destination("Encoder staging changed; it was not followed or removed")
+            }
             do {
                 try FileManager.default.removeItem(at: directory)
             } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
