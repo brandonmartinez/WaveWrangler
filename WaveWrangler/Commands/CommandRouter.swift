@@ -58,6 +58,8 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     @objc func showSettings(_ sender: Any?) { SettingsWindowController.show() }
     @objc func customizeControlBar(_ sender: Any?) { ControlBarCustomizationController.show() }
     @objc func showLibrary(_ sender: Any?) { LibraryWindowController.show() }
+    @objc func showSoftwareLicenses(_ sender: Any?) { SoftwareLicensesWindowController.show() }
+    @objc func exportEpisode(_ sender: Any?) { activeShowState?.requestExport() }
 
     // MARK: - File
 
@@ -322,6 +324,9 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
         case #selector(importSources(_:)):
             guard let show, show.canEdit, let episode = show.selectedEpisodeID else { return false }
             return SourceCommands.handler.canImportSources(store: show.store, episode: episode)
+        case #selector(exportEpisode(_:)):
+            item.toolTip = show?.exportUnavailableReason ?? "Export the whole episode"
+            return show != nil && show?.exportUnavailableReason == nil
         case #selector(relinkSource(_:)):
             guard let show, show.canEdit, let episode = show.selectedEpisodeID else { return false }
             return SourceCommands.handler.canRelinkSource(store: show.store, episode: episode)

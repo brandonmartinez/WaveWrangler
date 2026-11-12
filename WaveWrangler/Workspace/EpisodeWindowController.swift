@@ -83,6 +83,7 @@ private final class EpisodeEditorWindow: NSWindow {
     weak var originatingState: ShowWindowState?
 
     override func performClose(_ sender: Any?) {
+        if blockExportClose() { return }
         guard let document = originatingState?.store.document,
               document.mixerTransactions.needsBarrier else { super.performClose(sender); return }
         Task {
@@ -92,6 +93,8 @@ private final class EpisodeEditorWindow: NSWindow {
     }
 
     override func close() {
+        if blockExportClose() { return }
+        if originatingState?.exportPresented == true { originatingState?.store.document?.exportInterface.dismiss() }
         if originatingState?.mixerPresentation.isClosed == true { super.close(); return }
         guard let document = originatingState?.store.document,
               document.mixerTransactions.needsBarrier else { super.close(); return }
@@ -101,6 +104,19 @@ private final class EpisodeEditorWindow: NSWindow {
         }
     }
 
-    private func performCloseCaptured(_ sender: Any?) { super.performClose(sender) }
-    private func closeCaptured() { super.close() }
+    private func performCloseCaptured(_ sender: Any?) {
+        if blockExportClose() { return }
+        super.performClose(sender)
+    }
+    private func closeCaptured() {
+        if blockExportClose() { return }
+        if originatingState?.exportPresented == true { originatingState?.store.document?.exportInterface.dismiss() }
+        super.close()
+    }
+
+    private func blockExportClose() -> Bool {
+        guard let presentation = originatingState?.store.document?.exportInterface, presentation.isRunning else { return false }
+        presentation.explainCloseBlock()
+        return true
+    }
 }

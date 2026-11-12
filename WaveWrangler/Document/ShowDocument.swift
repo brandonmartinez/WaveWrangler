@@ -26,6 +26,7 @@ final class ShowDocument: NSDocument {
     let store: ShowDocumentStore
     lazy var mixerTransactions = MixerDocumentTransactions(document: self)
     lazy var exportJobs = EpisodeExportService(document: self)
+    lazy var exportInterface = EpisodeExportPresentation(document: self)
     private var libraryController: NSWindowController?
     weak var libraryWindow: NSWindow?
     let status = DocumentStatusModel()
@@ -614,6 +615,11 @@ final class ShowDocument: NSDocument {
     }
 
     override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
+        if exportInterface.isRunning {
+            exportInterface.explainCloseBlock()
+            Self.reply(to: delegate, selector: shouldCloseSelector, document: self, shouldClose: false, contextInfo: contextInfo)
+            return
+        }
         if mixerTransactions.needsBarrier {
             Task { @MainActor in
                 do {
@@ -999,6 +1005,8 @@ final class ShowDocument: NSDocument {
     }
 
     override func close() {
+        guard !exportInterface.isRunning else { exportInterface.explainCloseBlock(); return }
+        exportInterface.dismiss()
         guard !mixerTransactions.isClosed else { return }
         if mixerTransactions.needsBarrier {
             Task { @MainActor in

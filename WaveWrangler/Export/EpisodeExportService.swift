@@ -5,7 +5,7 @@ import WWCore
 import WWExport
 import WWMix
 
-/// Document-owned backend for the future export sheet. No live effect instance enters the offline job.
+/// Document-owned export backend. No live effect instance enters the offline job.
 @MainActor @Observable
 final class EpisodeExportService {
     enum State: Equatable {
