@@ -226,6 +226,28 @@ After applying a cut, the playhead moves before the new join by the app's
 This preference affects the post-cut playhead only, not cut boundaries,
 audition context lengths, or keyboard jump intervals.
 
+**Mute selected speaker region** is a separate, opt-in action in the same
+selection toolbar. It records a half-open aligned 48 kHz interval for only the
+selected speaker, including that speaker's corresponding backup channels.
+It does not ripple time, change Solo/Mute listening choices, or alter source
+recordings, measurements, transcripts, or accepted timing. Source listening,
+cleanup previews, and production apply silence before effects; untimed original
+source audition remains unchanged. Shared multichannel recordings resolve by
+speaker channel, not file identity alone.
+
+Muted intervals retain their waveform and original marker bars under the same
+striped treatment as audio outside Speaker In/Out. Select the mute icon to
+**Remove speaker mute**, or use its context menu. Add/remove are independent Undo
+actions; overlapping mutes remain independently removable. Processing snapshots
+and buffered Source playback invalidate on a mute edit, including Undo/Redo,
+without invalidating raw waveform or inference caches.
+
+Show schema 13 adds optional `EpisodeCleanup.speakerMuteRegions`. Schema 12 and
+earlier require the existing consented migration and exact-byte backup, which
+never invents mutes; older readers refuse schema 13 instead of silently losing
+these audible edits. Mutes retain their accepted-alignment revision and remain
+stored but inactive after timing replacement.
+
 Applied markers become single red scissor rails. Selecting a rail shows the same
 compact, inline toolbar used for other markers above the clicked track, not the
 first track. Clicking an expanded interval or its handles also keeps that track
@@ -1645,7 +1667,8 @@ control/episode-specific coalescing key. The store owns Undo/coalescing; the pur
 operations do not append duplicate history entries or create a second store.
 
 `EpisodeProcessingInputs` / `hasSameProcessingInputs(as:in:)` include mixer
-state, source/timing dependencies, working range, and active manual cuts.
+state, source/timing dependencies, working range, active manual cuts, and active
+speaker mute regions.
 `EpisodeMediaInputs` deliberately excludes mix state, preserving raw waveforms,
 accepted timing, and raw transcripts across mixer edits. Processing comparisons
 normalize sparse neutral entries and control order but preserve insert order

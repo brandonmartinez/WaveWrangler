@@ -9,11 +9,11 @@ struct ShowSchema11MigrationTests {
 
     @Test func schema11RequiresConsentAndExactBackup() throws {
         let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
-        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 11, minimum: 12)) {
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 11, minimum: SchemaVersion.show)) {
             try coder.decode(Self.golden)
         }
         let upgraded = try ShowSchemaMigration.decodeUpgradingOlder(Self.golden)
-        #expect(upgraded.payload.schemaVersion == 12)
+        #expect(upgraded.payload.schemaVersion == SchemaVersion.show)
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: Self.golden, migrated: upgraded.payload).isEmpty)
         let rig = Rig(), url = rig.url(), key = DocumentKey.show(upgraded.payload.show.id)
         try Self.golden.write(to: url)
@@ -33,7 +33,7 @@ struct ShowSchema11MigrationTests {
         let bytes = try ShowSchema8MigrationTests().unchecked(old, schema: 11)
         let upgraded = try ShowSchemaMigration.decodeSchema11(bytes)
         var expected = old
-        expected.schemaVersion = 12
+        expected.schemaVersion = SchemaVersion.show
         #expect(upgraded.payload == expected)
         #expect(ShowSchemaMigration.schema2ExpectationFailures(original: bytes, migrated: expected).isEmpty)
     }

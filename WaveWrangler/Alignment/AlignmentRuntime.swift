@@ -997,7 +997,7 @@ actor AlignmentRuntime {
                 var samples = [Float](repeating: 0, count: outputFrames.count)
                 for segment in segments {
                     let alignedFrames = segment.aligned
-                    let decoded: [Float]
+                    var decoded: [Float]
                     if timebase == .sourceTime {
                         guard let record = episode.source(source) else { throw DecodeFailure.notFound }
                         decoded = try await AlignedAuditionWindowReader.readWindow(
@@ -1025,6 +1025,10 @@ actor AlignmentRuntime {
                         )
                     }
                     guard decoded.count == alignedFrames.count else { throw WaveformWindowError.invalidSamples }
+                    if timebase == .acceptedTimeline {
+                        Self.applySpeakerMutes(episode.speakerMuteRegions(for: source, channel: channel,
+                            channelCount: interpretation.channelCount), to: &decoded, frames: alignedFrames)
+                    }
                     let offset = Int(segment.displayed.lowerBound - outputFrames.lowerBound)
                     samples.replaceSubrange(offset..<(offset + decoded.count), with: decoded)
                 }
@@ -1665,10 +1669,23 @@ actor AlignmentRuntime {
                 guard copied >= 0 else { throw WaveformWindowError.invalidSamples }
                 output.replaceSubrange(offset..<(offset + copied), with: samples.prefix(copied))
             }
+            Self.applySpeakerMutes(episode.activeSpeakerMuteRegions.filter { $0.speaker == lane.speaker },
+                to: &output, frames: Int64(first)..<Int64(last))
             channels[lane.speaker] = output
         }
         _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         return CleanupAudio(start: start, duration: duration, channels: channels)
+    }
+
+    private static func applySpeakerMutes(_ regions: [SpeakerMuteRegion], to samples: inout [Float],
+                                          frames: Range<Int64>) {
+        for region in regions {
+            let lo = max(frames.lowerBound, region.startFrame), hi = min(frames.upperBound, region.endFrame)
+            if hi > lo {
+                let offset = Int(lo - frames.lowerBound)
+                samples.replaceSubrange(offset..<(offset + Int(hi - lo)), with: repeatElement(0, count: Int(hi - lo)))
+            }
+        }
     }
 
     private actor CleanupLaneQueue {

@@ -469,6 +469,44 @@ final class ControlsSidebarUITests: XCTestCase {
         add(screenshot)
     }
 
+    func testSpeakerMuteKeepsMarkersAndSupportsUndoRedoAndRemoval() {
+        let app = launch()
+        defer { app.terminate() }
+        let candidate = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.cleanup.filler.' AND label CONTAINS 'Um,'")).firstMatch
+        XCTAssertTrue(candidate.waitForExistence(timeout: 20), app.debugDescription)
+        app.menuBars.menuBarItems["Window"].click()
+        app.menuBars.menuItems["Zoom"].click()
+        setTimelineFollowPlayhead(false, in: app)
+        let layout = app.descendants(matching: .any)["alignment.waveforms.layout"]
+        reveal(layout, in: app)
+        selectTimelineLayout("Speakers only", in: app)
+        reveal(candidate, in: app)
+        let markerID = candidate.identifier
+        candidate.click()
+        let mute = app.buttons["ww.timeline.selection.mute"]
+        XCTAssertTrue(mute.waitForExistence(timeout: 5) && mute.isHittable, app.debugDescription)
+        mute.click()
+        let region = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.timeline.speakerMute.'")).firstMatch
+        XCTAssertTrue(region.waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons[markerID].exists, "A mute keeps the original marker bars and audio time.")
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = "Speaker-only muted region with original markers"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { !region.exists })
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(region.waitForExistence(timeout: 5))
+        region.click()
+        let remove = app.buttons["ww.timeline.selection.unmute"]
+        XCTAssertTrue(remove.waitForExistence(timeout: 5) && remove.isHittable, app.debugDescription)
+        remove.click()
+        XCTAssertTrue(wait { !region.exists })
+        XCTAssertTrue(app.buttons[markerID].exists)
+    }
+
     private func launch(minimumSize: Bool = false, singlePrimary: Bool = false) -> XCUIApplication {
         continueAfterFailure = false
         let app = XCUIApplication()

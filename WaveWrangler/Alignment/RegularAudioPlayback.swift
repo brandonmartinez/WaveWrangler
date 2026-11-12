@@ -70,6 +70,7 @@ final class RegularAudioPlayback: Sendable {
         guard !canceled.load(ordering: .acquiring) else { return }
         guard let current = updated.episode(episode),
               EpisodeMediaInputs(current) == media,
+              current.activeSpeakerMuteRegions == model.episode(episode)?.activeSpeakerMuteRegions,
               current.activeManualCuts == model.episode(episode)?.activeManualCuts else {
             state.withLock { $0.failure = MixerFailure.staleDependencies }
             output.stop(ifCurrent: outputGeneration, preservingClock: true)

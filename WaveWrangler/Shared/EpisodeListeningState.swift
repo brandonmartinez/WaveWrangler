@@ -157,14 +157,16 @@ struct AudioTimelineSelectionToolbar: View {
     let duration: Double
     let play: (Double) -> Void
     var cleanup: EpisodeCleanupModel? = nil
+    var muteSpeaker: SpeakerID? = nil
     var trackWidth = 400.0
 
     private var rowHeight: Double {
-        Self.height(width: trackWidth, cleanup: cleanup)
+        Self.height(width: trackWidth, cleanup: cleanup, muteSpeaker: muteSpeaker)
     }
 
-    static func height(width: Double, cleanup: EpisodeCleanupModel?) -> Double {
-        cleanup?.selectedManualCut == nil && cleanup?.selectedFiller != nil && width < 410 ? 76 : 44
+    static func height(width: Double, cleanup: EpisodeCleanupModel?, muteSpeaker: SpeakerID? = nil) -> Double {
+        cleanup?.selectedManualCut == nil && cleanup?.selectedFiller != nil
+            && width < (muteSpeaker == nil ? 410 : 438) ? 76 : 44
     }
 
     var body: some View {
@@ -174,8 +176,9 @@ struct AudioTimelineSelectionToolbar: View {
                 let hi = min(geometry.size.width, (range.upperBound - start) / duration * geometry.size.width)
                 if hi > lo || (cleanup?.selectedManualCut != nil && hi >= 0 && lo <= geometry.size.width) {
                     let toolbarWidth = min(geometry.size.width, trackWidth,
-                        cleanup?.selectedManualCut != nil ? 252 : cleanup?.selectedFiller == nil ? 184 : 426)
-                    let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= 410
+                        cleanup?.selectedManualCut != nil ? 252
+                            : (cleanup?.selectedFiller == nil ? 184 : 426) + (muteSpeaker == nil ? 0 : 28))
+                    let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= (muteSpeaker == nil ? 410 : 438)
                     let layout = horizontal
                         ? AnyLayout(HStackLayout(spacing: 6))
                         : AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
@@ -238,8 +241,26 @@ struct AudioTimelineSelectionToolbar: View {
             }
             Button("Clear selection", systemImage: "xmark") {
                 cleanup?.selectedFillerID = nil
+                cleanup?.selectedSpeakerMuteID = nil
                 listening.selection = nil
                 listening.selectedTranscriptText = nil
+            }
+            if let cleanup, let muteSpeaker {
+                if let region = cleanup.selectedSpeakerMute, region.speaker == muteSpeaker {
+                    Button("Remove speaker mute", systemImage: "speaker.wave.2") {
+                        cleanup.removeSpeakerMute(region.id)
+                    }
+                    .disabled(!cleanup.canEditManualCuts)
+                    .help("Restore this speaker's audio in the selected mute region. Other regions and tracks are unchanged.")
+                    .accessibilityIdentifier("ww.timeline.selection.unmute")
+                } else {
+                    Button("Mute selected speaker region", systemImage: "speaker.slash.fill") {
+                        cleanup.muteSelection(for: muteSpeaker)
+                    }
+                    .disabled(!cleanup.canMuteSelection(for: muteSpeaker))
+                    .help("Silence this interval for this speaker only. Keep the time, waveform, and markers; Undo or Remove mute restores the audio.")
+                    .accessibilityIdentifier("ww.timeline.selection.mute")
+                }
             }
             if let cleanup {
                 Button("Cut across all aligned tracks", systemImage: "scissors") { cleanup.applyManualCut() }

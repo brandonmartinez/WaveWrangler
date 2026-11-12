@@ -694,6 +694,7 @@ struct AlignmentWaveformView: View {
                     .onChanged { drag in
                         guard let track = tracks.first(where: { $0.id == model.selectedWaveformSource })
                             ?? (model.listening.effectiveTool == .select ? tracks.first : nil) else { return }
+                        if model.listening.effectiveTool == .select { cleanup?.selectedSpeaker = speakerGroup.id }
                         dragGroup(
                             track,
                             strokes: model.listening.effectiveTool == .move && dragSession == nil
@@ -714,6 +715,15 @@ struct AlignmentWaveformView: View {
             }
             .frame(height: max(laneHeight + 50, CGFloat(tracks.count * 30 + 40)))
             .clipped()
+            .overlay {
+                if let cleanup, let speaker = speakerGroup.id, !model.isSourceTimePreview {
+                    SpeakerMuteMarkers(model: cleanup, speaker: speaker) {
+                        if let track = tracks.first(where: { $0.id == activeSourceID }) ?? tracks.first {
+                            model.selectWaveform(track)
+                        }
+                    }
+                }
+            }
             .overlay {
                 if let cleanup {
                     ManualCutMarkers(model: cleanup) {
@@ -882,7 +892,7 @@ struct AlignmentWaveformView: View {
                     .gesture(DragGesture(minimumDistance: 4, coordinateSpace: .global)
                         .onChanged { drag in
                             if model.listening.effectiveTool == .select {
-                                cleanup?.selectedSpeaker = speaker ?? model.trackSpeakerID(track.id)
+                                cleanup?.selectedSpeaker = muteSpeaker(for: track, explicit: speaker)
                             }
                             dragGroup(
                                 track,
@@ -903,6 +913,11 @@ struct AlignmentWaveformView: View {
                 }
                 .frame(height: laneHeight)
                 .clipped()
+                .overlay {
+                    if let cleanup, let speaker = muteSpeaker(for: track, explicit: speaker), !model.isSourceTimePreview {
+                        SpeakerMuteMarkers(model: cleanup, speaker: speaker) { model.selectWaveform(track) }
+                    }
+                }
                 .overlay {
                     if let cleanup {
                         ManualCutMarkers(model: cleanup) {
@@ -977,7 +992,27 @@ struct AlignmentWaveformView: View {
                 } else {
                     model.playSelection(context: context)
                 }
-            }, cleanup: cleanup, isBlocked: processingOperation != nil)
+            }, cleanup: cleanup, muteSpeaker: muteSpeaker, isBlocked: processingOperation != nil)
+    }
+
+    private var muteSpeaker: SpeakerID? {
+        guard !model.isSourceTimePreview, let source = activeSourceID,
+              model.sourceHasAcceptedTiming(source),
+              let episode = model.audioEditor.episode else { return nil }
+        let references = episode.references(to: source)
+        if let selected = cleanup?.selectedSpeaker, references.contains(where: { $0.speakerID == selected }) {
+            return selected
+        }
+        guard let track = model.waveformTracks.first(where: { $0.id == source }) else { return nil }
+        return muteSpeaker(for: track, explicit: nil)
+    }
+
+    private func muteSpeaker(for track: AlignmentWaveformTrack, explicit: SpeakerID?) -> SpeakerID? {
+        if let explicit { return explicit }
+        let speakers = Set((model.audioEditor.episode?.references(to: track.id) ?? []).filter {
+            $0.channel.resolvedChannel(channelCount: track.envelope.channelCount) == track.decodedChannel
+        }.map(\.speakerID))
+        return speakers.count == 1 ? speakers.first : nil
     }
 
     @ViewBuilder
@@ -1386,6 +1421,7 @@ struct AlignmentWaveformView: View {
             waveformFocused = true
             cleanup?.selectedFillerID = nil
             cleanup?.selectedManualCutID = nil
+            cleanup?.selectedSpeakerMuteID = nil
             model.selectWaveform(track)
             let origin = geometry.frame(in: .global).minX
             let width = max(1, geometry.size.width)

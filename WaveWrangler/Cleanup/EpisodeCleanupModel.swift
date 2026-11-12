@@ -82,6 +82,7 @@ final class EpisodeCleanupModel {
     var selectedWord: TranscriptWord?
     var selectedFillerID: UUID?
     var selectedManualCutID: UUID?
+    var selectedSpeakerMuteID: UUID?
     var reviewSearch = ""
     var reviewSpeakerFilter: SpeakerID?
     var reviewStatusFilter = FillerReviewFilter.all

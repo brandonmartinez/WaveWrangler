@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import WWCore
 
 struct AudioTimelineToolbarAnchor: PreferenceKey {
     static let defaultValue: Anchor<CGRect>? = nil
@@ -15,6 +16,7 @@ struct AudioTimelineFloatingToolbar: ViewModifier {
     let duration: Double
     let play: (Double) -> Void
     var cleanup: EpisodeCleanupModel?
+    var muteSpeaker: SpeakerID?
     var isBlocked = false
 
     func body(content: Content) -> some View {
@@ -23,9 +25,9 @@ struct AudioTimelineFloatingToolbar: ViewModifier {
                 GeometryReader { geometry in
                     let track = geometry[anchor]
                     let height = AudioTimelineSelectionToolbar.height(
-                        width: track.width, cleanup: cleanup)
+                        width: track.width, cleanup: cleanup, muteSpeaker: muteSpeaker)
                     AudioTimelineSelectionToolbar(listening: listening,
-                        start: start, duration: duration, play: play, cleanup: cleanup,
+                        start: start, duration: duration, play: play, cleanup: cleanup, muteSpeaker: muteSpeaker,
                         trackWidth: track.width)
                         .frame(width: track.width, height: height)
                         .position(x: track.midX, y: track.minY - height / 2)

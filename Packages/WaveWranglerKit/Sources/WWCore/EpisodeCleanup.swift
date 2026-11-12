@@ -95,6 +95,7 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
     public var fillerReviews: [FillerTimingReview]?
     public var transcriptHistory: [SpeakerTranscript]?
     public var manualCuts: [ManualEpisodeCut]?
+    public var speakerMuteRegions: [SpeakerMuteRegion]?
 
     public var explicitWorkingRange: EpisodeWorkingRange? {
         workingRange.flatMap { $0.hasExplicitBounds ? $0 : nil }
@@ -102,12 +103,13 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
 
     public init(workingRange: EpisodeWorkingRange? = nil, transcripts: [SpeakerTranscript] = [],
                 fillerReviews: [FillerTimingReview]? = nil, transcriptHistory: [SpeakerTranscript]? = nil,
-                manualCuts: [ManualEpisodeCut]? = nil) {
+                manualCuts: [ManualEpisodeCut]? = nil, speakerMuteRegions: [SpeakerMuteRegion]? = nil) {
         self.workingRange = workingRange
         self.transcripts = transcripts
         self.fillerReviews = fillerReviews
         self.transcriptHistory = transcriptHistory
         self.manualCuts = manualCuts
+        self.speakerMuteRegions = speakerMuteRegions
     }
 
     public var isValid: Bool {
@@ -124,6 +126,9 @@ public struct EpisodeCleanup: Sendable, Equatable, Codable {
             && (manualCuts?.count ?? 0) <= 100_000
             && manualCuts?.allSatisfy(\.isValid) != false
             && Set((manualCuts ?? []).map(\.id)).count == (manualCuts?.count ?? 0)
+            && (speakerMuteRegions?.count ?? 0) <= 100_000
+            && speakerMuteRegions?.allSatisfy(\.isValid) != false
+            && Set((speakerMuteRegions ?? []).map(\.id)).count == (speakerMuteRegions?.count ?? 0)
     }
 
     public func replacingTranscripts(_ replacement: [SpeakerTranscript]) throws(DomainError) -> Self {

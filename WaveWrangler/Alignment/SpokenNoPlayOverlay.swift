@@ -20,9 +20,9 @@ struct SpokenNoPlayOverlay: View {
                 let first = allowed.map { min(width, max(0, ($0.lowerBound - start) / duration * width)) } ?? width
                 let last = allowed.map { min(width, max(0, ($0.upperBound - start) / duration * width)) } ?? width
                 HStack(spacing: 0) {
-                    hatch.frame(width: first)
+                    AudioTimelineNoPlayHatch().frame(width: first)
                     Color.clear.frame(width: max(0, last - first))
-                    hatch.frame(width: max(0, width - last))
+                    AudioTimelineNoPlayHatch().frame(width: max(0, width - last))
                 }
             }
             .allowsHitTesting(false)
@@ -31,8 +31,10 @@ struct SpokenNoPlayOverlay: View {
             .accessibilityIdentifier("ww.waveforms.noPlay")
         }
     }
+}
 
-    private var hatch: some View {
+struct AudioTimelineNoPlayHatch: View {
+    var body: some View {
         Canvas { context, size in
             context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(nsColor: .windowBackgroundColor).opacity(0.78)))
             var lines = Path()
