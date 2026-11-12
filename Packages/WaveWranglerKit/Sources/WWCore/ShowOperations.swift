@@ -6,6 +6,8 @@ public enum DomainError: Error, Sendable, Equatable {
     case invalidWorkspace(String)
     case invalidMix(String)
     case invalidAudio(String)
+    case invalidPublication(String)
+    case unsupportedPublicationArtworkSchema(found: Int, supported: Int)
     case sourceIsNotRecording(SourceID)
     case sourceUsedByAudioClips(SourceID)
     case emptyTitle
@@ -64,6 +66,9 @@ extension ShowDocumentModel {
             }
         }
         copy.episodes.append(newEpisode)
+        if let issue = copy.publicationValidationIssues(expectedSchemaVersion: schemaVersion).first {
+            throw .invalidPublication(issue.detail)
+        }
         if newEpisode.audioArrangement != nil || newEpisode.mix?.audioTracks != nil
             || newEpisode.sources.contains(where: { $0.purpose != nil }),
            let issue = copy.validationIssues().first {
