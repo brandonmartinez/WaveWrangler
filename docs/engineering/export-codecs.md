@@ -99,7 +99,7 @@ let result = try await document.exportJobs.run(
 ```
 
 `selections` contains `EpisodeExportDelivery(filename:settings:)` values, with
-optional publication overrides, title/album overrides, integer-WAV dither and
+optional publication overrides, title/album overrides, integer-WAV dither, loudness normalization and
 confirmed omissions. Before submitting, call
 `ExportMetadataAdapter.preview(resolved, delivery:)` using
 `try model.resolvedPublication(for: episodeID)`. Present its omissions and copy
@@ -157,7 +157,7 @@ the nearest whole number of frames for the requested rate and episode duration.
 `ExportDither.none` is default; `.tpdf` adds triangular one-LSB dither before
 16/24-bit integer quantization. It is rejected for floating/lossy formats.
 
-Normalization is Off. Float32 WAV preserves finite over-unity values. Conversion
+Normalization defaults to Off. Float32 WAV preserves finite over-unity values. Conversion
 overs and integer/lossy overload fail with an actionable headroom error; there
 is no automatic clipping, gain adjustment or substitute silence. Full decoded
 verification precedes publication of *any* delivery. Published receipts report
@@ -174,10 +174,97 @@ rollback. Cancellation/failure cleans owned artifacts and reports cleanup errors
 replaced staging is preserved, not followed. No original media is opened by this
 layer.
 
-The phase-4 seam is `ExportIntermediate.convert(delivery:sink:)`: delivery-layout
-measurement, gain/limiting and decoded-over checks can consume the disk PCM
-without rerendering effects. No loudness algorithm, export sheet/menu/toolbar,
-license UI or end-to-end VM qualification is included in this backend phase.
+### Optional export loudness and delivered-file reports
+
+`ExportDelivery(..., normalization:)` and the app's `EpisodeExportDelivery.normalization`
+accept `ExportNormalization.off` (default), `.podcast`, or
+`.custom(targetLUFS:ceilingDBTP:)`. Podcast suggests -16 LUFS stereo or -19 LUFS
+mono with a -1 dBTP ceiling. Custom targets must be finite and within -36...-9
+LUFS; ceilings within -12...-0.1 dBTP. This is export-only, not source input-gain
+normalization, and never modifies a show or original recording.
+
+The meter uses the BS.1770 K-weighting shelf/high-pass coefficients recalculated
+for each requested output rate. Stereo channel energies have unity weights
+(mono has one channel); there is no surround/LFE path. Integrated loudness uses
+400 ms blocks with 100 ms hops, a -70 LUFS absolute gate and a second gate 10 LU
+below the absolute-gated mean. An energy/count histogram at 0.01 LU resolution
+bounds duration-independent gate state (about 1.4 MiB), with a 400 ms energy ring
+and constant filter state. This is BS.1770/EBU-style engineering qualification,
+not a claim of formal broadcast-meter certification. Programs shorter than
+400 ms or without an absolute-gated block return `integratedLUFS == nil`.
+Silence is not reported as achieving a target.
+
+True peak is **not** sample peak: a four-times polyphase, 64-input-tap-per-phase
+Blackman-windowed sinc reconstructs each channel. Raw samples are included,
+with zero-extension and filter flushing at both edges. Meter delay/flush never
+changes delivered samples, Start/End or duration. Finite reconstruction filters
+disagree most at hard boundaries: normalization reserves **0.7 dB below the
+requested ceiling**, plus 0.05 dB on the first encode. Treat reported peaks as
+estimates, not 0.1 dB-certified measurements; calibrated smooth signals agree
+with the reference within 0.15 dB, abrupt/burst fixtures within 0.7 dB.
+Digital silence has `truePeakDBTP == nil`; near-silence can have a finite peak
+but no measurable integrated loudness.
+
+For enabled normalization, a bounded conversion/measurement pass reads the
+existing private intermediate after the requested downmix and rate conversion,
+before dither or quantization. One constant gain is the minimum of the requested
+loudness gain, a **+24 dB boost bound**, and peak-constrained headroom including
+the reserve. Unmeasurable programs are never boosted (but may be attenuated to
+respect a ceiling). There is no limiter, lookahead, extra tail or effect rerender.
+Encoding separately reapplies conversion and then gain/dither/quantization.
+Off skips normalization measurement and adjustment; integer/lossy overload
+still fails actionably, and Float32 WAV still preserves finite over-range PCM.
+
+Every `ExportEncoder.finish()` measures the fully decoded, owned output inside
+the existing verifier; `VerifiedExport.loudness` exposes its
+`ExportLoudnessMeasurement`. No new arbitrary-URL decoding API or source-reader
+exception is added. Normalized jobs check the **decoded** peak, including codec
+priming/padding, against the reserved ceiling. An overshoot triggers attenuation
+by the excess plus 0.1 dB and a fresh encode from the intermediate. At most three
+corrective re-encodes are allowed; failure to meet the bound fails before any
+publication. Each replaced attempt is ownership-validated and disposed with
+throwing cleanup before creating another. No extra disk intermediate is added;
+the existing conservative PCM-sized output/remux budget still covers the peak
+simultaneous artifacts. Effects render exactly once across all deliveries and
+passes. Admission/currency/cancellation checks run at every converted and decoded
+block and before attempt disposal/publication. Progress distinguishes
+`.measuring(delivery:)`, `.correcting(delivery:attempt:)` and verification.
+
+`PublishedExport.loudness` is an `ExportLoudnessReport`: actual final
+`measurement`, optional `requestedTargetLUFS`/`ceilingDBTP`, total
+`appliedGainDB`, positive `correctiveAttenuationDB`, `correctionPasses` and
+`targetStatus`. Status is `.off`, `.achieved` (final loudness within 0.2 LU),
+`.peakLimited`, `.boostLimited`, `.unmeasurable` or `.targetMissed`.
+The last status explicitly handles codec-dependent level changes without falsely
+blaming the peak ceiling or claiming success. For example LAME's decoded
+1 kHz output can be about 0.45 LU lower than the input even with ample peak
+headroom. Reports describe decoded files, not a fictional exact program duration;
+the existing input/decoded frame counts and lossy tolerances remain authoritative.
+
+Qualification uses generated PCM only. Tests cover calibrated 1 kHz mono/stereo
+at all four WAV rates, absolute/relative gates, silence/near-silence, cancellation
+downmix, intersample peaks, custom validation, boost/peak bounds, dither,
+Off/Float32 over-range behavior, sample-for-sample fixed-gain timing, one render,
+actual MP3/AAC overshoots, correction cancellation/staleness and staging cleanup.
+Independent optional reference tests use an **already installed** FFmpeg, never
+a production executable or runtime dependency:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+umask 022
+WW_EXPORT_REFERENCE_FFMPEG="$(command -v ffmpeg)" \
+  WW_JOBS=2 WW_TEST_WORKERS=2 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 \
+  swift test --package-path Packages/WaveWranglerKit \
+  --scratch-path .build/swiftpm --jobs 2 --filter WWExportTests
+```
+
+FFmpeg 9.0.2's `ebur128=peak=true` independently qualifies smooth 1 kHz tones,
+absolute/relative gated programs, quarter-rate intersample tones, hard edges and
+bursts; the tests enforce 0.1 LU integrated agreement and the peak tolerances above.
+They also independently decode final MP3/AAC deliveries and require their
+reference peaks not to exceed the selected ceiling. No optional tooling is
+installed. Export sheet/menu/toolbar, license UI and dedicated VM qualification
+remain separate phases.
 
 ## LAME provenance and rebuilding/relinking
 

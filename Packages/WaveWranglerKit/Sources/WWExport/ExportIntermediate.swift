@@ -46,8 +46,9 @@ actor ExportIntermediate {
 
     func close() throws { try handle.close() }
 
-    /// Delivery-layout processing seam: future measurement/gain/limiting uses this disk PCM, not effects.
-    func convert(delivery: ExportDelivery, sink: @Sendable ([Float]) async throws -> Void) async throws {
+    /// Measurement omits dither, quantization and overload rejection; encoding never omits them.
+    func convert(delivery: ExportDelivery, gainDB: Double = 0, measuring: Bool = false,
+                 sink: @Sendable ([Float]) async throws -> Void) async throws {
         guard finished else { throw ExportFailure.invalidState }
         try handle.seek(toOffset: 0)
         let reader = IntermediateConversionInput(handle: handle, channels: delivery.settings.channels)
@@ -66,6 +67,7 @@ actor ExportIntermediate {
         var delivered: Int64 = 0
         var random = UInt64.random(in: 1...UInt64.max)
         var emptyTurns = 0
+        let gain = pow(10, gainDB / 20)
         while true {
             try Task.checkCancellation()
             var error: NSError?
@@ -80,8 +82,8 @@ actor ExportIntermediate {
                 var samples = [Float](repeating: 0, count: Int(count) * delivery.settings.channels)
                 for frame in 0..<Int(count) {
                     for channel in 0..<delivery.settings.channels {
-                        var value = channels[channel][frame]
-                        if delivery.dither == .tpdf, case .wave(let pcm) = delivery.settings.codec {
+                        var value = Float(Double(channels[channel][frame]) * gain)
+                        if !measuring, delivery.dither == .tpdf, case .wave(let pcm) = delivery.settings.codec {
                             func uniform() -> Double {
                                 random ^= random << 13; random ^= random >> 7; random ^= random << 17
                                 return Double(random >> 11) / 9_007_199_254_740_992
@@ -93,7 +95,7 @@ actor ExportIntermediate {
                             }
                         }
                         guard value.isFinite,
-                              delivery.settings.codec == .wave(.float32) || abs(value) <= 1 else {
+                              measuring || delivery.settings.codec == .wave(.float32) || abs(value) <= 1 else {
                             throw ExportFailure.invalidPCM("Delivery exceeds full scale after conversion. Reduce the production mix level or choose Float32 WAV; no clipping or gain adjustment was applied.")
                         }
                         samples[frame * delivery.settings.channels + channel] = value

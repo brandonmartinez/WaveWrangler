@@ -19,6 +19,7 @@ struct EpisodeExportDelivery: Sendable {
     var titleOverride: String?
     var albumOverride: String?
     var dither = ExportDither.none
+    var normalization = ExportNormalization.off
     var confirmedOmissions: Set<ExportMetadataOmission> = []
 }
 
@@ -76,6 +77,6 @@ enum ExportMetadataAdapter {
                 + preview.omissions.subtracting(selection.confirmedOmissions).map(\.field).sorted().joined(separator: ", "))
         }
         return try .init(filename: selection.filename, settings: selection.settings,
-                         metadata: preview.metadata, dither: selection.dither)
+                         metadata: preview.metadata, dither: selection.dither, normalization: selection.normalization)
     }
 }

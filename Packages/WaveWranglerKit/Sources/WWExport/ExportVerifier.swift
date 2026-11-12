@@ -8,6 +8,7 @@ public struct VerifiedExport: Sendable, Equatable {
     public let inputFrames: Int64
     public let decodedFrames: Int64
     public let byteCount: Int64
+    public let loudness: ExportLoudnessMeasurement
     let witness: ExportOutputWitness
     /// Container/decoder-visible difference; not a license to shift production timing.
     public var decodedFrameDelta: Int64 { decodedFrames - inputFrames }
@@ -37,7 +38,8 @@ struct ExportOutputWitness: Sendable, Equatable {
 enum ExportVerifier {
     /// Reopen and fully decode a staged result, bounded to 4096 frames per read.
     /// Lossy codecs can expose priming/padding: MP3 <=2304, AAC <=3072 frames; PCM must be exact.
-    static func verify(url: URL, settings: ExportSettings, expectedFrames: Int64) throws -> VerifiedExport {
+    static func verify(url: URL, settings: ExportSettings, expectedFrames: Int64,
+                       check: @Sendable () async throws -> Void = {}) async throws -> VerifiedExport {
         try Task.checkCancellation()
         guard expectedFrames > 0 else { throw ExportFailure.verification("Expected frame count must be positive") }
         var initial = stat()
@@ -76,8 +78,10 @@ enum ExportVerifier {
             throw ExportFailure.verification("Cannot allocate decode buffer")
         }
         var decoded: Int64 = 0
+        var meter = ExportLoudnessMeter(sampleRate: settings.sampleRate, channels: settings.channels)
         while file.framePosition < file.length {
             try Task.checkCancellation()
+            try await check()
             do {
                 try file.read(into: buffer, frameCount: AVAudioFrameCount(min(4_096, file.length - file.framePosition)))
             } catch {
@@ -102,6 +106,13 @@ enum ExportVerifier {
                     throw ExportFailure.verification("Decoder produced nonfinite PCM")
                 }
             }
+            var samples = [Float](repeating: 0, count: count * settings.channels)
+            for frame in 0..<count {
+                for channel in 0..<settings.channels {
+                    samples[frame * settings.channels + channel] = channels[channel][frame]
+                }
+            }
+            try meter.append(samples)
         }
         guard decoded > 0, abs(decoded - expectedFrames) <= tolerance else {
             throw ExportFailure.verification("Decoded duration does not match input")
@@ -111,6 +122,6 @@ enum ExportVerifier {
             throw ExportFailure.verification("Output changed during verification")
         }
         return VerifiedExport(stagingURL: url, settings: settings, inputFrames: expectedFrames,
-                              decodedFrames: decoded, byteCount: Int64(size), witness: witness)
+                              decodedFrames: decoded, byteCount: Int64(size), loudness: meter.finish(), witness: witness)
     }
 }

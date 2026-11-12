@@ -86,6 +86,10 @@ public actor ExportEncoder {
     /// Closes headers/tags and decodes every frame in bounded blocks before returning.
     /// The result remains private staging: the job coordinator must publish it transactionally.
     public func finish() async throws -> VerifiedExport {
+        try await finish(check: {})
+    }
+
+    func finish(check: @escaping @Sendable () async throws -> Void) async throws -> VerifiedExport {
         guard state == .encoding else { throw ExportFailure.invalidState }
         state = .finishing
         do {
@@ -120,7 +124,8 @@ public actor ExportEncoder {
             let file = try FileHandle(forWritingTo: verifiedURL)
             try file.synchronize()
             try file.close()
-            let result = try ExportVerifier.verify(url: verifiedURL, settings: settings, expectedFrames: frames)
+            let result = try await ExportVerifier.verify(url: verifiedURL, settings: settings,
+                                                        expectedFrames: frames, check: check)
             try staging.validateArtifacts()
             try Task.checkCancellation()
             guard state == .finishing else { throw CancellationError() }
