@@ -5,6 +5,24 @@ import WWOrganizer
 
 @Suite("App-level alignment listening default")
 struct AlignmentPreferenceTests {
+    @Test func cutJumpBackDefaultsPersistsAndRejectsInvalidStoredValues() throws {
+        let name = "CutJumpBackPreferenceTests.\(UUID())"
+        let defaults = try #require(UserDefaults(suiteName: name))
+        defer { defaults.removePersistentDomain(forName: name) }
+        let preferences = AppPreferences(defaults: defaults)
+        #expect(preferences.cutJumpBackSeconds == 0.5)
+        for seconds in [0.0, 0.5, 2.75, 30] {
+            preferences.cutJumpBackSeconds = seconds
+            #expect(AppPreferences(defaults: defaults).cutJumpBackSeconds == seconds)
+        }
+        for invalid in [-1.0, 31, .infinity, .nan] {
+            defaults.set(invalid, forKey: PreferenceKey.cutJumpBackSeconds)
+            #expect(preferences.cutJumpBackSeconds == 0.5)
+        }
+        defaults.set("invalid", forKey: PreferenceKey.cutJumpBackSeconds)
+        #expect(preferences.cutJumpBackSeconds == 0.5)
+    }
+
     @Test func autoInputGainTargetPersistsAndInvalidStoredValuesUseTheEditingDefault() throws {
         let name = "AutoInputGainPreferenceTests.\(UUID())"
         let defaults = try #require(UserDefaults(suiteName: name))

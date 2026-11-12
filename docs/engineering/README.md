@@ -220,6 +220,12 @@ tracks. Later audio ripples to the interval's start. Playback requests split int
 kept aligned windows before gateway reads; waveform and transcript presentation
 use the same shortened timeline. No export behavior is introduced.
 
+After applying a cut, the playhead moves before the new join by the app's
+**Settings > General > Cut editing > Jump back before a new cut** interval
+(0–30 seconds; default 0.5). The existing seek clamp preserves the timeline start.
+This preference affects the post-cut playhead only, not cut boundaries,
+audition context lengths, or keyboard jump intervals.
+
 Applied markers become single red scissor rails. Selecting a rail shows the same
 compact, inline toolbar used for other markers above the clicked track, not the
 first track. Clicking an expanded interval or its handles also keeps that track

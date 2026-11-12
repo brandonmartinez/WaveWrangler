@@ -131,6 +131,12 @@ struct GeneralSettingsView: View {
                 .accessibilityIdentifier("ww.settings.timelineJump")
                 caption("Space plays or pauses when another control is not focused. Left/Right jump by this interval in the track area. Text fields, review lists and 1 ms boundary-handle adjustments keep their normal keys.")
             }
+            Section("Cut editing") {
+                MixerNumberControl(title: "Jump back before a new cut (seconds)", value: $settings.cutJumpBackSeconds,
+                    range: AppPreferences.cutJumpBackRange, identifier: "ww.settings.cutJumpBack",
+                    endEditing: {})
+                caption("After applying a cut, place the playhead this many seconds before its join. Default: 0.5 seconds. The playhead never moves before the timeline start. This does not change cut boundaries or audition lengths.")
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)

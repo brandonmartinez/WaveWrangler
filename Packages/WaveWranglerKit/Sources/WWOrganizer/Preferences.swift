@@ -22,6 +22,7 @@ public enum PreferenceKey {
     public static let transcriptionThreads = "WWTranscriptionThreads"
     public static let editingPlaybackPolicy = "WWEditingPlaybackPolicy"
     public static let timelineJumpSeconds = "WWTimelineJumpSeconds"
+    public static let cutJumpBackSeconds = "WWCutJumpBackSeconds"
     public static let autoInputGainTargetDBFS = "WWAutoInputGainTargetDBFS"
 }
 
@@ -29,6 +30,8 @@ public enum PreferenceKey {
 public struct AppPreferences {
     public static let defaultAutosaveEnabled = true
     public static let defaultDownloadSourcesAutomatically = true
+    public static let defaultCutJumpBackSeconds = 0.5
+    public static let cutJumpBackRange: ClosedRange<Double> = 0...30
 
     /// Values for `UserDefaults.register(defaults:)`.
     public static var registrationDefaults: [String: Any] {
@@ -38,6 +41,7 @@ public struct AppPreferences {
             PreferenceKey.textSizePercent: TextSize.actual.percent,
             PreferenceKey.editingPlaybackPolicy: EditingPlaybackPolicy.muteNonPrimaries.rawValue,
             PreferenceKey.timelineJumpSeconds: TimelineJumpInterval.five.rawValue,
+            PreferenceKey.cutJumpBackSeconds: defaultCutJumpBackSeconds,
             PreferenceKey.autoInputGainTargetDBFS: AutoInputGainTarget.defaultDBFS,
         ]
     }
@@ -89,6 +93,15 @@ public struct AppPreferences {
             return value
         }
         nonmutating set { defaults.set(newValue, forKey: PreferenceKey.autoInputGainTargetDBFS) }
+    }
+
+    public var cutJumpBackSeconds: Double {
+        get {
+            guard let value = defaults.object(forKey: PreferenceKey.cutJumpBackSeconds) as? Double,
+                  Self.cutJumpBackRange.contains(value) else { return Self.defaultCutJumpBackSeconds }
+            return value
+        }
+        nonmutating set { defaults.set(newValue, forKey: PreferenceKey.cutJumpBackSeconds) }
     }
 }
 
