@@ -30,6 +30,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
     public var mix: EpisodeMixState?
     public var audioArrangement: AudioArrangement?
     public var productionRange: EpisodeProductionRange?
+    public var publication: EpisodePublication?
 
     public init(
         id: EpisodeID = EpisodeID(),
@@ -48,7 +49,8 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         workspace: EpisodeWorkspacePreferences? = nil,
         mix: EpisodeMixState? = nil,
         audioArrangement: AudioArrangement? = nil,
-        productionRange: EpisodeProductionRange? = nil
+        productionRange: EpisodeProductionRange? = nil,
+        publication: EpisodePublication? = nil
     ) {
         self.id = id
         self.title = title
@@ -67,6 +69,7 @@ public struct Episode: Sendable, Equatable, Codable, Identifiable {
         self.mix = mix
         self.audioArrangement = audioArrangement
         self.productionRange = productionRange
+        self.publication = publication
     }
 
     /// The complete recording partition, including ungrouped/unavailable recordings.

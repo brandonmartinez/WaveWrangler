@@ -764,7 +764,9 @@ final class EpisodeSetupModel {
 
     static func describe(_ error: DomainError) -> String {
         switch error {
-        case let .invalidAudio(reason), let .invalidMix(reason): reason
+        case let .invalidAudio(reason), let .invalidMix(reason), let .invalidPublication(reason): reason
+        case let .unsupportedPublicationArtworkSchema(found, supported):
+            "This artwork requires a newer WaveWrangler version (artwork schema \(found); supported \(supported))."
         case .sourceIsNotRecording: "Audio assets cannot have recorder timing or speaker assignments."
         case .sourceUsedByAudioClips: "Remove the clips that use this audio asset before removing its source."
         case let .invalidWorkspace(reason): reason

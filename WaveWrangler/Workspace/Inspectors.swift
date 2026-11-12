@@ -112,6 +112,8 @@ struct EpisodeInspector: View {
                 }
 
                 recordingDate(episode)
+                PublicationInspector(store: store, episodeID: episodeID)
+                    .id(episodeID)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Notes")
@@ -311,6 +313,8 @@ struct ShowInfoInspector: View {
                     .accessibilityLabel("Notes")
                     .accessibilityIdentifier("ww.inspector.show.notes")
             }
+            Divider()
+            PublicationInspector(store: store)
             Divider()
             LabeledContent("Location") { Text(Self.locationText(store.document?.fileURL)) }
             VStack(alignment: .leading, spacing: 4) {
