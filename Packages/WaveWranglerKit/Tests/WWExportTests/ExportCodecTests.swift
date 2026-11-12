@@ -312,18 +312,18 @@ struct ExportCodecTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let settings = try ExportSettings(codec: .mp3(.constantBitrate(kbps: 96)), sampleRate: 44_100)
         let (encoder, result) = try await encode(settings, directory: root)
-        #expect(throws: ExportFailure.self) {
-            try ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames + 1)
+        await #expect(throws: ExportFailure.self) {
+            try await ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames + 1)
         }
         let wrongBitrate = try ExportSettings(codec: .mp3(.constantBitrate(kbps: 128)), sampleRate: 44_100)
-        #expect(throws: ExportFailure.self) {
-            try ExportVerifier.verify(url: result.stagingURL, settings: wrongBitrate, expectedFrames: result.inputFrames)
+        await #expect(throws: ExportFailure.self) {
+            try await ExportVerifier.verify(url: result.stagingURL, settings: wrongBitrate, expectedFrames: result.inputFrames)
         }
         let handle = try FileHandle(forWritingTo: result.stagingURL)
         try handle.truncate(atOffset: UInt64(result.byteCount - 1))
         try handle.close()
-        #expect(throws: ExportFailure.self) {
-            try ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames)
+        await #expect(throws: ExportFailure.self) {
+            try await ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames)
         }
         await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
         #expect(try Int64(Data(contentsOf: result.stagingURL).count) == result.byteCount - 1)
@@ -338,8 +338,8 @@ struct ExportCodecTests {
             let handle = try FileHandle(forWritingTo: result.stagingURL)
             try handle.truncate(atOffset: 20)
             try handle.close()
-            #expect(throws: (any Error).self) {
-                try ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames)
+            await #expect(throws: (any Error).self) {
+                try await ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames)
             }
             await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
             #expect(try Data(contentsOf: result.stagingURL).count == 20)

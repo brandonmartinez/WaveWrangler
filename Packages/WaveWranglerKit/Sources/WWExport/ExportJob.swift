@@ -7,9 +7,10 @@ public struct ExportDelivery: Sendable, Equatable {
     public let settings: ExportSettings
     public let metadata: ExportMetadata
     public let dither: ExportDither
+    public let normalization: ExportNormalization
 
     public init(filename: String, settings: ExportSettings, metadata: ExportMetadata = .init(),
-                dither: ExportDither = .none) throws {
+                dither: ExportDither = .none, normalization: ExportNormalization = .off) throws {
         guard !filename.isEmpty, filename != ".", filename != "..",
               !filename.contains("/"), !filename.contains(":"), !filename.contains("\0"),
               filename.utf8.count <= 240,
@@ -22,10 +23,12 @@ public struct ExportDelivery: Sendable, Equatable {
             }
         }
         try metadata.validate(for: settings.codec)
+        _ = try normalization.targets(channels: settings.channels)
         self.filename = filename
         self.settings = settings
         self.metadata = metadata
         self.dither = dither
+        self.normalization = normalization
     }
 }
 
@@ -58,10 +61,12 @@ public struct PublishedExport: Sendable, Equatable {
     public let inputFrames: Int64
     public let decodedFrames: Int64
     public let byteCount: Int64
+    public let loudness: ExportLoudnessReport
 }
 
 public enum ExportJobPhase: Sendable, Equatable {
     case idle, preflight, rendering, converting(delivery: Int), verifying(delivery: Int), publishing, cleaning
+    case measuring(delivery: Int), correcting(delivery: Int, attempt: Int)
     case completed, canceled, failed
 }
 
@@ -138,22 +143,83 @@ public actor ExportJob {
             try await pcm.finish()
             try await check(isCurrent)
             var verified: [VerifiedExport] = []
+            var reports: [ExportLoudnessReport] = []
             for (index, delivery) in request.deliveries.enumerated() {
-                deliveryFrames = 0
                 let expected = Int64((Double(request.productionFrames.count64)
                     * Double(delivery.settings.sampleRate) / 48_000).rounded())
-                await update(.converting(delivery: index), total: expected, notify: notify)
-                let encoder = try ExportEncoder(stagingDirectory: owned.directory,
-                                                settings: delivery.settings, metadata: delivery.metadata)
-                encoders.append(encoder)
-                try await pcm.convert(delivery: delivery) { [self] samples in
-                    try await check(isCurrent)
-                    try await encoder.append(interleaved: samples)
-                    await conversionProgress(Int64(samples.count / delivery.settings.channels),
-                                             index: index, total: expected, notify: notify)
+                let targets = try delivery.normalization.targets(channels: delivery.settings.channels)
+                var gainDB = 0.0
+                var initialStatus = ExportLoudnessReport.TargetStatus.off
+                if let targets {
+                    await update(.measuring(delivery: index), total: expected, notify: notify)
+                    let meter = ExportLoudnessAccumulator(settings: delivery.settings)
+                    deliveryFrames = 0
+                    try await pcm.convert(delivery: delivery, measuring: true) { [self] samples in
+                        try await check(isCurrent)
+                        try await meter.append(samples)
+                        await measurementProgress(Int64(samples.count / delivery.settings.channels),
+                                                  index: index, total: expected, notify: notify)
+                    }
+                    guard deliveryFrames == expected else { throw ExportFailure.verification("Incomplete loudness pass") }
+                    let measured = await meter.finish()
+                    let desired = measured.integratedLUFS.map { targets.loudness - $0 } ?? 0
+                    let peakGain = measured.truePeakDBTP.map {
+                        targets.ceiling - ExportLoudnessMeter.ceilingReserveDB - $0 - 0.05
+                    } ?? 0
+                    gainDB = min(desired, ExportNormalization.maximumBoostDB, peakGain)
+                    if measured.integratedLUFS == nil { initialStatus = .unmeasurable }
+                    else if gainDB < desired - 0.1 {
+                        initialStatus = peakGain < min(desired, ExportNormalization.maximumBoostDB)
+                            ? .peakLimited : .boostLimited
+                    } else { initialStatus = .achieved }
                 }
-                await update(.verifying(delivery: index), total: request.productionFrames.count64, notify: notify)
-                verified.append(try await encoder.finish())
+                let originalGainDB = gainDB
+                var correctionPasses = 0
+                while true {
+                    deliveryFrames = 0
+                    if correctionPasses == 0 {
+                        await update(.converting(delivery: index), total: expected, notify: notify)
+                    } else {
+                        await update(.correcting(delivery: index, attempt: correctionPasses), total: expected, notify: notify)
+                    }
+                    try await check(isCurrent)
+                    try owned.validateOwnership()
+                    let encoder = try ExportEncoder(stagingDirectory: owned.directory,
+                                                    settings: delivery.settings, metadata: delivery.metadata)
+                    encoders.append(encoder)
+                    try await pcm.convert(delivery: delivery, gainDB: gainDB) { [self] samples in
+                        try await check(isCurrent)
+                        try await encoder.append(interleaved: samples)
+                        await conversionProgress(Int64(samples.count / delivery.settings.channels),
+                                                 index: index, total: expected, notify: notify)
+                    }
+                    await update(.verifying(delivery: index), total: expected, notify: notify)
+                    let file = try await encoder.finish { [self] in try await check(isCurrent) }
+                    try await check(isCurrent)
+                    if let targets, let peak = file.loudness.truePeakDBTP,
+                       peak > targets.ceiling - ExportLoudnessMeter.ceilingReserveDB {
+                        guard correctionPasses < 3 else {
+                            throw ExportFailure.verification("Decoded true peak cannot satisfy the ceiling and reconstruction safety reserve after three corrective re-encodes")
+                        }
+                        gainDB -= peak - (targets.ceiling - ExportLoudnessMeter.ceilingReserveDB) + 0.1
+                        correctionPasses += 1
+                        try owned.validateOwnership()
+                        try await encoder.cancel()
+                        continue
+                    }
+                    var status = initialStatus
+                    if targets != nil, file.loudness.integratedLUFS == nil { status = .unmeasurable }
+                    else if let targets, initialStatus == .achieved,
+                            let actual = file.loudness.integratedLUFS, abs(actual - targets.loudness) > 0.2 {
+                        status = correctionPasses > 0 ? .peakLimited : .targetMissed
+                    }
+                    reports.append(.init(measurement: file.loudness,
+                        requestedTargetLUFS: targets?.loudness, ceilingDBTP: targets?.ceiling,
+                        appliedGainDB: gainDB, correctiveAttenuationDB: originalGainDB - gainDB,
+                        correctionPasses: correctionPasses, targetStatus: status))
+                    verified.append(file)
+                    break
+                }
                 try await check(isCurrent)
             }
             await update(.publishing, total: request.productionFrames.count64, notify: notify)
@@ -162,7 +228,8 @@ public actor ExportJob {
                 try await check(isCurrent)
                 let url = try owned.publish(file, filename: request.deliveries[index].filename)
                 published.append(.init(url: url, settings: file.settings, inputFrames: file.inputFrames,
-                                       decodedFrames: file.decodedFrames, byteCount: file.byteCount))
+                                       decodedFrames: file.decodedFrames, byteCount: file.byteCount,
+                                       loudness: reports[index]))
             }
         } catch {
             let kind: ExportJobProblem.Kind
@@ -215,7 +282,16 @@ public actor ExportJob {
 
     private func conversionProgress(_ frames: Int64, index: Int, total: Int64, notify: Progress) async {
         deliveryFrames += frames
-        progress = .init(phase: .converting(delivery: index), completedFrames: deliveryFrames, totalFrames: total)
+        let phase: ExportJobPhase
+        if case .correcting = progress.phase { phase = progress.phase }
+        else { phase = .converting(delivery: index) }
+        progress = .init(phase: phase, completedFrames: deliveryFrames, totalFrames: total)
+        await notify(progress)
+    }
+
+    private func measurementProgress(_ frames: Int64, index: Int, total: Int64, notify: Progress) async {
+        deliveryFrames += frames
+        progress = .init(phase: .measuring(delivery: index), completedFrames: deliveryFrames, totalFrames: total)
         await notify(progress)
     }
 

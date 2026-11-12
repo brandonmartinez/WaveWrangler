@@ -17,10 +17,12 @@ struct ExportMetadataAdapterTests {
             settings: try .init(codec: .mp3(.constantBitrate(kbps: 128)), sampleRate: 48_000, channels: 2))
         selection.overrides = .init(creator: "", publicDescription: "Delivery only")
         selection.titleOverride = "Export title"
+        selection.normalization = .custom(targetLUFS: -18, ceilingDBTP: -2)
         let output = try ExportMetadataAdapter.delivery(resolved, selection: selection)
         #expect(output.metadata.title == "Export title" && output.metadata.album == "Show")
         #expect(output.metadata.artist == nil && output.metadata.publicDescription == "Delivery only")
         #expect(output.metadata.date == nil && output.metadata.episodeNumber == 7)
+        #expect(output.normalization == .custom(targetLUFS: -18, ceilingDBTP: -2))
         #expect(model == original && model.episodes[0].status == .planned)
     }
 
