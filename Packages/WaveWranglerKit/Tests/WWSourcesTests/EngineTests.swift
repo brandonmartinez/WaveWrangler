@@ -973,6 +973,11 @@ struct ForbiddenAPITests {
         if path == "WWExport/ExportVerifier.swift" {
             code = code.replacingOccurrences(of: #"\bAVAudioFile\b"#, with: "", options: .regularExpression)
         }
+        // This internal converter can only rewind the raw file it created from production PCM.
+        if path == "WWExport/ExportIntermediate.swift" {
+            code = code.replacingOccurrences(of: #"\bAVAudioConverter(?:InputStatus)?\b"#,
+                                            with: "", options: .regularExpression)
+        }
         var tokens = decodeTokens
         if !path.hasPrefix("WWDecode/") { tokens += contentGatewayAPITokens }
         return tokens.filter { token in
@@ -985,6 +990,9 @@ struct ForbiddenAPITests {
     @Test func exportStagingExceptionsAreExactAndDoNotPermitSourceGatewayAccess() {
         #expect(Self.otherModuleViolations(in: "AVAudioFile(forReading: ownedOutput)", path: "WWExport/ExportVerifier.swift").isEmpty)
         #expect(Self.otherModuleViolations(in: "AVURLAsset(url: ownedOutput)", path: "WWExport/ExportEncoder.swift").isEmpty)
+        #expect(Self.otherModuleViolations(in: "AVAudioConverter(from: pcm, to: pcm)", path: "WWExport/ExportIntermediate.swift").isEmpty)
+        #expect(Self.otherModuleViolations(in: "AVAudioFile(forReading: source)", path: "WWExport/ExportIntermediate.swift")
+            == ["WWExport/ExportIntermediate.swift: AVAudioFile"])
         for path in ["WWExport/Sub/ExportVerifier.swift", "WWExport/Other.swift", "WaveWrangler/ExportVerifier.swift"] {
             #expect(Self.otherModuleViolations(in: "AVAudioFile(forReading: source)", path: path).contains("\(path): AVAudioFile"))
         }

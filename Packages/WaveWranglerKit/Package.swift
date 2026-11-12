@@ -131,7 +131,7 @@ let package = Package(
         .testTarget(name: "WWAutoAlignTests", dependencies: ["WWAutoAlign", "WWAlignEstimate", "WWTimeMap", "WWCore"]),
         .testTarget(name: "WWRenderTests", dependencies: ["WWRender", "WWTimeMap", "WWCore", "WWTestSupport"]),
         .testTarget(name: "WWMixTests", dependencies: ["WWMix", "WWCore", "WWSources", "WWCommonEdit", "WWDerived", "WWRender"]),
-        .testTarget(name: "WWExportTests", dependencies: ["WWExport"]),
+        .testTarget(name: "WWExportTests", dependencies: ["WWExport", "WWMix", "WWCore"]),
         .testTarget(name: "WWAlignSegmentTests", dependencies: ["WWAlignSegment", "WWAlignEstimate", "WWTimeMap", "WWCore", "WWTestSupport"]),
         .testTarget(name: "WWAlignPipelineTests", dependencies: ["WWAlignPipeline", "WWDerived", "WWDecode", "WWSources", "WWTimeMap", "WWPersistence", "WWAlignEstimate", "WWRender", "WWCore"]),
         .testTarget(name: "WWWordEvaluationTests", dependencies: ["WWWordEvaluation"]),
