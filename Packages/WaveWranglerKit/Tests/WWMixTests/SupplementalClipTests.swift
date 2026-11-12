@@ -368,8 +368,9 @@ struct SupplementalClipTests {
         let f = try await SupplementalFixture(rate: 48_000, frames: 16)
         defer { try? f.remove() }
         let before = try Data(contentsOf: f.url)
-        let scheduler = try await f.scheduler(f.episode(clips: [f.clip(at: -2), f.clip(at: 3, channels: [1, 0])]),
-                                            frames: -4..<23)
+        var episode = f.episode(clips: [f.clip(at: -2), f.clip(at: 3, channels: [1, 0])])
+        episode.productionRange = .init(start: .absolute(frame: -4), end: .absolute(frame: 23))
+        let scheduler = try await f.scheduler(episode, frames: -4..<23)
         #expect(scheduler.recipe.routes.isEmpty)
         #expect(scheduler.recipe.audioTracks.map(\.track) == [f.track.id])
         #expect(scheduler.recipe.composition?.programFrames == -2..<19)
