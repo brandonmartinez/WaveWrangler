@@ -402,6 +402,16 @@ final class ControlsSidebarUITests: XCTestCase {
         for toggle in [recording, alignment, transcript, episode] {
             XCTAssertTrue(toggle.isHittable, toggle.debugDescription)
         }
+        let recordings = app.buttons["ww.show.recordings"]
+        for control in [app.buttons["ww.show.library"], recordings,
+                        app.buttons["ww.review.toggle"], app.buttons["ww.mixer.toggle"]] {
+            XCTAssertTrue(control.isHittable, control.debugDescription)
+        }
+        recordings.click()
+        XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.outlines["ww.setup.speakers"].exists)
+        app.buttons["Done"].click()
+        XCTAssertTrue(wait { recording.isHittable })
         XCTAssertFalse(app.outlines["ww.alignment.groups"].exists, "The recording inspector is contextual, not the detailed table.")
         alignment.click()
         XCTAssertEqual(alignment.value as? String, "Shown")

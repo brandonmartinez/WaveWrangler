@@ -612,10 +612,13 @@ swift test --package-path Packages/WaveWranglerKit --scratch-path .build/swiftpm
 The native episode editor opens into the integrated all-source workspace. It shares one transport,
 ruler and listening state with progressive transcript annotations and contextual review. The fixed
 action strip exposes recording management, refresh, transcription and its model/Preferences shortcut.
-Legacy Setup, Alignment and Edit & Cleanup remain in Views and their keyboard commands; Export
+The Workspace / Views / Export toolbar group is removed. Legacy Setup, Alignment and Edit & Cleanup
+remain in the View menu and their keyboard commands; Export remains available there and
 opens the existing unavailable explanation, not an export engine. Its contextual
 Recording inspector owns speaker/channel assignments, group nudges, numeric timing, and picked-point
-anchor actions; timing evidence is expandable. Grouped top-bar buttons toggle one Recording,
+anchor actions; timing evidence is expandable. The title bar separates Library, Recordings & Speakers,
+Save Status, bottom-pane controls (Review and Mixer), and sidebar controls with native toolbar spacing.
+The Recordings & Speakers button opens the existing management sheet. Grouped sidebar buttons toggle one Recording,
 Alignment, Transcript & review, or Episode sidebar at a time. The Alignment sidebar owns the
 epoch/anchor tables, detailed timing actions, and status previously shown below the tracks;
 its tables scroll horizontally in narrow windows. Recording settings buttons select their own source

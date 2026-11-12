@@ -175,6 +175,9 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         app.activate()
         let play = app.buttons["alignment.waveforms.transport.play"]
         XCTAssertTrue(play.waitForExistence(timeout: 20))
+        XCTAssertFalse(app.descendants(matching: .any)["ww.show.destination"].exists)
+        XCTAssertFalse(app.descendants(matching: .any)["ww.show.views"].exists)
+        XCTAssertFalse(app.buttons["Export…"].exists)
         setTimelineFollowPlayhead(false, in: app)
         chooseAddRecordings(in: app)
         XCTAssertTrue(app.outlines["ww.setup.sources"].waitForExistence(timeout: 10), app.debugDescription)
@@ -191,7 +194,7 @@ final class UnifiedWorkspaceUITests: XCTestCase {
             app.buttons["Done"].click()
             closeTimelineMore(in: app)
             XCTAssertTrue(wait { play.isHittable })
-            XCTAssertTrue(app.buttons["ww.show.destination.alignment"].isSelected,
+            XCTAssertTrue(play.exists,
                           "File Import keeps the integrated workspace rather than navigating to legacy Setup.")
         }
         let tracks = app.descendants(matching: .any).matching(
@@ -339,10 +342,10 @@ final class UnifiedWorkspaceUITests: XCTestCase {
         screenshot.name = "Native integrated workspace, marquee, cycle and readable transcript"
         screenshot.lifetime = .keepAlways
         add(screenshot)
-        app.buttons["Export…"].click()
+        app.typeKey("4", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["ww.show.blocked.heading"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Export isn't available yet"].exists)
-        app.buttons["ww.show.destination.alignment"].click()
+        app.typeKey("2", modifierFlags: .command)
         XCTAssertTrue(play.waitForExistence(timeout: 10))
     }
 

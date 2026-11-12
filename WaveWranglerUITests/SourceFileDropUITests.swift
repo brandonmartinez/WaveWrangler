@@ -25,8 +25,7 @@ final class SourceFileDropUITests: XCTestCase {
         defer { app.terminate() }
         app.menuBars.menuBarItems["Window"].click()
         app.menuBars.menuItems["Zoom"].click()
-        app.descendants(matching: .any)["ww.show.views"].click()
-        app.menuItems["Recordings & Speakers…"].click()
+        chooseAddRecordings(in: app)
         let outline = app.outlines["ww.setup.sources"]
         XCTAssertTrue(outline.waitForExistence(timeout: 10))
         let finder = XCUIApplication(bundleIdentifier: "com.apple.finder")

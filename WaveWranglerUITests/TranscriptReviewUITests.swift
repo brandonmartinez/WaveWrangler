@@ -41,7 +41,7 @@ final class TranscriptReviewUITests: XCTestCase {
         XCTAssertTrue(app.buttons["ww.cleanup.settings"].exists)
         XCTAssertFalse(app.buttons["Choose Local Model…"].exists)
         app.buttons["Go to Alignment"].click()
-        XCTAssertTrue(app.buttons["ww.show.destination.alignment"].isSelected)
+        XCTAssertTrue(app.buttons["alignment.waveforms.transport.play"].waitForExistence(timeout: 10))
         app.typeKey("3", modifierFlags: .command)
         XCTAssertTrue(app.staticTexts["ww.cleanup.heading"].waitForExistence(timeout: 5))
         app.buttons["Manage Recordings"].click()

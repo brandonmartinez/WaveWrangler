@@ -27,7 +27,7 @@ final class VisualAlignmentUITests: XCTestCase {
         app.buttons["ww.import.confirm"].click()
         XCTAssertTrue(waitUntil { !app.descendants(matching: .any)["ww.import.review"].exists })
         XCTAssertFalse(app.buttons["ww.setup.authorizeOriginals"].exists)
-        app.buttons["ww.show.destination.alignment"].click()
+        app.typeKey("2", modifierFlags: .command)
         let section = app.descendants(matching: .any)["alignment.ungrouped"]
         XCTAssertTrue(section.waitForExistence(timeout: 15), app.debugDescription)
         app.descendants(matching: .any)["alignment.waveforms.fillSpace"].click()
@@ -895,10 +895,8 @@ final class VisualAlignmentUITests: XCTestCase {
     }
 
     private func openAlignment(in app: XCUIApplication) {
-        let destination = app.buttons["ww.show.destination.alignment"]
-        XCTAssertTrue(destination.waitForExistence(timeout: 10))
-        destination.click()
-        XCTAssertTrue(destination.isSelected)
+        app.typeKey("2", modifierFlags: .command)
+        XCTAssertTrue(app.buttons["alignment.waveforms.transport.play"].waitForExistence(timeout: 10))
         showSidebar("recording", in: app)
     }
 

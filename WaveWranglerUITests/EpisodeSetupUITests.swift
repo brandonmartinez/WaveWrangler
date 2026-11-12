@@ -10,7 +10,7 @@ import XCTest
 @MainActor
 final class EpisodeSetupUITests: XCTestCase {
     private var app: XCUIApplication!
-    private enum SetupFailure: Error { case missingViews, missingSetupMenu, missingSources }
+    private enum SetupFailure: Error { case missingSources }
 
     override func setUp() async throws {
         continueAfterFailure = false
@@ -45,21 +45,10 @@ final class EpisodeSetupUITests: XCTestCase {
         add(XCTAttachment(screenshot: app.screenshot()))
     }
 
-    /// Select the retained Setup surface explicitly from the native Views menu.
+    /// Select the retained Setup surface with its View menu shortcut.
     private func openSetup() throws {
         let sources = app.descendants(matching: .any)["ww.setup.sources"]
-        let views = element("ww.show.views")
-        guard views.waitForExistence(timeout: 10) else {
-            attachState("Views control unavailable")
-            throw SetupFailure.missingViews
-        }
-        views.click()
-        let setup = app.menuItems["Legacy Setup"]
-        guard setup.waitForExistence(timeout: 5) else {
-            attachState("Setup menu unavailable")
-            throw SetupFailure.missingSetupMenu
-        }
-        setup.click()
+        app.typeKey("1", modifierFlags: .command)
         guard sources.waitForExistence(timeout: 10) else {
             attachState("Setup content unavailable")
             throw SetupFailure.missingSources

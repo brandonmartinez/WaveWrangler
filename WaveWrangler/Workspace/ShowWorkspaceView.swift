@@ -51,11 +51,6 @@ private struct ShowWindowContent: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Show content and inspector")
         .accessibilityIdentifier("ww.show.contentInspector")
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                DestinationControl(state: state)
-            }
-        }
         .sheet(isPresented: $state.recordingsPresented) {
             if let episode = state.selectedEpisode {
                 VStack(spacing: 0) {
@@ -92,17 +87,38 @@ private struct ShowWindowContent: View {
             ShowMessageBar(state: state)
         }
         .toolbar {
-            ToolbarItemGroup(placement: .primaryAction) {
+            ToolbarItem(placement: .primaryAction) {
                 Button("Library", systemImage: "books.vertical") {
                     if let document = state.store.document {
                         LibraryWindowController.show(document: document)
                     }
                 }
                 .accessibilityIdentifier("ww.show.library")
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItem(placement: .primaryAction) {
+                Button("Recordings & Speakers", systemImage: "person.2") {
+                    state.recordingsPresented = true
+                }
+                .disabled(state.selectedEpisode == nil)
+                .accessibilityIdentifier("ww.show.recordings")
+                .help("Manage this episode's recordings and speakers")
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItem(placement: .primaryAction) {
                 SaveStatusItem(state: state)
-                if state.destination == .alignment, state.selectedEpisode != nil {
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            if state.destination == .alignment, state.selectedEpisode != nil {
+                ToolbarItem(placement: .primaryAction) {
+                    WorkspaceBottomPaneToggles(state: state)
+                }
+                ToolbarSpacer(.fixed, placement: .primaryAction)
+                ToolbarItem(placement: .primaryAction) {
                     WorkspaceInspectorToggles(state: state)
-                } else {
+                }
+            } else {
+                ToolbarItem(placement: .primaryAction) {
                     Button {
                         state.toggleInspector()
                     } label: {

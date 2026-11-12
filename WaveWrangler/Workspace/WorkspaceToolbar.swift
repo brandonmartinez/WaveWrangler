@@ -2,7 +2,7 @@ import AppKit
 import SwiftUI
 import WWOrganizer
 
-struct WorkspaceInspectorToggles: View {
+struct WorkspaceBottomPaneToggles: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
@@ -45,6 +45,17 @@ struct WorkspaceInspectorToggles: View {
                 : state.bottomPanePresented && state.bottomPaneContent == .mixer ? "Shown" : "Hidden")
             .accessibilityIdentifier("ww.mixer.toggle")
             .help("Show the production mixer in the bottom pane or focus its separate window. Option-click to open in a separate window.")
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Bottom panes")
+    }
+}
+
+struct WorkspaceInspectorToggles: View {
+    @Bindable var state: ShowWindowState
+
+    var body: some View {
+        HStack(spacing: 2) {
             ForEach(ShowWindowState.WorkspaceInspector.allCases, id: \.self) { activity in
                 let active = state.inspectorPresented && state.workspaceInspector == activity
                 Button {
@@ -65,41 +76,6 @@ struct WorkspaceInspectorToggles: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Sidebar activities")
-    }
-}
-
-/// Destination control (IA §4.2). Segments are separate accessibility elements with stable identifiers
-/// so later destinations are focusable and announce "Not available in this version" (IA-12). Selecting
-/// one never moves keyboard focus (IA-13).
-struct DestinationControl: View {
-    @Bindable var state: ShowWindowState
-
-    var body: some View {
-        HStack(spacing: 8) {
-            Button("Workspace", systemImage: "waveform") { state.select(.alignment) }
-                .accessibilityAddTraits(state.destination == .alignment ? [.isSelected] : [])
-                .accessibilityIdentifier("ww.show.destination.alignment")
-            NativeActionMenu(
-                label: "Views", symbol: "rectangle.3.group",
-                identifier: "ww.show.views", actions: viewActions)
-            Button("Export…", systemImage: "square.and.arrow.up") { state.select(.export) }
-                .help("Export is not available yet. This opens the availability explanation; nothing is exported.")
-        }
-        .accessibilityElement(children: .contain)
-        .accessibilityLabel("Workspace and alternative views")
-        .accessibilityValue(state.destination.title)
-        .accessibilityIdentifier("ww.show.destination")
-    }
-
-    private var viewActions: [NativeActionMenu.Action] {
-        [.init(title: "Recordings & Speakers…", identifier: "ww.show.views.recordings") {
-            state.recordingsPresented = true
-        }] + ShowDestination.allCases.filter { $0 != .export }.enumerated().map { index, destination in
-            .init(
-                title: "Legacy \(destination.title)",
-                identifier: "ww.show.destination.\(destination.rawValue)", separatorBefore: index == 0
-            ) { state.select(destination) }
-        }
     }
 }
 

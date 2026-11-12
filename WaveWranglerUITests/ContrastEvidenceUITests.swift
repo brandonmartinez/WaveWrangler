@@ -318,7 +318,6 @@ final class ContrastEvidenceUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 1)
             window.typeKey("1", modifierFlags: .command)
             Thread.sleep(forTimeInterval: 1)
-            textOnAccent("Toolbar selected destination 'Setup' (accent 25% fill)", app.descendants(matching: .any)["ww.show.destination.setup"])
             EpisodeLibraryNavigation.browseCurrentShow(in: app)
             let episode = app.descendants(matching: .any).matching(NSPredicate(format: "identifier BEGINSWITH 'ww.show.sidebar.episode.'")).firstMatch
             episode.click()
