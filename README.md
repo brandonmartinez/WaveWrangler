@@ -19,12 +19,12 @@ The bundled Whisper/ggml notices are preserved in
 and [`WhisperCPULICENSE.txt`](WaveWrangler/WhisperCPULICENSE.txt).
 Downloaded models retain their own licenses.
 
-The planned MP3 export integration is approved to use an **unmodified,
-encoder-only LAME library**, called through a WaveWrangler-owned wrapper.
-LAME is not bundled yet. When integrated, pin the upstream release and source
-checksum, preserve its LGPL license and notices, and distribute the corresponding
-source and build instructions. Include the notices in the source distribution
-and expose them in the app through About or a third-party licenses window.
+The `WWExport` codec foundation bundles **unmodified, encoder-only LAME 3.100**,
+called through a WaveWrangler-owned wrapper, alongside system WAV and AAC-LC
+encoding. The pinned complete source archive, LGPL notices, bounded PCM API,
+generated-PCM qualification and practical source rebuild/relink instructions are
+documented in [Export codecs](docs/engineering/export-codecs.md). Notices are
+included as module resources for the later app About/licenses integration.
 
 Open application source and attribution alone are not the complete LGPL
 compliance requirements. The shipped integration must also provide a usable

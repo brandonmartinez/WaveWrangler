@@ -964,6 +964,15 @@ struct ForbiddenAPITests {
         if inMemoryPCMConverterPaths.contains(path) {
             code = code.replacingOccurrences(of: #"\bAVAudioConverter(?:InputBlock)?\b"#, with: "", options: .regularExpression)
         }
+        // These exact implementations only create/remux/verify private export staging, never sources.
+        // The verifier is internal; the public encoder accepts PCM and a directory, not an input URL.
+        if path == "WWExport/ExportEncoder.swift" {
+            code = code.replacingOccurrences(of: #"\b(?:AVAudioFile|AVURLAsset|AVAssetExportSession|AVAssetExportPresetPassthrough)\b"#,
+                                            with: "", options: .regularExpression)
+        }
+        if path == "WWExport/ExportVerifier.swift" {
+            code = code.replacingOccurrences(of: #"\bAVAudioFile\b"#, with: "", options: .regularExpression)
+        }
         var tokens = decodeTokens
         if !path.hasPrefix("WWDecode/") { tokens += contentGatewayAPITokens }
         return tokens.filter { token in
@@ -971,6 +980,16 @@ struct ForbiddenAPITests {
                 ? !matches(#"\bAVAudioPlayer\b"#, in: code).isEmpty
                 : code.contains(token)
         }.map { "\(path): \($0)" }
+    }
+
+    @Test func exportStagingExceptionsAreExactAndDoNotPermitSourceGatewayAccess() {
+        #expect(Self.otherModuleViolations(in: "AVAudioFile(forReading: ownedOutput)", path: "WWExport/ExportVerifier.swift").isEmpty)
+        #expect(Self.otherModuleViolations(in: "AVURLAsset(url: ownedOutput)", path: "WWExport/ExportEncoder.swift").isEmpty)
+        for path in ["WWExport/Sub/ExportVerifier.swift", "WWExport/Other.swift", "WaveWrangler/ExportVerifier.swift"] {
+            #expect(Self.otherModuleViolations(in: "AVAudioFile(forReading: source)", path: path).contains("\(path): AVAudioFile"))
+        }
+        #expect(Self.otherModuleViolations(in: "SystemSourceContentIO().openForDecoding(url)", path: "WWExport/ExportEncoder.swift")
+            == ["WWExport/ExportEncoder.swift: SystemSourceContentIO", "WWExport/ExportEncoder.swift: openForDecoding"])
     }
 
     @Test func decodeScannerDetectsMutationsAndWritableOpens() {
