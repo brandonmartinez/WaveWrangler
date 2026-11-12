@@ -108,6 +108,9 @@ struct MixerConsoleStrip: View {
                 if let inputWarning { Text(inputWarning).foregroundStyle(.red) }
                 if let speaker, let state = presentation.state, let episode = presentation.episode {
                     Divider()
+                    SpeakerAutoInputGainControl(store: state.store, episodeID: episode.id, speakerID: speaker.id,
+                                                enabled: canEdit, identifier: "\(identifier).autoInputGain")
+                    Divider()
                     SpeakerAppearanceEditor(store: state.store, episodeID: episode.id, speakerID: speaker.id,
                                             showsHostMembership: false)
                         .disabled(!canEdit)

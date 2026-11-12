@@ -632,6 +632,12 @@ final class EpisodeAlignmentModel {
         document?.store.model.episode(episodeID)?.statedChannel(of: source)
     }
 
+    func waveformInputGain(for track: AlignmentWaveformTrack) -> Double {
+        guard let channel = track.decodedChannel ?? (track.envelope.channelCount == 1 ? 0 : nil) else { return 1 }
+        let gainDB = document?.store.model.episode(episodeID)?.mix?.inputGainDB(for: track.id, channel: channel) ?? 0
+        return pow(10, gainDB / 20)
+    }
+
     func matchOptions(for track: AlignmentWaveformTrack) -> [SpeakerMatchOption] {
         guard let live = document?.store.model.episode(episodeID),
               (!hasAcceptedRevision || waveformMap != nil),

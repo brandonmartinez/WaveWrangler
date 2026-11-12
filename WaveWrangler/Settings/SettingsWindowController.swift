@@ -151,6 +151,13 @@ struct SourcesSettingsView: View {
                     .accessibilityIdentifier("ww.settings.downloadSources")
                 caption(SettingsWording.downloadCaption(enabled: settings.downloadSourcesAutomatically))
             }
+            Section("Auto Input Gain") {
+                MixerNumberControl(title: "Target level (dBFS RMS)", value: $settings.autoInputGainTargetDBFS,
+                    range: AutoInputGainTarget.rangeDBFS, identifier: "ww.settings.autoInputGain.target",
+                    endEditing: {})
+                caption("Editing reference for audio above a quiet gate, not final loudness or voice detection. Noise and music can influence the result. Default: -20 dBFS RMS. Estimated true peaks are kept below -6 dBTP with an additional 0.5 dB margin.")
+                caption("Run Auto Input Gain explicitly for one speaker's confirmed Primary from its input-gain controls or mixer input information. Changing this target does not analyze audio or change existing gains.")
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)

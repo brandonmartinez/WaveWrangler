@@ -1515,7 +1515,7 @@ struct AlignmentWaveformView: View {
                 snapshot: model.waveformTilesVersion, index: index, size: size,
                 start: model.waveformStartSeconds - shift, duration: model.waveformDurationSeconds,
                 color: model.trackIdentity(track.id).color, lineWidth: 1.5,
-                gain: normalizeView ? model.waveformDisplayGains[track.id] ?? 1 : 1,
+                gain: normalizeView ? model.waveformDisplayGains[track.id] ?? 1 : model.waveformInputGain(for: track),
                 draftEpoch: !activeGroup && model.waveformTimingIsDraft ? model.selection : nil,
                 draftRatePPM: model.waveformRatePPM,
                 draftOffsetMilliseconds: model.waveformOffsetMilliseconds, displayScale: displayScale
@@ -1530,7 +1530,7 @@ struct AlignmentWaveformView: View {
            !model.waveformTimingIsDraft, let input = model.waveformProposalInput(for: track) {
             AudioTimelineWaveformProposalDrawing(input: input, size: size,
                 start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
-                normalized: normalizeView, displayScale: displayScale)
+                normalized: normalizeView, inputGain: model.waveformInputGain(for: track), displayScale: displayScale)
         }
     }
 
@@ -1546,7 +1546,7 @@ struct AlignmentWaveformView: View {
                 size: size, start: model.waveformStartSeconds - shift, duration: model.waveformDurationSeconds,
                 color: model.trackIdentity(track.id).color.opacity(overlay ? 0.8 : 1),
                 lineWidth: overlay ? (model.selectedWaveformSource == track.id ? 2 : 1.3) : 1.5,
-                gain: normalizeView ? model.waveformOverviewDisplayGains[track.id] ?? 1 : 1,
+                gain: normalizeView ? model.waveformOverviewDisplayGains[track.id] ?? 1 : model.waveformInputGain(for: track),
                 draftEpoch: !activeGroup && model.waveformTimingIsDraft ? model.selection : nil,
                 draftRatePPM: model.waveformRatePPM,
                 draftOffsetMilliseconds: model.waveformOffsetMilliseconds,
@@ -1574,7 +1574,7 @@ struct AlignmentWaveformView: View {
                 start: clip.drawingStart, duration: model.waveformDurationSeconds,
                 color: model.trackIdentity(track.id).color.opacity(overlay ? 0.8 : 1),
                 lineWidth: overlay ? (model.selectedWaveformSource == track.id ? 2 : 1.3) : 1.5,
-                gain: normalizeView ? slice.gains[track.id] ?? 1 : 1,
+                gain: normalizeView ? slice.gains[track.id] ?? 1 : model.waveformInputGain(for: track),
                 draftEpoch: !activeGroup && model.waveformTimingIsDraft ? model.selection : nil,
                 draftRatePPM: model.waveformRatePPM, draftOffsetMilliseconds: model.waveformOffsetMilliseconds,
                 displayScale: displayScale

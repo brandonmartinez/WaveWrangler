@@ -473,17 +473,8 @@ public actor NativeSourcePreparation {
         else {
             throw NativeSourcePreparationFailure.formatMismatch
         }
-        let declared = actual.channelLayout.isDeclaredBySource
-            && ((actual.channelCount == 1 && actual.channelLayout.channelLabels == [42])
-                || (actual.channelCount == 2 && actual.channelLayout.channelLabels == [1, 2]))
-        let legacy = actual.channelLayout == .undeclared
-            && legacyWavePCMChannelOrder?.channelCount == actual.channelCount
-        let m4a = actual.channelLayout == .undeclared && actual.container.kind == .m4a
-            && [.aac, .appleLossless].contains(actual.codec.kind)
-            && m4aCodecChannelOrder?.channelCount == actual.channelCount
-        guard declared || legacy || m4a else {
-            throw NativeSourcePreparationFailure.unsupportedChannelLayout
-        }
+        try SourceChannelOrder.require(actual, legacyWavePCM: legacyWavePCMChannelOrder,
+                                       m4aCodec: m4aCodecChannelOrder)
     }
 
     private func window(_ range: Range<Int64>, audio: PreparedSourceAudio) throws -> PreparedSourceWindow {

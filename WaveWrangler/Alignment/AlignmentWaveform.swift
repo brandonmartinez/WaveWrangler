@@ -23,11 +23,12 @@ struct AlignmentWaveformTrack: Identifiable, Sendable {
     let envelope: WaveformEnvelope
     let sourceIdentity: RawSourceIdentity?
     let overviewCacheKey: DerivedAssetKey?
+    let decodedChannel: Int?
 
     init(
         group: RecorderGroupID, epoch: RecordingEpochID, name: String, groupName: String,
         envelope: WaveformEnvelope, sourceIdentity: RawSourceIdentity? = nil,
-        overviewCacheKey: DerivedAssetKey? = nil
+        overviewCacheKey: DerivedAssetKey? = nil, decodedChannel: Int? = nil
     ) {
         self.group = group
         self.epoch = epoch
@@ -36,6 +37,7 @@ struct AlignmentWaveformTrack: Identifiable, Sendable {
         self.envelope = envelope
         self.sourceIdentity = sourceIdentity
         self.overviewCacheKey = overviewCacheKey
+        self.decodedChannel = decodedChannel
     }
 }
 
@@ -639,6 +641,12 @@ enum AlignmentWaveformProjection {
         guard normalized else { return 1 }
         let peak = strokes.reduce(0.0) { max($0, abs(Double($1.low)), abs(Double($1.high))) }
         return peak.isFinite && peak > 0 && peak < 1 ? 1 / peak : 1
+    }
+
+    static func displayChannel(for source: SourceID, in episode: Episode) -> Int? {
+        if let stated = episode.statedChannel(of: source) { return stated }
+        let channels = Set(episode.references(to: source).compactMap(\.channel.channel.value))
+        return channels.count == 1 ? channels.first : nil
     }
 
     static func overviewExtent(_ strokes: [AlignmentWaveformStroke]) -> ClosedRange<Double>? {

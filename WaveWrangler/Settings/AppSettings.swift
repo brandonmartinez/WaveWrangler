@@ -61,6 +61,14 @@ final class AppSettings {
         }
     }
 
+    var autoInputGainTargetDBFS: Double {
+        didSet {
+            if preferences.autoInputGainTargetDBFS != autoInputGainTargetDBFS {
+                preferences.autoInputGainTargetDBFS = autoInputGainTargetDBFS
+            }
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         preferences = AppPreferences(defaults: defaults)
@@ -69,6 +77,7 @@ final class AppSettings {
         textSize = preferences.textSize
         editingPlaybackPolicy = preferences.editingPlaybackPolicy
         timelineJumpInterval = preferences.timelineJumpInterval
+        autoInputGainTargetDBFS = preferences.autoInputGainTargetDBFS
         reloadControlBar()
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: defaults, queue: .main
@@ -89,6 +98,9 @@ final class AppSettings {
         }
         if timelineJumpInterval != preferences.timelineJumpInterval {
             timelineJumpInterval = preferences.timelineJumpInterval
+        }
+        if autoInputGainTargetDBFS != preferences.autoInputGainTargetDBFS {
+            autoInputGainTargetDBFS = preferences.autoInputGainTargetDBFS
         }
     }
 

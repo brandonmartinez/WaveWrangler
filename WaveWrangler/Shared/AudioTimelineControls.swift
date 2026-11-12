@@ -815,6 +815,7 @@ struct AudioTimelineWaveformProposalDrawing: View {
     let start: Double
     let duration: Double
     let normalized: Bool
+    var inputGain: Double = 1
     let displayScale: Double
     @State private var prepared: (input: AlignmentWaveformProjection.ProposalInput, index: AlignmentWaveformStrokeIndex)?
 
@@ -824,7 +825,7 @@ struct AudioTimelineWaveformProposalDrawing: View {
                 AudioTimelineWaveformDrawing(
                     snapshot: prepared.index.id, index: prepared.index, size: size, start: start, duration: duration,
                     color: .teal.opacity(0.65), lineWidth: 1.5,
-                    gain: normalized ? prepared.index.normalizedGain : 1,
+                    gain: normalized ? prepared.index.normalizedGain : inputGain,
                     displayScale: displayScale, ghost: true)
                     .equatable()
             } else {

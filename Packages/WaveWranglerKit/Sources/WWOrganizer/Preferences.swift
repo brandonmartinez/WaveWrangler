@@ -22,6 +22,7 @@ public enum PreferenceKey {
     public static let transcriptionThreads = "WWTranscriptionThreads"
     public static let editingPlaybackPolicy = "WWEditingPlaybackPolicy"
     public static let timelineJumpSeconds = "WWTimelineJumpSeconds"
+    public static let autoInputGainTargetDBFS = "WWAutoInputGainTargetDBFS"
 }
 
 /// Typed accessor over a `UserDefaults` store with the product defaults applied.
@@ -37,6 +38,7 @@ public struct AppPreferences {
             PreferenceKey.textSizePercent: TextSize.actual.percent,
             PreferenceKey.editingPlaybackPolicy: EditingPlaybackPolicy.muteNonPrimaries.rawValue,
             PreferenceKey.timelineJumpSeconds: TimelineJumpInterval.five.rawValue,
+            PreferenceKey.autoInputGainTargetDBFS: AutoInputGainTarget.defaultDBFS,
         ]
     }
 
@@ -78,6 +80,15 @@ public struct AppPreferences {
                 .flatMap(TimelineJumpInterval.init(rawValue:)) ?? .five
         }
         nonmutating set { defaults.set(newValue.rawValue, forKey: PreferenceKey.timelineJumpSeconds) }
+    }
+
+    public var autoInputGainTargetDBFS: Double {
+        get {
+            guard let value = defaults.object(forKey: PreferenceKey.autoInputGainTargetDBFS) as? Double,
+                  AutoInputGainTarget.isValid(value) else { return AutoInputGainTarget.defaultDBFS }
+            return value
+        }
+        nonmutating set { defaults.set(newValue, forKey: PreferenceKey.autoInputGainTargetDBFS) }
     }
 }
 

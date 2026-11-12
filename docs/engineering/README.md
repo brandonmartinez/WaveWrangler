@@ -2041,6 +2041,38 @@ zero (center pan/balance or unity gain). A drag
 ends one Undo coalescing interval. Generic AU parameter fields and recording
 input gain outside the mixer retain their existing field/slider behavior.
 
+**Auto Input Gain** is an extended, manually invoked action for one speaker's
+confirmed Primary recording/channel, available in the recording input-gain
+controls and the mixer input-information popover. It never runs on opening a
+show, changing preferences, or all tracks at once. Settings > Sources configures
+the target for future runs: -20 dBFS RMS by default, adjustable from -36 to
+-12 dBFS RMS. This is a pre-mix editing reference, not delivery loudness/LUFS.
+
+The local, authorized streaming reader measures 400 ms windows using a bounded
+0.1 dB histogram. It gates below the greater of -60 dBFS and 20 dB below the
+95th-percentile active-window level, requiring at least 400 ms above that gate.
+The gate is level-based, not voice recognition; noise, crosstalk, and music can
+affect the recommendation. Peaks cover the entire selected channel, including
+gated-out windows. A 4x, 48-tap windowed-sinc **estimated** true peak limits the
+new absolute gain to -6 dBTP with an extra 0.5 dB margin and the existing
+-96...+24 dB input-gain range. This is not a certified BS.1770 meter, clipping
+repair, compression, or a guarantee of headroom after summing tracks or effects.
+
+Only one analysis runs per document, with progress and cancellation. Source
+authorization/identity is rechecked during and after decoding; changed, closed,
+read-only, or busy documents cannot receive a stale result. Canceling or a
+failed analysis leaves the gain unchanged. A successful result is one separate
+Undo/Redo edit to the existing saved recording/channel gain, not an additive
+adjustment. Original media, waveform bins, and effect state stay unchanged.
+
+With **Normalize** off, recording waveforms use that saved input gain as a
+linear display scale, including retained/detail tiles, overviews, and proposed
+timing previews. Gain changes and Undo/Redo redraw without remeasuring audio.
+Normalize remains a full-height visual override, independent of input gain.
+Waveforms select the stated speaker channel (or a unique referenced channel);
+an unresolved multichannel aggregate is not scaled by an arbitrary channel's
+gain. Supplemental Audio Clip waveforms are unaffected.
+
 Source Audition keeps recording input gain and appearance editing active.
 Production-only inserts, Solo/Mute, pan/balance, and output gain are disabled and
 dimmed even while stopped; source listening choices remain in the main editor.
