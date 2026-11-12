@@ -387,6 +387,105 @@ acceptOmissions,start,cancel,close,progress.phase,result,message}` and
 `ww.licenses.{window,list,text}`. Intrinsic layout and real UI interactions are
 not certified by compilation or the unhosted tests.
 
+### Phase 6 partial VM evidence (storage blocked)
+
+Qualification began from integration source
+`522fb12486a81c0c2047ecdc26056076a3866062`. Only `ww-ui-1` was started, with the
+documented independently detached `tart run --no-graphics --no-clipboard --no-audio
+ww-ui-1` service. SSH, unlocked console, display-awake assertion, Xcode first-launch
+status and the existing two-test functional smoke result were checked before the
+exclusive guest lease. No hosted/UI test or application was launched on the
+physical host.
+
+The initial leased invocation was:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+source "$HOME/.shell/exports.sh"
+ssh ww-ui-1 'umask 022
+RUN="$HOME/ww-uitest-runs/export-phase6-522fb124-initial"
+TEST_RUNNER_WW_PROBE="$RUN/wwpersist-probe" \
+TEST_RUNNER_SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 \
+~/ww-uitest-runs/gui-lock run --lane refinement --class pr \
+  --sha 522fb12486a81c0c2047ecdc26056076a3866062 \
+  --dir "$RUN" --result "$RUN/hosted.xcresult" \
+  --lease-minutes 15 --queue-timeout 60 -- \
+  xcodebuild test-without-building \
+    -xctestrun "$RUN/Products/WaveWranglerHostedTests_macosx27.2-arm64.xctestrun" \
+    -destination "platform=macOS,arch=arm64" -parallel-testing-enabled NO \
+    -only-testing:WaveWranglerHostedTests/PublicationMetadataHostedTests \
+    -only-testing:WaveWranglerHostedTests/EpisodeExportInterfaceHostedTests \
+    -resultBundlePath "$RUN/hosted.xcresult"'
+```
+
+Swift Testing executed seven tests: all three publication transaction tests and
+the first three export interface tests passed; the actual linked-notices/window
+test failed its minimum-width/title assertion at the then-current line 102.
+Notice resolution and exact bundled Whisper bytes passed before that assertion.
+`SoftwareLicensesWindowController` now disables the hosting controller's automatic
+sizing, matching the existing mixer and episode window pattern, so explicit native
+minimum dimensions remain authoritative. This correction compiles but still
+requires a clean VM rerun.
+
+The guest exhausted storage during diagnostics (`No space left on device`, OSLog
+error 28); the subsequent free-space check reported only 111 MiB. The run exited
+65, and lease metadata writes also failed. Its results are diagnostic evidence,
+not clean qualification. Do not retry until storage is restored and the lease is
+rechecked/reclaimed through `gui-lock`. Disk expansion from 120 to 160 GB was
+referred for approval; no other sessions' artifacts/caches were deleted and no
+disk resize was performed. A later read-only check showed 382 MiB free, no running
+test process and the dead PID 1078 lease still marked stale; this is still
+insufficient diagnostic headroom.
+
+Local evidence is `.build/export-phase6-initial/{sourceSHA,ui-build.log,
+hosted-build.log,probe-build.log,transfer-check.txt,hosted-run.log,
+hosted-summary.json,hosted.xcresult}`. Guest evidence is
+`~/ww-uitest-runs/export-phase6-522fb124-initial/`. Products were transferred to a
+staging directory, compared with `rsync -naci --delete` (preserving symlinks), and
+the app/UI runner signatures verified before the atomic directory rename.
+
+Pending runtime coverage now includes two generated-production tests nested in
+`EpisodeExportInterfaceHostedTests.EpisodeExportProductionHostedTests`: actual
+document/service/render/encode export of all three formats with normalization Off
+and Podcast; signed Start -24,000 / End 264,003, a manual cut, supplemental clip,
+envelope/routing and an Apple Audio Unit; capture of unpolled native state;
+independent AVAudioFile reopening and exact Float32 production comparison;
+original-source byte preservation, actual verified save, inherited Unicode
+metadata/artwork and export-only title/genre overrides; cancellation, model
+invalidation and revoked source access. Audio attachments are retained for
+independent codec/tag/loudness inspection. These new assertions have **not run**.
+The UI tests also retain screenshots/audio and add idle Escape dismissal and
+metadata-edit omission reconsent; neither UI test has executed in this phase.
+
+Host-only preparation of the modified tests passes with isolated DerivedData
+`.build/ExportQualification`, logs in `.build/export-phase6-fixed/`:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+umask 022
+xcodebuild build-for-testing -project WaveWrangler.xcodeproj \
+  -scheme WaveWranglerUITests -testPlan Regression -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/ExportQualification" -jobs 2 \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
+xcodebuild build-for-testing -project WaveWrangler.xcodeproj \
+  -scheme WaveWranglerHostedTests -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/ExportQualification" -jobs 2 \
+  EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
+python3 scripts/test-ui-plans.py --products .build/ExportQualification/Build/Products
+codesign --verify --deep --strict .build/ExportQualification/Build/Products/Debug/WaveWrangler.app
+codesign --verify --deep --strict .build/ExportQualification/Build/Products/Debug/WaveWranglerUITests-Runner.app
+```
+
+The unrelated hosted exclusion remains explicit; compilation does not certify
+any runtime assertion. Phase 6 remains incomplete: clean hosted/UI execution,
+independent exported metadata/artwork/frame/loudness verification, and the
+remaining lifecycle/partial-publication/accessibility interactions listed above
+are still gates. Test signing does not clear App Store/legal or signed relinkable
+distribution release requirements.
+
 ## LAME provenance and rebuilding/relinking
 
 LAME 3.100, <https://lame.sourceforge.io/>, is distributed under the GNU Library

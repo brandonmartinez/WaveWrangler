@@ -27,7 +27,9 @@ final class SoftwareLicensesWindowController: NSWindowController {
     }
 
     private init() {
-        let window = NSWindow(contentViewController: NSHostingController(rootView: SoftwareLicensesView()))
+        let hosting = NSHostingController(rootView: SoftwareLicensesView())
+        hosting.sizingOptions = []
+        let window = NSWindow(contentViewController: hosting)
         window.title = "Software Licenses"
         window.styleMask = [.titled, .closable, .resizable, .miniaturizable]
         window.setContentSize(.init(width: 720, height: 540))

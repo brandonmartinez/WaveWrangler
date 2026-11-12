@@ -29,6 +29,7 @@ final class EpisodeExportUITests: XCTestCase {
         XCTAssertTrue(start.waitForExistence(timeout: 10), app.debugDescription)
         XCTAssertFalse(start.isEnabled, "An explicit destination is required.")
         XCTAssertTrue(app.popUpButtons["ww.export.wave.bits"].exists)
+        evidence("Whole-episode export sheet at default size", app: app)
         app.checkBoxes["ww.export.format.mp3"].click()
         app.checkBoxes["ww.export.format.m4a"].click()
         reveal(app.popUpButtons["ww.export.mp3.mode"], in: app)
@@ -40,7 +41,8 @@ final class EpisodeExportUITests: XCTestCase {
         app.typeKey(.escape, modifierFlags: [])
         reveal(app.popUpButtons["ww.export.m4a.bitrate"], in: app)
         XCTAssertFalse(app.popUpButtons["ww.export.m4a.mode"].exists)
-        app.buttons["ww.export.close"].click()
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(wait { !start.exists }, "Escape must dismiss an idle export sheet.")
         app.buttons["ww.show.export"].click()
         XCTAssertTrue(start.waitForExistence(timeout: 5))
         XCTAssertEqual(app.sheets.count, 1)
@@ -59,6 +61,7 @@ final class EpisodeExportUITests: XCTestCase {
         XCTAssertTrue(window.staticTexts["ww.licenses.text"].waitForExistence(timeout: 5))
         let text = window.staticTexts["ww.licenses.text"]
         XCTAssertTrue((text.value as? String ?? text.label).contains("complete source rebuild/relink"))
+        evidence("Linked Software Licenses and relink notice", app: app)
     }
 
     func testMultiFormatPublicationRemembersSuccessAndCollisionNeverOverwrites() throws {
@@ -83,6 +86,17 @@ final class EpisodeExportUITests: XCTestCase {
         reveal(omissions, in: app)
         omissions.click()
         XCTAssertTrue(wait { app.buttons["ww.export.start"].isEnabled }, app.debugDescription)
+        reveal(app.disclosureTriangles["ww.export.metadata"], in: app)
+        app.disclosureTriangles["ww.export.metadata"].click()
+        let title = app.textFields["ww.export.metadata.title"]
+        reveal(title, in: app)
+        replace(title, with: "Export-only title")
+        XCTAssertFalse(app.buttons["ww.export.start"].isEnabled,
+                       "Changing metadata must revoke the earlier omission acknowledgment.")
+        reveal(omissions, in: app)
+        omissions.click()
+        XCTAssertTrue(wait { app.buttons["ww.export.start"].isEnabled })
+        evidence("Explicit omissions acknowledged after metadata edit", app: app)
         app.buttons["ww.export.start"].click()
         let result = app.staticTexts["ww.export.result"]
         XCTAssertTrue(result.waitForExistence(timeout: 120), app.debugDescription)
@@ -91,6 +105,13 @@ final class EpisodeExportUITests: XCTestCase {
         let originals = try files.map { try Data(contentsOf: $0) }
         XCTAssertTrue(originals.allSatisfy { !$0.isEmpty })
         XCTAssertEqual(app.buttons.matching(identifier: "Reveal in Finder").count, 3)
+        evidence("Verified three-format export receipts", app: app)
+        for (index, file) in files.enumerated() {
+            let attachment = XCTAttachment(data: originals[index], uniformTypeIdentifier: "public.audio")
+            attachment.name = file.lastPathComponent
+            attachment.lifetime = .keepAlways
+            add(attachment)
+        }
         app.buttons["ww.export.close"].click()
         app.typeKey("4", modifierFlags: .command)
         XCTAssertTrue(app.buttons["ww.export.start"].waitForExistence(timeout: 10))
@@ -108,6 +129,14 @@ final class EpisodeExportUITests: XCTestCase {
         for (index, file) in files.enumerated() {
             XCTAssertEqual(try Data(contentsOf: file), originals[index])
         }
+        evidence("Collision refusal preserves earlier deliveries", app: app)
+    }
+
+    private func evidence(_ name: String, app: XCUIApplication) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
     }
 
     private func replace(_ field: XCUIElement, with value: String) {
