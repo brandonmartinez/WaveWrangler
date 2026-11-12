@@ -139,10 +139,14 @@ replacement curve.
 
 Select an Audio Clip and place the playhead inside its audible trimmed interval,
 then choose **Fade In...** or **Fade Out...** in the inspector. A fade **starts**
-at that production playhead, captures the evaluated current gain, and ends after
-the entered duration or at the entered program end time. The target is linear
-amplitude (1 full level, 0.25 low, 0 exact Silence); Fade In at the clip beginning
-can explicitly initialize Silence. Endpoints hold until the next ramp. Review
+at that production playhead and ends after the entered duration or at the
+entered program end time. Both **Start amplitude** and **End amplitude** are
+editable linear levels (1 full level, 0.25 low, 0 exact Silence). Fade In suggests
+Silence to the evaluated current level; Fade Out suggests the current level to
+Silence. These are suggestions, not limits tied to the old curve: a unity clip
+can fade from 0 to 1 without increasing its maximum amplitude. A custom start
+level preserves preceding output samples, stepping to the requested level at
+the fade start. Endpoints hold until the next ramp. Review
 lists overwritten knots, crossed ramps, and any changed next-ramp start level;
 applying a conflict requires explicit replacement approval. Later endpoints and
 outside-trim support are retained. **Edit Fade Point...** supports exact local
@@ -219,6 +223,34 @@ uses the same merged removal intervals, including hidden, muted, and backup
 tracks. Later audio ripples to the interval's start. Playback requests split into
 kept aligned windows before gateway reads; waveform and transcript presentation
 use the same shortened timeline. No export behavior is introduced.
+
+After applying a cut, the playhead moves before the new join by the app's
+**Settings > General > Cut editing > Jump back before a new cut** interval
+(0–30 seconds; default 0.5). The existing seek clamp preserves the timeline start.
+This preference affects the post-cut playhead only, not cut boundaries,
+audition context lengths, or keyboard jump intervals.
+
+**Mute selected speaker region** is a separate, opt-in action in the same
+selection toolbar. It records a half-open aligned 48 kHz interval for only the
+selected speaker, including that speaker's corresponding backup channels.
+It does not ripple time, change Solo/Mute listening choices, or alter source
+recordings, measurements, transcripts, or accepted timing. Source listening,
+cleanup previews, and production apply silence before effects; untimed original
+source audition remains unchanged. Shared multichannel recordings resolve by
+speaker channel, not file identity alone.
+
+Muted intervals retain their waveform and original marker bars under the same
+striped treatment as audio outside Speaker In/Out. Select the mute icon to
+**Remove speaker mute**, or use its context menu. Add/remove are independent Undo
+actions; overlapping mutes remain independently removable. Processing snapshots
+and buffered Source playback invalidate on a mute edit, including Undo/Redo,
+without invalidating raw waveform or inference caches.
+
+Show schema 13 adds optional `EpisodeCleanup.speakerMuteRegions`. Schema 12 and
+earlier require the existing consented migration and exact-byte backup, which
+never invents mutes; older readers refuse schema 13 instead of silently losing
+these audible edits. Mutes retain their accepted-alignment revision and remain
+stored but inactive after timing replacement.
 
 Applied markers become single red scissor rails. Selecting a rail shows the same
 compact, inline toolbar used for other markers above the clicked track, not the
@@ -1639,7 +1671,8 @@ control/episode-specific coalescing key. The store owns Undo/coalescing; the pur
 operations do not append duplicate history entries or create a second store.
 
 `EpisodeProcessingInputs` / `hasSameProcessingInputs(as:in:)` include mixer
-state, source/timing dependencies, working range, and active manual cuts.
+state, source/timing dependencies, working range, active manual cuts, and active
+speaker mute regions.
 `EpisodeMediaInputs` deliberately excludes mix state, preserving raw waveforms,
 accepted timing, and raw transcripts across mixer edits. Processing comparisons
 normalize sparse neutral entries and control order but preserve insert order
@@ -2040,6 +2073,38 @@ adjustment step the value, and Option-click or double-click resets a control to
 zero (center pan/balance or unity gain). A drag
 ends one Undo coalescing interval. Generic AU parameter fields and recording
 input gain outside the mixer retain their existing field/slider behavior.
+
+**Auto Input Gain** is an extended, manually invoked action for one speaker's
+confirmed Primary recording/channel, available in the recording input-gain
+controls and the mixer input-information popover. It never runs on opening a
+show, changing preferences, or all tracks at once. Settings > Sources configures
+the target for future runs: -20 dBFS RMS by default, adjustable from -36 to
+-12 dBFS RMS. This is a pre-mix editing reference, not delivery loudness/LUFS.
+
+The local, authorized streaming reader measures 400 ms windows using a bounded
+0.1 dB histogram. It gates below the greater of -60 dBFS and 20 dB below the
+95th-percentile active-window level, requiring at least 400 ms above that gate.
+The gate is level-based, not voice recognition; noise, crosstalk, and music can
+affect the recommendation. Peaks cover the entire selected channel, including
+gated-out windows. A 4x, 48-tap windowed-sinc **estimated** true peak limits the
+new absolute gain to -6 dBTP with an extra 0.5 dB margin and the existing
+-96...+24 dB input-gain range. This is not a certified BS.1770 meter, clipping
+repair, compression, or a guarantee of headroom after summing tracks or effects.
+
+Only one analysis runs per document, with progress and cancellation. Source
+authorization/identity is rechecked during and after decoding; changed, closed,
+read-only, or busy documents cannot receive a stale result. Canceling or a
+failed analysis leaves the gain unchanged. A successful result is one separate
+Undo/Redo edit to the existing saved recording/channel gain, not an additive
+adjustment. Original media, waveform bins, and effect state stay unchanged.
+
+With **Normalize** off, recording waveforms use that saved input gain as a
+linear display scale, including retained/detail tiles, overviews, and proposed
+timing previews. Gain changes and Undo/Redo redraw without remeasuring audio.
+Normalize remains a full-height visual override, independent of input gain.
+Waveforms select the stated speaker channel (or a unique referenced channel);
+an unresolved multichannel aggregate is not scaled by an arbitrary channel's
+gain. Supplemental Audio Clip waveforms are unaffected.
 
 Source Audition keeps recording input gain and appearance editing active.
 Production-only inserts, Solo/Mute, pan/balance, and output gain are disabled and

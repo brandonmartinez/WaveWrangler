@@ -153,7 +153,11 @@ struct ManualCutsHostedTests {
         }
     }
 
-    @Test func sameRippleFramesReachPrimariesBackupsAndBothListeningPaths() async throws {
+    @Test(arguments: [0.5, 2.0])
+    func sameRippleFramesReachPrimariesBackupsAndBothListeningPaths(jumpBack: Double) async throws {
+        let priorJumpBack = AppSettings.shared.cutJumpBackSeconds
+        AppSettings.shared.cutJumpBackSeconds = jumpBack
+        defer { AppSettings.shared.cutJumpBackSeconds = priorJumpBack }
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
@@ -177,8 +181,11 @@ struct ManualCutsHostedTests {
         let choices = cleanup.listening.playback
         cleanup.applyManualCut()
         try #require(cleanup.error == nil, "\(cleanup.error ?? "")")
-        #expect(f.model.waveformPlayheadSeconds == 0.5 && cleanup.playhead == 0.5,
-            "Continue from half a second before the new join, not from the former transport position.")
+        let expectedPlayhead = max(0, 1 - jumpBack)
+        let alignmentPlayhead = f.model.waveformPlayheadSeconds
+        let cleanupPlayhead = cleanup.playhead
+        #expect(alignmentPlayhead == expectedPlayhead && cleanupPlayhead == expectedPlayhead,
+            "Use the configured jump-back interval, clamping at the timeline start.")
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try await wait { f.document.verifiedModel == f.document.store.model }
         let edited = f.document.store.model

@@ -586,13 +586,15 @@ actor AlignmentRuntime {
             else { continue }
             do {
                 let admission = try await waveformSource(record.id, sources: sources)
+                let decodedChannel = decodedChannels[record.id]
+                    ?? AlignmentWaveformProjection.displayChannel(for: record.id, in: episode)
                 let envelope: WaveformEnvelope
                 var overviewKey: DerivedAssetKey?
                 if overview {
                     let cached = try await cachedOverview(
                         admission: admission, episode: episode, group: groupID, map: map,
                         sourceIndex: index, sourceCount: selectedSources.count,
-                        decodedChannel: decodedChannels[record.id], activity: overviewActivity, progress: progress
+                        decodedChannel: decodedChannel, activity: overviewActivity, progress: progress
                     )
                     envelope = cached.envelope
                     overviewKey = cached.key
@@ -623,7 +625,7 @@ actor AlignmentRuntime {
                             startSeconds: Double(range.lowerBound) / rate,
                             durationSeconds: Double(range.count) / rate,
                             groupMap: sourceMap, sourceCorrection: correction,
-                            decodedChannel: decodedChannels[record.id]
+                            decodedChannel: decodedChannel
                         ))
                     }
                     if let first = pieces.first {
@@ -641,7 +643,7 @@ actor AlignmentRuntime {
                 tracks.append(AlignmentWaveformTrack(
                     group: groupID, epoch: epochID, name: record.displayNameHint,
                     groupName: group.name, envelope: envelope, sourceIdentity: admission.witness,
-                    overviewCacheKey: overviewKey
+                    overviewCacheKey: overviewKey, decodedChannel: decodedChannel
                 ))
             } catch is CancellationError {
                 throw CancellationError()
@@ -776,6 +778,36 @@ actor AlignmentRuntime {
         let record: DeviceAccessRecord
         let url: URL
         let witness: RawSourceIdentity
+    }
+
+    func analyzeInputGain(
+        model: ShowDocumentModel, episode episodeID: EpisodeID, speaker: SpeakerID,
+        targetDBFS: Double,
+        validateSelection: @escaping @Sendable () async throws -> Void,
+        progress: @escaping @Sendable (Double) async throws -> Void
+    ) async throws -> AutoInputGainResult {
+        guard model.show.id == showID, let episode = model.episode(episodeID),
+              let assignment = episode.assignment(for: speaker),
+              assignment.primaryConfirmation == .userConfirmed,
+              let primary = assignment.primary, let channel = primary.channel.value,
+              let source = episode.source(primary.sourceID), source.isRecording,
+              source.role == .primary, source.roleConfirmation == .userConfirmed,
+              let snapshots = accessStore as? any DeviceAccessSnapshotStore
+        else { throw AutoInputGainFailure.notAuthorized }
+        try await validateSelection()
+        let sources = try await resolveSources([source])
+        let admission = try await waveformSource(source.id, sources: sources)
+        guard let snapshot = try await snapshots.snapshot(for: admission.key),
+              snapshot.mutationGeneration != nil, snapshot.record == admission.record else {
+            throw AutoInputGainFailure.notAuthorized
+        }
+        let read = SourceReadAdmission(source: source.id, location: admission.url, witness: admission.witness,
+            authorization: .explicitUserRequest(for: source.id), availability: .on) { [self] in
+                try await validateSelection()
+                try await validateSourceAccess(admission, snapshot: snapshot)
+            }
+        return try await AutoInputGainAnalysis.analyze(
+            read, decoder: pipeline.decoder, channel: channel, targetDBFS: targetDBFS, progress: progress)
     }
 
     private struct SourceAdmissionError: LocalizedError {
@@ -965,7 +997,7 @@ actor AlignmentRuntime {
                 var samples = [Float](repeating: 0, count: outputFrames.count)
                 for segment in segments {
                     let alignedFrames = segment.aligned
-                    let decoded: [Float]
+                    var decoded: [Float]
                     if timebase == .sourceTime {
                         guard let record = episode.source(source) else { throw DecodeFailure.notFound }
                         decoded = try await AlignedAuditionWindowReader.readWindow(
@@ -993,6 +1025,10 @@ actor AlignmentRuntime {
                         )
                     }
                     guard decoded.count == alignedFrames.count else { throw WaveformWindowError.invalidSamples }
+                    if timebase == .acceptedTimeline {
+                        Self.applySpeakerMutes(episode.speakerMuteRegions(for: source, channel: channel,
+                            channelCount: interpretation.channelCount), to: &decoded, frames: alignedFrames)
+                    }
                     let offset = Int(segment.displayed.lowerBound - outputFrames.lowerBound)
                     samples.replaceSubrange(offset..<(offset + decoded.count), with: decoded)
                 }
@@ -1252,17 +1288,17 @@ actor AlignmentRuntime {
         }
         let witness = try await pipeline.decoder.captureRawIdentity(url, matching: fingerprint)
         let admitted = WaveformSourceAdmission(key: key, record: snapshot.record, url: url, witness: witness)
-        try await validateSupplementalAccess(admitted, snapshot: snapshot)
+        try await validateSourceAccess(admitted, snapshot: snapshot)
         let read = SourceReadAdmission(source: id, location: url, witness: witness,
             authorization: .explicitUserRequest(for: id), availability: .on) { [weak self] in
                 guard let self else { throw MixerFailure.staleDependencies }
-                try await self.validateSupplementalAccess(admitted, snapshot: snapshot)
+                try await self.validateSourceAccess(admitted, snapshot: snapshot)
             }
         return .init(read: read, generation: snapshot.mutationGeneration)
     }
 
     @concurrent
-    nonisolated private func validateSupplementalAccess(_ admission: WaveformSourceAdmission, snapshot: DeviceAccessSnapshot) async throws {
+    nonisolated private func validateSourceAccess(_ admission: WaveformSourceAdmission, snapshot: DeviceAccessSnapshot) async throws {
         guard let store = accessStore as? any DeviceAccessSnapshotStore,
               try await store.snapshot(for: admission.key) == snapshot else {
             throw NativeSourcePreparationFailure.notAuthorized
@@ -1633,10 +1669,23 @@ actor AlignmentRuntime {
                 guard copied >= 0 else { throw WaveformWindowError.invalidSamples }
                 output.replaceSubrange(offset..<(offset + copied), with: samples.prefix(copied))
             }
+            Self.applySpeakerMutes(episode.activeSpeakerMuteRegions.filter { $0.speaker == lane.speaker },
+                to: &output, frames: Int64(first)..<Int64(last))
             channels[lane.speaker] = output
         }
         _ = try await pipeline.verifiedAcceptedMap(model: model, episode: episodeID)
         return CleanupAudio(start: start, duration: duration, channels: channels)
+    }
+
+    private static func applySpeakerMutes(_ regions: [SpeakerMuteRegion], to samples: inout [Float],
+                                          frames: Range<Int64>) {
+        for region in regions {
+            let lo = max(frames.lowerBound, region.startFrame), hi = min(frames.upperBound, region.endFrame)
+            if hi > lo {
+                let offset = Int(lo - frames.lowerBound)
+                samples.replaceSubrange(offset..<(offset + Int(hi - lo)), with: repeatElement(0, count: Int(hi - lo)))
+            }
+        }
     }
 
     private actor CleanupLaneQueue {

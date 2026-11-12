@@ -7,7 +7,6 @@ public enum AudioFadeDirection: Sendable, Equatable {
 public enum AudioEnvelopeEditError: Error, Sendable, Equatable {
     case invalidInterval
     case invalidDirection
-    case invalidSilenceStart
     case unknownPoint
     case retainedSupportIsReadOnly
     case replacementRequired
@@ -45,17 +44,16 @@ public struct AudioEnvelopeEditing: Sendable {
 
     public func fade(
         from start: Int64, to end: Int64, direction: AudioFadeDirection,
-        target: Double, initializingSilence: Bool = false
+        target: Double, initialAmplitude: Double? = nil
     ) throws -> AudioEnvelopeEditPreview {
         guard start >= 0, start < end, end <= evaluator.durationFrames else {
             throw AudioEnvelopeEditError.invalidInterval
         }
-        guard target.isFinite, (0...1).contains(target) else { throw AudioEnvelopeError.invalidAmplitude }
-        guard !initializingSilence || start == 0 && direction == .fadeIn else {
-            throw AudioEnvelopeEditError.invalidSilenceStart
-        }
         let current = try evaluator.amplitude(atLocalFrame: start)
-        let initial = initializingSilence ? 0 : current
+        let initial = initialAmplitude ?? current
+        guard target.isFinite, (0...1).contains(target), initial.isFinite, (0...1).contains(initial) else {
+            throw AudioEnvelopeError.invalidAmplitude
+        }
         guard direction == .fadeIn ? target > initial : target < initial else {
             throw AudioEnvelopeEditError.invalidDirection
         }
@@ -79,7 +77,14 @@ public struct AudioEnvelopeEditing: Sendable {
         // Every level changed to establish that hold is included in the replacement review.
         let duration = try AudioEnvelopeCoordinate(numerator: evaluator.durationFrames)
         var heldUntil: AudioEnvelopeCoordinate?
-        var result = try evaluator.settingPoint(atLocalFrame: start, amplitude: initial)
+        var result = evaluator.envelope
+        if start > 0, initial != current {
+            // Preserve preceding output samples when the requested start level introduces a step.
+            result = try evaluator.settingPoint(atLocalFrame: start - 1,
+                amplitude: evaluator.amplitude(atLocalFrame: start - 1))
+        }
+        result = try AudioEnvelopeEvaluator(envelope: result, durationFrames: evaluator.durationFrames)
+            .settingPoint(atLocalFrame: start, amplitude: initial)
         result = try AudioEnvelopeEvaluator(envelope: result, durationFrames: evaluator.durationFrames)
             .settingPoint(atLocalFrame: end, amplitude: target)
         let keyed = try result.points.map { (try localCoordinate(of: $0), $0) }

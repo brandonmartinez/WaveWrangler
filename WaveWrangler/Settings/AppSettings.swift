@@ -61,6 +61,22 @@ final class AppSettings {
         }
     }
 
+    var autoInputGainTargetDBFS: Double {
+        didSet {
+            if preferences.autoInputGainTargetDBFS != autoInputGainTargetDBFS {
+                preferences.autoInputGainTargetDBFS = autoInputGainTargetDBFS
+            }
+        }
+    }
+
+    var cutJumpBackSeconds: Double {
+        didSet {
+            if preferences.cutJumpBackSeconds != cutJumpBackSeconds {
+                preferences.cutJumpBackSeconds = cutJumpBackSeconds
+            }
+        }
+    }
+
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         preferences = AppPreferences(defaults: defaults)
@@ -69,6 +85,8 @@ final class AppSettings {
         textSize = preferences.textSize
         editingPlaybackPolicy = preferences.editingPlaybackPolicy
         timelineJumpInterval = preferences.timelineJumpInterval
+        cutJumpBackSeconds = preferences.cutJumpBackSeconds
+        autoInputGainTargetDBFS = preferences.autoInputGainTargetDBFS
         reloadControlBar()
         observer = NotificationCenter.default.addObserver(
             forName: UserDefaults.didChangeNotification, object: defaults, queue: .main
@@ -89,6 +107,12 @@ final class AppSettings {
         }
         if timelineJumpInterval != preferences.timelineJumpInterval {
             timelineJumpInterval = preferences.timelineJumpInterval
+        }
+        if cutJumpBackSeconds != preferences.cutJumpBackSeconds {
+            cutJumpBackSeconds = preferences.cutJumpBackSeconds
+        }
+        if autoInputGainTargetDBFS != preferences.autoInputGainTargetDBFS {
+            autoInputGainTargetDBFS = preferences.autoInputGainTargetDBFS
         }
     }
 

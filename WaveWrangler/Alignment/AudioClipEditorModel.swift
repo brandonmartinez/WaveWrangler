@@ -774,7 +774,7 @@ final class AudioClipEditorModel {
             guard !overflow, !endOverflow, duration > 0 else { throw AudioEnvelopeEditError.invalidInterval }
             return try session.editing.fade(from: start, to: end, direction: direction,
                 target: AudioFadeInput.amplitude(draft.level, silence: draft.silence),
-                initializingSilence: draft.initializingSilence)
+                initialAmplitude: AudioFadeInput.amplitude(draft.startLevel, silence: draft.startSilence))
         case .point(let index):
             if draft.removing { return try session.editing.removingPoint(at: index) }
             return try session.editing.editingPoint(at: index, to: AudioFadeInput.coordinate(draft.localFrame),

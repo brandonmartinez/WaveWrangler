@@ -147,14 +147,14 @@ extension EpisodeCleanupModel {
         guard cut.isValid else { error = "A cut must remove at least one aligned audio frame."; return }
         var cleanup = episode?.cleanup ?? EpisodeCleanup()
         cleanup.manualCuts = manualCuts + [cut]
-        guard saveManualCuts(cleanup, action: "Cut across aligned tracks") else { return }
+        guard saveTimelineEdit(cleanup, action: "Cut across aligned tracks") else { return }
         selectedFillerID = nil
         selectedWord = nil
         selectedManualCutID = cut.id
         listening.selectionToolsPresented = true
         listening.selection = nil
         listening.selectedTranscriptText = nil
-        seek(to: cutTimeline.editedTime(forAlignedTime: cut.alignedStart) - 0.5)
+        seek(to: cutTimeline.editedTime(forAlignedTime: cut.alignedStart) - AppSettings.shared.cutJumpBackSeconds)
         message = "Cut applied across every aligned track, including hidden and muted tracks. Undo or Restore cut recovers the original audio."
     }
 
@@ -167,7 +167,7 @@ extension EpisodeCleanupModel {
         guard let cut = cleanup.manualCuts?.first(where: { $0.id == id }) else { return }
         cleanup.manualCuts?.removeAll { $0.id == id }
         if cleanup.manualCuts?.isEmpty == true { cleanup.manualCuts = nil }
-        guard saveManualCuts(cleanup, action: "Restore cross-track cut") else { return }
+        guard saveTimelineEdit(cleanup, action: "Restore cross-track cut") else { return }
         selectedManualCutID = nil
         if let markerID = cut.markerID, let marker = fillerReviews.first(where: { $0.id == markerID }),
            fillerIssue(marker) == nil {
@@ -212,7 +212,7 @@ extension EpisodeCleanupModel {
         }
         cleanup.manualCuts = manualCuts.map { $0.id == original.id ? updated : $0 }
         if updated == original { error = nil; return true }
-        guard saveManualCuts(cleanup, action: "Adjust cross-track cut boundaries") else { return false }
+        guard saveTimelineEdit(cleanup, action: "Adjust cross-track cut boundaries") else { return false }
         selectedManualCutID = updated.id
         refreshManualCutSelection()
         message = "Cut boundaries adjusted across every aligned track. Undo restores the previous cut."
@@ -263,12 +263,12 @@ extension EpisodeCleanupModel {
         refreshManualCutSelection()
     }
 
-    private func saveManualCuts(_ cleanup: EpisodeCleanup, action: String) -> Bool {
+    func saveTimelineEdit(_ cleanup: EpisodeCleanup, action: String) -> Bool {
         stopPlayback()
         guard state.store.apply(action, { model throws(DomainError) in
             try model.settingCleanup(cleanup, in: episodeID)
         }) else {
-            error = "The cut could not be saved: \(String(describing: state.store.lastError))."
+            error = "The timeline edit could not be saved: \(String(describing: state.store.lastError))."
             return false
         }
         synchronizeCutTimeline()

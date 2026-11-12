@@ -7,6 +7,22 @@ import WWTimeMap
 
 @Suite("Waveform selection")
 struct AlignmentWaveformTests {
+    @Test func waveformChannelUsesStatedPlacementOrAnUnambiguousSpeakerReference() {
+        var source = SourceRecord(displayNameHint: "stereo.wav")
+        var episode = Episode(title: "Channels", sources: [source])
+        #expect(AlignmentWaveformProjection.displayChannel(for: source.id, in: episode) == nil)
+        episode.speakerAssignments = [
+            SpeakerAssignment(speakerID: SpeakerID(), primary: .init(sourceID: source.id, statedChannel: 1))
+        ]
+        #expect(AlignmentWaveformProjection.displayChannel(for: source.id, in: episode) == 1)
+        episode.speakerAssignments.append(
+            SpeakerAssignment(speakerID: SpeakerID(), primary: .init(sourceID: source.id, statedChannel: 0)))
+        #expect(AlignmentWaveformProjection.displayChannel(for: source.id, in: episode) == nil)
+        source.placement.channelLabels = [.init(channel: 1, label: "Speaker")]
+        episode.sources = [source]
+        #expect(AlignmentWaveformProjection.displayChannel(for: source.id, in: episode) == 1)
+    }
+
     @Test func adaptiveGhostAndClockMarkersAreFileLocalAndNeverBridgeUnsupportedAudio() throws {
         let f = try previewFixture()
         func participant(_ track: AlignmentWaveformTrack) -> AnalysisParticipant {

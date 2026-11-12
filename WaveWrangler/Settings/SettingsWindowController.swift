@@ -131,6 +131,12 @@ struct GeneralSettingsView: View {
                 .accessibilityIdentifier("ww.settings.timelineJump")
                 caption("Space plays or pauses when another control is not focused. Left/Right jump by this interval in the track area. Text fields, review lists and 1 ms boundary-handle adjustments keep their normal keys.")
             }
+            Section("Cut editing") {
+                MixerNumberControl(title: "Jump back before a new cut (seconds)", value: $settings.cutJumpBackSeconds,
+                    range: AppPreferences.cutJumpBackRange, identifier: "ww.settings.cutJumpBack",
+                    endEditing: {})
+                caption("After applying a cut, place the playhead this many seconds before its join. Default: 0.5 seconds. The playhead never moves before the timeline start. This does not change cut boundaries or audition lengths.")
+            }
         }
         .formStyle(.grouped)
         .frame(width: 520)
@@ -150,6 +156,13 @@ struct SourcesSettingsView: View {
                     .help(SettingsWording.downloadCaption(enabled: settings.downloadSourcesAutomatically))
                     .accessibilityIdentifier("ww.settings.downloadSources")
                 caption(SettingsWording.downloadCaption(enabled: settings.downloadSourcesAutomatically))
+            }
+            Section("Auto Input Gain") {
+                MixerNumberControl(title: "Target level (dBFS RMS)", value: $settings.autoInputGainTargetDBFS,
+                    range: AutoInputGainTarget.rangeDBFS, identifier: "ww.settings.autoInputGain.target",
+                    endEditing: {})
+                caption("Editing reference for audio above a quiet gate, not final loudness or voice detection. Noise and music can influence the result. Default: -20 dBFS RMS. Estimated true peaks are kept below -6 dBTP with an additional 0.5 dB margin.")
+                caption("Run Auto Input Gain explicitly for one speaker's confirmed Primary from its input-gain controls or mixer input information. Changing this target does not analyze audio or change existing gains.")
             }
         }
         .formStyle(.grouped)

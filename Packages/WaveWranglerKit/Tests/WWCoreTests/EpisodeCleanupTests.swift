@@ -4,6 +4,36 @@ import WWCore
 
 @Suite("Episode cleanup range and transcript state")
 struct EpisodeCleanupTests {
+    @Test func speakerMutesAreChannelSpecificAndInvalidateProcessingNotMedia() throws {
+        let source = SourceID(), backup = SourceID(), speaker = SpeakerID(), other = SpeakerID()
+        let mute = SpeakerMuteRegion(speaker: speaker, alignmentRevision: 1, startFrame: 48_000, endFrame: 96_000)
+        var episode = Episode(title: "Synthetic", speakerAssignments: [
+            .init(speakerID: speaker, primary: .init(sourceID: source, statedChannel: 0),
+                  backups: [.init(sourceID: backup, statedChannel: 0)]),
+            .init(speakerID: other, primary: .init(sourceID: source, statedChannel: 1)),
+        ], alignment: .init(acceptedRevision: 1))
+        let original = episode
+        episode.cleanup = .init(speakerMuteRegions: [mute])
+        #expect(episode.speakerMuteRegions(for: source, channel: 0, channelCount: 2) == [mute])
+        #expect(episode.speakerMuteRegions(for: source, channel: 1, channelCount: 2).isEmpty)
+        #expect(episode.speakerMuteRegions(for: backup, channel: 0, channelCount: 1) == [mute])
+        #expect(EpisodeMediaInputs(episode) == EpisodeMediaInputs(original))
+        #expect(!EpisodeProcessingInputs(episode).hasSameProgramInputs(as: EpisodeProcessingInputs(original)))
+        #expect(try episode.manualCutTimeline().removals.isEmpty)
+        episode.alignment?.acceptedRevision = 2
+        #expect(episode.activeSpeakerMuteRegions.isEmpty)
+        #expect(episode.cleanup?.speakerMuteRegions == [mute], "Stale edits remain recoverable, not rebound to new timing")
+        episode.cleanup = try episode.cleanup?.resettingForReplacementAlignment()
+        #expect(episode.cleanup?.speakerMuteRegions == [mute])
+        for invalid in [
+            SpeakerMuteRegion(speaker: speaker, alignmentRevision: 0, startFrame: 0, endFrame: 1),
+            SpeakerMuteRegion(speaker: speaker, alignmentRevision: 1, startFrame: 2, endFrame: 2),
+            SpeakerMuteRegion(speaker: speaker, alignmentRevision: 1, startFrame: -ManualEpisodeCut.frameLimit - 1, endFrame: 1),
+            SpeakerMuteRegion(speaker: speaker, alignmentRevision: 1, startFrame: 0, endFrame: ManualEpisodeCut.frameLimit + 1),
+        ] { #expect(!EpisodeCleanup(speakerMuteRegions: [invalid]).isValid) }
+        #expect(!EpisodeCleanup(speakerMuteRegions: [mute, mute]).isValid)
+    }
+
     @Test func omittedBoundariesMeanAutomaticFullRangeWithoutRewritingLegacyRecords() throws {
         let empty = EpisodeWorkingRange(alignmentRevision: 7)
         let automatic = EpisodeCleanup(workingRange: empty)

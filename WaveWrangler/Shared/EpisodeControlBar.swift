@@ -239,7 +239,7 @@ struct EpisodeControlBar: View {
         Toggle("Normalize view", isOn: Binding(get: { model.listening.workspace.normalizeView },
                                               set: { model.listening.workspace.normalizeView = $0 }))
             .toggleStyle(.checkbox)
-            .help("Scales displayed peaks only. Playback, originals, and saved timing are unchanged.")
+            .help("Scales displayed peaks to full height, overriding the input-gain display. Turn off to see saved recording/channel input gain. Playback, originals, and saved timing are unchanged.")
             .accessibilityIdentifier("alignment.waveforms.normalizeView")
     }
 

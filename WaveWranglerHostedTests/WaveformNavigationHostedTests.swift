@@ -8,6 +8,58 @@ import WWCore
 @MainActor
 @Suite("Waveform navigation and rendered silhouettes", .serialized)
 struct WaveformNavigationHostedTests {
+    @Test func inputGainChangesWaveformHeightWithoutReloadingBinsAndUndoRestoresIt() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 4)
+        defer { f.close() }
+        let store = f.document.store
+        let episode = try #require(store.model.episode(f.model.episodeID))
+        let reference = try #require(episode.speakerAssignments.first?.primary)
+        let track = try #require(f.model.waveformTracks.first { $0.id == reference.sourceID })
+        let snapshot = f.model.waveformTilesVersion
+        let bins = track.envelope.bins
+        let normalizedGain = f.model.waveformDisplayGains[track.id]
+        let undo = try #require(f.document.undoManager)
+        undo.groupsByEvent = false
+        let index = AlignmentWaveformStrokeIndex(strokes: [
+            .init(sourceSeconds: 0.5, groupSeconds: 0.5, displaySeconds: 0.5, low: -0.2, high: 0.2,
+                  mapped: true, epoch: track.epoch, displayRange: 0...1, groupRange: 0...1)
+        ])
+        func height(normalized: Bool) throws -> Int {
+            let renderer = ImageRenderer(content: AudioTimelineWaveformDrawing(
+                snapshot: snapshot, index: index, size: CGSize(width: 100, height: 100),
+                start: 0, duration: 1, color: .white, lineWidth: 1,
+                gain: normalized ? index.normalizedGain : f.model.waveformInputGain(for: track),
+                displayScale: 1).background(.black))
+            let bitmap = NSBitmapImageRep(cgImage: try #require(renderer.cgImage))
+            return try (0..<100).filter { y in
+                let color = try #require(bitmap.colorAt(x: 50, y: y)?.usingColorSpace(.deviceRGB))
+                return color.redComponent > 0.3
+            }.count
+        }
+        let initialHeight = try height(normalized: false)
+        let normalizedHeight = try height(normalized: true)
+        try #require(store.setRecordingInputGain(6, reference: reference, in: episode.id))
+        let boostedGain = f.model.waveformInputGain(for: track)
+        #expect(abs(boostedGain - pow(10, 6.0 / 20)) < 0.000001)
+        #expect(try height(normalized: false) >= initialHeight * 2 - 2)
+        #expect(try height(normalized: true) == normalizedHeight)
+        let retainedSnapshot = f.model.waveformTilesVersion
+        let retainedBins = f.model.waveformTracks.first { $0.id == track.id }?.envelope.bins
+        let retainedNormalizedGain = f.model.waveformDisplayGains[track.id]
+        #expect(retainedSnapshot == snapshot && retainedBins == bins)
+        #expect(retainedNormalizedGain == normalizedGain)
+        store.endCoalescing()
+        try #require(store.setRecordingInputGain(-6, reference: reference, in: episode.id))
+        #expect(try height(normalized: false) <= initialHeight / 2 + 2)
+        undo.undo()
+        let undoneGain = f.model.waveformInputGain(for: track)
+        #expect(abs(undoneGain - pow(10, 6.0 / 20)) < 0.000001)
+        undo.undo()
+        let originalGain = f.model.waveformInputGain(for: track)
+        #expect(originalGain == 1)
+        #expect(try height(normalized: false) == initialHeight)
+    }
+
     @Test func zoomReturnsToThePlayheadAfterPanningWithoutSeekingOrEditing() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }

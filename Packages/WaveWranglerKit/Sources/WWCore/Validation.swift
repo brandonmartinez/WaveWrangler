@@ -55,6 +55,9 @@ extension ShowDocumentModel {
         let speakerIDs = Set(speakers.map(\.id))
         for episode in episodes {
             issues += Self.issues(in: episode, speakerIDs: speakerIDs)
+            if expectedSchemaVersion < 13, episode.cleanup?.speakerMuteRegions != nil {
+                issues.append(.init(.invalidCleanup, "schemas before 13 cannot contain speaker mute regions"))
+            }
             if expectedSchemaVersion < 12, let mix = episode.mix {
                 let slots = mix.speakers.flatMap(\.inserts) + mix.master.inserts
                     + (mix.audioTracks ?? []).flatMap(\.inserts)

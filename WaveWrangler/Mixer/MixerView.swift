@@ -131,6 +131,10 @@ struct RecordingInputGainControl: View {
                 }), range: EpisodeMixState.gainRangeDB, identifier: identifier, endEditing: { store.endCoalescing() })
                 .disabled(!enabled || !store.canEdit)
                 .help("Saved gain for this recording and channel, before inserts. Original audio, waveforms, alignment, and transcripts are unchanged.")
+            if let assignment = store.model.episode(episodeID)?.speakerAssignments.first(where: { $0.primary == reference }) {
+                SpeakerAutoInputGainControl(store: store, episodeID: episodeID, speakerID: assignment.speakerID,
+                    enabled: enabled, identifier: "\(identifier).auto")
+            }
             if let error = store.lastError {
                 Text(EpisodeSetupModel.describe(error)).font(.caption).foregroundStyle(.red)
                     .accessibilityIdentifier("\(identifier).error")

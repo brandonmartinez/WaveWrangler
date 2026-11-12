@@ -11,6 +11,7 @@ final class ShowDocumentStore {
         weak var value: RegularAudioPlayback?
     }
     @ObservationIgnored private var listeningSessions: [WeakListening] = []
+    @ObservationIgnored lazy var autoInputGain = AutoInputGainController(store: self)
 
     private(set) var model: ShowDocumentModel {
         didSet {

@@ -1,7 +1,7 @@
 import Foundation
 import WWCore
 
-/// Show schema migrations (C5): 1 through 11 to current.
+/// Show schema migrations (C5): 1 through 12 to current.
 ///
 /// Schema 4 adds source-local timing corrections; a schema 3 document cannot contain them.
 /// All previous schemas migrate directly to current, preserving the original bytes in a backup.
@@ -13,6 +13,7 @@ import WWCore
 /// Schema 10 adds source purpose and optional audio arrangement/track mix; migration invents no assets or clips.
 /// Schema 11 adds optional production boundaries; migration does not enable speech restriction or add markers.
 /// Schema 12 adds optional insert rack positions; older arrays retain their consecutive rows unchanged.
+/// Schema 13 adds optional speaker mute regions; migration never creates or applies a mute.
 ///
 /// **2 → 3** (WW-020): schema 3 adds the optional `Episode.alignment` (versioned positive maps). A schema 2 show
 /// has none, so the upgrade sets `schemaVersion` to 3 and changes nothing else; a schema 2 file that already
@@ -38,9 +39,9 @@ import WWCore
 /// (retained checkpoints, unpublished edit checkpoints) offerable as whole values.
 public enum ShowSchemaMigration {
     /// Older show schemas this build can migrate.
-    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    public static let migratableSchemas: Set<Int> = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
 
-    /// The registered migration steps (schemas 1 through 11 to current). Each goes straight to the
+    /// The registered migration steps (schemas 1 through 12 to current). Each goes straight to the
     /// current schema, so a schema 1 show is never published as an intermediate schema 2 revision.
     public static var steps: [MigrationStep<ShowDocumentModel>] {
         [
@@ -132,6 +133,14 @@ public enum ShowSchemaMigration {
                 },
                 expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
             ),
+            MigrationStep(
+                fromSchema: 12,
+                migrate: { data in
+                    let decoded = try decodeSchema12(data)
+                    return (decoded.payload, decoded.revision)
+                },
+                expectations: { original, migrated in schema2ExpectationFailures(original: original, migrated: migrated) }
+            ),
         ]
     }
 
@@ -162,7 +171,22 @@ public enum ShowSchemaMigration {
             return try decodeSchema10(data)
         } catch .unsupportedOlderSchema(found: 11, minimum: _) {
             return try decodeSchema11(data)
+        } catch .unsupportedOlderSchema(found: 12, minimum: _) {
+            return try decodeSchema12(data)
         }
+    }
+
+    static func decodeSchema12(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
+        let format = DocumentFormat(identifier: DocumentFormat.show.identifier,
+            filenameExtension: DocumentFormat.show.filenameExtension,
+            currentSchemaVersion: 12, minimumReadableSchemaVersion: 12)
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>(format: format) { payload, schema in
+            payload.validationIssues(expectedSchemaVersion: schema) + payload.embeddedMapIssues()
+        }
+        let decoded = try coder.decode(data)
+        var upgraded = decoded.payload
+        upgraded.schemaVersion = SchemaVersion.show
+        return DecodedDocument(payload: upgraded, publication: decoded.publication)
     }
 
     static func decodeSchema11(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {

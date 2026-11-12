@@ -44,8 +44,7 @@ struct AudioFadeInput {
         if let error = error as? AudioEnvelopeEditError {
             return switch error {
             case .invalidInterval: "The fade must start inside the audible trimmed clip and end later, no later than its exclusive endpoint."
-            case .invalidDirection: "Fade In must increase the evaluated current level; Fade Out must decrease it. At clip start, Fade In can explicitly start at Silence."
-            case .invalidSilenceStart: "Only Fade In at the audible clip beginning can initialize Silence."
+            case .invalidDirection: "Fade In must increase from the start amplitude to the end amplitude; Fade Out must decrease. Adjust either endpoint."
             case .unknownPoint: "This fade point is no longer available. Cancel and reopen point editing."
             case .retainedSupportIsReadOnly: "This is retained curve support outside the audible trim, not an editable local point."
             case .replacementRequired: "Review and explicitly approve replacement of the listed automation before applying."
@@ -130,7 +129,8 @@ struct AudioFadeDraft {
     var usingEnd = false
     var level: String
     var silence: Bool
-    var initializingSilence = false
+    var startLevel: String
+    var startSilence: Bool
     var localFrame: String
     var removing = false
     var replacing = false
@@ -139,14 +139,18 @@ struct AudioFadeDraft {
         switch session.purpose {
         case .fade(let direction, let start):
             length = AudioInsertionSheet.seconds(min(48_000, session.editing.evaluator.durationFrames - start))
-            level = direction == .fadeIn ? "1" : "0"
-            silence = direction == .fadeOut
+            startLevel = direction == .fadeIn ? "0" : String(session.currentAmplitude)
+            startSilence = direction == .fadeIn || session.currentAmplitude == 0
+            level = direction == .fadeIn ? String(session.currentAmplitude) : "0"
+            silence = direction == .fadeOut || session.currentAmplitude == 0
             localFrame = session.initialLocalFrame
         case .point(let index):
             let point = session.projected.clip.envelope.points[index]
             length = ""
             level = String(point.amplitude)
             silence = point.amplitude == 0
+            startLevel = ""
+            startSilence = false
             localFrame = session.initialLocalFrame
         }
     }
@@ -214,7 +218,7 @@ struct AudioFadeSheet: View {
             Text("Clip-local output time; original source samples, timing, transcripts, and waveform measurements stay unchanged.")
                 .font(.caption).foregroundStyle(.secondary)
             switch session.purpose {
-            case .fade(let direction, let start):
+            case .fade(_, let start):
                 Text("Starts at program \(AudioInsertionSheet.seconds(session.projected.programFrames.lowerBound + start)) s · clip-local frame \(start).")
                     .accessibilityIdentifier("ww.audioFade.start")
                 Text("Evaluated current amplitude: \(AudioFadeInput.levelText(session.currentAmplitude))")
@@ -227,10 +231,15 @@ struct AudioFadeSheet: View {
                     TextField("Fade length", text: $draft.length)
                         .accessibilityIdentifier("ww.audioFade.length")
                 }
-                if direction == .fadeIn, start == 0 {
-                    Toggle("Initialize the audible clip beginning at Silence", isOn: $draft.initializingSilence)
-                        .accessibilityIdentifier("ww.audioFade.initializeSilence")
+                HStack {
+                    Text("Start amplitude (0…1)")
+                    TextField("Start amplitude", text: $draft.startLevel)
+                        .disabled(draft.startSilence)
+                        .accessibilityIdentifier("ww.audioFade.startLevel")
+                    Toggle("Silence", isOn: $draft.startSilence)
+                        .accessibilityIdentifier("ww.audioFade.startSilence")
                 }
+                .textFieldStyle(.roundedBorder)
             case .point:
                 LabeledContent("Clip-local frame (integer or fraction)") {
                     TextField("Clip-local frame", text: $draft.localFrame)
@@ -242,8 +251,8 @@ struct AudioFadeSheet: View {
                     .accessibilityIdentifier("ww.audioFade.remove")
             }
             HStack {
-                Text("Target amplitude (0…1)")
-                TextField("Target amplitude", text: $draft.level)
+                Text(amplitudeLabel)
+                TextField(amplitudeLabel, text: $draft.level)
                     .disabled(draft.silence || draft.removing)
                     .accessibilityIdentifier("ww.audioFade.level")
                 Toggle("Silence", isOn: $draft.silence)
@@ -323,8 +332,16 @@ struct AudioFadeSheet: View {
         .onChange(of: draft.length) { _, _ in draft.replacing = false }
         .onChange(of: draft.level) { _, _ in draft.replacing = false }
         .onChange(of: draft.silence) { _, _ in draft.replacing = false }
-        .onChange(of: draft.initializingSilence) { _, _ in draft.replacing = false }
+        .onChange(of: draft.startLevel) { _, _ in draft.replacing = false }
+        .onChange(of: draft.startSilence) { _, _ in draft.replacing = false }
         .onChange(of: draft.localFrame) { _, _ in draft.replacing = false }
         .onChange(of: draft.removing) { _, _ in draft.replacing = false }
+    }
+
+    private var amplitudeLabel: String {
+        switch session.purpose {
+        case .fade: "End amplitude (0…1)"
+        case .point: "Point amplitude (0…1)"
+        }
     }
 }

@@ -28,6 +28,59 @@ final class MixerUITests: XCTestCase {
         return condition()
     }
 
+    func testAutoInputGainIsExplicitPerSpeakerAndUsesTheSettingsTarget() throws {
+        let app = launch()
+        defer { app.terminate() }
+        app.buttons["ww.mixer.toggle"].click()
+        let input = app.buttons.matching(NSPredicate(
+            format: "identifier ENDSWITH '.input' AND label CONTAINS 'input information and appearance'")).firstMatch
+        XCTAssertTrue(input.waitForExistence(timeout: 10), app.debugDescription)
+        let strip = String(input.identifier.dropLast(".input".count))
+        let gain = app.textFields["\(strip).inputGain"]
+        XCTAssertTrue(gain.exists)
+        let initialGain = gain.value as? String
+        input.click()
+        let disclosure = app.disclosureTriangles["Auto Input Gain"]
+        XCTAssertTrue(disclosure.waitForExistence(timeout: 5), app.debugDescription)
+        disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        let run = app.buttons["\(strip).autoInputGain.run"]
+        XCTAssertTrue(run.waitForExistence(timeout: 5) && run.isEnabled, app.debugDescription)
+        XCTAssertEqual(gain.value as? String, initialGain, "Opening the control must not analyze or adjust gain.")
+        app.buttons["\(strip).autoInputGain.settings"].click()
+        let settings = app.windows["ww.settings.window"]
+        let target = settings.textFields["ww.settings.autoInputGain.target"]
+        XCTAssertTrue(target.waitForExistence(timeout: 5), app.debugDescription)
+        target.click()
+        target.typeKey("a", modifierFlags: .command)
+        target.typeText("-24")
+        target.typeKey(.return, modifierFlags: [])
+        settings.typeKey("w", modifierFlags: .command)
+        if !run.exists {
+            input.click()
+            disclosure.coordinate(withNormalizedOffset: CGVector(dx: 0.2, dy: 0.5)).click()
+        }
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(
+            format: "value BEGINSWITH 'Target:' AND value CONTAINS '-24'")).firstMatch.waitForExistence(timeout: 5),
+                      app.debugDescription)
+        XCTAssertEqual(gain.value as? String, initialGain, "Changing the preference must not alter existing gain.")
+        run.click()
+        let status = app.staticTexts["\(strip).autoInputGain.status"]
+        XCTAssertTrue(status.waitForExistence(timeout: 30), app.debugDescription)
+        let message = status.value as? String ?? status.label
+        XCTAssertTrue(message.contains("Set input gain"), message)
+        let screenshot = XCTAttachment(screenshot: app.screenshot())
+        screenshot.name = "Per-speaker Auto Input Gain result"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let applied = gain.value as? String
+        XCTAssertNotEqual(applied, initialGain)
+        app.typeKey(.escape, modifierFlags: [])
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { gain.value as? String == initialGain })
+        app.typeKey("z", modifierFlags: [.command, .shift])
+        XCTAssertTrue(wait { gain.value as? String == applied })
+    }
+
     func testOptionClickOpensReviewAndMixerDirectlyInSeparateWindows() {
         let app = launch()
         defer { app.terminate() }
