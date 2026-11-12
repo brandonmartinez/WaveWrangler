@@ -24,7 +24,7 @@ struct AudioEnvelopeEditingTests {
             #expect(try evaluator.amplitude(atLocalFrame: frame) == value)
         }
         curve = try editing().fade(from: 0, to: 100, direction: .fadeIn, target: 0.25,
-                                    initializingSilence: true).confirmed(replacing: false)
+                                    initialAmplitude: 0).confirmed(replacing: false)
         curve = try editing(curve).fade(from: 200, to: 300, direction: .fadeIn, target: 1)
             .confirmed(replacing: false)
         curve = try editing(curve).fade(from: 400, to: 480, direction: .fadeOut, target: 0)
@@ -63,6 +63,35 @@ struct AudioEnvelopeEditingTests {
         #expect(try held.amplitude(atLocalFrame: 75) == 0.25)
         #expect(try held.amplitude(atLocalFrame: 175) == 0.25,
                 "Do not invent a bridging ramp across the overwritten ramp's tail or a later hold.")
+    }
+
+    @Test func explicitEndpointsFadeUnityAndPreserveAudioBeforeCustomStarts() throws {
+        let unity = try editing().fade(from: 0, to: 100, direction: .fadeIn,
+            target: 1, initialAmplitude: 0).confirmed(replacing: false)
+        let unityEvaluator = try editing(unity).evaluator
+        #expect(try unityEvaluator.amplitude(atLocalFrame: 0) == 0)
+        #expect(try unityEvaluator.amplitude(atLocalFrame: 50) == 0.5)
+        #expect(try unityEvaluator.amplitude(atLocalFrame: 100) == 1)
+        let original = AudioClipEnvelope(points: [
+            .init(frame: 0, amplitude: 0.25), .init(frame: 200, amplitude: 1),
+        ])
+        let helper = try editing(original)
+        for (direction, initial, target): (AudioFadeDirection, Double, Double) in [
+            (.fadeIn, 0.1, 0.8), (.fadeOut, 0.8, 0.1),
+        ] {
+            let edit = try helper.fade(from: 100, to: 150, direction: direction,
+                target: target, initialAmplitude: initial)
+            #expect(edit.requiresReplacement)
+            let evaluator = try editing(edit.confirmed(replacing: true)).evaluator
+            for frame: Int64 in 0..<100 {
+                #expect(abs(try evaluator.amplitude(atLocalFrame: frame)
+                    - helper.evaluator.amplitude(atLocalFrame: frame)) < 1e-12)
+            }
+            #expect(try evaluator.amplitude(atLocalFrame: 100) == initial)
+            #expect(abs(try evaluator.amplitude(atLocalFrame: 125) - (initial + target) / 2) < 1e-12)
+            #expect(try evaluator.amplitude(atLocalFrame: 150) == target)
+            #expect(try evaluator.amplitude(atLocalFrame: 480) == target)
+        }
     }
 
     @Test func retainedFractionalOriginsOutsideSupportAndOutputOwnershipSurviveFadesAndSplits() throws {
@@ -187,11 +216,17 @@ struct AudioEnvelopeEditingTests {
         #expect(throws: AudioEnvelopeEditError.invalidDirection) {
             try helper.fade(from: 0, to: 10, direction: .fadeOut, target: 1)
         }
-        #expect(throws: AudioEnvelopeEditError.invalidSilenceStart) {
-            try helper.fade(from: 1, to: 10, direction: .fadeIn, target: 1, initializingSilence: true)
+        for initial in [Double.nan, .infinity, -.infinity, -0.01, 1.01] {
+            #expect(throws: AudioEnvelopeError.invalidAmplitude) {
+                try helper.fade(from: 0, to: 10, direction: .fadeIn, target: 1, initialAmplitude: initial)
+            }
         }
-        #expect(throws: AudioEnvelopeEditError.invalidSilenceStart) {
-            try helper.fade(from: 0, to: 10, direction: .fadeOut, target: 0, initializingSilence: true)
+        for (direction, initial, target): (AudioFadeDirection, Double, Double) in [
+            (.fadeIn, 0.8, 0.2), (.fadeOut, 0.2, 0.8), (.fadeIn, 0.5, 0.5), (.fadeOut, 0.5, 0.5),
+        ] {
+            #expect(throws: AudioEnvelopeEditError.invalidDirection) {
+                try helper.fade(from: 0, to: 10, direction: direction, target: target, initialAmplitude: initial)
+            }
         }
         #expect(throws: AudioEnvelopeEditError.unknownPoint) { try helper.removingPoint(at: 0) }
         #expect(helper.evaluator.envelope == .init())

@@ -139,10 +139,14 @@ replacement curve.
 
 Select an Audio Clip and place the playhead inside its audible trimmed interval,
 then choose **Fade In...** or **Fade Out...** in the inspector. A fade **starts**
-at that production playhead, captures the evaluated current gain, and ends after
-the entered duration or at the entered program end time. The target is linear
-amplitude (1 full level, 0.25 low, 0 exact Silence); Fade In at the clip beginning
-can explicitly initialize Silence. Endpoints hold until the next ramp. Review
+at that production playhead and ends after the entered duration or at the
+entered program end time. Both **Start amplitude** and **End amplitude** are
+editable linear levels (1 full level, 0.25 low, 0 exact Silence). Fade In suggests
+Silence to the evaluated current level; Fade Out suggests the current level to
+Silence. These are suggestions, not limits tied to the old curve: a unity clip
+can fade from 0 to 1 without increasing its maximum amplitude. A custom start
+level preserves preceding output samples, stepping to the requested level at
+the fade start. Endpoints hold until the next ramp. Review
 lists overwritten knots, crossed ramps, and any changed next-ramp start level;
 applying a conflict requires explicit replacement approval. Later endpoints and
 outside-trim support are retained. **Edit Fade Point...** supports exact local

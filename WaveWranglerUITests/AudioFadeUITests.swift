@@ -92,12 +92,24 @@ final class AudioFadeUITests: XCTestCase {
         let app = launch()
         defer { app.terminate() }
         try importAudio(file, in: app)
-        fade(app, direction: "in", start: "0", duration: "0.5", level: "0.25", initializingSilence: true)
+        openFade(app, direction: "in", start: "0")
+        XCTAssertTrue(app.textFields["ww.audioFade.startLevel"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["ww.audioFade.startLevel"].value as? String, "0")
+        XCTAssertEqual(String(describing: app.checkBoxes["ww.audioFade.startSilence"].value ?? ""), "1")
+        XCTAssertEqual(app.textFields["ww.audioFade.level"].value as? String, "1.0")
+        XCTAssertTrue(app.buttons["ww.audioFade.apply"].isEnabled, "Unity Fade In must work without changing a field.")
+        screenshot(app, name: "Editable fade endpoints default to Silence and current unity level")
+        app.buttons["ww.audioFade.apply"].click()
+        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "2 fade points" })
+        timelineFocus(app)
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "0 fade points" })
+        fade(app, direction: "in", start: "0", duration: "0.5", level: "0.25")
         XCTAssertEqual(text(app.staticTexts["ww.audioFade.count"]), "2 fade points")
-        fade(app, direction: "in", start: "1", duration: "0.5", level: "1")
+        fade(app, direction: "in", start: "1", duration: "0.5", level: "1", startLevel: "0.25")
         XCTAssertEqual(text(app.staticTexts["ww.audioFade.count"]), "4 fade points")
-        fade(app, direction: "out", start: "3", duration: "1", level: "0")
-        XCTAssertEqual(text(app.staticTexts["ww.audioFade.count"]), "6 fade points")
+        fade(app, direction: "out", start: "3", duration: "1", level: "0.1", startLevel: "0.75")
+        XCTAssertEqual(text(app.staticTexts["ww.audioFade.count"]), "7 fade points")
         point(1, in: app)
         XCTAssertEqual(app.textFields["ww.audioFade.localFrame"].value as? String, "24000")
         replace(app.textFields["ww.audioFade.level"], with: "0.2")
@@ -111,12 +123,12 @@ final class AudioFadeUITests: XCTestCase {
         XCTAssertTrue(app.checkBoxes["ww.audioFade.replace"].waitForExistence(timeout: 5))
         app.checkBoxes["ww.audioFade.replace"].click()
         app.buttons["ww.audioFade.apply"].click()
-        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "5 fade points" })
+        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "6 fade points" })
         timelineFocus(app)
         app.typeKey("z", modifierFlags: .command)
-        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "6 fade points" })
+        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "7 fade points" })
         app.typeKey("z", modifierFlags: [.command, .shift])
-        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "5 fade points" })
+        XCTAssertTrue(wait { text(app.staticTexts["ww.audioFade.count"]) == "6 fade points" })
         app.typeKey("s", modifierFlags: .command)
         XCTAssertTrue(wait { (app.buttons["ww.show.saveStatus"].value as? String)?.hasPrefix("Saved") == true })
         XCTAssertEqual(try Data(contentsOf: file), bytes)
@@ -288,11 +300,16 @@ final class AudioFadeUITests: XCTestCase {
     }
 
     private func fade(_ app: XCUIApplication, direction: String, start: String, duration: String, level: String,
-                      initializingSilence: Bool = false) {
+                      startLevel: String? = nil) {
         openFade(app, direction: direction, start: start)
         XCTAssertTrue(app.textFields["ww.audioFade.length"].waitForExistence(timeout: 5), app.debugDescription)
         replace(app.textFields["ww.audioFade.length"], with: duration)
-        if initializingSilence { app.checkBoxes["ww.audioFade.initializeSilence"].click() }
+        if let startLevel {
+            if String(describing: app.checkBoxes["ww.audioFade.startSilence"].value ?? "") == "1" {
+                app.checkBoxes["ww.audioFade.startSilence"].click()
+            }
+            replace(app.textFields["ww.audioFade.startLevel"], with: startLevel)
+        }
         if level != "0" {
             if String(describing: app.checkBoxes["ww.audioFade.silence"].value ?? "") == "1" {
                 app.checkBoxes["ww.audioFade.silence"].click()

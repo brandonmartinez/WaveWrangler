@@ -64,18 +64,100 @@ struct AudioFadeHostedTests {
     }
 
     private func fade(_ editor: AudioClipEditorModel, start: Double, duration: String, level: String,
-                      direction: AudioFadeDirection = .fadeOut, silenceStart: Bool = false) async throws {
+                      direction: AudioFadeDirection = .fadeOut) async throws {
         await editor.requestFade(direction, programSeconds: start)
         let session = try requireFadeSession(editor)
         var draft = AudioFadeDraft(session: session)
         draft.length = duration
         draft.level = level
         draft.silence = level == "0"
-        draft.initializingSilence = silenceStart
         draft.replacing = true
         let applied = editor.commitFade(session, draft: draft)
         let refusal = editor.error
         try #require(applied, Comment(rawValue: refusal ?? "The fade was not applied."))
+    }
+
+    @Test func editableEndpointsDefaultToCurrentLevelAndReachProductionWithUndoAndSave() async throws {
+        let f = try await helper.ready()
+        defer { f.close() }
+        let bed = try await importBed(f)
+        defer { Task { await bed.engine.shutdown() } }
+        let editor = f.model.audioEditor, undo = try undoManager(f)
+        defer { undo.groupsByEvent = true }
+        let original = f.document.store.model, bytes = try Data(contentsOf: bed.file)
+        try await helper.wait {
+            editor.canPlaceDroppedAudio && editor.selected != nil && editor.store.canEdit
+                && TrackProcessingOperation.current(alignment: f.model, cleanup: bed.owner.state.cleanupModel) == nil
+        }
+        await editor.requestFade(.fadeIn, programSeconds: 2)
+        let incoming = try requireFadeSession(editor)
+        var draft = AudioFadeDraft(session: incoming)
+        #expect(draft.startSilence && draft.startLevel == "0" && !draft.silence && Double(draft.level) == 1)
+        draft.length = "0.5"
+        let defaultPreview = try editor.fadePreview(incoming, draft: draft)
+        #expect(defaultPreview.envelope.points.map(\.amplitude) == [0, 1])
+        #expect(f.document.store.model == original)
+        try #require(editor.commitFade(incoming, draft: draft))
+        undo.undo()
+        editor.refresh()
+        try await helper.wait {
+            editor.canPlaceDroppedAudio && editor.selected != nil && editor.store.canEdit
+                && TrackProcessingOperation.current(alignment: f.model, cleanup: bed.owner.state.cleanupModel) == nil
+        }
+        let undoneDefault = f.document.store.model
+        #expect(undoneDefault == original)
+
+        await editor.requestFade(.fadeIn, programSeconds: 2)
+        let custom = try requireFadeSession(editor)
+        draft = AudioFadeDraft(session: custom)
+        draft.length = "0.5"
+        draft.startSilence = false
+        draft.startLevel = "0.1"
+        draft.level = "0.8"
+        try #require(editor.commitFade(custom, draft: draft))
+        try await helper.wait {
+            editor.canPlaceDroppedAudio && editor.selected != nil && editor.store.canEdit
+                && TrackProcessingOperation.current(alignment: f.model, cleanup: bed.owner.state.cleanupModel) == nil
+        }
+        await editor.requestFade(.fadeOut, programSeconds: 3)
+        let outgoing = try requireFadeSession(editor)
+        draft = AudioFadeDraft(session: outgoing)
+        #expect(!draft.startSilence && Double(draft.startLevel) == 0.8 && draft.silence)
+        draft.length = "0.5"
+        draft.startLevel = "0.7"
+        draft.level = "0.2"
+        draft.silence = false
+        let beforeOut = f.document.store.model
+        try #require(editor.commitFade(outgoing, draft: draft))
+        let after = f.document.store.model
+        undo.undo()
+        let undone = f.document.store.model
+        #expect(undone == beforeOut)
+        undo.redo()
+        editor.refresh()
+        let redone = f.document.store.model
+        #expect(redone == after)
+        let selected = try #require(editor.selected)
+        let evaluator = try AudioEnvelopeEvaluator(envelope: selected.clip.envelope, durationFrames: 96_000)
+        #expect(try evaluator.amplitude(atLocalFrame: 0) == 0.1)
+        #expect(try evaluator.amplitude(atLocalFrame: 47_999) == 0.8)
+        #expect(try evaluator.amplitude(atLocalFrame: 48_000) == 0.7)
+        #expect(try evaluator.amplitude(atLocalFrame: 72_000) == 0.2)
+        let range: Range<Int64> = 96_000..<192_000, episode = f.model.episodeID
+        let rawRecipe = try await f.runtime.mixerRecipe(model: original, episode: episode, programFrames: range)
+        let raw = try #require(try await f.runtime.productionPCM(recipe: rawRecipe, model: original, frames: range)
+            .audioTracks[selected.clip.track])
+        let recipe = try await f.runtime.mixerRecipe(model: after, episode: episode, programFrames: range)
+        let pcm = try #require(try await f.runtime.productionPCM(recipe: recipe, model: after, frames: range)
+            .audioTracks[selected.clip.track])
+        for index in 0..<range.count {
+            let level = Float(try evaluator.amplitude(atLocalFrame: Int64(index)))
+            for channel in 0..<2 { #expect(pcm[channel][index] == raw[channel][index] * level) }
+        }
+        try await helper.save(f.document)
+        let url = try #require(f.document.fileURL)
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url)).payload == after)
+        #expect(try Data(contentsOf: bed.file) == bytes)
     }
 
     @Test func sequencesUndoSaveReopenAndProductionShareTheExactCurrentLocalCurve() async throws {
@@ -331,7 +413,7 @@ struct AudioFadeHostedTests {
         defer { Task { await bed.engine.shutdown() } }
         let editor = f.model.audioEditor, undo = try undoManager(f)
         defer { undo.groupsByEvent = true }
-        try await fade(editor, start: 2, duration: "1", level: "1", direction: .fadeIn, silenceStart: true)
+        try await fade(editor, start: 2, duration: "1", level: "1", direction: .fadeIn)
         let original = try #require(editor.selected)
         var trimmed = original.clip
         trimmed.trim.startFrame = 1
@@ -490,6 +572,8 @@ struct AudioFadeHostedTests {
             let late = try requireFadeSession(editor)
             var draft = AudioFadeDraft(session: late)
             draft.length = "0.25"
+            draft.level = "1"
+            draft.silence = false
             _ = try await f.model.mixer.prepare(programFrames: 96_000..<98_048)
             try await f.model.mixer.beginEditorObservation(coalescing: "f8.late")
             await f.model.mixer.suspendEditorObservation()
