@@ -18,6 +18,9 @@ struct EpisodeExportDelivery: Sendable {
     var overrides = PublicationMetadata()
     var titleOverride: String?
     var albumOverride: String?
+    /// Nil inherits; empty deliberately omits. Episode numbers use text so empty remains distinct.
+    var dateOverride: String?
+    var episodeNumberOverride: String?
     var dither = ExportDither.none
     var normalization = ExportNormalization.off
     var confirmedOmissions: Set<ExportMetadataOmission> = []
@@ -40,11 +43,17 @@ enum ExportMetadataAdapter {
         ] where present {
             omit(field, "This field has no qualified mapping in the selected export format.")
         }
+        let number: Int?
+        if let override = delivery.episodeNumberOverride {
+            if override.isEmpty { number = nil }
+            else if let parsed = Int(override), (1...Int(Int32.max)).contains(parsed) { number = parsed }
+            else { throw ExportFailure.invalidMetadata("Episode number must be a positive 32-bit integer, or empty to omit.") }
+        } else { number = resolved.episodeNumber }
         var metadata = ExportMetadata(title: text(delivery.titleOverride ?? resolved.title),
             artist: text(publicValues.creator), album: text(delivery.albumOverride ?? resolved.album),
             publicDescription: text(publicValues.publicDescription), copyright: text(publicValues.copyright),
-            genre: text(publicValues.genre), date: resolved.publicationDate?.description,
-            episodeNumber: resolved.episodeNumber)
+            genre: text(publicValues.genre), date: text(delivery.dateOverride ?? resolved.publicationDate?.description),
+            episodeNumber: number)
         if case .wave = delivery.settings.codec {
             if publicValues.artwork?.image != nil { omit("artwork", "WAV INFO does not support embedded artwork.") }
             if metadata.episodeNumber != nil { omit("episodeNumber", "WAV INFO does not support episode numbers.") }

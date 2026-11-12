@@ -38,6 +38,7 @@ final class ShowWindowState {
     }
     var inspectorPresented = true { didSet { persistWorkspacePanels() } }
     var recordingsPresented = false { didSet { persistWorkspacePanels() } }
+    var exportPresented = false
     enum WorkspaceInspector: String, CaseIterable {
         case recording = "Recording"
         case alignment = "Alignment"
@@ -327,6 +328,7 @@ final class ShowWindowState {
     // MARK: - View commands
 
     func select(_ destination: ShowDestination) {
+        if destination == .export { requestExport(); return }
         let changed = self.destination != destination
         #if DEBUG
         if changed, destination == .review,

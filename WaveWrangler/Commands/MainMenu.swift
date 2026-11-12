@@ -106,6 +106,7 @@ enum MainMenu {
         menu.addItem(.separator())
         menu.addItem(routed("Import Sources…", #selector(CommandRouter.importSources(_:)), .importSources))
         menu.addItem(routed("Relink Source…", #selector(CommandRouter.relinkSource(_:))))
+        menu.addItem(routed("Export…", #selector(CommandRouter.exportEpisode(_:)), .destinationExport))
         menu.addItem(.separator())
         menu.addItem(submenuItem(libraryMenu()))
         menu.addItem(routed("Show in Finder", #selector(CommandRouter.showInFinder(_:))))
@@ -174,6 +175,7 @@ enum MainMenu {
         menu.addItem(.separator())
         let commands: [MenuCommand] = [.destinationSetup, .destinationAlignment, .destinationReview, .destinationExport]
         for (index, destination) in ShowDestination.allCases.enumerated() {
+            if destination == .export { continue }
             menu.addItem(routed(destination.title, #selector(CommandRouter.selectDestination(_:)), commands[index], tag: index))
         }
         menu.addItem(.separator())
@@ -230,6 +232,7 @@ enum MainMenu {
     private static func helpMenu() -> NSMenu {
         let menu = NSMenu(title: "Help")
         menu.addItem(standard("WaveWrangler Help", #selector(NSApplication.showHelp(_:)), .help))
+        menu.addItem(routed("Software Licenses…", #selector(CommandRouter.showSoftwareLicenses(_:))))
         return menu
     }
 }

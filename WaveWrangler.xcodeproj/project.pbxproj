@@ -81,6 +81,7 @@
 				Alignment/ProductionPlaybackDiagnostics.swift,
 				Alignment/ProductionPlaybackRefill.swift,
 				Export/ExportMetadataAdapter.swift,
+				Export/EpisodeExportSelection.swift,
 				App/AppBuildIdentity.swift,
 				Document/CopyElsewhereRetryGate.swift,
 				Document/FormatUpdate.swift,

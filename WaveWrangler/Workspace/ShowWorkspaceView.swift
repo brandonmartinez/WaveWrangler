@@ -51,6 +51,14 @@ private struct ShowWindowContent: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Show content and inspector")
         .accessibilityIdentifier("ww.show.contentInspector")
+        .sheet(isPresented: Binding(get: { state.exportPresented }, set: {
+            if !$0 { state.store.document?.exportInterface.dismiss() }
+        })) {
+            if let document = state.store.document {
+                EpisodeExportSheet(model: document.exportInterface, document: document)
+                    .wwAppEnvironment()
+            }
+        }
         .sheet(isPresented: $state.recordingsPresented) {
             if let episode = state.selectedEpisode {
                 VStack(spacing: 0) {
@@ -103,6 +111,13 @@ private struct ShowWindowContent: View {
                 .disabled(state.selectedEpisode == nil)
                 .accessibilityIdentifier("ww.show.recordings")
                 .help("Manage this episode's recordings and speakers")
+            }
+            ToolbarSpacer(.fixed, placement: .primaryAction)
+            ToolbarItem(placement: .primaryAction) {
+                Button("Export", systemImage: "square.and.arrow.up") { state.requestExport() }
+                    .disabled(state.exportUnavailableReason != nil)
+                    .help(state.exportUnavailableReason ?? "Export this whole episode (⌘4)")
+                    .accessibilityIdentifier("ww.show.export")
             }
             ToolbarSpacer(.fixed, placement: .primaryAction)
             ToolbarItem(placement: .primaryAction) {

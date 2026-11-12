@@ -84,7 +84,7 @@ whole-episode PCM allocation.
 
 WAV uses RIFF LIST/INFO INAM/IART/IPRD/ICMT/ICOP/IGNR/ICRD, restricted to ASCII
 for interoperability. Artwork and episode numbers are explicitly rejected for
-WAV, not silently discarded. A later UI must communicate that limitation.
+WAV, not silently discarded. The export sheet previews and requires consent to these omissions.
 
 ## Document-owned production jobs
 
@@ -99,7 +99,7 @@ let result = try await document.exportJobs.run(
 ```
 
 `selections` contains `EpisodeExportDelivery(filename:settings:)` values, with
-optional publication overrides, title/album overrides, integer-WAV dither, loudness normalization and
+optional publication overrides, title/album/date/episode-number overrides, integer-WAV dither, loudness normalization and
 confirmed omissions. Before submitting, call
 `ExportMetadataAdapter.preview(resolved, delivery:)` using
 `try model.resolvedPublication(for: episodeID)`. Present its omissions and copy
@@ -263,8 +263,129 @@ absolute/relative gated programs, quarter-rate intersample tones, hard edges and
 bursts; the tests enforce 0.1 LU integrated agreement and the peak tolerances above.
 They also independently decode final MP3/AAC deliveries and require their
 reference peaks not to exceed the selected ceiling. No optional tooling is
-installed. Export sheet/menu/toolbar, license UI and dedicated VM qualification
-remain separate phases.
+installed. Dedicated VM qualification of the native interface remains a separate phase.
+
+## Native interface integration (phase 5)
+
+`ShowDocument.exportInterface` owns one `EpisodeExportPresentation` per show.
+`ShowWindowState.requestExport()` is the common entry point for the toolbar,
+`CommandRouter.exportEpisode(_:)` (File > Export, Command-4), and legacy
+`select(.export)` requests. The serialized `ShowDestination.export` and
+`MenuCommand.destinationExport` keys remain stable. Export is no longer a View
+destination or a competing navigation screen; a saved obsolete destination
+falls back to Alignment. `exportUnavailableReason` drives menu validation and
+toolbar help/disabled state. A second window cannot open another sheet for the
+same show, while another show's export remains independent.
+
+`EpisodeExportSheet` presents the signed, read-only Start/End/duration, supported
+format-specific controls, one common base filename, an explicit native folder
+picker, optional loudness normalization, and collapsed export-only metadata and
+artwork edits. `EpisodeExportOptions.delivery(_:baseName:)` constructs validated
+typed backend requests. There is no selection/subtimeline, realtime, effect-tail,
+Apple Music, overwrite, or additional-destination option.
+
+`EpisodeExportDelivery.titleOverride`, `albumOverride`, `dateOverride` and
+`episodeNumberOverride` distinguish nil inheritance from empty-string omission.
+The number override must be a positive 32-bit integer or empty. Other text and
+artwork use the existing `PublicationMetadata` overrides. Editing the format,
+normalization or metadata revokes omission consent synchronously; preparation
+also revokes it on document-generation changes. The backend still re-resolves
+the frozen publication and enforces exact omission consent. Export never writes
+the reusable publication defaults or private Notes.
+
+Successful choices use `EpisodeExportPreferenceStore` and the established
+`PersistenceEnvironment.preferences`, keyed `WWEpisodeExport.v1.<ShowID>`.
+Only `ExportJobResult.succeeded` records options and a device-local security-scoped
+folder bookmark. Failed/canceled/cleanup-failed selections do not replace them.
+No portable absolute path or new document schema is added. Malformed or stale
+saved choices produce an actionable message and require a fresh folder choice;
+export-only metadata/omission consent is never remembered as reusable defaults.
+
+The presentation owns the task and shows service phases, intentional cancellation,
+and cleanup completion. Running work disables interactive sheet dismissal and
+blocks native document/window close (including the post-Audio-Unit-barrier close
+path), directing the user to Cancel Export first. Finished results list only
+actual `published` receipts, measured loudness/target-limited status, problem and
+cleanup errors. Reveal/Open exist only for those receipts. No partial, canceled,
+or cleanup-failed attempt is called full success. A collision advises choosing
+another base name or folder and never overwrites an earlier delivery.
+
+Help > Software Licenses opens `SoftwareLicensesWindowController` without
+replacing the standard About panel. `SoftwareLicenses.notices(appBundle:)`
+loads the linked `ExportLicensing.notices()` resource bundle plus the unchanged
+app-bundled `WhisperCPULICENSE.txt`. The selectable, resizable native window shows
+the exact first-party MIT license, exact upstream COPYING/LICENSE and the original
+`lame.c` copyright/version-2-or-later grant, and source/relink/release-gate pointers.
+Missing resources are visible errors, not empty successful notices.
+
+### Phase 5 evidence and phase 6 handoff
+
+Phase 5 runs no hosted/UI tests on the desktop and takes no VM lease.
+The focused unhosted selectors are:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+umask 022
+WW_JOBS=2 WW_TEST_WORKERS=2 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 \
+  xcodebuild -project WaveWrangler.xcodeproj -scheme WaveWrangler \
+  -configuration Debug -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/ExportInterfaceTests" -jobs 2 \
+  -only-testing:WaveWranglerTests/EpisodeExportSelectionTests \
+  -only-testing:WaveWranglerTests/ExportMetadataAdapterTests \
+  -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM= test
+WW_JOBS=2 WW_DERIVED_DATA="$PWD/.build/ExportInterfaceBuild" scripts/build.sh Debug
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 \
+  swift test --package-path Packages/WaveWranglerKit --jobs 2 \
+  --filter 'DestinationTests|SymbolAndMenuTests'
+python3 scripts/check-lame-source.py
+python3 scripts/test-ui-plans.py --static
+```
+
+The 11 focused tests cover the supported selection matrix/defaults, typed invalid
+requests, integer-only dither, custom normalization bounds, safe filenames,
+per-show successful bookmark preferences, actual linked license resource resolution
+and exact notice bytes, the preserved unique shortcut, nil/empty metadata
+precedence, Notes isolation, and newly required omission rejection.
+The three focused package destination/menu-register tests also pass. The native
+Debug build and both focused build-for-testing targets compile successfully
+(hosted compile only with the explicit baseline exclusion described below).
+The built application's five package notices and Whisper notice match their
+source resource bytes exactly; the pinned LAME source and static UI-plan checks pass.
+
+Build-for-testing only (no application launch) prepares
+`EpisodeExportInterfaceHostedTests` and `EpisodeExportUITests`. The existing
+unrelated `ControlsSidebarHostedTests.swift:16` reference to missing
+`DestinationControl` blocks the full hosted compile. An explicit
+`EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift` permits focused
+compile evidence, **not** a full hosted-suite pass. Do not silently drop it from
+qualification. The two UI tests are included by the Regression plan.
+
+After restoring/checking and leasing a ready VM in phase 6, run these selectors
+using the documented VM GUI workflow (never fall back to the desktop):
+
+- `WaveWranglerHostedTests/EpisodeExportInterfaceHostedTests`: shared presentation,
+  legacy retargeting, synchronous consent revocation, actual native menu structure,
+  app/package license resources and window.
+- `WaveWranglerUITests/EpisodeExportUITests/testMenuToolbarShareCompactSheetSupportedOptionsAndSoftwareLicenses`:
+  actual File/toolbar sheet, supported pickers, canceled choices, no old View entry,
+  Help/licenses and relink text.
+- `WaveWranglerUITests/EpisodeExportUITests/testMultiFormatPublicationRemembersSuccessAndCollisionNeverOverwrites`:
+  generated authorized production fixture, real native folder choice, explicit WAV
+  omissions, Podcast normalization, three outputs, receipts, successful preferences,
+  repeated collision refusal and byte-preservation of earlier deliveries.
+
+Additional phase 6 interactions still require actual VM evidence: running
+Cancel/Keep Exporting and cleanup; Escape/Command-W/document-close and application
+quit while rendering; two windows on one show and independent other-show export;
+source/model invalidation; nonzero/negative Start/End; Unicode, oversized/replacement
+artwork and inherited/omitted metadata; partial publication and foreign-staging
+cleanup errors; peak/boost/unmeasurable/target-missed result text; headroom failures
+and Float32 over-range warning; minimum-size/large-text/keyboard/VoiceOver layout
+and absence of clipped controls. Stable controls use `ww.show.export`,
+`ww.export.{sheet,scroll,range,format.wave,format.mp3,format.m4a,filename,chooseDirectory,
+acceptOmissions,start,cancel,close,progress.phase,result,message}` and
+`ww.licenses.{window,list,text}`. Intrinsic layout and real UI interactions are
+not certified by compilation or the unhosted tests.
 
 ## LAME provenance and rebuilding/relinking
 
@@ -323,8 +444,8 @@ do not impose additional restrictions on replacement builds. A binary release
 must accompany its exact corresponding source/build materials and usable relink
 instructions, not merely point to an upstream homepage or provide attribution.
 
-`ExportLicensing` exposes the resource-bundled COPYING/LICENSE URLs for the later
-About/licenses UI. Preserve other components' notices. **Release gate:** validate
+`ExportLicensing` exposes the resource-bundled COPYING/LICENSE URLs and throwing
+`notices()` loader used by Help > Software Licenses. Preserve other components' notices. **Release gate:** validate
 the exact shipped source/relink package, application linkage, signing, sandbox,
 library validation, distribution terms and any App Store terms before shipping.
 This development foundation is not a claim of legal or App Store clearance.

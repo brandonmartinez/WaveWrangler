@@ -7,6 +7,43 @@ import WWExport
 
 @Suite("Export publication metadata adaptation")
 struct ExportMetadataAdapterTests {
+    @Test func exportOnlyDateNumberAndTextPreserveInheritVersusOmit() throws {
+        let episode = Episode(title: "Episode", number: 7)
+        let model = ShowDocumentModel(show: .init(title: "Show"), episodes: [episode])
+        let resolved = try model.resolvedPublication(for: episode.id)
+        var selection = try EpisodeExportOptions().delivery(.mp3, baseName: "Episode")
+        #expect(try ExportMetadataAdapter.delivery(resolved, selection: selection).metadata.episodeNumber == 7)
+        selection.titleOverride = ""; selection.albumOverride = ""
+        selection.dateOverride = "2026-11-12"; selection.episodeNumberOverride = "8"
+        let changed = try ExportMetadataAdapter.delivery(resolved, selection: selection).metadata
+        #expect(changed.title == nil && changed.album == nil)
+        #expect(changed.date == "2026-11-12" && changed.episodeNumber == 8)
+        selection.dateOverride = ""; selection.episodeNumberOverride = ""
+        let omitted = try ExportMetadataAdapter.delivery(resolved, selection: selection).metadata
+        #expect(omitted.date == nil && omitted.episodeNumber == nil)
+        for invalid in ["0", "-1", "2147483648", "one", "1.5"] {
+            selection.episodeNumberOverride = invalid
+            #expect(throws: ExportFailure.self) { try ExportMetadataAdapter.delivery(resolved, selection: selection) }
+        }
+        selection.episodeNumberOverride = nil
+        selection.dateOverride = "not-a-date"
+        #expect(throws: ExportFailure.self) { try ExportMetadataAdapter.delivery(resolved, selection: selection) }
+        #expect(model.episodes[0].number == 7 && model.episodes[0].publishedOn == nil)
+    }
+
+    @Test func newlyRequiredOmissionsCannotReuseEarlierConsent() throws {
+        let episode = Episode(title: "Episode", number: 7)
+        let model = ShowDocumentModel(show: .init(title: "Show"), episodes: [episode])
+        var selection = try EpisodeExportOptions().delivery(.wave, baseName: "Episode")
+        let resolved = try model.resolvedPublication(for: episode.id)
+        selection.confirmedOmissions = try ExportMetadataAdapter.preview(resolved, delivery: selection).omissions
+        _ = try ExportMetadataAdapter.delivery(resolved, selection: selection)
+        let changed = try model.settingShowPublication(.init(publisher: "New publisher"))
+        let refreshed = try changed.resolvedPublication(for: episode.id)
+        #expect(throws: ExportFailure.self) { try ExportMetadataAdapter.delivery(refreshed, selection: selection) }
+        selection.confirmedOmissions = try ExportMetadataAdapter.preview(refreshed, delivery: selection).omissions
+        _ = try ExportMetadataAdapter.delivery(refreshed, selection: selection)
+    }
     @Test func inheritedDefaultsAndExportOverridesNeverMutateDocumentOrCopyNotes() throws {
         let episode = Episode(title: "Episode", number: 7, notes: "PRIVATE episode notes")
         let model = ShowDocumentModel(show: .init(title: "Show", notes: "PRIVATE show notes",
