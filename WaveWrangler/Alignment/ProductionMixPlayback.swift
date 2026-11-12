@@ -245,18 +245,21 @@ final class ProductionMixPlayback: Sendable {
     private let state: Mutex<State>
     private let canceled = Atomic<Bool>(false)
     private let diagnostics: ProductionPlaybackDiagnostics
+    private let rawCache: ProductionPlaybackPCMCache
 
     #if DEBUG
     var diagnosticsForTesting: ProductionPlaybackDiagnostics { diagnostics }
     #endif
 
     init(processor: MixerProcessor, runtime: AlignmentRuntime, model: ShowDocumentModel,
-         controls: MixerLiveControls, outputGeneration: UInt64) {
+         controls: MixerLiveControls, outputGeneration: UInt64, startup: ProductionPlaybackStartup? = nil,
+         rawCache: ProductionPlaybackPCMCache = ProductionPlaybackPCMCache()) {
         self.processor = processor
         self.runtime = runtime
         self.model = model
         self.outputGeneration = outputGeneration
-        diagnostics = ProductionPlaybackDiagnostics(processor: processor.diagnostics)
+        self.rawCache = rawCache
+        diagnostics = ProductionPlaybackDiagnostics(processor: processor.diagnostics, startup: startup)
         state = Mutex(State(controls: controls))
     }
 
@@ -283,7 +286,9 @@ final class ProductionMixPlayback: Sendable {
     func play(output: AlignmentAudioPlayback, startFrame: Int64? = nil,
               onBufferDeadline: @escaping @MainActor @Sendable () -> Void) async throws {
         try check()
+        let consumerStarted = ContinuousClock.now
         try await runtime.withProductionConsumer(recipe: processor.recipe, model: model) { [self] consumer in
+            diagnostics.startup?.record(.consumer, since: consumerStarted)
             try check()
             try await playPrepared(consumer: consumer, output: output, startFrame: startFrame,
                                    onBufferDeadline: onBufferDeadline)
@@ -298,7 +303,9 @@ final class ProductionMixPlayback: Sendable {
         let cache = ProductionCyclePCMCache(bounds: inputFrames) { [self] frames in
             try check()
             guard output.generation == outputGeneration else { throw CancellationError() }
-            return try await runtime.productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
+            return try await rawCache.window(frames, startup: diagnostics.startup) { [self] frames in
+                try await runtime.productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
+            }
         }
         func queueEnd(at frame: Int64) -> Int64 {
             state.withLock { state in
@@ -306,7 +313,8 @@ final class ProductionMixPlayback: Sendable {
             }
         }
         func makeQueue(from frame: Int64, to end: Int64) -> ProductionPCMQueue {
-            ProductionPCMQueue(frames: frame..<end, diagnostics: diagnostics, prepare: { [self] frames in
+            ProductionPCMQueue(frames: frame..<end, diagnostics: diagnostics,
+                               readyWindows: MixerLiveTiming.startupSourceWindows, prepare: { [self] frames in
                 try await cache.window(frames, retaining: state.withLock { $0.cycle })
             }, failed: { [self] in invalidate($0) })
         }
@@ -315,8 +323,12 @@ final class ProductionMixPlayback: Sendable {
         await queue.start()
         var validation: Task<Void, Never>?
         do {
+            let reserveStarted = ContinuousClock.now
             try await queue.waitUntilReady()
+            diagnostics.startup?.record(.rawReserve, since: reserveStarted)
+            let validationStarted = ContinuousClock.now
             try await validate(recipe: recipe)
+            diagnostics.startup?.record(.validation, since: validationStarted)
             try check()
             // Bookmark/File Provider and full-map verification can exceed the processed horizon.
             // Keep checking even after the whole program is prefetched, without blocking live DSP.
@@ -332,6 +344,7 @@ final class ProductionMixPlayback: Sendable {
                     invalidate(error)
                 }
             }
+            diagnostics.startup?.beginOutput()
             try await processor.beginPlaybackPass(at: first)
             var cursor = PlaybackCycleCursor(frame: first, end: inputFrames.upperBound)
             var expectedInput = first

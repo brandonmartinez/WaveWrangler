@@ -265,6 +265,7 @@ public struct MixerPCMWindow: Sendable {
 public enum MixerLiveTiming {
     public static let sourceWindowFrames = 48_000
     public static let sourcePrefetchWindows = 5
+    public static let startupSourceWindows = 2
     public static let processingBlockFrames = MixerRecipe.blockFrames
     public static let maximumScheduledAheadFrames = MixerRecipe.sampleRate / 4
     public static let refillLowWaterFrames = MixerRecipe.sampleRate / 5

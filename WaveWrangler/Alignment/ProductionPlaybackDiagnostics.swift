@@ -3,6 +3,49 @@ import OSLog
 import Synchronization
 import WWMix
 
+/// One startup, with numeric timings only. Cached PCM is evidence, never source authorization.
+final class ProductionPlaybackStartup: Sendable {
+    enum Stage: String, CaseIterable, Sendable {
+        case composition, retirement, stateCapture, recipe, processor, consumer, rawReserve, validation, output
+    }
+
+    struct Snapshot: Sendable {
+        var stages: [Stage: Duration] = [:]
+        var elapsed: Duration?
+        var reusedProcessor = false
+        var cachedWindows = 0
+        fileprivate var outputStarted: ContinuousClock.Instant?
+    }
+
+    private let started = ContinuousClock.now
+    private let state = Mutex(Snapshot())
+    private static let logger = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "AudioPlayback")
+
+    var snapshot: Snapshot { state.withLock { $0 } }
+
+    func record(_ stage: Stage, since start: ContinuousClock.Instant) {
+        state.withLock { $0.stages[stage, default: .zero] += start.duration(to: .now) }
+    }
+
+    func reusedProcessor() { state.withLock { $0.reusedProcessor = true } }
+    func reusedWindow() { state.withLock { $0.cachedWindows += 1 } }
+    func beginOutput() { state.withLock { $0.outputStarted = .now } }
+
+    func reportStarted() {
+        let report: Snapshot? = state.withLock {
+            guard $0.elapsed == nil else { return nil }
+            if let start = $0.outputStarted { $0.stages[.output] = start.duration(to: .now) }
+            $0.elapsed = started.duration(to: .now)
+            return $0
+        }
+        guard let report else { return }
+        let stages = Stage.allCases.map {
+            "\($0.rawValue)Ms=\(ProductionPlaybackDiagnostics.milliseconds(report.stages[$0] ?? .zero))"
+        }.joined(separator: " ")
+        Self.logger.info("WWAUDIO_STARTUP elapsedMs=\(ProductionPlaybackDiagnostics.milliseconds(report.elapsed ?? .zero), privacy: .public) warmProcessor=\(report.reusedProcessor) cachedWindows=\(report.cachedWindows) \(stages, privacy: .public)")
+    }
+}
+
 /// Bounded numeric evidence only; never retains audio, source identifiers, paths, or vendor state.
 final class ProductionPlaybackDiagnostics: Sendable {
     enum Stage: String, CaseIterable, Sendable {
@@ -37,8 +80,12 @@ final class ProductionPlaybackDiagnostics: Sendable {
     private static let logger = Logger(subsystem: "com.brandonmartinez.wavewrangler", category: "AudioPlayback")
     private let state = Mutex(State())
     private let processor: MixerProcessingDiagnostics?
+    let startup: ProductionPlaybackStartup?
 
-    init(processor: MixerProcessingDiagnostics? = nil) { self.processor = processor }
+    init(processor: MixerProcessingDiagnostics? = nil, startup: ProductionPlaybackStartup? = nil) {
+        self.processor = processor
+        self.startup = startup
+    }
 
     func begin(_ stage: Stage, at now: ContinuousClock.Instant = .now) -> ContinuousClock.Instant {
         state.withLock { $0.timings[stage]?.started = now }
@@ -135,7 +182,7 @@ final class ProductionPlaybackDiagnostics: Sendable {
         return "WWAUDIO_UNDERRUN v=2 scheduledFrames=\(scheduledFrames) consumedFrames=\(consumedFrames) appendGapMs=\(Self.milliseconds(appendGap)) rawQueued=\(captured.queuedRawWindows) rawPrepared=\(captured.preparedRawWindows) minBufferedFrames=\(minimum) lowWaterCrossings=\(captured.lowWaterCrossings) \(stages) \(processorStages)"
     }
 
-    private static func milliseconds(_ duration: Duration) -> String {
+    fileprivate static func milliseconds(_ duration: Duration) -> String {
         let parts = duration.components
         return String(format: "%.3f", locale: Locale(identifier: "en_US_POSIX"),
                       Double(parts.seconds) * 1000 + Double(parts.attoseconds) / 1e15)

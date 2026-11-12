@@ -32,6 +32,34 @@ struct PlaybackCycleCursor {
     }
 }
 
+/// A small, controller-owned raw working set survives Stop. It retains no readers or access grants.
+actor ProductionPlaybackPCMCache {
+    private var windows: [MixerPCMWindow] = []
+    private let capacity = MixerLiveTiming.sourcePrefetchWindows + 3
+
+    func window(_ frames: Range<Int64>, startup: ProductionPlaybackStartup?,
+                prepare: @Sendable (Range<Int64>) async throws -> MixerPCMWindow) async throws -> MixerPCMWindow {
+        try Task.checkCancellation()
+        if let index = windows.firstIndex(where: { $0.frames == frames }) {
+            let window = windows.remove(at: index)
+            windows.append(window)
+            startup?.reusedWindow()
+            return window
+        }
+        let window = try await prepare(frames)
+        try Task.checkCancellation()
+        guard window.frames == frames else { throw MixerFailure.discontinuousPCM }
+        windows.removeAll { $0.frames == frames }
+        windows.append(window)
+        if windows.count > capacity { windows.removeFirst(windows.count - capacity) }
+        return window
+    }
+
+    #if DEBUG
+    var retainedWindowCount: Int { windows.count }
+    #endif
+}
+
 /// Retain ungained cycle tiles and the current decode tile, never rendered/frozen controls.
 actor ProductionCyclePCMCache {
     private var tiles: [Int64: MixerPCMWindow] = [:]

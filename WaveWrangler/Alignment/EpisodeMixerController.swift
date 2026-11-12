@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import Synchronization
 import WWCommonEdit
 import WWCore
 import WWMix
@@ -26,6 +27,8 @@ final class EpisodeMixerController {
     var soloedAudioTracks: Set<AudioTrackID> = [] { didSet { refreshPlaybackControls() } }
     var masterMuted = false { didSet { refreshPlaybackControls() } }
     @ObservationIgnored private var playback: ProductionMixPlayback?
+    @ObservationIgnored private var rawPlaybackCache = ProductionPlaybackPCMCache()
+    @ObservationIgnored private var canRestartProcessor = false
     @ObservationIgnored private(set) var processor: MixerProcessor?
     @ObservationIgnored private var snapshot: ShowDocumentModel?
     @ObservationIgnored private var expectedMix: EpisodeMixState?
@@ -69,19 +72,35 @@ final class EpisodeMixerController {
         _ = try await prepare(programFrames: frames.lowerBound..<(frames.lowerBound + 1))
     }
 
-    func prepare(programFrames: Range<Int64>, policy: MixerRenderPolicy = .init()) async throws -> MixerRecipe {
+    func prepare(programFrames: Range<Int64>, policy: MixerRenderPolicy = .init(),
+                 startup: ProductionPlaybackStartup? = nil) async throws -> MixerRecipe {
         let presentations = document.map {
             ShowWindowRegistry.states(for: $0.store).filter { $0.alignmentModel?.mixer === self }.map(\.mixerPresentation)
         } ?? []
         presentations.forEach { $0.hideEditorsForBarrier() }
         let key = editorObservationKey
+        let retirementStarted = ContinuousClock.now
+        try await runtime.productionRetirements.wait()
+        try Task.checkCancellation()
+        startup?.record(.retirement, since: retirementStarted)
         await suspendEditorObservation()
         do {
-            return try await operations.run { [self] in
-                if nativeStateBaseline != nil { try await captureState(coalescing: key) }
-                document?.store.endCoalescing()
-                presentations.forEach { $0.dismissEditorsAfterCapture() }
-                return try await load(programFrames: programFrames, policy: policy)
+            let canceled = Mutex(false)
+            return try await withTaskCancellationHandler {
+                try await operations.run { [self] in
+                    if canceled.withLock({ $0 }) { throw CancellationError() }
+                    let captureStarted = ContinuousClock.now
+                    if nativeStateBaseline != nil { try await captureState(coalescing: key) }
+                    if canceled.withLock({ $0 }) { throw CancellationError() }
+                    startup?.record(.stateCapture, since: captureStarted)
+                    document?.store.endCoalescing()
+                    presentations.forEach { $0.dismissEditorsAfterCapture() }
+                    let recipe = try await load(programFrames: programFrames, policy: policy, startup: startup)
+                    if canceled.withLock({ $0 }) { throw CancellationError() }
+                    return recipe
+                }
+            } onCancel: {
+                canceled.withLock { $0 = true }
             }
         } catch {
             presentations.forEach { $0.restoreEditorsAfterBarrier() }
@@ -89,9 +108,31 @@ final class EpisodeMixerController {
         }
     }
 
-    private func load(programFrames: Range<Int64>, policy: MixerRenderPolicy) async throws -> MixerRecipe {
+    private func load(programFrames: Range<Int64>, policy: MixerRenderPolicy,
+                      startup: ProductionPlaybackStartup?) async throws -> MixerRecipe {
         playback?.cancel()
         playback = nil
+        if canRestartProcessor, let processor, processor.recipe.programFrames == programFrames,
+           processor.recipe.policy == policy, case .ready = state, currentDependencyFailure() == nil {
+            let revision = generation
+            let processorStarted = ContinuousClock.now
+            state = .loading
+            do {
+                try await processor.restartPlayback(controls: liveControls())
+                try Task.checkCancellation()
+                guard generation == revision else { throw CancellationError() }
+                try validateCurrent()
+                startup?.record(.processor, since: processorStarted)
+                startup?.reusedProcessor()
+                state = .ready
+                return processor.recipe
+            } catch {
+                if generation == revision { fail(error) }
+                throw error
+            }
+        }
+        canRestartProcessor = false
+        rawPlaybackCache = ProductionPlaybackPCMCache()
         generation &+= 1
         let generation = generation
         editorObservationGeneration &+= 1
@@ -106,10 +147,14 @@ final class EpisodeMixerController {
             guard document.verifiedModel?.hasSameMediaInputs(as: model, in: episodeID) == true else {
                 throw MixerFailure.staleDependencies
             }
+            let recipeStarted = ContinuousClock.now
             let recipe = try await runtime.mixerRecipe(model: model, episode: episodeID,
                 programFrames: programFrames, policy: policy)
+            startup?.record(.recipe, since: recipeStarted)
+            let processorStarted = ContinuousClock.now
             let loaded = try await MixerProcessor.load(recipe: recipe, livePlayback: true)
             let statuses = await loaded.unitStatuses()
+            startup?.record(.processor, since: processorStarted)
             try Task.checkCancellation()
             guard self.generation == generation,
                   document.store.model.hasSameProcessingInputs(as: model, in: episodeID) else {
@@ -128,6 +173,7 @@ final class EpisodeMixerController {
             mutedAudioTracks.formIntersection(tracks)
             soloedAudioTracks.formIntersection(tracks)
             unitStatuses = statuses
+            canRestartProcessor = true
             state = .ready
             return recipe
         } catch {
@@ -221,11 +267,13 @@ final class EpisodeMixerController {
         return controls
     }
 
-    func makePlayback(output: AlignmentAudioPlayback) throws -> ProductionMixPlayback {
+    func makePlayback(output: AlignmentAudioPlayback,
+                      startup: ProductionPlaybackStartup? = nil) throws -> ProductionMixPlayback {
         try validateCurrent()
         guard let processor, let snapshot else { throw MixerFailure.staleDependencies }
         let prepared = ProductionMixPlayback(processor: processor, runtime: runtime,
-            model: snapshot, controls: try liveControls(), outputGeneration: output.generation)
+            model: snapshot, controls: try liveControls(), outputGeneration: output.generation, startup: startup,
+            rawCache: rawPlaybackCache)
         playback?.cancel()
         playback = prepared
         consoleMeters = MixerConsoleSnapshot()
@@ -525,6 +573,8 @@ final class EpisodeMixerController {
         playback?.invalidate(MixerFailure.staleDependencies)
         playback = nil
         processor = nil
+        canRestartProcessor = false
+        rawPlaybackCache = ProductionPlaybackPCMCache()
         snapshot = nil
         expectedMix = nil
         nativeStateBaseline = nil
@@ -542,7 +592,9 @@ final class EpisodeMixerController {
     }
 
     func fail(_ error: Error) {
+        canRestartProcessor = false
         playback?.invalidate(error)
+        rawPlaybackCache = ProductionPlaybackPCMCache()
         generation &+= 1
         editorObservationGeneration &+= 1
         editorObservationCancellation?.cancel()

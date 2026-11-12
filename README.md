@@ -59,6 +59,9 @@ Leaving Alignment stops diagnostic source audition. Deliberate production listen
 continue in a detached mixer, which retains its own Stop control.
 Levels describe prepared PCM, including clipping; they are not acoustic-output measurements.
 This is buffered monitoring, not live microphone monitoring or zero-latency processing.
+Repeated starts with unchanged processing inputs reuse reset effects and bounded raw
+PCM caches, with source authorization rechecked before output. Cuts update the visible
+waveforms before background detail finishes; original audio remains untouched.
 The initial processing scope is arm64, mono/stereo recordings, mono speaker inserts, and 48 kHz
 stereo Master/output. Compatibility is unit-specific. There is no export/file-delivery UI yet.
 
@@ -522,7 +525,9 @@ Left/Right for 1 ms steps. Numeric aligned-second fields and separate 1 ms nudge
 in the toolbar and inspector.
 At dense zoom levels, lightweight rails replace individual controls; click a marked interval to
 zoom in and inspect it, or zoom in manually for draggable handles.
-Bounds cannot cross, leave the analyzed/working range, or cross unsupported accepted timing,
+Dragged and nudged boundaries hard-stop at the neighboring interval in the same speaker lane;
+numeric entries cannot bypass that limit. Bounds cannot cross their opposite edge,
+leave the analyzed/working range, or cross unsupported accepted timing,
 source occurrences or recording segments. Adaptive timing and affine rates use the existing source-frame mapping;
 there is no amplitude snapping or new alignment.
 

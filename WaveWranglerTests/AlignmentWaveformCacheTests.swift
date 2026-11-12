@@ -5,6 +5,37 @@ import WWCore
 
 @Suite("Alignment waveform cache ownership")
 struct AlignmentWaveformCacheTests {
+    @Test func viewportProjectionMatchesFullGeometryAcrossCutsAndRestoration() async throws {
+        let source = SourceID(), epoch = RecordingEpochID()
+        let strokes = (0..<2000).map { frame in
+            let start = Double(frame) / 100
+            let amplitude: Float = (100..<200).contains(frame) ? 0.9 : 0.2
+            return AlignmentWaveformStroke(sourceSeconds: start + 0.005, groupSeconds: start + 0.005,
+                displaySeconds: start + 0.005, low: -amplitude, high: amplitude, mapped: true, epoch: epoch,
+                displayRange: start...(start + 0.009), groupRange: start...(start + 0.009))
+        }
+        let aligned = AlignmentWaveformStrokeIndex(strokes: strokes)
+        let cuts = try ManualCutTimeline(cuts: [
+            .init(alignmentRevision: 1, startFrame: 48_000, endFrame: 96_000),
+            .init(alignmentRevision: 1, startFrame: 192_000, endFrame: 240_000),
+        ])
+        for projection in [AudioTimelineProjection(cuts: cuts), .unedited] {
+            let full = AlignmentWaveformStrokeIndex(strokes: projection.project(strokes))
+            let rebuilt = try await AlignmentWaveformProjection.reproject(
+                alignedIndices: [source: aligned], projection: projection)
+            #expect(rebuilt.strokes[source] == full.strokes)
+            #expect(rebuilt.gains[source] == full.normalizedGain)
+            for start in [0.0, 0.75, 1, 2.75, 3, 10] {
+                let expected = full.visible(start: start, duration: 0.5)
+                #expect(aligned.projectedVisible(projection, start: start, duration: 0.5) == expected)
+                let preview = try await AlignmentWaveformProjection.reproject(alignedIndices: [source: aligned],
+                    projection: projection, window: start...(start + 0.5))
+                #expect(preview.strokes[source] == expected)
+            }
+        }
+        #expect(aligned.strokes == strokes, "Undo and Show Cut must retain the removed geometry.")
+    }
+
     @Test func cacheIsBoundedReplacesMatchingWindowsAndDiscardsOldGenerations() {
         var cache = AlignmentWaveformCache()
         for start in 0..<9 { cache.insert(tile(start: Double(start))) }

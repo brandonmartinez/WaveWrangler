@@ -709,6 +709,71 @@ struct EpisodeCleanupModelTests {
         #expect(model.episode?.alignment == snapshot.episodes[0].alignment)
     }
 
+    @Test(arguments: [false, true])
+    func fillerBoundariesClampAtTheirNeighborsAndKeepTheOppositeEdge(endEdge: Bool) throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        let speaker = review.speaker
+        model.addManualFiller(speaker: speaker, start: 1.5, end: 1.75)
+        model.addManualFiller(speaker: speaker, start: 2.5, end: 2.75)
+        let neighbors = model.fillerReviews.filter { $0.id != review.id }
+        let original = review.bounds
+        model.setFillerBoundary(review.id, edge: endEdge ? .end : .start,
+            time: endEdge ? 20 : -20, original: original)
+        let updated = try #require(model.fillerReviews.first { $0.id == review.id })
+        #expect(updated.bounds.alignedStart == (endEdge ? original.alignedStart : 1.75))
+        #expect(updated.bounds.alignedEnd == (endEdge ? 2.5 : original.alignedEnd))
+        #expect(model.fillerReviews.filter { $0.id != review.id } == neighbors)
+        #expect(model.error == nil)
+        let limits = try #require(model.fillerBoundaryLimits(updated,
+            edge: endEdge ? .end : .start, original: updated.bounds))
+        #expect(endEdge ? limits.lowerBound > updated.bounds.alignedStart
+            : limits.upperBound < updated.bounds.alignedEnd)
+        let snapshot = model.state.store.model
+        model.setFillerBounds(review.id, start: endEdge ? updated.bounds.alignedStart : 1.7,
+            end: endEdge ? 2.6 : updated.bounds.alignedEnd)
+        #expect(model.error != nil && model.state.store.model == snapshot,
+            "Typed bounds must not bypass the drag and keyboard neighbor stops.")
+    }
+
+    @Test(arguments: [false, true])
+    func draggingFillerPastANeighborStopsItsPreviewBeforePublishing(endEdge: Bool) async throws {
+        let model = try fillerFixture()
+        defer { model.cancel() }
+        model.proposeFillers()
+        let review = try #require(model.fillerReviews.first)
+        model.addManualFiller(speaker: review.speaker, start: 1.5, end: 1.75)
+        model.addManualFiller(speaker: review.speaker, start: 2.5, end: 2.75)
+        model.windowStart = 1
+        model.windowDuration = 3
+        let snapshot = model.state.store.model
+        let host = HostedTimelineWindow(width: 900, height: 96,
+            content: FillerTimingOverlay(model: model, reviews: [review]))
+        defer { host.close() }
+        try await host.settle()
+        let frames = host.controlFrames.filter { abs($0.width - 18) < 1 && abs($0.height - 18) < 1 }
+            .sorted { $0.minY < $1.minY }
+        try #require(frames.count == 2)
+        let moving = frames[endEdge ? 1 : 0]
+        let stationary = frames[endEdge ? 0 : 1]
+        let point = CGPoint(x: moving.midX, y: moving.midY)
+        let pastNeighbor = CGPoint(x: point.x + (endEdge ? 500 : -500), y: point.y)
+        try await host.mouse([(.leftMouseDown, point), (.leftMouseDragged, pastNeighbor)])
+        let limitX = ((endEdge ? 2.5 : 1.75) - 1) / 3 * 900
+        #expect(host.controlFrames.contains {
+            abs($0.midX - limitX) < 1 && $0.minY == moving.minY
+        })
+        #expect(host.controlFrames.contains(stationary))
+        #expect(model.state.store.model == snapshot, "Dragging must not save partial timing edits.")
+        try host.capture("Filler boundary hard stop \(endEdge ? "end" : "start")")
+        try await host.mouse([(.leftMouseUp, pastNeighbor)])
+        let updated = try #require(model.fillerReviews.first { $0.id == review.id })
+        #expect(updated.bounds.alignedStart == (endEdge ? review.bounds.alignedStart : 1.75))
+        #expect(updated.bounds.alignedEnd == (endEdge ? 2.5 : review.bounds.alignedEnd))
+    }
+
     @Test func cancelingReviewClearsReactiveRefreshSkip() async throws {
         let model = try fillerFixture()
         defer { model.cancel() }

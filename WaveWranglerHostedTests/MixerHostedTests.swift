@@ -11,6 +11,62 @@ import WWPersistence
 @MainActor
 @Suite("Document-bound mixer integration (synthetic and Apple units)", .serialized)
 struct MixerHostedTests {
+    @Test func stoppingAFailedTransportDoesNotMakeItsGraphReusable() async throws {
+        let f = try await ready(durationSeconds: 4)
+        defer { f.close() }
+        _ = try await f.model.mixer.prepare(programFrames: 0..<48_000)
+        let failed = try #require(f.model.mixer.processor)
+        f.model.mixer.fail(MixerFailure.incompletePCM)
+        f.model.mixer.stop()
+        let startup = ProductionPlaybackStartup()
+        _ = try await f.model.mixer.prepare(programFrames: 0..<48_000, startup: startup)
+        #expect(f.model.mixer.processor !== failed && !startup.snapshot.reusedProcessor)
+    }
+
+    @Test func productionRestartMeasuresColdAndRepeatedStarts() async throws {
+        let f = try await ready(durationSeconds: 12)
+        defer { f.close() }
+        try insert(try appleSlot(), into: f)
+        try await save(f.document)
+        f.model.load()
+        var firstProcessor: MixerProcessor?
+        var firstRevision: UInt64?
+        for pass in 0..<2 {
+            let start = ContinuousClock.now
+            f.model.playProductionMix(interval: 0...8, repeating: false)
+            try await wait(f.model.lastError ?? f.model.auditionLabel) {
+                f.model.isAuditioning || f.model.lastError != nil
+            }
+            try #require(f.model.lastError == nil)
+            let diagnostics = try #require(f.model.mixer.playbackDiagnosticsForTesting)
+            let startup = try #require(diagnostics.startup?.snapshot)
+            let elapsed = try #require(startup.elapsed)
+            if pass == 0 {
+                firstProcessor = f.model.mixer.processor
+                firstRevision = f.model.mixer.instanceRevision
+                #expect(!startup.reusedProcessor && startup.cachedWindows == 0)
+            } else {
+                #expect(startup.reusedProcessor && startup.cachedWindows >= 2)
+                #expect(f.model.mixer.processor === firstProcessor && f.model.mixer.instanceRevision == firstRevision)
+                #expect(startup.stages[.recipe] == nil)
+                #expect(elapsed < .seconds(1), "A warm synthetic restart must not take seconds.")
+            }
+            print("PRODUCTION_START pass=\(pass) scheduled=\(elapsed) observed=\(start.duration(to: .now)) warm=\(startup.reusedProcessor) cached=\(startup.cachedWindows) stages=\(startup.stages)")
+            f.model.stopAudition()
+        }
+        f.model.playProductionMix(interval: 0...0.5, repeating: false)
+        try await wait(f.model.lastError ?? f.model.auditionLabel) { !f.model.canStopAudition }
+        try #require(f.model.lastError == nil)
+        let finishedProcessor = try #require(f.model.mixer.processor)
+        #expect(finishedProcessor !== firstProcessor, "A changed frozen range requires a new recipe.")
+        f.model.playProductionMix(interval: 0...0.5, repeating: false)
+        try await wait(f.model.lastError ?? f.model.auditionLabel) { f.model.isAuditioning || f.model.lastError != nil }
+        #expect(f.model.lastError == nil && f.model.mixer.processor === finishedProcessor,
+                "Natural completion must be restartable without reloading Audio Units.")
+        try await wait(f.model.lastError ?? f.model.auditionLabel) { !f.model.canStopAudition }
+        #expect(f.model.lastError == nil && f.model.waveformPlayheadSeconds == 0.5)
+    }
+
     @Test func sourceGainChangesKeepTheTransportClock() async throws {
         let f = try await ready(durationSeconds: 12)
         defer { f.close() }

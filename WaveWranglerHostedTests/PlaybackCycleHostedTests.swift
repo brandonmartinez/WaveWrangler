@@ -9,6 +9,32 @@ import WWMix
 @MainActor
 @Suite("Persistent playback cycles (synthetic only)", .serialized)
 struct PlaybackCycleHostedTests {
+    @Test func restartCacheRetainsOnlyABoundedRawWorkingSetAndHonorsCancellation() async throws {
+        let cache = ProductionPlaybackPCMCache()
+        let decodes = Mutex(0)
+        let reference = ChannelReference(sourceID: SourceID(), channel: .unknown)
+        let prepare: @Sendable (Range<Int64>) async throws -> MixerPCMWindow = { frames in
+            decodes.withLock { $0 += 1 }
+            return .init(frames: frames, channels: [reference: frames.map { Float($0) }])
+        }
+        for frame: Int64 in 0..<12 {
+            _ = try await cache.window(frame..<(frame + 1), startup: nil, prepare: prepare)
+        }
+        #expect(await cache.retainedWindowCount == 8)
+        let startup = ProductionPlaybackStartup()
+        let warm = try await cache.window(11..<12, startup: startup, prepare: prepare)
+        #expect(warm.channels[reference] == [11])
+        #expect(decodes.withLock { $0 } == 12 && startup.snapshot.cachedWindows == 1)
+        _ = try await cache.window(0..<1, startup: nil, prepare: prepare)
+        #expect(decodes.withLock { $0 } == 13, "Evicted PCM must be prepared again.")
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await cache.window(11..<12, startup: nil, prepare: prepare)
+        }
+        await #expect(throws: CancellationError.self) { _ = try await task.value }
+        #expect(decodes.withLock { $0 } == 13)
+    }
+
     @Test func cyclesCatchAtTheEndWithoutSeekingAtEnableTime() {
         var cursor = PlaybackCycleCursor(frame: 0, end: 100)
         #expect(cursor.next(maximumFrames: 15, cycle: 10..<20) == 0..<15)

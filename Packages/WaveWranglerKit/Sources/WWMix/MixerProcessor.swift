@@ -304,6 +304,41 @@ public actor MixerProcessor {
         playbackSegments.append((playbackInputFrames, frame))
     }
 
+    /// A stopped transport starts a new stream; cycle passes deliberately do not reset effects.
+    public func restartPlayback(controls: MixerLiveControls) throws {
+        guard livePlayback else { throw MixerFailure.staleDependencies }
+        if let failure { throw failure }
+        try Task.checkCancellation()
+        terminal = false
+        do {
+            try setLiveControls(controls)
+            for unit in allUnits { try unit.resetForPlayback() }
+            for index in delays.indices { delays[index].reset() }
+            for index in speakerMeterDelays.indices { speakerMeterDelays[index].reset() }
+            for index in audioTrackDelays.indices {
+                for channel in audioTrackDelays[index].indices { audioTrackDelays[index][channel].reset() }
+                for channel in audioTrackMeterDelays[index].indices { audioTrackMeterDelays[index][channel].reset() }
+                for channel in audioTrackGains[index].indices { audioTrackGains[index][channel].reset() }
+            }
+            for index in inputGains.indices { inputGains[index].reset() }
+            for index in leftGains.indices { leftGains[index].reset() }
+            for index in rightGains.indices { rightGains[index].reset() }
+            masterGain.reset()
+            nextInput = recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames)
+            renderFrame = nextInput
+            discarded = recipe.policy.prerollFrames + latencyFrames
+            emitted = 0
+            flushRemaining = nil
+            playbackInputFrames = 0
+            playbackStartOffset = 0
+            playbackSegments.removeAll(keepingCapacity: true)
+        } catch {
+            terminal = true
+            failure = error
+            throw error
+        }
+    }
+
     /// Drain latency and the declared tail in bounded windows. Call until nil; no device/file output.
     public func finishNext(maximumFrames: Int = MixerRecipe.maximumWindowFrames,
                            submittedAt: ContinuousClock.Instant? = nil) throws -> MixerPCMOutput? {
@@ -446,6 +481,7 @@ struct GainRamp {
     private var target: Float
     private var remaining = 0
     init(_ value: Float) { self.value = value; target = value }
+    mutating func reset() { value = target; remaining = 0 }
     mutating func set(_ target: Float) {
         guard target != self.target else { return }
         self.target = target
@@ -464,6 +500,10 @@ struct FrameDelay {
     private var samples: [Float]
     private var cursor = 0
     init(frames: Int) { samples = .init(repeating: 0, count: frames) }
+    mutating func reset() {
+        samples = .init(repeating: 0, count: samples.count)
+        cursor = 0
+    }
     mutating func process(_ input: [Float]) -> [Float] {
         guard !samples.isEmpty else { return input }
         var output = input

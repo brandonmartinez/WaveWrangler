@@ -313,6 +313,16 @@ final class NativeAudioUnit: @unchecked Sendable {
         wetGain.set(value ? 0 : 1)
     }
 
+    func resetForPlayback() throws {
+        unit.reset()
+        try verifyTiming()
+        sampleTime = 0
+        input.frames = 0
+        input.sampleTime = 0
+        wetGain.reset()
+        for channel in dryDelays.indices { dryDelays[channel].reset() }
+    }
+
     func parameters() throws -> [MixerParameter] {
         try (unit.parameterTree?.allParameters ?? []).map {
             guard $0.minValue.isFinite, $0.maxValue.isFinite, $0.value.isFinite, $0.minValue <= $0.maxValue else {

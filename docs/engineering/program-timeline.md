@@ -235,6 +235,28 @@ Device-record/generation checks, local residency, raw witnesses, decoder format,
 and before/after access verification remain required. This changes execution
 isolation, not authorization lifetime, verification frequency, or rendered reserve.
 
+Repeated production starts may reuse a live processor only for the same frozen
+program range, render policy, and current processing dependencies. Restart resets
+effect histories, delay/latency compensation, ramps, and sample clocks; it does not
+reinstantiate effects or restore old document controls. Failed transports are not
+reusable. Prior producers and consumers retire before restart, outside the mixer
+operation queue to avoid a retirement joining its own queued preparation.
+
+An eight-window controller-local cache retains raw PCM, never source readers,
+access grants, or processed output. Initial source validation still gates output,
+including on cache hits. Two one-second raw windows permit startup; capacity remains
+five windows and the rendered scheduling horizon remains 250 ms. Source, recipe,
+range, or processing changes take the cold path. Numeric `WWAUDIO_STARTUP` diagnostics
+separate preparation stages and report at output scheduling, not acoustic onset.
+
+Cut-only waveform refresh retains immutable, uncut aligned overview indices.
+Inverse display-window queries project the visible geometry first; the interface
+can then accept seeks, selections, and navigation while detailed tiles and the full
+overview are reprojected off-main. Old detailed coordinates stay hidden until that
+publication, but their measured samples remain available for reprojection. New cuts
+cancel stale publications; restoration and Show Cut reuse the uncut geometry.
+Unplaced source-origin previews do not use a production timeline's dialogue inverse.
+
 ## Exact envelopes and the additive schema-10 shape
 
 Ordinary integer `frame`/`amplitude` point bytes and initializer behavior are

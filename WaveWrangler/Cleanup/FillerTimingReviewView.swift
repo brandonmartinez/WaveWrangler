@@ -226,11 +226,13 @@ private struct FillerTimingRegionView: View {
                         dragEdge = edge
                         model.selectFiller(review.id, reveal: false, movePlayhead: false)
                     }
-                    if let dragOrigin {
+                    if let dragOrigin,
+                       let limits = model.fillerBoundaryLimits(review, edge: edge, original: dragOrigin) {
                         let origin = edge == .start ? dragOrigin.alignedStart : dragOrigin.alignedEnd
-                        dragTime = model.cutTimeline.alignedTime(forEditedTime:
+                        let proposed = model.cutTimeline.alignedTime(forEditedTime:
                             model.cutTimeline.editedTime(forAlignedTime: origin)
                                 + value.translation.width / max(1, size.width) * duration)
+                        dragTime = min(limits.upperBound, max(limits.lowerBound, proposed))
                     }
                 }
                 .onEnded { value in
@@ -239,9 +241,7 @@ private struct FillerTimingRegionView: View {
                         let time = model.cutTimeline.alignedTime(forEditedTime:
                             model.cutTimeline.editedTime(forAlignedTime: origin)
                                 + value.translation.width / max(1, size.width) * duration)
-                        model.setFillerBounds(review.id,
-                            start: edge == .start ? time : dragOrigin.alignedStart,
-                            end: edge == .end ? time : dragOrigin.alignedEnd)
+                        model.setFillerBoundary(review.id, edge: edge, time: time, original: dragOrigin)
                     }
                     dragOrigin = nil
                     dragTime = nil

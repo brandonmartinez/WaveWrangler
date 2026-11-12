@@ -222,6 +222,22 @@ struct AlignmentWaveformStrokeIndex: Sendable {
         return matches.sorted().map { strokes[$0] }
     }
 
+    func projectedVisible(_ projection: AudioTimelineProjection, start: Double,
+                          duration: Double) -> [AlignmentWaveformStroke] {
+        guard start.isFinite, duration.isFinite, duration > 0,
+              start >= -86_400, start + duration <= 86_400 else { return [] }
+        let frames = Int64(floor(start * 48_000))..<Int64(ceil((start + duration) * 48_000))
+        var matches = Set<Int>()
+        for segment in projection.alignedSegments(forDisplayFrames: frames) {
+            matches.formUnion(display.overlapping(start: Double(segment.aligned.lowerBound) / 48_000,
+                end: Double(segment.aligned.upperBound) / 48_000))
+        }
+        matches.formUnion(display.overlapping(start: start, end: start + duration).filter { !strokes[$0].mapped })
+        return projection.project(matches.sorted().map { strokes[$0] }).filter {
+            $0.displayRange.upperBound >= start && $0.displayRange.lowerBound < start + duration
+        }
+    }
+
     @concurrent
     static func prepare(strokes: [AlignmentWaveformStroke]) async throws -> Self {
         try Task.checkCancellation()

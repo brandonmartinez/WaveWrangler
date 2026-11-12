@@ -712,6 +712,7 @@ private final class AlignmentAudioPlaybackGraph: @unchecked Sendable {
             clock = AlignmentPlaybackClock(startSeconds: Double(first) / Double(MixerRecipe.sampleRate),
                 duration: Double(scheduled.frameCount) / Double(MixerRecipe.sampleRate),
                 startedAt: Date().addingTimeInterval(lead))
+            diagnostics?.startup?.reportStarted()
         } else if let clock {
             self.clock = AlignmentPlaybackClock(startSeconds: clock.startSeconds,
                 duration: Double(scheduled.frameCount) / Double(MixerRecipe.sampleRate), startedAt: clock.startedAt,

@@ -607,11 +607,14 @@ actor AlignmentRuntime {
                     }
                     let rate = Double(ManualEpisodeCut.frameRate)
                     let first = Int64(floor(startSeconds * rate))
-                    let cuts = map == nil || (sourceMap == nil && correction == nil)
+                    let hasAlignedTiming = map != nil && (sourceMap != nil || correction != nil)
+                    let cuts = !hasAlignedTiming
                         ? .unedited : try episode.manualCutTimeline(revealing: revealingCut)
                     let requestedFrames = first..<(first + Int64(ceil(durationSeconds * rate)))
-                    let ranges = presentation?.alignedSegments(forDisplayFrames: requestedFrames).map(\.aligned)
-                        ?? cuts.alignedRanges(forEditedFrames: requestedFrames)
+                    let ranges = hasAlignedTiming
+                        ? presentation?.alignedSegments(forDisplayFrames: requestedFrames).map(\.aligned)
+                            ?? cuts.alignedRanges(forEditedFrames: requestedFrames)
+                        : [requestedFrames]
                     var pieces: [WaveformEnvelope] = []
                     for range in ranges {
                         pieces.append(try await WaveformWindowReader.readWindow(
@@ -764,7 +767,8 @@ actor AlignmentRuntime {
                                 cuts: ManualCutTimeline, mappedOnly: Bool = false,
                                 projection: AudioTimelineProjection? = nil) async throws -> AlignmentWaveformProjection.Prepared {
         try await AlignmentWaveformProjection.prepare(load: load, episode: episode, cuts: cuts, mappedOnly: mappedOnly,
-            cache: AlignmentWaveformPreparationCache(coordinator: coordinator), projection: projection)
+            cache: AlignmentWaveformPreparationCache(coordinator: coordinator), projection: projection,
+            retainingAlignedIndices: true)
     }
 
     private struct WaveformSourceAdmission: Sendable {

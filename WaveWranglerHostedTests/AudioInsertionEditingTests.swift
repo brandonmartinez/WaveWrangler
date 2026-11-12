@@ -9,6 +9,39 @@ import WWTimeMap
 struct AudioInsertionEditingTests {
     private let rate: Int64 = 48_000
 
+    @Test func viewportWaveformsMatchFullProjectionAcrossInsertionsExpandedCutsAndUnplacedAudio() throws {
+        let f = try AudioInsertionTestFixture()
+        let cut = ManualEpisodeCut(alignmentRevision: 1, startFrame: rate, endFrame: 2 * rate)
+        let regions = [
+            AudioInsertionRegion(anchor: .programOrigin(frame: 0), durationFrames: rate),
+            AudioInsertionRegion(anchor: try f.anchor(4 * rate), durationFrames: 2 * rate),
+        ]
+        let program = try ProgramTimeline(episode: f.episode(regions: regions, cuts: [cut]),
+            dialogueFrames: f.coverage)
+        let epoch = RecordingEpochID()
+        var strokes = (0..<2000).map { frame in
+            let start = Double(frame) / 100
+            return AlignmentWaveformStroke(sourceSeconds: start + 0.005, groupSeconds: start + 0.005,
+                displaySeconds: start + 0.005, low: -0.5, high: 0.5, mapped: true, epoch: epoch,
+                displayRange: start...(start + 0.009), groupRange: start...(start + 0.009))
+        }
+        strokes.append(.init(sourceSeconds: 0.5, groupSeconds: 0.5, displaySeconds: 0.5,
+            low: -0.8, high: 0.8, mapped: false, epoch: epoch,
+            displayRange: 0...1, groupRange: 0...1))
+        let aligned = AlignmentWaveformStrokeIndex(strokes: strokes)
+        for projection in [
+            AudioTimelineProjection(cuts: program.cuts, program: program),
+            AudioTimelineProjection(cuts: .unedited, program: program, expanded: cut),
+        ] {
+            let full = AlignmentWaveformStrokeIndex(strokes: projection.project(strokes))
+            for start in [-0.5, 0, 0.5, 1, 1.75, 2, 2.75, 3, 3.75, 4, 5, 6, 8] {
+                #expect(aligned.projectedVisible(projection, start: start, duration: 0.5)
+                    == full.visible(start: start, duration: 0.5))
+            }
+        }
+        #expect(aligned.strokes == strokes)
+    }
+
     @Test func indexedCutGeometryMatchesFullScanWithInsertionsAndExpandedReview() throws {
         let f = try AudioInsertionTestFixture()
         let cuts: [ManualEpisodeCut] = (0..<100).map { index in

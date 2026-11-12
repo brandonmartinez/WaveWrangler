@@ -162,8 +162,46 @@ extension EpisodeCleanupModel {
         fillerEndText = selectedFiller.map { String(format: "%.6f", $0.bounds.alignedEnd) } ?? ""
     }
 
+    func fillerBoundaryLimits(_ review: FillerTimingReview, edge: FillerTimingEdge,
+                              original: FillerTimingBounds) -> ClosedRange<Double>? {
+        guard let lane = plan?.lanes.first(where: { $0.speaker == review.speaker }) else { return nil }
+        let current = Set(reviewRows.lazy.filter {
+            $0.speakerID == review.speaker && $0.issue == nil && $0.cutID == nil
+        }.map(\.id))
+        let neighbors = fillerReviews.filter { $0.id != review.id && current.contains($0.id) }
+        let preceding = neighbors.map(\.bounds.alignedEnd).filter { $0 <= original.alignedStart }.max()
+        let following = neighbors.map(\.bounds.alignedStart).filter { $0 >= original.alignedEnd }.min()
+        let lower = max(lane.start, review.analyzedRange?.tracksIn ?? -.infinity,
+            episode?.cleanup?.workingRange?.tracksIn ?? -.infinity, preceding ?? -.infinity)
+        let upper = min(lane.end, review.analyzedRange?.tracksOut ?? .infinity,
+            episode?.cleanup?.workingRange?.tracksOut ?? .infinity, following ?? .infinity)
+        let minimum = 1 / Double(ManualEpisodeCut.frameRate)
+        let lo = edge == .start ? lower : max(lower, original.alignedStart + minimum)
+        let hi = edge == .start ? min(upper, original.alignedEnd - minimum) : upper
+        return lo <= hi ? lo...hi : nil
+    }
+
+    func setFillerBoundary(_ id: UUID, edge: FillerTimingEdge, time: Double,
+                           original: FillerTimingBounds) {
+        guard let review = editableFiller(id) else { return }
+        guard time.isFinite, review.bounds == original,
+              let limits = fillerBoundaryLimits(review, edge: edge, original: original) else {
+            error = "This interval changed or its boundary is unavailable. Select it again before adjusting timing."
+            return
+        }
+        let clamped = min(limits.upperBound, max(limits.lowerBound, time))
+        setFillerBounds(id, start: edge == .start ? clamped : original.alignedStart,
+                        end: edge == .end ? clamped : original.alignedEnd)
+    }
+
     func setFillerBounds(_ id: UUID, start: Double, end: Double) {
         guard let review = editableFiller(id) else { return }
+        guard let startLimits = fillerBoundaryLimits(review, edge: .start, original: review.bounds),
+              let endLimits = fillerBoundaryLimits(review, edge: .end, original: review.bounds),
+              start >= startLimits.lowerBound, end <= endLimits.upperBound else {
+            error = "Audible-word boundaries cannot cross neighboring intervals in this speaker lane."
+            return
+        }
         guard let bounds = mappedFillerBounds(review, start: start, end: end) else {
             error = "Audible-word start must precede end and stay in the same supported source/timing region and analyzed range."
             return
@@ -188,8 +226,9 @@ extension EpisodeCleanupModel {
 
     func nudgeFiller(_ id: UUID, edge: FillerTimingEdge, seconds: Double) {
         guard let review = editableFiller(id) else { return }
-        setFillerBounds(id, start: review.bounds.alignedStart + (edge == .start ? seconds : 0),
-                       end: review.bounds.alignedEnd + (edge == .end ? seconds : 0))
+        setFillerBoundary(id, edge: edge,
+            time: (edge == .start ? review.bounds.alignedStart : review.bounds.alignedEnd) + seconds,
+            original: review.bounds)
     }
 
     func decideFiller(_ id: UUID, decision: FillerReviewDecision) {

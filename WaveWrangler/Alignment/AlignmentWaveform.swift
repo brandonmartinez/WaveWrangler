@@ -187,6 +187,7 @@ enum AlignmentWaveformProjection {
     struct Prepared: Sendable {
         var strokes: [SourceID: [AlignmentWaveformStroke]] = [:]
         var indices: [SourceID: AlignmentWaveformStrokeIndex] = [:]
+        var alignedIndices: [SourceID: AlignmentWaveformStrokeIndex] = [:]
         var gains: [SourceID: Double] = [:]
         var errors: [SourceID: String] = [:]
         var restoredTracks = 0
@@ -197,14 +198,32 @@ enum AlignmentWaveformProjection {
     static func prepare(load: AlignmentWaveformLoad, episode: Episode?,
                         cuts: ManualCutTimeline, mappedOnly: Bool = false,
                         cache: AlignmentWaveformPreparationCache? = nil,
-                        projection: AudioTimelineProjection? = nil) async throws -> Prepared {
+                        projection: AudioTimelineProjection? = nil,
+                        retainingAlignedIndices: Bool = false) async throws -> Prepared {
         var result = Prepared()
         for track in load.tracks {
             try Task.checkCancellation()
             do {
                 let correction = episode?.alignment?.acceptedMap?.sourceCorrections?.first { $0.source == track.id }
                 let index: AlignmentWaveformStrokeIndex
-                if let cache, let episode, let overviewKey = track.overviewCacheKey,
+                if retainingAlignedIndices {
+                    let aligned: AlignmentWaveformStrokeIndex
+                    if let cache, let episode, let overviewKey = track.overviewCacheKey {
+                        let prepared = try await cache.prepare(track: track, overviewKey: overviewKey,
+                            episode: episode.id, map: load.map, correction: correction, cuts: .unedited,
+                            mappedOnly: mappedOnly)
+                        aligned = prepared.index
+                        if prepared.reused { result.restoredTracks += 1 }
+                        if prepared.repaired { result.repairedTracks += 1 }
+                    } else {
+                        var strokes = try strokes(track: track, map: load.map, correction: correction)
+                        if mappedOnly { strokes.removeAll { !$0.mapped } }
+                        aligned = AlignmentWaveformStrokeIndex(strokes: strokes)
+                    }
+                    result.alignedIndices[track.id] = aligned
+                    index = AlignmentWaveformStrokeIndex(strokes:
+                        projection?.project(aligned.strokes) ?? applyingCuts(cuts, to: aligned.strokes))
+                } else if let cache, let episode, let overviewKey = track.overviewCacheKey,
                    projection?.hasInsertions != true, projection?.hasExpandedCut != true {
                     let prepared = try await cache.prepare(track: track, overviewKey: overviewKey,
                         episode: episode.id, map: load.map, correction: correction, cuts: cuts, mappedOnly: mappedOnly)
@@ -225,6 +244,26 @@ enum AlignmentWaveformProjection {
             } catch {
                 result.errors[track.id] = error.localizedDescription
             }
+        }
+        try Task.checkCancellation()
+        return result
+    }
+
+    @concurrent
+    static func reproject(alignedIndices: [SourceID: AlignmentWaveformStrokeIndex],
+                          projection: AudioTimelineProjection,
+                          window: ClosedRange<Double>? = nil) async throws -> Prepared {
+        var result = Prepared()
+        result.alignedIndices = alignedIndices
+        for (source, aligned) in alignedIndices {
+            try Task.checkCancellation()
+            let strokes = window.map {
+                aligned.projectedVisible(projection, start: $0.lowerBound, duration: $0.upperBound - $0.lowerBound)
+            } ?? projection.project(aligned.strokes)
+            let index = AlignmentWaveformStrokeIndex(strokes: strokes)
+            result.strokes[source] = strokes
+            result.indices[source] = index
+            result.gains[source] = window == nil ? index.normalizedGain : aligned.normalizedGain
         }
         try Task.checkCancellation()
         return result

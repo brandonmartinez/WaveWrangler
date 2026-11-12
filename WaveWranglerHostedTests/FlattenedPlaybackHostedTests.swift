@@ -338,6 +338,26 @@ struct FlattenedPlaybackHostedTests {
         #expect(f.model.waveformPlayheadSeconds < 4)
     }
 
+    @Test func aWarmRestartRevalidatesCachedPCMBeforePublishingAnOutputClock() async throws {
+        let f = try await fixture()
+        defer { f.close() }
+        f.model.playProductionMix(interval: 0...4, repeating: false)
+        try await wait(f.model.auditionLabel) { f.model.isAuditioning || f.model.lastError != nil }
+        try #require(f.model.lastError == nil)
+        let processor = try #require(f.model.mixer.processor)
+        f.model.stopAudition()
+        try await f.runtime.productionRetirements.wait()
+        let handle = try FileHandle(forWritingTo: f.files[1])
+        try handle.seekToEnd()
+        try handle.write(contentsOf: Data([0]))
+        try handle.close()
+        f.model.playProductionMix(interval: 0...4, repeating: false)
+        try await wait("A changed original must refuse the cached restart") { !f.model.canStopAudition }
+        #expect(f.model.lastError != nil)
+        #expect(f.model.playbackClockForTesting == nil)
+        #expect(f.model.mixer.processor === processor, "This refusal must exercise the warm path.")
+    }
+
     @Test func slowSourceRevalidationDoesNotBlockTheProcessedAudioDeadline() async throws {
         let f = try await fixture()
         defer { f.close() }

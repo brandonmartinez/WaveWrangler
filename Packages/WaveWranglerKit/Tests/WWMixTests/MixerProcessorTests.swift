@@ -51,6 +51,43 @@ struct MixFixture {
 
 @Suite("Shared mixer processing", .serialized)
 struct MixerProcessorTests {
+    @Test(arguments: [false, true], [0, 23])
+    func stoppedAndCompletedLiveGraphsRestartWithCleanEffectsAndFrameClocks(completed: Bool, latency: Int) async throws {
+        let f = MixFixture()
+        var episode = f.episode
+        episode.mix = .init(speakers: [.init(speaker: f.speaker, pan: -1)])
+        let recipe = try f.recipe(episode, frames: -512..<1024, policy: .init(prerollFrames: 17))
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]],
+            masterUnits: [generated(.decay, channels: 2, latency: latency)], livePlayback: true)
+        let reference = recipe.routes[0].reference
+        try await processor.beginPlaybackPass(at: -529)
+        _ = try await processor.process(.init(frames: -529..<0,
+            channels: [reference: Array(repeating: 1, count: 529)]))
+        if completed {
+            _ = try await processor.process(.init(frames: 0..<1024,
+                channels: [reference: Array(repeating: 1, count: 1024)]))
+            while try await processor.finishNext() != nil {}
+        }
+        var controls = MixerLiveControls(recipe: recipe)
+        controls.masterGainDB = -6
+        try await processor.restartPlayback(controls: controls)
+        try await processor.beginPlaybackPass(at: 239)
+        let clean = try await processor.process(.init(frames: 239..<1024,
+            channels: [reference: Array(repeating: 0, count: 785)]))
+        #expect(clean.firstFrame == 256 && clean.frameCount == 785 - 17 - latency)
+        #expect(clean.channels.allSatisfy { $0.allSatisfy { $0 == 0 } },
+                "Old delay lines and effect decay must not leak into a stopped/seeked restart.")
+        var end = clean.firstFrame + Int64(clean.frameCount)
+        while let flush = try await processor.finishNext(maximumFrames: 11) {
+            #expect(flush.firstFrame == end)
+            #expect(flush.channels.allSatisfy { $0.allSatisfy { $0 == 0 } })
+            end += Int64(flush.frameCount)
+        }
+        #expect(end == 1024)
+        let offline = try MixerProcessor(recipe: recipe, speakerUnits: [[]], masterUnits: [])
+        await #expect(throws: MixerFailure.staleDependencies) { try await offline.restartPlayback(controls: controls) }
+    }
+
     @Test func playbackSubmissionsAndCapturesPopulateSeparateExecutionDiagnostics() async throws {
         let f = MixFixture()
         let recipe = try f.recipe(frames: 0..<512)
@@ -806,6 +843,11 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     override var outputBusses: AUAudioUnitBusArray { outputs }
     override var latency: TimeInterval { reportedLatency ?? Double(delay) / 48_000 }
     override var tailTime: TimeInterval { reportedTail ?? Double(tail) / 48_000 }
+    override func reset() {
+        rings = Array(repeating: [Float](repeating: 0, count: delay), count: decay.count)
+        decay = .init(repeating: 0, count: decay.count)
+        cursor = 0
+    }
     override var fullStateForDocument: [String: Any]? {
         get {
             documentCaptureCount += 1

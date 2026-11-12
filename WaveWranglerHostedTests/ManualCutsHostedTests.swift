@@ -10,6 +10,61 @@ import WWPersistence
 @MainActor
 @Suite("Manual cut production listening and waveform path", .serialized)
 struct ManualCutsHostedTests {
+    @Test func cutViewportPublishesBeforeBackgroundDetailAndRemainsInteractive() async throws {
+        let f = try await MixerHostedTests().ready(durationSeconds: 12)
+        defer { f.close() }
+        f.model.ensureWaveformOverview()
+        try await wait { !f.model.isLoadingOverview && !f.model.waveformOverviewTracks.isEmpty }
+        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let revision = try #require(episode.alignment?.acceptedRevision)
+        f.model.waveformStartSeconds = 0
+        f.model.waveformDurationSeconds = 6
+        f.model.cutWaveformDetailDelayForTesting = .seconds(2)
+        let cut = ManualEpisodeCut(alignmentRevision: revision, startFrame: 48_000, endFrame: 96_000)
+        try #require(f.document.store.apply("Cut preview", { model throws(DomainError) in
+            try model.settingCleanup(EpisodeCleanup(manualCuts: [cut]), in: episode.id)
+        }))
+        let started = ContinuousClock.now
+        f.model.synchronizeCuts()
+        try await wait { f.model.hasUsableWaveformPresentation || f.model.lastError != nil }
+        let elapsed = started.duration(to: .now)
+        #expect(elapsed < .milliseconds(500), "The viewport cannot wait for the full-detail refresh: \(elapsed)")
+        #expect(f.model.lastError == nil && f.model.isLoadingWaveforms)
+        #expect(f.model.trackProcessingOperation == nil,
+            "The correct cut preview must not remain behind a blocking preparation overlay.")
+        let source = try #require(f.model.waveformOverviewTracks.first?.id)
+        let preview = try #require(f.model.waveformOverviewIndices[source])
+        #expect(!preview.isEmpty)
+        #expect(preview.strokes.allSatisfy { !($0.groupSeconds > 1 && $0.groupSeconds < 2) })
+        #expect(f.model.previewWaveformPlayhead(to: 0.5))
+        f.model.listening.select(from: 0.5, to: 0.75, within: 0...6)
+        #expect(f.model.listening.selection == 0.5...0.75)
+        f.model.waveformStartSeconds = 7
+        f.model.waveformDurationSeconds = 2
+        try await wait {
+            f.model.waveformOverviewIndices[source]?.hasVisible(start: 7, duration: 2) == true
+        }
+        #expect(f.model.isLoadingWaveforms && f.model.hasUsableWaveformPresentation)
+        #expect(f.model.waveformTileSlices.isEmpty,
+            "Old detailed geometry must stay hidden, not be discarded, until reprojection completes.")
+        try #require(f.document.store.apply("Restore preview cut", { model throws(DomainError) in
+            try model.settingCleanup(EpisodeCleanup(manualCuts: []), in: episode.id)
+        }))
+        f.model.waveformStartSeconds = 0
+        f.model.waveformDurationSeconds = 6
+        f.model.synchronizeCuts()
+        try await wait {
+            f.model.hasUsableWaveformPresentation
+                && f.model.waveformOverviewIndices[source]?.strokes.contains {
+                    $0.groupSeconds > 1 && $0.groupSeconds < 2
+                } == true
+        }
+        #expect(f.model.isLoadingWaveforms && f.model.trackProcessingOperation == nil)
+        try await wait { !f.model.isLoadingWaveforms }
+        #expect(f.model.hasUsableWaveformPresentation && f.model.lastError == nil)
+        print("CUT_VIEWPORT elapsed=\(elapsed)")
+    }
+
     @Test func unexpandedPresentationDoesNotObserveUnrelatedDocumentEdits() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 6)
         defer { f.close() }
