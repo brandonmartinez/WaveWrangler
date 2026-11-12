@@ -980,7 +980,9 @@ struct AlignmentWaveformView: View {
 
     private var selectionOverlay: some View {
         AudioTimelineSelectionOverlay(listening: model.listening,
-            start: model.waveformStartSeconds, duration: model.waveformDurationSeconds)
+            start: model.waveformStartSeconds, duration: model.waveformDurationSeconds,
+            editingBounds: cleanup?.selectedFiller == nil && cleanup?.selectedManualCut == nil
+                && cleanup?.selectedSpeakerMute == nil ? model.waveformViewingBounds : nil)
     }
 
     private var floatingToolbar: AudioTimelineFloatingToolbar {

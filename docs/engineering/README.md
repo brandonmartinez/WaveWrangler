@@ -214,6 +214,14 @@ anchor repair on shortening/removal.
 
 ### Manual cuts and editing layouts
 
+Temporary waveform selections have accent-colored boundary rails with independent
+start/end handles. Drag either handle or use its focused Left/Right keys for
+1 ms adjustments before cutting or muting. Boundaries cannot cross. Clicking
+outside the selection and its toolbar, pressing Escape, or choosing **Clear
+selection** removes the temporary selection and rails without changing saved
+edits, cycle locators, or listening choices. Saved marker selections retain their
+existing dismissal behavior.
+
 The current marker/selection toolbar provides **Cut across all aligned tracks**.
 This is an explicit manual operation, not automatic filler removal or protected-cut
 approval. It records an original-aligned, half-open interval on the shared 48 kHz

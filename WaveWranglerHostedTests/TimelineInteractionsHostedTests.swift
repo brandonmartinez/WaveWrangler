@@ -7,6 +7,44 @@ import WWCore
 @MainActor
 @Suite("Fitted tracks, paged following, and cycle creation", .serialized)
 struct TimelineInteractionsHostedTests {
+    @Test func temporarySelectionRailsResizeIndependentlyAndClampWithoutCrossing() throws {
+        let listening = EpisodeListeningState()
+        listening.selection = 2...4
+        listening.resizeSelection(.start, to: 3, original: 2...4, within: 0...10)
+        #expect(listening.selection == 3...4)
+        listening.resizeSelection(.end, to: 3.5, original: 3...4, within: 0...10)
+        #expect(listening.selection == 3...3.5)
+        listening.resizeSelection(.start, to: -2, original: 3...3.5, within: 0...10)
+        #expect(listening.selection == 0...3.5)
+        listening.resizeSelection(.end, to: 20, original: 0...3.5, within: 0...10)
+        #expect(listening.selection == 0...10)
+        listening.resizeSelection(.start, to: 20, original: 0...10, within: 0...10)
+        let range = try #require(listening.selection)
+        #expect(abs(range.lowerBound - (10 - 1 / 48_000.0)) < 1e-10)
+        #expect(range.upperBound == 10)
+        listening.resizeSelection(.end, to: -1, original: 2...4, within: 0...10)
+        #expect(listening.selection == 2...(2 + 1 / 48_000.0))
+        let before = listening.selection
+        listening.resizeSelection(.start, to: .nan, original: 2...4, within: 0...10)
+        #expect(listening.selection == before)
+    }
+
+    @Test func dismissingTemporarySelectionClearsTextButKeepsCycleAndListeningChoices() {
+        let listening = EpisodeListeningState()
+        listening.select(from: 2, to: 4, within: 0...10)
+        listening.selectedTranscriptText = "Selected words"
+        listening.setCycleRange(2...4)
+        listening.cycleEnabled = true
+        let playback = listening.playback
+        listening.clearSelection()
+        #expect(listening.selection == nil && listening.selectedTranscriptText == nil)
+        #expect(!listening.selectionToolsPresented)
+        #expect(listening.cycleRange == 2...4 && listening.cycleEnabled)
+        #expect(listening.playback == playback)
+        listening.select(from: 3, to: 5, within: 0...10)
+        #expect(listening.selectionToolsPresented && listening.selection == 3...5)
+    }
+
     @Test func fitUsesActualChromeAndNeverClampsToTheManualMaximum() {
         #expect(AudioTimelineTrackFit.height(current: 64, viewport: 1_000, content: 228,
                                              rows: 2, scale: 2) == 450)

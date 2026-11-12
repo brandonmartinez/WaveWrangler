@@ -121,6 +121,26 @@ final class EpisodeListeningState {
         selectedTranscriptText = nil
     }
 
+    func clearSelection() {
+        selection = nil
+        selectedTranscriptText = nil
+        selectionToolsPresented = false
+    }
+
+    func resizeSelection(_ edge: FillerTimingEdge, to time: Double,
+                         original: ClosedRange<Double>, within bounds: ClosedRange<Double>) {
+        guard time.isFinite else { return }
+        let minimum = min(1 / 48_000.0, original.upperBound - original.lowerBound)
+        if edge == .start {
+            selection = max(min(bounds.lowerBound, original.lowerBound),
+                            min(time, original.upperBound - minimum))...original.upperBound
+        } else {
+            selection = original.lowerBound...min(max(bounds.upperBound, original.upperBound),
+                                                  max(time, original.lowerBound + minimum))
+        }
+        selectedTranscriptText = nil
+    }
+
     func auditionRange(context: Double, within bounds: ClosedRange<Double>) -> ClosedRange<Double>? {
         guard let selection, context.isFinite, context >= 0 else { return nil }
         let lo = max(bounds.lowerBound, selection.lowerBound - context)
@@ -133,6 +153,12 @@ struct AudioTimelineSelectionOverlay: View {
     @Bindable var listening: EpisodeListeningState
     let start: Double
     let duration: Double
+    var editingBounds: ClosedRange<Double>? = nil
+    @State private var dragOrigin: ClosedRange<Double>?
+
+    private var editable: Bool {
+        editingBounds != nil && listening.selectionToolsPresented && listening.effectiveTool == .select
+    }
 
     var body: some View {
         GeometryReader { geometry in
@@ -140,14 +166,61 @@ struct AudioTimelineSelectionOverlay: View {
                 let lo = max(0, (range.lowerBound - start) / duration * geometry.size.width)
                 let hi = min(geometry.size.width, (range.upperBound - start) / duration * geometry.size.width)
                 if hi > lo {
-                    Rectangle().fill(Color.accentColor.opacity(0.16))
-                        .frame(width: hi - lo, height: geometry.size.height)
-                        .offset(x: lo)
+                    ZStack(alignment: .topLeading) {
+                        Rectangle().fill(Color.accentColor.opacity(0.16))
+                            .frame(width: hi - lo, height: geometry.size.height)
+                            .offset(x: lo)
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                        if editable {
+                            Canvas { context, size in
+                                for time in [range.lowerBound, range.upperBound] {
+                                    let x = (time - start) / duration * size.width
+                                    var rail = Path()
+                                    rail.move(to: CGPoint(x: x, y: 0))
+                                    rail.addLine(to: CGPoint(x: x, y: size.height))
+                                    context.stroke(rail, with: .color(.accentColor),
+                                                   style: StrokeStyle(lineWidth: 1.5, dash: [2, 3]))
+                                }
+                            }
+                            .allowsHitTesting(false)
+                            .accessibilityHidden(true)
+                            handle(.start, range: range, size: geometry.size)
+                            handle(.end, range: range, size: geometry.size)
+                        }
+                    }
+                    .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
                 }
             }
         }
-        .allowsHitTesting(false)
-        .accessibilityHidden(true)
+        .allowsHitTesting(editable)
+    }
+
+    @ViewBuilder
+    private func handle(_ edge: FillerTimingEdge, range: ClosedRange<Double>, size: CGSize) -> some View {
+        let time = edge == .start ? range.lowerBound : range.upperBound
+        let x = (time - start) / duration * size.width
+        if x >= 0, x <= size.width, let editingBounds {
+            AudioTimelineBoundaryControl(
+                edge: edge, color: .accentColor,
+                title: "Selection \(edge == .start ? "start" : "end") handle",
+                time: time, identifier: "ww.timeline.selection.\(edge == .start ? "start" : "end")",
+                enabled: true, select: {},
+                nudge: { listening.resizeSelection(edge, to: time + $0, original: range, within: editingBounds) })
+            .offset(x: min(max(0, x - 9), max(0, size.width - 18)),
+                    y: edge == .start ? 0 : max(0, size.height - 18))
+            .highPriorityGesture(DragGesture(minimumDistance: 2, coordinateSpace: .global)
+                .onChanged { value in
+                    if dragOrigin == nil { dragOrigin = range }
+                    if let original = dragOrigin {
+                        let origin = edge == .start ? original.lowerBound : original.upperBound
+                        listening.resizeSelection(edge,
+                            to: origin + value.translation.width / max(1, size.width) * duration,
+                            original: original, within: editingBounds)
+                    }
+                }
+                .onEnded { _ in dragOrigin = nil })
+        }
     }
 }
 
@@ -169,15 +242,19 @@ struct AudioTimelineSelectionToolbar: View {
             && width < (muteSpeaker == nil ? 410 : 438) ? 76 : 44
     }
 
+    static func width(trackWidth: Double, cleanup: EpisodeCleanupModel?, muteSpeaker: SpeakerID? = nil) -> Double {
+        min(trackWidth, cleanup?.selectedManualCut != nil ? 252
+            : (cleanup?.selectedFiller == nil ? 184 : 426) + (muteSpeaker == nil ? 0 : 28))
+    }
+
     var body: some View {
         GeometryReader { geometry in
             if let range = cleanup?.manualCutSelection ?? listening.selection, duration > 0 {
                 let lo = max(0, (range.lowerBound - start) / duration * geometry.size.width)
                 let hi = min(geometry.size.width, (range.upperBound - start) / duration * geometry.size.width)
                 if hi > lo || (cleanup?.selectedManualCut != nil && hi >= 0 && lo <= geometry.size.width) {
-                    let toolbarWidth = min(geometry.size.width, trackWidth,
-                        cleanup?.selectedManualCut != nil ? 252
-                            : (cleanup?.selectedFiller == nil ? 184 : 426) + (muteSpeaker == nil ? 0 : 28))
+                    let toolbarWidth = Self.width(trackWidth: min(geometry.size.width, trackWidth),
+                                                  cleanup: cleanup, muteSpeaker: muteSpeaker)
                     let horizontal = cleanup?.selectedFiller == nil || toolbarWidth >= (muteSpeaker == nil ? 410 : 438)
                     let layout = horizontal
                         ? AnyLayout(HStackLayout(spacing: 6))
@@ -201,9 +278,6 @@ struct AudioTimelineSelectionToolbar: View {
                     .padding(4)
                     .frame(width: toolbarWidth)
                     .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 5))
-                    .background(AudioTimelineToolbarClickAway {
-                        listening.selectionToolsPresented = false
-                    })
                     .position(x: TimelineToolbarPlacement.center(
                         selectionStart: lo, selectionEnd: hi,
                         toolbarWidth: toolbarWidth, trackWidth: geometry.size.width),
@@ -242,8 +316,7 @@ struct AudioTimelineSelectionToolbar: View {
             Button("Clear selection", systemImage: "xmark") {
                 cleanup?.selectedFillerID = nil
                 cleanup?.selectedSpeakerMuteID = nil
-                listening.selection = nil
-                listening.selectedTranscriptText = nil
+                listening.clearSelection()
             }
             if let cleanup, let muteSpeaker {
                 if let region = cleanup.selectedSpeakerMute, region.speaker == muteSpeaker {
