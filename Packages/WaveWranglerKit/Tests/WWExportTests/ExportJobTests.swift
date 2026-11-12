@@ -92,6 +92,30 @@ struct ExportJobTests {
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("out.wav").path))
     }
 
+    @Test func unexpectedEncoderEntrySurfacesCleanupFailureWithoutLosingPublishedReceipt() async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = try request(root, frames: 0..<100)
+        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+            guard value.phase == .cleaning else { return }
+            do {
+                let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
+                    includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix(".ww-export-job-") })
+                let encoder = try #require(FileManager.default.contentsOfDirectory(at: staging,
+                    includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix("ww-export-") })
+                try Data("external entry".utf8).write(to: encoder.appendingPathComponent("external"))
+            } catch { Issue.record(error) }
+        })
+        #expect(!result.succeeded && result.problem?.kind == .cleanup)
+        #expect(result.published.count == 1 && !result.cleanupErrors.isEmpty)
+        let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
+            includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix(".ww-export-job-") })
+        let encoder = try #require(FileManager.default.contentsOfDirectory(at: staging,
+            includingPropertiesForKeys: nil).first)
+        #expect(try Data(contentsOf: encoder.appendingPathComponent("external")) == Data("external entry".utf8))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("out.wav").path))
+    }
+
     private func directory() throws -> URL {
         let url = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
             .appendingPathComponent("ww-job-tests-\(UUID())", isDirectory: true)

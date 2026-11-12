@@ -325,7 +325,8 @@ struct ExportCodecTests {
         #expect(throws: ExportFailure.self) {
             try ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames)
         }
-        try await encoder.cancel()
+        await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
+        #expect(try Int64(Data(contentsOf: result.stagingURL).count) == result.byteCount - 1)
     }
 
     @Test func truncatedOutputsFailVerification() async throws {
@@ -340,7 +341,100 @@ struct ExportCodecTests {
             #expect(throws: (any Error).self) {
                 try ExportVerifier.verify(url: result.stagingURL, settings: settings, expectedFrames: result.inputFrames)
             }
-            try await encoder.cancel()
+            await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
+            #expect(try Data(contentsOf: result.stagingURL).count == 20)
         }
+    }
+
+    @Test func cancellationPreservesUnexpectedEntriesAndRemovesOnlyOwnedOutputs() async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (encoder, result) = try await encode(ExportSettings(codec: .wave(.int16)), directory: root)
+        let foreign = result.stagingURL.deletingLastPathComponent().appendingPathComponent("external")
+        try Data("external bytes".utf8).write(to: foreign)
+        await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
+        #expect(try Data(contentsOf: foreign) == Data("external bytes".utf8))
+        #expect(!FileManager.default.fileExists(atPath: result.stagingURL.path))
+        await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
+        try FileManager.default.removeItem(at: foreign)
+        try await encoder.cancel()
+        try await encoder.cancel()
+        #expect(try FileManager.default.contentsOfDirectory(atPath: root.path).isEmpty)
+    }
+
+    @Test(arguments: [ExportCodec.wave(.int16), .mp3(.constantBitrate(kbps: 128)),
+                      .aacLC(bitrate: 128_000)], [false, true])
+    func cancellationPreservesReplacementOfPartialOutput(codec: ExportCodec, failed: Bool) async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let settings = try ExportSettings(codec: codec)
+        let encoder = try ExportEncoder(stagingDirectory: root, settings: settings)
+        try await encoder.append(interleaved: pcm(start: 0, count: 100, settings: settings))
+        if failed {
+            await #expect(throws: ExportFailure.self) { try await encoder.append(interleaved: [.nan, 0]) }
+        }
+        let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
+            includingPropertiesForKeys: nil).first)
+        let output = staging.appendingPathComponent("encoded.\(codec.fileExtension)")
+        try FileManager.default.moveItem(at: output, to: root.appendingPathComponent("moved-owned"))
+        try Data("replacement bytes".utf8).write(to: output)
+        await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
+        #expect(try Data(contentsOf: output) == Data("replacement bytes".utf8))
+        #expect(FileManager.default.fileExists(atPath: root.appendingPathComponent("moved-owned").path))
+    }
+
+    @Test func cancellationPreservesInPlaceChangesAndCompletedRemuxReplacement() async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (wave, result) = try await encode(ExportSettings(codec: .wave(.int16)), directory: root)
+        let file = try FileHandle(forWritingTo: result.stagingURL)
+        try file.write(contentsOf: Data("external in-place edit".utf8))
+        try file.close()
+        let changed = try Data(contentsOf: result.stagingURL)
+        await #expect(throws: ExportFailure.self) { try await wave.cancel() }
+        #expect(try Data(contentsOf: result.stagingURL) == changed)
+
+        let (aac, tagged) = try await encode(ExportSettings(codec: .aacLC(bitrate: 128_000)),
+                                            directory: root, metadata: .init(title: "Metadata remux"))
+        #expect(tagged.stagingURL.lastPathComponent == "tagged.m4a")
+        try FileManager.default.moveItem(at: tagged.stagingURL, to: root.appendingPathComponent("moved-tagged"))
+        try Data("external tagged replacement".utf8).write(to: tagged.stagingURL)
+        await #expect(throws: ExportFailure.self) { try await aac.cancel() }
+        #expect(try Data(contentsOf: tagged.stagingURL) == Data("external tagged replacement".utf8))
+    }
+
+    @Test func failedRemuxDoesNotAdoptOrRemoveAnUnownedOutput() async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let settings = try ExportSettings(codec: .aacLC(bitrate: 128_000))
+        let encoder = try ExportEncoder(stagingDirectory: root, settings: settings,
+                                        metadata: .init(title: "Metadata remux"))
+        try await encoder.append(interleaved: pcm(start: 0, count: 4_096, settings: settings))
+        let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
+            includingPropertiesForKeys: nil).first)
+        let tagged = staging.appendingPathComponent("tagged.m4a")
+        try Data("external remux collision".utf8).write(to: tagged)
+        await #expect(throws: (any Error).self) { try await encoder.finish() }
+        await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
+        #expect(try Data(contentsOf: tagged) == Data("external remux collision".utf8))
+        #expect(!FileManager.default.fileExists(atPath: staging.appendingPathComponent("encoded.m4a").path))
+    }
+
+    @Test(arguments: [false, true])
+    func cancellationPreservesSymbolicAndHardLinkReplacements(hardLink: Bool) async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (encoder, result) = try await encode(ExportSettings(codec: .wave(.int16)), directory: root)
+        let external = root.appendingPathComponent("external-original")
+        try Data("external original".utf8).write(to: external)
+        try FileManager.default.moveItem(at: result.stagingURL, to: root.appendingPathComponent("moved-owned"))
+        if hardLink {
+            try FileManager.default.linkItem(at: external, to: result.stagingURL)
+        } else {
+            try FileManager.default.createSymbolicLink(at: result.stagingURL, withDestinationURL: external)
+        }
+        await #expect(throws: ExportFailure.self) { try await encoder.cancel() }
+        #expect(try Data(contentsOf: external) == Data("external original".utf8))
+        #expect(try Data(contentsOf: result.stagingURL) == Data("external original".utf8))
     }
 }

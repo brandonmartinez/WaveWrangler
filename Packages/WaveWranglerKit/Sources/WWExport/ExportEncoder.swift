@@ -10,13 +10,15 @@ public actor ExportEncoder {
     public let settings: ExportSettings
     private let metadata: ExportMetadata
     private let directory: URL
-    private let directoryIdentity: stat
+    private let staging: ExportEncoderStaging
     private let output: URL
     private let writer: CodecWriter
     private var frames: Int64 = 0
+    private var writerMayHaveChanged = false
     private enum State { case encoding, finishing, finished, canceled, failed }
     private var state = State.encoding
     private var remux: AVAssetExportSession?
+    private var remuxTask: Task<Void, Error>?
     private var disposed = false
 
     public init(stagingDirectory: URL, settings: ExportSettings, metadata: ExportMetadata = .init()) throws {
@@ -26,24 +28,25 @@ public actor ExportEncoder {
               try stagingDirectory.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink != true else {
             throw ExportFailure.destination("An existing local staging directory is required")
         }
-        let directory = stagingDirectory.appendingPathComponent("ww-export-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
-                                               attributes: [.posixPermissions: 0o700])
-        var identity = stat()
-        guard lstat(directory.path, &identity) == 0, identity.st_mode & S_IFMT == S_IFDIR else {
-            throw ExportFailure.destination("Cannot inspect the newly created encoder staging directory")
-        }
-        let output = directory.appendingPathComponent("encoded.\(settings.codec.fileExtension)")
+        let staging = try ExportEncoderStaging(parent: stagingDirectory)
+        let output: URL
         do {
+            output = try staging.create("encoded.\(settings.codec.fileExtension)")
             writer = try CodecWriter(url: output, settings: settings, metadata: metadata)
+            try staging.checkpoint()
         } catch {
-            try FileManager.default.removeItem(at: directory)
+            do {
+                try staging.checkpoint()
+                try staging.cleanup()
+            } catch let cleanup {
+                throw ExportFailure.destination("\(error); encoder initialization cleanup failed: \(cleanup)")
+            }
             throw error
         }
         self.settings = settings
         self.metadata = metadata
-        self.directory = directory
-        directoryIdentity = identity
+        directory = staging.directory
+        self.staging = staging
         self.output = output
     }
 
@@ -52,6 +55,7 @@ public actor ExportEncoder {
     public func append(interleaved samples: [Float]) throws {
         guard state == .encoding else { throw ExportFailure.invalidState }
         do {
+            try staging.validateArtifacts()
             try Task.checkCancellation()
             let allowsOverRange = settings.codec == .wave(.float32)
             guard !samples.isEmpty, samples.count % settings.channels == 0,
@@ -68,12 +72,14 @@ public actor ExportEncoder {
                     throw ExportFailure.encoder("WAV exceeds RIFF's 4 GiB limit; RF64 is not supported")
                 }
             }
+            writerMayHaveChanged = true
             try writer.append(samples)
+            try staging.checkpoint()
+            writerMayHaveChanged = false
             frames = total
         } catch {
             state = .failed
-            writer.abort()
-            throw error
+            throw abort(error)
         }
     }
 
@@ -83,9 +89,13 @@ public actor ExportEncoder {
         guard state == .encoding else { throw ExportFailure.invalidState }
         state = .finishing
         do {
+            try staging.validateArtifacts()
             try Task.checkCancellation()
             guard frames > 0 else { throw ExportFailure.invalidPCM("Cannot finish an empty export") }
+            writerMayHaveChanged = true
             try writer.finish()
+            try staging.checkpoint()
+            writerMayHaveChanged = false
             var verifiedURL = output
             if case .aacLC = settings.codec, !metadata.m4aItems.isEmpty {
                 let tagged = directory.appendingPathComponent("tagged.m4a")
@@ -95,55 +105,69 @@ public actor ExportEncoder {
                 }
                 remux = session
                 session.metadata = metadata.m4aItems
-                try await session.export(to: tagged, as: .m4a)
+                let task = Task {
+                    try await session.export(to: tagged, as: .m4a)
+                    try staging.recordCompletedRemux("tagged.m4a")
+                }
+                remuxTask = task
+                try await task.value
                 remux = nil
                 try Task.checkCancellation()
                 guard state == .finishing else { throw CancellationError() }
-                try FileManager.default.removeItem(at: output)
+                try staging.remove(output.lastPathComponent)
                 verifiedURL = tagged
             }
             let file = try FileHandle(forWritingTo: verifiedURL)
             try file.synchronize()
             try file.close()
             let result = try ExportVerifier.verify(url: verifiedURL, settings: settings, expectedFrames: frames)
+            try staging.validateArtifacts()
             try Task.checkCancellation()
             guard state == .finishing else { throw CancellationError() }
             state = .finished
             return result
         } catch {
             if state != .canceled { state = .failed }
-            writer.abort()
             remux?.cancelExport()
             remux = nil
             // Explicit cancel also retries cleanup if a filesystem error prevented it.
-            throw error
+            throw abort(error)
         }
     }
 
     /// Idempotent disposal, including a finished staging result. Cleanup failures are reported.
     /// The coordinator must dispose this directory after copying/publishing the verified file.
-    public func cancel() throws {
+    public func cancel() async throws {
+        guard !disposed else { return }
         remux?.cancelExport()
-        writer.abort()
         state = .canceled
-        if !disposed {
-            var current = stat()
-            if lstat(directory.path, &current) != 0 {
-                guard errno == ENOENT else { throw ExportFailure.destination("Cannot inspect encoder staging for cleanup") }
-                disposed = true
-                return
-            }
-            guard current.st_dev == directoryIdentity.st_dev, current.st_ino == directoryIdentity.st_ino,
-                  current.st_mode & S_IFMT == S_IFDIR else {
-                throw ExportFailure.destination("Encoder staging changed; it was not followed or removed")
-            }
-            do {
-                try FileManager.default.removeItem(at: directory)
-            } catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile {
-                // An already removed owned directory is the idempotent disposal case.
-            }
-            disposed = true
+        // Join the framework operation before touching any remux artifacts. Its error belongs to finish().
+        if let remuxTask { _ = await remuxTask.result }
+        var errors: [String] = []
+        do { try staging.validateArtifacts(missingAllowed: true) }
+        catch { errors.append(String(describing: error)) }
+        writer.abort()
+        do { try staging.checkpoint(missingAllowed: true) }
+        catch { errors.append(String(describing: error)) }
+        do { try staging.cleanup(); disposed = true }
+        catch { errors.append(String(describing: error)) }
+        if !errors.isEmpty { throw ExportFailure.destination(errors.joined(separator: "; ")) }
+    }
+
+    private func abort(_ error: Error) -> Error {
+        var errors = [String(describing: error)]
+        if !writerMayHaveChanged {
+            do { try staging.validateArtifacts() }
+            catch { errors.append(String(describing: error)) }
         }
+        writer.abort()
+        writerMayHaveChanged = false
+        do { try staging.checkpoint() }
+        catch { errors.append(String(describing: error)) }
+        if errors.count > 1 {
+            return ExportFailure.destination(errors.joined(separator: "; "))
+        }
+        return error
     }
 }
 
@@ -182,10 +206,6 @@ private final class CodecWriter {
                 lame_set_write_id3tag_automatic(encoder, 0)
                 try check(lame_set_bWriteVbrTag(encoder, 1))
                 try check(lame_init_params(encoder))
-                guard FileManager.default.createFile(atPath: url.path, contents: nil,
-                                                     attributes: [.posixPermissions: 0o600]) else {
-                    throw ExportFailure.destination("Cannot create MP3 staging file")
-                }
                 let file = try FileHandle(forWritingTo: url)
                 handle = file
                 let tag = metadata.mp3Tag

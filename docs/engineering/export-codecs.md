@@ -47,6 +47,15 @@ M4A remux cancels that session; no finalized result can then be returned. No act
 method suspends during native encoding, so queued cancellation takes effect at the
 next bounded block. No desktop app or user recordings are needed for qualification.
 
+Encoder cleanup retains file descriptors and identity/change witnesses for its
+generated files, including partial native output and successfully remuxed M4A.
+It unlinks only unchanged owned files and removes the directory only when empty.
+Unexpected entries, replacements and in-place external edits are preserved with
+throwing cleanup errors. Cancellation joins an active metadata remux before
+cleanup. A failed framework remux cannot establish ownership of a remaining
+partial `tagged.m4a`; that unconfirmed entry is preserved and reported, not adopted
+or recursively deleted.
+
 MP3 finalization overwrites the reserved Xing/LAME frame with frame/byte counts and
 encoder delay/padding. Verification audits every MPEG packet boundary, the exact
 Xing byte/packet count, and the LAME input-frame equation. Core Audio sometimes
