@@ -682,8 +682,8 @@ dismissal. No long timing sleep substitutes for the capture gate.
 Host validation is limited to the native Debug build, focused unhosted tests,
 and hosted build-for-testing with the unchanged explicit
 `EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift` baseline exclusion.
-The new hosted regressions require a fresh leased-VM run after integration;
-the earlier phase 6 runtime evidence does not cover this follow-up.
+The earlier phase 6 runtime evidence does not cover this follow-up; the fresh
+integrated-source VM results below now qualify these hosted regressions.
 
 Follow-up host results: the native Debug build passed, and the phase 5 focused
 unhosted `xcodebuild test` command above passed all 11 tests using
@@ -704,3 +704,84 @@ xcodebuild build-for-testing -project WaveWrangler.xcodeproj \
   -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
   DEVELOPMENT_TEAM= EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift
 ```
+
+### Integrated final-review VM requalification
+
+The qualification worktree was clean before fast-forwarding to
+`522bb03118852b48cb38e42611dc0b6d42486d46`, including the post-capture close guards
+and intermediate ownership/active AAC-remux cancellation fixes. Both runs used
+that exact clean source: `runtime20.patch` and `runtime21.patch` are empty
+(SHA-256 `e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855`).
+Only this evidence documentation changed afterward; no implementation or test
+repair was necessary.
+
+Ready, unlocked `ww-ui-1` (`192.168.64.3`) retained its display-awake assertion,
+passed Xcode first-launch readiness and had no active test or lease before
+dispatch. Host builds used `.build/ExportQualification`, two jobs, test signing,
+`umask 022` and sequential suites. Products were transferred atomically, compared
+with empty checksum-based `rsync -naci --delete` receipts and signature-verified
+before separate exclusive `gui-lock` leases. No hosted/UI execution or app launch
+occurred on the physical host. The baseline
+`EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift` remained explicit.
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+bash .build/export-phase6-resumed/qualify.sh runtime20 hosted
+bash .build/export-phase6-resumed/qualify.sh runtime21 ui
+python3 scripts/test-ui-plans.py --products .build/ExportQualification/Build/Products
+python3 .build/export-phase6-resumed/verify_outputs.py \
+  .build/export-phase6-resumed/runtime20/hosted-attachments
+python3 .build/export-phase6-resumed/verify_ui_outputs.py \
+  .build/export-phase6-resumed/runtime21/ui-attachments
+```
+
+The retained driver uses the build/test commands above, dynamically labels
+sourceSHA and guest run directories from HEAD, sources the full SSH environment,
+and records per-run source, patch and app fingerprints. Guest result paths are:
+
+```text
+~/ww-uitest-runs/export-phase6-522bb031-runtime20/hosted.xcresult
+~/ww-uitest-runs/export-phase6-522bb031-runtime21/ui.xcresult
+```
+
+Swift Testing passed **14 tests in three suites**, including both argument cases
+`checkingPermission=false` and `true` for the close-first capture/export race,
+plus `documentCloseDismissesIdleExportReopenedDuringCapture`. All prior actual
+production Off/Podcast/multioutput, cancellation, stale/revoked access, partial
+publication/foreign-file preservation/cleanup refusal, metadata/artwork and
+document-window lifecycle cases passed. All **three native UI tests** passed,
+including actual three-format AAC-metadata publication and real Keep Exporting,
+Command-W, Command-Q and confirmed cancellation through cleanup. This does not
+replace the backend's deterministic suspended-remux cancellation/forwarding/join
+tests with a timing-sensitive large-file race.
+
+Fresh audio attachments from these results were independently reopened and
+verified, not reused from an earlier source. The six hosted outputs reproduce
+the production frame counts, padding, Unicode tags, original PNG artwork and
+Off/Podcast measurements in the table above. The three fresh native UI receipts
+match independently decoded five-second frame counts, title override, loudness
+and true peak; MP3 still truthfully reports `targetMissed`. Per-file SHA-256,
+metadata and measurements are retained in
+`runtime20/independent-output-verification.json` and
+`runtime21/independent-ui-output-verification.json`.
+
+All local evidence is under `.build/export-phase6-resumed/`: runtime20/21
+xcresults, summaries, screenshots/audio, attachment manifests and independent
+JSON; `runtime{20,21}-{hosted,ui}-{build,run}.log` as applicable;
+`runtime{20,21}.sourceSHA`, `.patch`, `.patch.sha256` and `-transfer-check.txt`.
+Signed app executable SHA-256 fingerprints (`runtimeN-app.sha256`) are:
+
+| Run | App executable SHA-256 |
+| --- | --- |
+| Hosted runtime20 | `3ea5952cc5c489d134527dca303d4d71bb9e947503f4f8aa56fbc150f356fb63` |
+| UI runtime21 | `8e9157c7212de35f1b27163c2e42db3a17cc135a9747fed5fb1171a6d1ff431f` |
+
+After retrieving and verifying all evidence, the lease was `HOLDER none`, no
+test/app process remained and VM1 had 1.3 GiB free. Ownership was confirmed for
+the original detached `export-vm-service` shell PID 19453 and Tart child 19458.
+Only that managed service was stopped; `tart list` confirmed `ww-ui-1` stopped
+and both owned PIDs absent at `2026-11-13T02:20:52Z`. No other service was stopped,
+no additional cleanup or disk expansion was needed, and guest results/Products
+remain intact. Shutdown evidence is `final-review-vm-prestop.log` and
+`final-review-vm-stopped.log`. The earlier exclusion and formal accessibility,
+hardware-performance, App Store/legal and signed-distribution scope limits remain.
