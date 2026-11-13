@@ -100,6 +100,14 @@ final class EpisodeExportPresentation {
         let snapshot = document.store.model
         do {
             let active = try await AlignmentRuntimeProvider.runtime(for: document, episode: episodeID)
+            #if DEBUG
+            if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
+               UserDefaults.standard.bool(forKey: "WWUITestExportSlowValidation") {
+                await active.setProductionValidationHookForTesting {
+                    try await Task.sleep(for: .seconds(120))
+                }
+            }
+            #endif
             let composition = try await active.programComposition(model: snapshot, episode: episodeID)
             guard let episode = snapshot.episode(episodeID),
                   let range = try EpisodeProductionProjection(episode: episode, composition: composition).episodeFrames,
@@ -223,6 +231,7 @@ final class EpisodeExportPresentation {
                     let completed = try await document.exportJobs.run(episode: episodeID, runtime: runtime,
                         userSelectedDirectory: directory, deliveries: values)
                     result = completed
+                    message = nil
                     do {
                         try preferences(document).save(savedOptions, directory: directory, succeeded: completed.succeeded)
                     } catch { message = "Files exported, but choices could not be remembered: \(EpisodeExportWording.error(error))" }
@@ -236,6 +245,7 @@ final class EpisodeExportPresentation {
     func cancel() {
         guard isRunning else { return }
         message = "Canceling export; waiting for cleanup."
+        task?.cancel()
         Task { await service?.cancel() }
     }
 

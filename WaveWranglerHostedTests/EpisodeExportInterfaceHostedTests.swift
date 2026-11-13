@@ -219,7 +219,8 @@ struct EpisodeExportInterfaceHostedTests {
                 try model.settingMasterMix(.init(gainDB: -12), in: f.model.episodeID)
             })
             let invalidated = try await stale.value
-            #expect(!invalidated.succeeded && invalidated.problem?.kind == .stale && invalidated.published.isEmpty)
+            #expect(!invalidated.succeeded && invalidated.problem?.kind == .stale && invalidated.published.isEmpty,
+                    "Model invalidation result: \(String(describing: invalidated.problem)); cleanup: \(invalidated.cleanupErrors)")
             let invalidatedContents = try FileManager.default.contentsOfDirectory(atPath: folder.path)
             #expect(!service.isRunning && invalidatedContents.isEmpty)
 
@@ -236,6 +237,165 @@ struct EpisodeExportInterfaceHostedTests {
                 #expect(service.lastResult == nil && !service.isRunning)
             }
             #expect((try FileManager.default.contentsOfDirectory(atPath: folder.path)).isEmpty)
+        }
+
+        @Test func realPartialPublicationPreservesForeignFilesAndReportsCleanupFailure() async throws {
+            let f = try await ready()
+            defer { f.close() }
+            let folder = f.folder.appendingPathComponent("partial-publication")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            let service = f.document.exportJobs
+            let collision = folder.appendingPathComponent("Partial.mp3")
+            let foreignBytes = Data("Foreign contents must survive export cleanup".utf8)
+            await f.runtime.setProductionValidationHookForTesting {
+                try await MainActor.run {
+                    guard service.progress.phase == .publishing,
+                          FileManager.default.fileExists(atPath: folder.appendingPathComponent("Partial.wav").path),
+                          !FileManager.default.fileExists(atPath: collision.path) else { return }
+                    try foreignBytes.write(to: collision, options: .withoutOverwriting)
+                    let stage = try #require(FileManager.default.contentsOfDirectory(
+                        at: folder, includingPropertiesForKeys: nil).first {
+                            $0.lastPathComponent.hasPrefix(".ww-export-job-")
+                        })
+                    try foreignBytes.write(to: stage.appendingPathComponent("foreign.txt"), options: .withoutOverwriting)
+                }
+            }
+            let result = try await service.run(episode: f.model.episodeID, runtime: f.runtime,
+                userSelectedDirectory: folder, deliveries: selections(f, prefix: "Partial", normalization: .off))
+            await f.runtime.setProductionValidationHookForTesting(nil)
+            #expect(!result.succeeded && result.problem?.kind == .destination)
+            #expect(!result.cleanupErrors.isEmpty && !service.isRunning)
+            #expect(result.published.map(\.url.lastPathComponent) == ["Partial.wav"])
+            let decoded = try decode(folder.appendingPathComponent("Partial.wav"))
+            #expect(decoded[0].count == 288_003)
+            #expect(try Data(contentsOf: collision) == foreignBytes)
+            #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("Partial.m4a").path))
+            let stage = try #require(FileManager.default.contentsOfDirectory(
+                at: folder, includingPropertiesForKeys: nil).first {
+                    $0.lastPathComponent.hasPrefix(".ww-export-job-")
+                })
+            #expect(try Data(contentsOf: stage.appendingPathComponent("foreign.txt")) == foreignBytes)
+            let saved = try EpisodeExportPreferenceStore(defaults: PersistenceEnvironment.preferences,
+                show: f.document.store.model.show.id).load()
+            #expect(saved == nil)
+        }
+
+        @Test func runningPresentationGuardsNativeWindowsAndDocumentClosureUntilRealCancellation() async throws {
+            let f = try await ready()
+            defer { f.close() }
+            let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
+            let showID = f.document.store.model.show.id
+            try await SetupEngineProvider.store.save(access.records(in: showID))
+            defer { Task { try await SetupEngineProvider.store.removeRecords(in: showID) } }
+            let runtime = try await AlignmentRuntimeProvider.runtime(for: f.document, episode: f.model.episodeID)
+            let first = MixerHostedTests().owner(f)
+            let second = MixerHostedTests().owner(f)
+            first.showWindow(nil)
+            second.showWindow(nil)
+            let window = try #require(first.window)
+            let presentation = f.document.exportInterface
+            first.state.requestExport()
+            await presentation.prepare()
+            try await MixerHostedTests().wait("Prepared export presentation") { presentation.frames != nil }
+            let folder = f.folder.appendingPathComponent("presentation-cancel")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            presentation.directory = folder
+            presentation.options.formats = [.wave, .mp3, .m4a]
+            presentation.options.normalization = .podcast
+            presentation.acceptedOmissions = try presentation.allOmissions
+            let gate = ExportQualificationGate()
+            await runtime.setProductionValidationHookForTesting { try await gate.wait() }
+            defer {
+                presentation.cancel()
+                Task { await gate.release() }
+            }
+            presentation.start()
+            try await MixerHostedTests().wait("Running presentation") { f.document.exportJobs.state == .running }
+            let keptRunning = presentation.isRunning && presentation.result == nil
+            #expect(keptRunning)
+            second.state.requestExport()
+            let singleOwner = first.state.exportPresented && !second.state.exportPresented
+            #expect(singleOwner)
+            presentation.dismiss()
+            window.performClose(nil)
+            f.document.close()
+            let reply = ExportCloseReply()
+            f.document.canClose(withDelegate: reply,
+                shouldClose: #selector(ExportCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+            #expect(reply.shouldClose == false)
+            NSDocumentController.shared.closeAllDocuments(withDelegate: reply,
+                didCloseAllSelector: #selector(ExportCloseReply.controller(_:didCloseAll:contextInfo:)), contextInfo: nil)
+            try await MixerHostedTests().wait("Quit document-close refusal") { reply.didCloseAll != nil }
+            #expect(reply.didCloseAll == false)
+            let stillOwned = presentation.isPresented && window.isVisible && f.document.windowControllers.contains(first)
+            #expect(stillOwned)
+            let message = presentation.message
+            #expect(message?.contains("Cancel Export") == true)
+            presentation.cancel()
+            try await MixerHostedTests().wait("Canceled presentation released") { !presentation.isRunning }
+            let result = presentation.result
+            let messageAfterCancel = presentation.message
+            #expect(result?.problem?.kind == .canceled || messageAfterCancel?.contains("canceled") == true)
+            #expect(messageAfterCancel == nil)
+            #expect((try FileManager.default.contentsOfDirectory(atPath: folder.path)).isEmpty)
+            let saved = try EpisodeExportPreferenceStore(defaults: PersistenceEnvironment.preferences,
+                show: f.document.store.model.show.id).load()
+            #expect(saved == nil, "Canceled jobs must not persist successful choices.")
+            await runtime.setProductionValidationHookForTesting(nil)
+            presentation.dismiss()
+            let dismissed = !first.state.exportPresented && !presentation.isPresented
+            #expect(dismissed)
+        }
+
+        @Test func exportArtworkImportRejectsInvalidBytesWithoutMutatingPublicationDefaults() async throws {
+            let f = try await ready()
+            defer { f.close() }
+            let owner = MixerHostedTests().owner(f)
+            owner.state.requestExport()
+            let presentation = f.document.exportInterface
+            let original = f.document.store.model
+            let artwork = try #require(original.resolvedPublication(for: f.model.episodeID).metadata.artwork?.image)
+            let image = f.folder.appendingPathComponent("generated-export.png")
+            try artwork.data.write(to: image)
+            presentation.importArtwork(image)
+            try await MixerHostedTests().wait("Imported export artwork") { !presentation.importingArtwork }
+            let imported = presentation.overrides.artwork?.image?.data
+            #expect(imported == artwork.data)
+            let invalid = f.folder.appendingPathComponent("invalid-export.png")
+            try Data("Not an image".utf8).write(to: invalid)
+            presentation.importArtwork(invalid)
+            try await MixerHostedTests().wait("Rejected export artwork") { !presentation.importingArtwork }
+            let error = presentation.message
+            let preserved = presentation.overrides.artwork?.image?.data
+            #expect(error != nil && preserved == artwork.data)
+            presentation.overrides.artwork = PublicationArtworkSelection.none
+            let omitted = presentation.artwork == nil
+            #expect(omitted)
+            presentation.overrides.artwork = nil
+            let inherited = presentation.artwork?.data
+            let unchanged = f.document.store.model == original
+            #expect(inherited == artwork.data)
+            #expect(unchanged)
+            presentation.dismiss()
+        }
+    }
+
+    private actor ExportQualificationGate {
+        private var released = false
+        func wait() async throws {
+            while !released { try await Task.sleep(for: .milliseconds(20)) }
+        }
+        func release() { released = true }
+    }
+
+    @MainActor private final class ExportCloseReply: NSObject {
+        var shouldClose: Bool?
+        var didCloseAll: Bool?
+        @objc func document(_ document: NSDocument, shouldClose: Bool, contextInfo: UnsafeMutableRawPointer?) {
+            self.shouldClose = shouldClose
+        }
+        @objc func controller(_ controller: NSDocumentController, didCloseAll: Bool, contextInfo: UnsafeMutableRawPointer?) {
+            self.didCloseAll = didCloseAll
         }
     }
 
@@ -325,7 +485,8 @@ struct EpisodeExportInterfaceHostedTests {
         #expect(notices.last?.text.contains("Jeffrey Quesnelle") == true)
         SoftwareLicensesWindowController.show()
         let window = try #require(NSApp.windows.first { $0.accessibilityIdentifier() == "ww.licenses.window" })
-        #expect(window.contentMinSize.width >= 540 && window.title == "Software Licenses")
+        let minimumWidth = window.contentMinSize.width
+        #expect(minimumWidth >= 540 && window.title == "Software Licenses", "Native content minimum: \(window.contentMinSize)")
         window.close()
     }
 }

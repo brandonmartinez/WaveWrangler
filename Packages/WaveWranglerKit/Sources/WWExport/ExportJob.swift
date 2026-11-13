@@ -86,6 +86,11 @@ public struct ExportJobProblem: Error, Sendable, Equatable {
     public enum Kind: Sendable { case canceled, stale, rendering, encoding, destination, cleanup }
     public let kind: Kind
     public let message: String
+
+    public init(kind: Kind, message: String) {
+        self.kind = kind
+        self.message = message
+    }
 }
 
 public struct ExportJobResult: Sendable {

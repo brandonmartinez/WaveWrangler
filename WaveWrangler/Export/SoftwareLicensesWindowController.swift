@@ -28,7 +28,7 @@ final class SoftwareLicensesWindowController: NSWindowController {
 
     private init() {
         let hosting = NSHostingController(rootView: SoftwareLicensesView())
-        hosting.sizingOptions = []
+        hosting.sizingOptions = [.minSize]
         let window = NSWindow(contentViewController: hosting)
         window.title = "Software Licenses"
         window.styleMask = [.titled, .closable, .resizable, .miniaturizable]
@@ -67,6 +67,7 @@ private struct SoftwareLicensesView: View {
                             .font(.system(.body, design: .monospaced))
                             .textSelection(.enabled).frame(maxWidth: .infinity, alignment: .leading).padding()
                             .accessibilityIdentifier("ww.licenses.text")
+                            .id(selection)
                     }.frame(minWidth: 300)
                 }
             }
@@ -77,5 +78,6 @@ private struct SoftwareLicensesView: View {
                 selection = notices.first?.id
             } catch { self.error = error.localizedDescription }
         }
+        .frame(minWidth: 540, minHeight: 360)
     }
 }

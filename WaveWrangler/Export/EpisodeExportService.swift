@@ -68,14 +68,22 @@ final class EpisodeExportService {
                         && document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: id) == true
                 }
                 guard valid else { return false }
-                try await runtime.validateProduction(recipe: recipe, model: snapshot)
+                do {
+                    try await runtime.validateProduction(recipe: recipe, model: snapshot)
+                } catch MixerFailure.staleDependencies {
+                    return false
+                }
                 return await MainActor.run { !self.cancellationRequested && document.store.model == snapshot }
             }
             try checkCancellation()
             state = .running
             let result = try await job.run(request, isCurrent: current, render: { sink in
-                try await runtime.renderProductionOffline(recipe: recipe, model: snapshot, isCurrent: current) { output in
-                    try await sink(output.firstFrame, output.channels)
+                do {
+                    try await runtime.renderProductionOffline(recipe: recipe, model: snapshot, isCurrent: current) { output in
+                        try await sink(output.firstFrame, output.channels)
+                    }
+                } catch MixerFailure.staleDependencies {
+                    throw ExportJobProblem(kind: .stale, message: "The document or source admission changed. Restart export.")
                 }
             }, progress: { [weak self] value in
                 await MainActor.run { self?.progress = value }
