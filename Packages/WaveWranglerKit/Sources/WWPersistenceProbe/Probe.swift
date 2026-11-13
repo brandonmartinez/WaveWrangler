@@ -108,16 +108,16 @@ struct ExitAtBoundary: PublicationHooks {
     }
 }
 
-typealias ShowSession = CanonicalDocumentSession<JSONEnvelopeCoder<ShowDocumentModel>>
+typealias ShowSession = CanonicalDocumentSession<ShowPackageCoder>
 
 struct Probe {
     let args: Arguments
     let file: URL
     let recovery: RecoveryStore?
-    let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+    let coder = ShowPackageCoder()
 
-    var publisher: DocumentPublisher<JSONEnvelopeCoder<ShowDocumentModel>> { DocumentPublisher(coder: coder, recovery: recovery) }
-    var opener: DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>> { DocumentOpener(coder: coder, recovery: recovery) }
+    var publisher: DocumentPublisher<ShowPackageCoder> { DocumentPublisher(coder: coder, recovery: recovery) }
+    var opener: DocumentOpener<ShowPackageCoder> { DocumentOpener(coder: coder, recovery: recovery) }
 
     func openSession(gate: AutosaveGate? = nil, hooks: any PublicationHooks = NoPublicationHooks()) -> ShowSession? {
         let hooked = DocumentPublisher(coder: coder, recovery: recovery, hooks: hooks)
@@ -157,6 +157,8 @@ struct Probe {
         case "hold-save": return await holdSave()
         case "checkpoint": return await checkpoint()
         case "offer": return offer()
+        case "package-trial": return packageTrial()
+        case "package-convert": return packageConvert()
         default:
             emit(["error": "unknown command \(args.command)"])
             return 2
@@ -229,7 +231,7 @@ struct Probe {
         func ms(_ start: ContinuousClock.Instant) -> Double { seconds(.now - start) * 1000 }
         var out: [String: Any] = [:]
         var t = ContinuousClock.now
-        guard let data = try? Data(contentsOf: file) else { emit(["error": "read"]); return 1 }
+        guard let data = try? LocalFileOperations().read(file) else { emit(["error": "read"]); return 1 }
         out["readMs"] = ms(t)
         t = .now
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
@@ -247,7 +249,7 @@ struct Probe {
             t = .now
             let showID = document.payload.show.id
             _ = EditCheckpointOffer.assess(recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue, onDisk: fingerprint,
-                                           coder: coder, belongsToDocument: { $0.show.id == showID })
+                                           coder: JSONEnvelopeCoder<ShowDocumentModel>.show, belongsToDocument: { $0.show.id == showID })
             out["offerScanMs"] = ms(t)
         }
         // The persistent library path (PersistentLibraryEntryObserver.openShow): resolve the read-write

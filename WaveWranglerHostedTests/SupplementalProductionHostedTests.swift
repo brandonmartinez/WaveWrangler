@@ -56,7 +56,7 @@ struct SupplementalProductionHostedTests {
                                     recordedAt: Date(), rawWitness: witness), createdAt: Date())
         let access = InMemoryDeviceAccessStore([record])
         let showURL = folder.appendingPathComponent("synthetic.wwshow")
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(model, revision: 1, publicationID: UUID()).data.write(to: showURL)
+        try LocalFileOperations().writeNew(ShowPackageCoder().encodeDocument(model, revision: 1, publicationID: UUID()).data, to: showURL)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: showURL, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)

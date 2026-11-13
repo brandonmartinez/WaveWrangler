@@ -33,7 +33,7 @@ public struct FileVersionInspector: ProviderVersionInspecting {
     public func unresolvedConflictVersions(of url: URL) -> [ProviderConflictVersion] {
         (NSFileVersion.unresolvedConflictVersionsOfItem(at: url) ?? []).map { version in
             ProviderConflictVersion(id: version.url.path, savingComputer: version.localizedNameOfSavingComputer,
-                                    modified: version.modificationDate, bytes: try? Data(contentsOf: version.url))
+                                    modified: version.modificationDate, bytes: try? LocalFileOperations().read(version.url))
         }
     }
 

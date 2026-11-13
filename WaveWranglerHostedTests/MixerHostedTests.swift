@@ -709,7 +709,7 @@ struct MixerHostedTests {
         try await wait { presentation.inserts(.master).map(\.rackPosition) == [1, 5] }
         try await save(f.document)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(saved.episode(f.model.episodeID)?.mix?.master.inserts == presentation.inserts(.master))
         presentation.changeInserts(.master, action: "Remove Earlier Effect") {
             try MixerInsertRack.removing(earlier.id, from: $0)
@@ -944,7 +944,7 @@ struct MixerHostedTests {
         #expect(mix.inputGainDB(for: f.target, channel: 0) == 0)
         #expect(mix.state(for: assignment.speakerID).gainDB == -6 && mix.state(for: assignment.speakerID).pan == 0.25)
         try await save(f.document)
-        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: #require(f.document.fileURL))).payload
+        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(reopened.episode(episodeID)?.mix == mix)
         #expect(reopened.episode(episodeID)?.alignment == episode.alignment)
     }
@@ -1469,7 +1469,7 @@ struct MixerHostedTests {
             ShowDocument.debugPublicationHooks = previousHooks
         }
         let priorURL = try #require(f.document.fileURL)
-        let priorBytes = try Data(contentsOf: priorURL)
+        let priorBytes = try LocalFileOperations().read(priorURL)
         let saving = Task { try await save(f.document) }
         try await wait { gate.entered }
         let savedSnapshot = f.document.store.model
@@ -1477,7 +1477,7 @@ struct MixerHostedTests {
         let statusWhileSaving = f.document.saveStatus.state
         #expect(!gate.ranOnMainThread && !gate.timedOut)
         #expect(!statusWhileSaving.isCoherentlySaved)
-        #expect(try Data(contentsOf: url) == priorBytes)
+        #expect(try LocalFileOperations().read(url) == priorBytes)
         let editorVisible = editor.isVisible
         let observing = controller.editorObservationKey != nil
         let busy = f.document.mixerTransactions.isBusy
@@ -1515,7 +1515,8 @@ struct MixerHostedTests {
         let isSaved = f.document.status.saveStatus.state.isVerifiedOnDisk
         #expect(verified == savedSnapshot && edited != savedSnapshot)
         #expect(isEdited && !isSaved)
-        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url)).payload == savedSnapshot)
+        let savedMatches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(url)).payload == savedSnapshot
+        #expect(savedMatches)
         ShowDocument.debugBeforeSaveEncoding = nil
         ShowDocument.debugPublicationHooks = previousHooks
         try await save(f.document)

@@ -115,7 +115,7 @@ struct TracksWorkflowHostedTests {
         }
         #expect(reset == (try before.resettingAlignment(in: f.model.episodeID)))
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == reset && saved.episodes[0].cleanup?.transcripts.isEmpty == true)
         undo.undo()
@@ -233,7 +233,7 @@ struct TracksWorkflowHostedTests {
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try #require(f.document.verifiedModel == accepted.model)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == accepted.model)
         let waveforms = try await f.runtime.waveformTracks(
@@ -362,7 +362,7 @@ struct TracksWorkflowHostedTests {
         #expect(correction.source == f.target && correction.retainsAllAudio)
         #expect(f.model.selectedTracksAdaptive.isEmpty)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == accepted)
         try #require(undo.canUndo)
@@ -509,7 +509,7 @@ struct TracksWorkflowHostedTests {
         try await saveSelection()
         #expect(f.document.store.model == selected, "The dialog action restores the editor's selection with one Undo")
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved.episodes[0].preferredAlignmentReferenceGroupID == targetGroup)
         #expect(saved.episodes[0].alignment == episode.alignment)

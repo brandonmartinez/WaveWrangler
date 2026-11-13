@@ -337,7 +337,8 @@ struct ManualCutsHostedTests {
         try await wait { f.document.verifiedModel == f.document.store.model }
         let edited = f.document.store.model
         let savedURL = try #require(f.document.fileURL)
-        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: savedURL)).payload == edited)
+        let savedMatches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(savedURL)).payload == edited
+        #expect(savedMatches)
         #expect(edited.episodes[0].sources == episode.sources && edited.episodes[0].alignment == episode.alignment)
         #expect(cleanup.listening.playback == choices, "A cut never changes listening choices")
         let result = try await f.runtime.sourceAuditions(model: edited, episode: episode.id,

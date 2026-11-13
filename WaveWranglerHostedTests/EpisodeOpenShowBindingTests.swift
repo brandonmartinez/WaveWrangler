@@ -30,10 +30,10 @@ struct EpisodeOpenShowBindingTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent("open.wwshow")
-        let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        let encoded = try ShowPackageCoder().encodeDocument(
             model, revision: 1, publicationID: UUID()
         )
-        try encoded.data.write(to: url)
+        try LocalFileOperations().writeNew(encoded.data, to: url)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: url, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
@@ -131,13 +131,13 @@ struct EpisodeOpenShowBindingTests {
         let opened = try open()
         defer { opened.close() }
         let copy = opened.folder.appendingPathComponent("old-copy.wwshow")
-        try opened.data.write(to: copy)
+        try LocalFileOperations().writeNew(opened.data, to: copy)
         let binding = try OpenShowSourceBinding.capture(for: opened.document)
-        let newBytes = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        let newBytes = try ShowPackageCoder().encodeDocument(
             opened.document.store.model, revision: 2, publicationID: UUID()
         ).data
-        try newBytes.write(to: opened.url, options: [.atomic])
-        #expect(RevisionFingerprint(of: try Data(contentsOf: copy)) == RevisionFingerprint(of: opened.data))
+        try ShowPackage.fileWrapper(for: newBytes).write(to: opened.url, options: [.atomic], originalContentsURL: nil)
+        #expect(RevisionFingerprint(of: try LocalFileOperations().read(copy)) == RevisionFingerprint(of: opened.data))
         await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
             try await binding.current()
         }
@@ -153,10 +153,10 @@ struct EpisodeOpenShowBindingTests {
         let opened = try open()
         defer { opened.close() }
         let binding = try OpenShowSourceBinding.capture(for: opened.document)
-        let replaced = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        let replaced = try ShowPackageCoder().encodeDocument(
             opened.document.store.model, revision: 1, publicationID: UUID()
         )
-        try replaced.data.write(to: opened.url, options: [.atomic])
+        try ShowPackage.fileWrapper(for: replaced.data).write(to: opened.url, options: [.atomic], originalContentsURL: nil)
         await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
             try await binding.current()
         }

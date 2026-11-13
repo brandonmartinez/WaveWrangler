@@ -41,7 +41,7 @@ struct AudioClipEditorHostedTests {
         try Self.wave(rate: 44_100, frames: 44_100).write(to: file)
         let initial = ShowDocumentModel(show: Show(title: "Synthetic audio editor"), episodes: [Episode(title: "Empty episode")])
         let url = folder.appendingPathComponent("show.wwshow")
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(initial, revision: 1, publicationID: UUID()).data.write(to: url)
+        try LocalFileOperations().writeNew(ShowPackageCoder().encodeDocument(initial, revision: 1, publicationID: UUID()).data, to: url)
         let document = try #require(try NSDocumentController.shared.makeDocument(
             withContentsOf: url, ofType: DocumentTypes.show) as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
@@ -116,7 +116,7 @@ struct AudioClipEditorHostedTests {
                 "Audio-only episodes must not acquire fabricated speaker timing.")
         #expect(f.document.store.model == after)
         try await MixerHostedTests().save(f.document)
-        let bytes = try Data(contentsOf: #require(f.document.fileURL))
+        let bytes = try LocalFileOperations().read(#require(f.document.fileURL))
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
         #expect(reopened.payload == after)
         #expect(try Data(contentsOf: f.file) == original)
@@ -198,7 +198,7 @@ struct AudioClipEditorHostedTests {
         f.document.undoManager?.redo()
         #expect(f.document.store.model == after)
         try await MixerHostedTests().save(f.document)
-        let bytes = try Data(contentsOf: #require(f.document.fileURL))
+        let bytes = try LocalFileOperations().read(#require(f.document.fileURL))
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
         #expect(reopened.payload == after)
         let savedURL = try #require(f.document.fileURL)
@@ -254,7 +254,7 @@ struct AudioClipEditorHostedTests {
             #expect(redone == after)
             try await MixerHostedTests().save(f.document)
             let savedURL = f.document.fileURL
-            let saved = try Data(contentsOf: #require(savedURL))
+            let saved = try LocalFileOperations().read(#require(savedURL))
             #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(saved).payload == after)
             #expect(try Data(contentsOf: file) == original)
         }
@@ -511,7 +511,7 @@ struct AudioClipEditorHostedTests {
         #expect(f.document.store.model == after)
         try await MixerHostedTests().save(f.document)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(saved == after)
         let recipe = try await f.runtime.mixerRecipe(model: after, episode: f.model.episodeID,
             programFrames: 123_457..<171_937)

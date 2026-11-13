@@ -170,7 +170,7 @@ enum NativeHoldoutRunner {
     }
 
     static func decode(_ url: URL) -> DecodedDocument<ShowDocumentModel>? {
-        (try? Data(contentsOf: url)).flatMap { try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode($0) }
+        (try? LocalFileOperations().read(url)).flatMap { try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode($0) }
     }
 
     // MARK: - Families
@@ -200,7 +200,7 @@ enum NativeHoldoutRunner {
         let url = dir.appending(path: "Show.wwshow")
         let saveAsURL = dir.appending(path: "Saved As.wwshow")
         let recovery = PersistenceEnvironment.recovery
-        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: recovery)
+        let publisher = DocumentPublisher(coder: ShowPackageCoder(), recovery: recovery)
         let r1 = show(&rng)
         let key = DocumentKey.show(r1.show.id)
         let first = try publisher.publish(r1, revision: 1, key: key, to: url, target: .newLocation)
@@ -282,7 +282,7 @@ enum NativeHoldoutRunner {
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appending(path: "Shared.wwshow")
         let model = show(&rng)
-        _ = try DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: PersistenceEnvironment.recovery)
+        _ = try DocumentPublisher(coder: ShowPackageCoder(), recovery: PersistenceEnvironment.recovery)
             .publish(model, revision: 1, key: .show(model.show.id), to: url, target: .newLocation)
         let document = try open(url)
         document.makeWindowControllers()

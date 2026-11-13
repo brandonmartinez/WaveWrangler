@@ -12,7 +12,7 @@ supplemental audio (10), production bounds (11), rack positions (12),
 speaker mutes (13), and publication metadata/artwork (14).
 Embedded time-map format changes require a show schema bump too.
 
-Canonical envelopes contain `checksum`, `format`, `payload`, `publicationID`,
+Library and legacy show envelopes contain `checksum`, `format`, `payload`, `publicationID`,
 `revision` and `schemaVersion`. SHA-256 covers canonical sorted payload bytes;
 it detects integrity failure, not authenticity. A revision orders publications
 but does not prove identity: conflict detection compares the exact opened base,
@@ -28,6 +28,80 @@ verified protocol. Never invent speaker roles, cuts, metadata or permissions.
 In particular, schema-1's ambiguous channel zero becomes unknown unless the
 old bytes explicitly establish that channel. Test migrations against independent
 old-format expectations, not only the current encoder.
+
+### Show packages
+
+New `.wwshow` documents use `com.brandonmartinez.wavewrangler.show-package`,
+conforming to `com.apple.package`, not JSON. The legacy show UTI and serialized
+`com.brandonmartinez.wavewrangler.show` identifier remain unchanged; open panels
+accept both, but new saves use the package type. A distinct UTI avoids competing
+JSON declarations from older installed builds. Package storage version **1** is independent of model schema
+14. `Manifest.json` indexes `Components/<SHA256>` files: a catalog without
+episodes, one component per episode, and original binary artwork. JSON
+components use bounded LZFSE only when smaller; artwork stays uncompressed.
+Historical transcripts, individual word IDs and review provenance remain intact.
+This factors persistence; the app still loads and encodes the complete model.
+It does not yet provide lazy episode loading or bounded catalog-size memory.
+
+The manifest records model/package versions, publication identity, canonical
+model checksum and component encodings/uncompressed lengths. Readers inspect
+the frozen version header before opening any components, reject unknown content,
+verify stored component digests, and independently validate the reconstructed
+model/checksum. Reads reject links and nonregular children through read-only,
+directory-relative descriptors. Limits are 64 MiB per component, 10,000 episodes
+and 512 MiB for either the framed snapshot or total expanded content.
+
+Publication/recovery uses a deterministic internal snapshot containing the exact
+manifest and stored component bytes. Its fingerprint distinguishes even
+semantically identical but externally rewritten manifests. Recovery snapshots
+remain single device-local files; they are not user-facing show packages.
+Native saves retain unchanged `FileWrapper` children while using stock AppKit
+safe replacement and the same independent read-back check. Wrapper reuse keeps
+unchanged components distinguishable, but atomic writes may still replace their
+inodes. It does not establish reduced physical writes or network transfer.
+
+Flat schema-14 shows also require the existing explicit **Update** consent.
+The storage-only migration preserves the complete payload, keeps exact original
+bytes locally, rechecks the originally opened base, and publishes a package at
+the same URL with the next revision. Schemas 1-13 use their existing migration
+expectations before package publication. Legacy readers remain available while
+personal-document upgrades are being verified; do not remove them early.
+
+### Provider evaluation
+
+A local verified save is not proof of remote recovery, cross-device integrity,
+efficient network transfer or distributed conflict safety. Apple's archived
+[iCloud document guidance](https://developer.apple.com/library/archive/documentation/General/Conceptual/iCloudDesignGuide/Chapters/DesigningForDocumentsIniCloud.html)
+recommends package factoring and changed-element transfer.
+[OneDrive's macOS File Provider design](https://techcommunity.microsoft.com/blog/onedriveblog/inside-the-new-files-on-demand-experience-on-macos/3058922)
+describes recognized packages as one cloud file with hidden `.pkgf` storage;
+do not infer independently synced children or transactional remote edits.
+[Dropbox packages](https://help.dropbox.com/create-upload/package-files) have
+File Provider flattening, compatible-client and web-download limitations.
+Dropbox and Google Drive are potentially supported, untested; Google's
+[File Provider guidance](https://support.google.com/drive/answer/12178485?hl=en)
+does not establish a package-specific contract.
+
+The headless probe supports explicitly authorized, generated-only trials:
+
+```sh
+wwpersist-probe package-trial --file /authorized/test/NEW_DIRECTORY \
+  --recovery /local/private/recovery
+```
+
+It refuses an existing trial directory, creates generated transcripts/history
+and artwork, verifies a package roundtrip and a catalog-only FileWrapper save,
+and reports sizes, unchanged bytes/wrapper identity/inodes and optional provider
+metadata separately. `isUploaded` is provider-reported status, not a remote
+read-back. Verify `isUbiquitousItem` rather than assuming a Documents folder is
+iCloud-managed. Do not run these commands against unapproved cloud locations.
+
+For an explicitly authorized schema-14 personal document, `package-convert
+--file LEGACY_SHOW --destination NEW_LOCAL_DIRECTORY` creates a separate local
+package and exact-byte backup, compares complete JSON payload trees, and
+rechecks the untouched original. It never opens referenced audio. Keep private
+trial/conversion evidence and document contents outside Git; generated local
+trials do not authorize hosted/UI execution on a physical host.
 
 ## Verified publication and recovery
 

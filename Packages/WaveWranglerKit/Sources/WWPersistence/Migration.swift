@@ -47,7 +47,7 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
 
     public var migratableSchemas: Set<Int> { Set(steps.keys) }
 
-    public func migrate(_ url: URL, key: DocumentKey, isCanceled: () -> Bool = { false }) throws -> MigrationReceipt {
+    public func migrate(_ url: URL, key: DocumentKey, expectedOriginal: Data? = nil, isCanceled: () -> Bool = { false }) throws -> MigrationReceipt {
         guard let recovery = publisher.recovery else {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "migration requires a recovery store")
         }
@@ -59,6 +59,10 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: WriteFailureKind(classifying: error), detail: "\(error)")
         }
         let originalFingerprint = RevisionFingerprint(of: original)
+        if let expectedOriginal, original != expectedOriginal {
+            throw PublicationError.conflict(PublicationConflict(expected: RevisionFingerprint(of: expectedOriginal),
+                onDisk: originalFingerprint, preservedCandidate: nil))
+        }
         guard let schema = originalFingerprint.schemaVersion, let step = steps[schema] else {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "no migration from schema \(originalFingerprint.schemaVersion.map(String.init) ?? "?")")
         }

@@ -104,9 +104,9 @@ struct AlignmentWaveformRetentionHostedTests {
             ))
         }
         let url = folder.appendingPathComponent("show.wwshow")
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        try LocalFileOperations().writeNew(ShowPackageCoder().encodeDocument(
             initial, revision: 1, publicationID: UUID()
-        ).data.write(to: url)
+        ).data, to: url)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: url, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)

@@ -41,7 +41,8 @@ protocol LibraryEntryObserving: LibraryEntryChecking {
 }
 
 extension UTType {
-    static var wwShow: UTType { UTType(DocumentTypes.show) ?? .json }
+    static var wwShow: UTType { UTType(DocumentTypes.show) ?? .package }
+    static var wwLegacyShow: UTType { UTType(DocumentTypes.legacyShow) ?? .json }
 }
 
 /// Result of choosing a library location (states-and-recovery §5.1, ST-33).
@@ -230,7 +231,7 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
 
     func locateShow(_ id: ShowID) async throws {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.wwShow]
+        panel.allowedContentTypes = [.wwShow, .wwLegacyShow]
         panel.allowsMultipleSelection = false
         panel.message = "Choose the show file. WaveWrangler checks the show inside the file, not its name."
         guard await panel.begin() == .OK, let url = panel.url else { return }

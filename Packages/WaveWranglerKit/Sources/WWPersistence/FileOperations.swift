@@ -28,7 +28,13 @@ public struct LocalFileOperations: FileOperations {
     public init() {}
 
     public func read(_ url: URL) throws -> Data {
-        try Data(contentsOf: url, options: [.uncached])
+        // A retained URL can cache the old regular-file type across a flat-to-package replacement.
+        var metadata = stat()
+        guard lstat(url.path, &metadata) == 0 else { throw POSIXError.current() }
+        if metadata.st_mode & S_IFMT == S_IFDIR {
+            return try ShowPackage.read(from: url)
+        }
+        return try Data(contentsOf: url, options: [.uncached])
     }
 
     public func exists(_ url: URL) -> Bool {
@@ -40,6 +46,10 @@ public struct LocalFileOperations: FileOperations {
     }
 
     public func writeNew(_ data: Data, to url: URL) throws {
+        if url.pathExtension.lowercased() == "wwshow", ShowPackage.isSnapshot(data) {
+            try ShowPackage.writeNew(data, to: url, ops: self)
+            return
+        }
         let fd = open(url.path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0o644)
         guard fd >= 0 else { throw POSIXError.current() }
         var closed = false

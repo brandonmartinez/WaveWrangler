@@ -128,7 +128,7 @@ struct AudioProgramProjectionHostedTests {
         #expect(redone)
         try await helper.save(f.document)
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
         let saved = reopened == after
         #expect(saved)
     }
@@ -236,7 +236,7 @@ struct AudioProgramProjectionHostedTests {
         #expect(samples.count == 4_800 && samples.allSatisfy { $0 == 0 })
         try await helper.save(f.document)
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(reopened == f.document.store.model)
         let reopenedComposition = try await f.runtime.programComposition(model: reopened, episode: initial.id)
         #expect(reopenedComposition == composition)

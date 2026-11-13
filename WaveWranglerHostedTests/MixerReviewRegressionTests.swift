@@ -13,7 +13,7 @@ struct MixerReviewRegressionTests {
 
     private func offer(_ payload: ShowDocumentModel, for document: ShowDocument) throws -> URL {
         try #require(PersistenceEnvironment.isUITestRun)
-        let disk = try Data(contentsOf: #require(document.fileURL))
+        let disk = try LocalFileOperations().read(#require(document.fileURL))
         let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
             payload, revision: document.revision + 1, publicationID: UUID()).data
         let schema = try #require(EnvelopeHeaderInfo.peek(encoded)?.schemaVersion)
@@ -120,7 +120,7 @@ struct MixerReviewRegressionTests {
         let candidate = try original.settingMasterMix(.init(inserts: [changed]), in: f.model.episodeID)
         let url = try offer(candidate, for: f.document)
         defer { try? PersistenceEnvironment.recovery.discardOfferedEditCheckpoints([url], for: f.document.documentKey) }
-        let disk = try Data(contentsOf: #require(f.document.fileURL))
+        let disk = try LocalFileOperations().read(#require(f.document.fileURL))
         f.model.mixer.beforeStateCapture = { throw MixerFailure.state(slot.id, "synthetic native capture refusal") }
         do {
             try await helper.save(f.document)
@@ -130,7 +130,7 @@ struct MixerReviewRegressionTests {
         try await helper.wait { !f.document.mixerTransactions.isBusy && presentation.error != nil }
         #expect(!presentation.isClosed && presentation.editorWindow != nil && presentation.canDiscardEditorChanges)
         #expect(f.document.store.model == original)
-        #expect(try Data(contentsOf: #require(f.document.fileURL)) == disk)
+        #expect(try LocalFileOperations().read(#require(f.document.fileURL)) == disk)
         f.document.restoreOfferedEditCheckpoint()
         #expect(!f.document.isEditCheckpointRestoreInEffect && FileManager.default.fileExists(atPath: url.path))
         try await presentation.discardFailedEditorChanges(confirm: { false })

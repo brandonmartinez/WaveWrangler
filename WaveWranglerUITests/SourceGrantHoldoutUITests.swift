@@ -334,8 +334,7 @@ final class SourceGrantHoldoutUITests: XCTestCase {
 
     /// The show title as written on disk (independent of the app).
     private func diskTitle(_ url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = try? ShowStorage.envelope(url),
               let payload = object["payload"] as? [String: Any] else { return nil }
         return (payload["show"] as? [String: Any])?["title"] as? String
     }

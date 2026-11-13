@@ -202,9 +202,10 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             app.typeKey("s", modifierFlags: .command)
             check(Acceptance.waitFor(timeout: 10) { self.diskTitle(document) == "Newest Version" }, "newest version saved")
             app.terminate()
-            // Simulate an incomplete newest save: truncate the file.
-            let data = try Data(contentsOf: document)
-            try data.prefix(data.count / 2).write(to: document)
+            // Simulate an incomplete newest save by truncating its manifest.
+            let content = try ShowStorage.contentURL(document)
+            let data = try Data(contentsOf: content)
+            try data.prefix(data.count / 2).write(to: content)
             let reopened = try openOptionally(document, autosave: false)
             Thread.sleep(forTimeInterval: 2)
             let texts = app.descendants(matching: .staticText).allElementsBoundByIndex.prefix(40).map { "\($0.value ?? $0.label)" }
@@ -229,17 +230,18 @@ final class CoreTasksKeyboardUITests: XCTestCase {
                 check(title.waitForExistence(timeout: 5) && title.value as? String == "Complete Version", "opened the last complete version: \(title.value ?? "nil")")
                 Acceptance.record(self, "T17 opened window title: \(copy.title)")
             }
-            check(data.prefix(data.count / 2) == (try? Data(contentsOf: document)), "the damaged file is left unchanged")
+            check(data.prefix(data.count / 2) == (try? Data(contentsOf: content)), "the damaged manifest is left unchanged")
         }
     }
 
     /// T20 (K19): a show written by a newer WaveWrangler is refused for editing and saving with a reason.
     func testT20UnknownNewerRefusal() throws {
         let document = try makeDocument("Newer")
-        var object = try JSONSerialization.jsonObject(with: Data(contentsOf: document)) as! [String: Any]
+        let content = try ShowStorage.contentURL(document)
+        var object = try JSONSerialization.jsonObject(with: Data(contentsOf: content)) as! [String: Any]
         object["schemaVersion"] = 99
-        try JSONSerialization.data(withJSONObject: object).write(to: document)
-        let bytes = try Data(contentsOf: document)
+        try JSONSerialization.data(withJSONObject: object).write(to: content)
+        let bytes = try Data(contentsOf: content)
         try task("T20") {
             _ = try openOptionally(document, autosave: true, freshStorage: true)
             Thread.sleep(forTimeInterval: 2)
@@ -250,7 +252,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
             check(app.windows.matching(identifier: "ww.show.window").count == 0, "no editable window opens")
             if app.dialogs.firstMatch.exists || app.sheets.firstMatch.exists { try audit("T20 refusal") }
             app.typeKey(.escape, modifierFlags: [])
-            check((try? Data(contentsOf: document)) == bytes, "file bytes unchanged")
+            check((try? Data(contentsOf: content)) == bytes, "manifest bytes unchanged")
         }
     }
 
@@ -402,8 +404,7 @@ final class CoreTasksKeyboardUITests: XCTestCase {
     }
 
     private func payload(_ url: URL) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        guard let object = try? ShowStorage.envelope(url) else { return nil }
         return object["payload"] as? [String: Any]
     }
 

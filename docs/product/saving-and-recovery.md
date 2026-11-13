@@ -62,13 +62,30 @@ the version that opened. Recovery is not a substitute for independent backups.
 
 ## Older and newer show formats
 
+New shows use a `.wwshow` document package. Finder presents it as one document;
+inside, episode data and artwork are stored separately and text is compressed
+when useful. Copy or move the complete document, not individual internal files.
+The package still references your original recordings rather than embedding them.
+
 An older show may require **Update** before saving. The update requires explicit
 consent and backs up the original bytes. **Open Read-Only** lets you inspect
-without committing the format change. A failed update keeps the original
-unchanged and offers recovery actions.
+without committing the format change. If an update fails, retain the exact-byte
+backup and follow the reported recovery actions; do not assume an unverified
+publication succeeded.
+
+This includes existing JSON `.wwshow` files even when their editing-data schema
+is current. Updating replaces that document with a package after preserving its
+original bytes in a local migration backup. To keep the old file separately,
+make a copy first and update the copy. Older builds may not open package shows.
 
 Keep a separate backup before moving important work between app versions.
 Newer or damaged formats may open read-only instead of being silently rewritten.
+
+Cloud sync is separate from local saving. iCloud and OneDrive handle packages
+differently; an uploaded indicator is not an independently verified remote
+backup. Wait for sync before switching Macs, avoid simultaneous edits, and keep
+an independent backup. Dropbox and Google Drive are potentially supported but
+untested. No cloud provider grants another Mac access to referenced recordings.
 
 ## Keep source access separate from document saving
 

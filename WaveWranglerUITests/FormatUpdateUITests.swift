@@ -366,8 +366,7 @@ final class FormatUpdateUITests: XCTestCase {
     }
 
     private func envelope(_ url: URL) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        try? ShowStorage.envelope(url)
     }
 
     private func diskSchemaVersion(_ url: URL) -> Int? { envelope(url)?["schemaVersion"] as? Int }

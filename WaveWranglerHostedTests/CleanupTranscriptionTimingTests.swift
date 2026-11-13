@@ -191,7 +191,8 @@ struct CleanupTranscriptionTimingTests {
         let adjusted = f.document.store.model
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
-        #expect(try coder.decode(Data(contentsOf: #require(f.document.fileURL))).payload == adjusted)
+        let savedMatches = try coder.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload == adjusted
+        #expect(savedMatches)
         #expect(f.document.verifiedModel == adjusted)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originalAudio)
         do {
@@ -216,7 +217,8 @@ struct CleanupTranscriptionTimingTests {
         #expect(try !cleanup.publishTranscripts(transcripts, expecting: snapshot))
         #expect(f.document.store.model == beforeLateResult, "An obsolete job cannot overwrite new reviews")
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        #expect(try coder.decode(Data(contentsOf: #require(f.document.fileURL))).payload == beforeLateResult)
+        let lateSavedMatches = try coder.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload == beforeLateResult
+        #expect(lateSavedMatches)
         let raw = try NSDocumentController.shared.makeDocument(
             withContentsOf: #require(f.document.fileURL), ofType: DocumentTypes.show)
         let reopened = try #require(raw as? ShowDocument)

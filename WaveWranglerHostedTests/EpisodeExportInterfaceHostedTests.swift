@@ -183,7 +183,7 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
             #expect(owner.state.store === f.document.store)
             try await MixerHostedTests().save(f.document)
-            let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: #require(f.document.fileURL))).payload
+            let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload
             #expect(reopened == capturedModel)
             try await controller.discardUncapturedEditorState()
         }

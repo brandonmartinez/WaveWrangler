@@ -608,3 +608,26 @@ extension DocumentMigrator where Coder == JSONEnvelopeCoder<ShowDocumentModel> {
                          identify: { (try? ShowSchemaMigration.decodeUpgradingOlder($0)).map { .show($0.payload.show.id) } })
     }
 }
+
+extension DocumentMigrator where Coder == ShowPackageCoder {
+    /// Storage-only migration of schema 14, or the existing explicit domain migrations followed by
+    /// package publication. Exact original bytes remain in the device-local migration backup.
+    public static func show(publisher: DocumentPublisher<ShowPackageCoder>) -> DocumentMigrator<ShowPackageCoder> {
+        let storageStep = MigrationStep<ShowDocumentModel>(fromSchema: SchemaVersion.show, migrate: { original in
+            guard !ShowPackage.isSnapshot(original) else {
+                throw PersistenceError.malformed("This show is already a package")
+            }
+            let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(original)
+            return (decoded.payload, decoded.revision)
+        }, expectations: { original, migrated in
+            guard let object = try? JSONSerialization.jsonObject(with: original) as? NSDictionary,
+                  let payload = object["payload"] as? NSDictionary,
+                  let bytes = try? JSONEnvelopeCoder<ShowDocumentModel>.makeEncoder().encode(migrated),
+                  let encoded = try? JSONSerialization.jsonObject(with: bytes) as? NSDictionary,
+                  payload == encoded else { return ["Package conversion changed legacy payload content"] }
+            return []
+        })
+        return DocumentMigrator(publisher: publisher, steps: ShowSchemaMigration.steps + [storageStep],
+            identify: { (try? ShowSchemaMigration.decodeUpgradingOlder($0)).map { .show($0.payload.show.id) } })
+    }
+}

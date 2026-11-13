@@ -121,7 +121,7 @@ enum LibraryLocationFixture {
         try? FileManager.default.removeItem(at: folder)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let locations = LibraryShowLocations(root: PersistenceEnvironment.applicationSupport("LibraryShowLocations"))
-        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil)
+        let publisher = DocumentPublisher(coder: ShowPackageCoder(), recovery: nil)
         for entry in entries where entry.lastKnownTitle.hasPrefix("Location Show") {
             let url = folder.appending(path: "\(entry.lastKnownTitle).wwshow")
             let model = ShowDocumentModel.untitled(id: entry.showID, title: entry.lastKnownTitle)

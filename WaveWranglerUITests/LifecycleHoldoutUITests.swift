@@ -301,8 +301,7 @@ final class LifecycleHoldoutUITests: XCTestCase {
     }
 
     private func diskTitle(_ url: URL) -> String? {
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = try? ShowStorage.envelope(url),
               let payload = object["payload"] as? [String: Any], let show = payload["show"] as? [String: Any]
         else { return nil }
         return show["title"] as? String

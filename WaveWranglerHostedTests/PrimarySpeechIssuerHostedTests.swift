@@ -97,10 +97,10 @@ struct PrimarySpeechIssuerHostedTests {
         var accepted = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episode.id)
         mutate?(&accepted)
         let url = folder.appendingPathComponent("show.wwshow")
-        let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        let encoded = try ShowPackageCoder().encodeDocument(
             accepted, revision: 1, publicationID: UUID()
         )
-        try encoded.data.write(to: url)
+        try LocalFileOperations().writeNew(encoded.data, to: url)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: url, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)

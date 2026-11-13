@@ -30,9 +30,16 @@ struct AppConfigurationTests {
     @Test func showDocumentTypeIsEditedByShowDocument() throws {
         let info = try Self.plist("Info.plist")
         let types = try #require(info["CFBundleDocumentTypes"] as? [[String: Any]])
-        let show = try #require(types.first { ($0["LSItemContentTypes"] as? [String])?.contains(DocumentFormat.show.identifier) == true })
+        let show = try #require(types.first { ($0["LSItemContentTypes"] as? [String])?.contains(ShowPackage.typeIdentifier) == true })
         #expect(show["NSDocumentClass"] as? String == "ShowDocument")
         #expect(show["CFBundleTypeRole"] as? String == "Editor")
+        #expect(show["LSTypeIsPackage"] as? Bool == true)
+        let exported = try #require(info["UTExportedTypeDeclarations"] as? [[String: Any]])
+        let package = try #require(exported.first { $0["UTTypeIdentifier"] as? String == ShowPackage.typeIdentifier })
+        let conforms = try #require(package["UTTypeConformsTo"] as? [String])
+        #expect(conforms.contains("com.apple.package") && !conforms.contains("public.json"))
+        let tags = try #require(package["UTTypeTagSpecification"] as? [String: Any])
+        #expect(tags["public.filename-extension"] as? [String] == ["wwshow"])
     }
 
     @Test func recordingDragsAreDataNotAnOpenableDocumentType() throws {
@@ -104,11 +111,12 @@ struct AppConfigurationTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let model = try ShowDocumentModel.untitled().addingEpisode(Episode(title: "Synthetic", number: 1))
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let url = directory.appending(path: "Synthetic.\(try #require(DocumentFormat.show.filenameExtension))")
-        try coder.encode(model, revision: 1).write(to: url, options: .atomic)
-        let decoded = try coder.decode(Data(contentsOf: url))
-        #expect(decoded.payload == model)
+        try LocalFileOperations().writeNew(coder.encode(model, revision: 1), to: url)
+        let decoded = try coder.decode(LocalFileOperations().read(url))
+        let matches = decoded.payload == model
+        #expect(matches)
         #expect(decoded.revision == 1)
     }
 
