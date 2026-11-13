@@ -634,6 +634,25 @@ the exact shipped source/relink package, application linkage, signing, sandbox,
 library validation, distribution terms and any App Store terms before shipping.
 This development foundation is not a claim of legal or App Store clearance.
 
+### Mac App Store licensing checkpoint
+
+Charging for WaveWrangler and licensing its first-party code under MIT do not,
+by themselves, conflict with LAME's LGPL-2.0-or-later license. However, notices
+alone are insufficient. [GNU Library GPL version 2, section 6](https://www.gnu.org/licenses/old-licenses/lgpl-2.0.html)
+requires the applicable modification/reverse-engineering rights and materials
+needed to relink with a modified library; those application materials may be
+source code rather than separate object files.
+
+[Apple's standard EULA](https://www.apple.com/legal/internet-services/itunes/dev/stdeula/)
+recognizes open-source licensing exceptions, but that is not blanket clearance
+for every App Store agreement, usage restriction, or signing/DRM arrangement.
+Before App Store submission, obtain open-source licensing counsel's review of
+the exact release, its corresponding source/build package, practical rebuild/
+relink and local signing instructions, and the then-applicable Apple terms.
+Our replacement path is a complete source rebuild, not modification of the
+signed Store app in place. Keep this release gate open until that review and
+the release-specific technical checks are complete.
+
 ## Generated-PCM qualification
 
 ```sh
