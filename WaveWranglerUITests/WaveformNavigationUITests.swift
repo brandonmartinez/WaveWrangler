@@ -2,6 +2,73 @@ import XCTest
 
 @MainActor
 final class WaveformNavigationUITests: XCTestCase {
+    func testTemporarySelectionRailsResizeAndDismissWithoutLeavingASelection() throws {
+        let app = launch("Temporary selection rails", singlePrimary: true)
+        defer { app.terminate() }
+        let track = tracks(in: app).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 20), app.debugDescription)
+        setTimelineFollowPlayhead(false, in: app)
+        reveal(track, in: app)
+        let start = app.buttons["ww.timeline.selection.start"]
+        let end = app.buttons["ww.timeline.selection.end"]
+        let actions = app.descendants(matching: .any)["ww.timeline.selection.actions"]
+        func select() {
+            track.coordinate(withNormalizedOffset: CGVector(dx: 0.6, dy: 0.5))
+                .click(forDuration: 0.1, thenDragTo:
+                    track.coordinate(withNormalizedOffset: CGVector(dx: 0.8, dy: 0.5)))
+            XCTAssertTrue(start.waitForExistence(timeout: 5) && end.exists && actions.exists,
+                          app.debugDescription)
+        }
+        func seconds(_ handle: XCUIElement) throws -> Double {
+            try XCTUnwrap((handle.value as? String)?.split(separator: " ").first.flatMap { Double($0) })
+        }
+        select()
+        let originalStart = try seconds(start)
+        let originalEnd = try seconds(end)
+        start.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .click(forDuration: 0.1, thenDragTo:
+                start.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                    .withOffset(CGVector(dx: 20, dy: 0)))
+        XCTAssertGreaterThan(try seconds(start), originalStart)
+        XCTAssertEqual(try seconds(end), originalEnd, accuracy: 0.000001)
+        let movedStart = try seconds(start)
+        end.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            .click(forDuration: 0.1, thenDragTo:
+                end.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+                    .withOffset(CGVector(dx: -20, dy: 0)))
+        XCTAssertLessThan(try seconds(end), originalEnd)
+        XCTAssertEqual(try seconds(start), movedStart, accuracy: 0.000001)
+        XCTAssertTrue(actions.exists, "Rail drags must not dismiss the selection toolbar.")
+        capture(app, name: "Temporary selection with independently adjusted rails")
+        let selectedStart = try seconds(start)
+        let selectedEnd = try seconds(end)
+        let mute = app.buttons["ww.timeline.selection.mute"]
+        XCTAssertTrue(mute.isHittable && mute.isEnabled)
+        mute.click()
+        let region = app.buttons.matching(NSPredicate(
+            format: "identifier BEGINSWITH 'ww.timeline.speakerMute.'")).firstMatch
+        XCTAssertTrue(region.waitForExistence(timeout: 5))
+        let muted = (region.value as? String ?? "").split(separator: " ").compactMap { Double($0) }
+        XCTAssertEqual(try XCTUnwrap(muted.first), selectedStart, accuracy: 0.001)
+        XCTAssertEqual(try XCTUnwrap(muted.last), selectedEnd, accuracy: 0.001)
+        XCTAssertFalse(start.exists || end.exists, "Saved mutes must not acquire temporary selection rails.")
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(region.waitForNonExistence(timeout: 5))
+        select()
+        app.staticTexts["alignment.waveforms.ruler"]
+            .coordinate(withNormalizedOffset: CGVector(dx: 0.1, dy: 0.25)).click()
+        XCTAssertTrue(start.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(end.exists || actions.exists)
+        select()
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(start.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(end.exists || actions.exists)
+        select()
+        app.buttons["Clear selection"].click()
+        XCTAssertTrue(start.waitForNonExistence(timeout: 5))
+        XCTAssertFalse(end.exists || actions.exists)
+    }
+
     func testEpisodeControlBarDefaultLayoutAndFourBoundaries() throws {
         let app = launch("Episode control bar", singlePrimary: true)
         defer { app.terminate() }
