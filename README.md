@@ -1,737 +1,119 @@
-# WaveWrangler
-Local-first macOS multitrack podcast alignment and editing
+<p align="center">
+  <img src="docs/assets/branding/wavewrangler-logo.svg" alt="WaveWrangler" width="360">
+</p>
 
-Development is directed by the current refinement session, not the retired Squad
-milestone process. Use American English for first-party code and interface text.
-UI tests prefer the [macOS VMs](docs/engineering/ui-test-vm-hosts.md); a physical
-host requires a specific hardware-dependent reason and approval.
+# Your recordings. One conversation.
 
-Native macOS multitrack podcast preparation: local audio processing, referenced media, cloud canonical projects.
+**WaveWrangler is a native macOS app for turning separately recorded podcast
+tracks into an edited, mixed episode.** Bring your speakers together, review
+the timing, shape the conversation, and add music without changing your
+original recordings.
 
-## License and third-party software
+![An episode in WaveWrangler, with speaker waveforms, music, and the production mixer](docs/assets/screenshots/episode-workspace.png)
 
-WaveWrangler's first-party source is available under the [MIT License](LICENSE).
-MIT permits commercial distribution, including paid builds; charging for a build
-does not change the license of the published source. Third-party components retain
-their own licenses and copyright notices, not WaveWrangler's MIT copyright notice.
-The bundled Whisper/ggml notices are preserved in
-[`upstream/LICENSE`](Packages/WaveWranglerKit/Sources/WWWhisperNative/upstream/LICENSE)
-and [`WhisperCPULICENSE.txt`](WaveWrangler/WhisperCPULICENSE.txt).
-Downloaded models retain their own licenses.
+## From separate tracks to a finished episode
 
-The `WWExport` codec foundation bundles **unmodified, encoder-only LAME 3.100**,
-called through a WaveWrangler-owned wrapper, alongside system WAV and AAC-LC
-encoding. The pinned complete source archive, LGPL notices, bounded PCM API,
-generated-PCM qualification and practical source rebuild/relink instructions are
-documented in [Export codecs](docs/engineering/export-codecs.md). Notices are
-included as module resources for the later app About/licenses integration.
+| What you want to do | What WaveWrangler provides |
+| --- | --- |
+| Keep a series organized | A Library of shows and episodes, collections, and dedicated episode windows. |
+| Bring recordings into sync | Reviewed automatic alignment, manual anchors and timing adjustments, and adaptive file timing for changing delay. |
+| Find and refine edits | Local Whisper transcripts, approximate word timing, filler review, synchronized cuts, and speaker-only mute regions. |
+| Build an opening and closing | Supplemental Audio Clips, explicit intro/ripple insertion, trims, splits, fades, and graphical level automation. |
+| Balance the conversation | Per-speaker input gain, Auto Input Gain, Audio Unit inserts, faders and pan, plus a Master strip. |
+| Deliver the episode | Whole-episode WAV, MP3, and M4A/AAC-LC export, optional loudness normalization, and publication metadata and artwork. |
 
-Open application source and attribution alone are not the complete LGPL
-compliance requirements. The shipped integration must also provide a usable
-way to rebuild/relink with a modified library, or a qualifying replaceable shared
-library mechanism. Verify that path against the exact upstream license and the
-released macOS signing/library-validation configuration. Do not modify LAME,
-include its separately licensed decoder, or impose terms that override its
-required user rights. App Store terms, signing, sandbox behavior, and source
-availability require a separate release review before any App Store submission;
-the choice of MIT or an unmodified library is not automatic store clearance.
+### Review the timing, rather than trust a guess
 
-## Library and episode editors
+Recorders can start at different times, drift apart, or change delay during a
+take. **Align Tracks** proposes timing for you to review; it never silently
+accepts it. Use measured intervals, manual corrections, or adaptive timing
+where appropriate, and listen before proceeding.
 
-Select a show in **Library** to browse and manage its episodes. Create, rename, reorder, or delete
-episodes there, and edit show or episode information without opening an editor.
-Double-click an episode or choose **Open Episode** to edit it in a dedicated window. Multiple
-episodes, including episodes from different shows, can remain open together. Opening an already-open
-episode brings its window forward; **Open Episode in New Window** creates another view.
+Adaptive timing distinguishes locally supported matches from estimated gaps
+and ends. Retaining audio is not a claim that every moment is verified.
+See [Alignment](docs/product/alignment.md).
 
-Editors have no episode selector. Each stays bound to the episode it opened; deleting that episode
-shows an unavailable state rather than switching the editor to another episode. Windows belonging to
-the same show share its document, Save/autosave state, and Undo history. Closing an episode window
-does not discard a show that is still being managed in Library; **Close Show** closes that show
-through the normal unsaved-changes decision.
+### Edit the conversation without editing your originals
 
-## Mixer and input gain
+Transcribe assigned Primary tracks locally, listen to suggested fillers, and
+adjust their boundaries before cutting. A synchronized cut removes time across
+the spoken tracks; a speaker-only mute leaves everyone else's timing in place.
+Review decisions alone do not cut audio.
 
-Choose **View > Show Mixer** or the mixer button beside the sidebar controls. **Review** and
-**Mixer** are alternative contents of the same resizable bottom pane; switching keeps the review
-selection and saved divider height. **Pop Out** opens a native resizable mixer window for another
-display. **Reattach** returns it to the bottom pane. Repeatedly opening a detached mixer focuses
-the existing window. Closing its originating episode editor closes its mixer and effect editors.
-Each episode editor owns its own auxiliary window, bound to that editor's document and transport.
+Add a music bed or an outro as an Audio Clip. Ordinary placement overlays the
+timeline; creating an intro or inserting time is a separate, previewed action.
+See [Transcription and editing](docs/product/transcription-and-editing.md) and
+[Audio Clips](docs/product/audio-clips.md).
 
-There is one strip per assigned speaker and a pinned **Master** beside the horizontally scrolling
-speaker strips. A strip identifies its selected Primary recording and channel; Backups are never
-automatically mixed in. **Input gain (dB)** is the same saved recording/channel value in the mixer
-and Recording inspector. It precedes inserts and also applies to diagnostic source listening.
-Replacing a Primary uses the new recording's own input gain while retaining the speaker's
-effects, output fader, and pan. Original audio, measured waveforms, alignment, and transcription
-inputs are unchanged. Numeric controls and sliders use the show's normal Save and Undo history.
+### Hear the mix you intend to export
 
-Use **Add**, **Open Editor**, and the insert actions menu for ordered Audio Unit effects,
-generic parameters, reordering, bypass, and removal. Native vendor editors are requested when
-available; otherwise the generic parameter editor is used. Missing or unsupported units remain
-visible with their saved state and an error; they are not silently omitted. Close an effect
-editor before changing source/timing assignments. Save, Undo/Redo, restart, and close await
-full native-state capture; Undo or restart dismisses an editor belonging to an old processor.
-A refused capture leaves the editor open for retry or an explicitly confirmed discard of its
-unsaved changes from the mixer itself. Opening an effect editor in another window of the same
-episode safely captures and closes the previous effect editor before handing it over.
-Insert edits in one episode do not stop another episode's mixer.
+Select **Production Mix** in the control bar's **Mix/Source** menu, then press
+Play to hear speaker Primaries, saved edits, Audio Clips, speaker processing,
+and Master processing. Dock the mixer below the timeline or detach it.
 
-**Play Mix** explicitly selects production listening through the confirmed speaker Primaries,
-speaker inserts/fader/pan, and Master inserts/output gain. Ordinary timeline/source audition
-remains diagnostic listening, without those inserts or faders. Opening, docking, or closing a
-mixer never starts playback or changes those source-listening choices. Mixer **Solo/Mute** is
-temporary production listening, not a saved render setting or a source-role change.
-Leaving Alignment stops diagnostic source audition. Deliberate production listening can
-continue in a detached mixer, which retains its own Stop control.
-Levels describe prepared PCM, including clipping; they are not acoustic-output measurements.
-This is buffered monitoring, not live microphone monitoring or zero-latency processing.
-Repeated starts with unchanged processing inputs reuse reset effects and bounded raw
-PCM caches, with source authorization rechecked before output. Cuts update the visible
-waveforms before background detail finishes; original audio remains untouched.
-The initial processing scope is arm64, mono/stereo recordings, mono speaker inserts, and 48 kHz
-stereo Master/output. Compatibility is unit-specific. There is no export/file-delivery UI yet.
+Source audition is different: it helps compare recordings and timing, not
+judge the finished mix. Backups are not automatically added to production.
+See [Mixer](docs/product/mixer.md) and [Export](docs/product/export.md).
 
-## Audio intros and inserted time
+## A short first-session workflow
 
-Ordinary Audio Clip placement overlays the program; it never creates a gap.
-Open the compact **Inserted Time** menu above the timeline and choose
-**Insert Intro...** or **Insert & Ripple...** to explicitly insert time.
-The preview shows signed **program** start, duration
-or end, every affected dialogue interval, clip start, and inserted region.
-Intro defaults to the earliest retained dialogue, inserted region, or unpinned
-clip, not an assumed zero. Unrelated earlier pins stay fixed; an audio-only
-program uses its first content boundary, or zero when empty. Current original
-IN/OUT values remain visible and unchanged.
+1. **Create a show and episode.** Keep show-wide publication defaults and
+   episode-specific details together in Library.
+2. **Add recordings.** Open **Recordings & Speakers**, review the import,
+   assign speakers and channels, and choose each speaker's Primary.
+3. **Align and listen.** Run **Align Tracks**, inspect the proposals, and
+   explicitly accept the timing you want to use.
+4. **Review and edit.** Download a model when you choose to, transcribe,
+   audition words and selections, and make deliberate cuts or mutes.
+5. **Add music and mix.** Place Audio Clips, shape fades, balance the speaker
+   strips, and audition in **Production Mix** mode.
+6. **Export.** Review Episode Start/End, choose formats and a destination,
+   and check metadata before starting the whole-episode export.
 
-**Move selected clip to insertion start** is an explicit, initially unchecked
-choice. An unpinned selection starts at offset zero in the new region; a chosen
-pinned clip explicitly moves there and keeps its pin. Other pins do not move.
-The lead-in is independent of the clip's full length: a 40-second music bed with
-a 10-second intro lets speech begin under the remaining music. Trims, channels,
-output ownership, fades, and original media stay intact.
+Start with the [Getting started guide](docs/product/getting-started.md), or
+browse the [user guide](docs/product/README.md).
 
-**Inserted Time** lists existing regions for position/duration editing or
-removal. A moved destination is measured with that region removed; leaving its
-start unchanged preserves same-boundary order. Clips attached to a moved region
-follow it. Shortening clamps starts in the removed tail to the new end; removal
-clamps attached starts to the old start. Neither operation deletes clip audio.
-Later unpinned placements and dialogue ripple, spanning clips stay whole, and
-other pins remain fixed. Regions cannot nest or be pinned. Exact region edges
-are valid destinations; interiors and Show cut's review-only audio are not.
+## Your media stays yours
 
-Each Apply is one named Undo/Redo and normal Save operation. Previewing never
-seeks, starts playback, changes routing, or edits the document. Applying stops
-playback, clears temporary selection/cycle, and reprojects retained waveforms,
-words, and markers; a cursor inside shortened/removed time clamps to its seam.
-Alignment clocks, accepted timing, transcript provenance, manual cuts, and
-original recordings are never rewritten to make an intro.
+Original recordings are referenced in place, not rewritten. Imports explicitly
+authorize audio use on this Mac; changed or unavailable sources require review.
+Editing decisions live in the show document and support Undo/Redo.
 
-## Audio Clip fades
+Whisper inference runs locally. Model downloads happen only when requested;
+recordings and transcripts are not uploaded for transcription. Recognition and
+word timing are approximate, and every model can make mistakes.
 
-Select an Audio Clip, position the playhead inside its audible trimmed interval,
-and choose **Fade In...** or **Fade Out...** in the inspector. The fade starts at
-that production position, captures the evaluated current level, and ends after
-the entered duration or at the entered program end time. Amplitude is linear:
-1 is full level, 0.25 is low, and 0 is exact **Silence**. Fade In at the clip
-beginning can explicitly initialize Silence. Repeat actions to build
-full-to-low-to-zero or zero-to-low-to-full-to-zero sequences.
+**Saved** means the local show was verified on disk, not that a cloud provider
+finished syncing it. Recovery offers and save failures remain visible.
+See [Saving and recovery](docs/product/saving-and-recovery.md).
 
-Conflicting points, crossed ramps, and changed later hold/start levels are
-reviewed before explicit replacement. **Edit Fade Point...** supports exact
-local frame/fraction and level editing or deliberate removal. Each apply is one
-Undo action. The visible curve is cached separately from the playhead and raw
-waveform; moves, trims, splits, saves, and Undo/Redo retain source ownership and
-the exact curve. Original recordings, alignment, and transcripts are unchanged.
+## Current availability
 
-## Visual alignment
+WaveWrangler is under active development. There are currently **no published
+GitHub releases**; build from source to try it. The app targets **macOS 26 or
+later on Apple silicon**. That is a development target, not a claim of
+qualification across every Mac, OS version, recording format, or Audio Unit.
+No App Store availability or distribution-readiness claim is made.
 
-Import recordings in **Setup** to review device groups, recording segments, and speaker/channel
-assignments. A new import has provisional file identity: choose **Confirm original** for each
-unchanged local source before decoding or playback. A changed original must be reviewed through
-**Relink Source** instead. Sources remain referenced in place and are never modified.
-Device-local records left by sources removed from the show do not block confirming a newly
-imported source; an original still used by another source in the show remains unavailable.
+## Build and open locally
 
-In **Alignment**, the shared timeline is the primary editor. **Refresh audio** loads bounded
-measured waveform windows on one seconds-based ruler. The track-view dropdown lists **By recorder**,
-**By speaker**, **Overlay**, and **Speakers only**, in that order. **By speaker** remains the default,
-grouping lanes by assigned speaker across recorders. **By recorder** groups lanes by recorder group.
-Unassigned recordings remain under **Unknown speaker**. **Overlay** always combines enabled
-recordings by speaker on the same scale. Changing layout does not change timing, recorder-group
-membership, or which recordings are shown and heard. Use the lane
-checkboxes, overlay recordings list, or **Recording** inspector to choose which groups and tracks
-are shown and heard. Select a recording to make its recorder active for overlay dragging.
-Choose **Place groups at source time**
-to accept a first manual placement without running
-acoustic analysis. **Normalize view** scales each recording's displayed peaks within its measured
-tile (including zoomed-out main lanes); it does not change audio, playback, or saved
-timing. Up to eight bounded measured tiles and their projected strokes are cached in memory;
-adjacent tiles share the same viewport without rebuilding their paths on each pan. A changed
-episode, source, or verified alignment clears them.
-
-Blocking audio, timing, transcription, or waveform preparation hides the floating
-selection tools immediately, even before the progress panel appears. Cancel stays
-available when safe; finishing preparation restores the tools without discarding
-the selection.
-
-**Fill Space** fits visible waveforms vertically and adapts to resizing, layout changes, and
-collapsed groups. Waveforms stay at least 64 points tall; if the tracks and their actual headers
-or independent Ungrouped rows cannot fit, vertical scrolling remains available. Fitted heights
-can exceed the manual slider's maximum. Adjusting track height or turning the toggle off restores
-manual sizing. The toggle is remembered per episode.
-
-**Follow Playhead** starts on and remembers each episode's subsequent choice. At the visible
-right edge it pages the viewport to put the playhead at the left, including selection and cycle
-playback, without seeking or restarting audio. Panning turns following off; enabling it immediately
-returns to the current playhead. Drag the separate **Cycle range** strip below the ruler to make a
-loop, or use **Cycle selection** on an existing track selection. The icon-only **Cycle** control
-beside Play/Stop enables the same range. The upper ruler retains seeking, scrubbing, panning,
-zooming, and cycle-locator editing.
-
-Open a recording's settings button to choose its **Speaker** and **Channel** in the
-**Recording** inspector, then use **Align…** beside a non-reference track. These choices edit the same
-episode Setup assignments (one speaker and one stated channel per source), with Undo and
-normal document saving; they are not temporary match settings. Choose a reference
-recording from the menu if several already aligned tracks share that speaker. The reference
-recorder itself cannot be matched as a target. A verified mono source automatically uses its only
-channel for matching, even when an older assignment leaves the channel unknown; analysis does not
-rewrite that saved assignment. Multichannel files still require an explicit speaker channel, and
-out-of-range selections are refused. The review names recordings that need a channel choice.
-A measured mono source also offers **Use mono channel 1** to explicitly save that choice.
-Selecting **Primary** confirms that choice; there is no separate confirmation step.
-Playback and the Speakers only view can use a mono recording's sole channel even when an
-older saved assignment leaves its channel unknown. Multichannel speaker channels still
-require an explicit choice. Transcription readiness is separate from timeline Solo/playback.
-An eligible match compares only that
-speaker's chosen channels (or a verified mono file's sole channel) and proposes the **target recorder group's**
-timing, so its other tracks move with it. You can then match another speaker from the newly
-aligned recorder to a third recorder without moving either already aligned group. Unrelated
-speakers are not mixed to manufacture a match. Multichannel files currently have one assigned
-speaker channel per source; split or import separate sources if independent speakers need their
-own assignments. Selected-speaker matching streams each complete channel into a compact spectral
-fingerprint, finds shared passages across the whole reference, then precisely checks distinctive
-passages distributed over the overlap to fit offset and drift. Fine matching filters low-frequency
-rumble, tolerates opposite waveform polarity, and uses the coarse drift estimate to speed-compensate
-short analysis snippets before comparing them; originals are never filtered, stretched, or inverted.
-These analysis hints do not approve timing or relax the ambiguity and coverage checks.
-**No initial anchor or manual placement is required.** The first scan can take a while; unchanged channel fingerprints are cached
-locally for reuse. Unequal file lengths do not require a percentage setting. This candidate supports
-channels up to two hours and needs at least twenty seconds of shared audio; ambiguous content or
-insufficient distributed evidence can still require a different speaker or manual anchors.
-
-The analysis reports the measured offset, drift in ppm, covered interval, eligible
-windows, peak evidence and residual, or a refusal for silence, ambiguous/periodic peaks,
-inconsistent drift, discontinuities or unavailable sources. These are **not probabilities or
-proof of clock accuracy**: different microphone distances can imitate an offset. Nothing is
-automatically applied. Review the proposal or refusal directly under the selected waveform,
-using **Show proposed alignment** to toggle a dashed teal ghost of the proposed measured interval
-in the main lanes or speaker overlay. The ghost moves every loaded track in the affected recorder
-recording segment, without changing saved timing, playback, anchors, or extending beyond measured coverage.
-Then choose **Accept measured interval** to create an
-undoable, verified manual decision; rate-aware playback corrects that mapped interval's
-clock rate (not pitch-preserving time stretching) without altering the original. Outside it,
-audio stays unplaced. **Extend to whole recording segment…** is a
-separate, warned human decision to extrapolate its rate and offset into unmeasured audio, not a
-new confidence claim. Whole-track feature indexing is not precise verification of every intervening
-frame, so brief edits between checked passages can be missed. A quiet stretch between consistent
-matches can remain in the proposal only when both decoded recordings measure silence there; this
-does not prove that no audio is missing. One-sided active-audio gaps, unrelated windows, and declared
-recorder restarts still refuse or stay separate. Accepting a proposal
-records visible evidence markers at its first and last reliable windows, not a clock approval.
-
-For software/network recordings whose delay changes within a take, **Align Tracks** and the
-individual **Align…** action automatically try adaptive timing when a single offset/rate cannot
-fit the measured delays. You can also select the target waveform and choose **Adaptive review…**
-directly. This experimental path measures overlapping local
-windows throughout the shared audio instead of forcing one offset/rate over the entire file.
-Dashed teal waveforms and clock icons show locally supported timing runs for **only that file**;
-uncertain transitions, silent/ambiguous regions and unmeasured ends are not claimed as measured.
-Choose **Accept file timing and retain all audio…** to save a file-local correction and enable
-pitch-preserving playback. All original source audio is retained: unmatched gaps use interpolated
-timing, and unmeasured ends extrapolate the nearest supported rate. Purple question marks label
-these **estimates, not verified alignment**; speech may still be out of sync. If retaining every
-interval would exceed supported playback rates, acceptance refuses rather than muting audio.
-For an older correction that silences unmatched intervals, choose **Restore unmatched audio…**
-to restore gaps and ends without reanalysis, as a saved, undoable
-revision. Steep joins may widen estimated transitions into neighboring supported audio; timing
-outside those transitions stays unchanged. Older corrections are not silently rewritten.
-Automatic analysis never automatically applies timing.
-One shared multichannel processor applies the curve to every channel in that file; sibling files
-and original media remain unchanged. Blue clock icons mark applied timing. **Remove adaptive file
-timing** and native Undo/Redo restore earlier timing without discarding decoded waveform bins.
-Full-length review reports progress and can be canceled without accepting any partial timing.
-Solo playback, live track joining, and aligned comparison recognize accepted file-local timing
-even when its recorder group has no accepted clock map. Only the corrected file becomes playable;
-sibling files do not inherit its timing. The Recording inspector distinguishes accepted adaptive
-file timing from the separate recorder-group status. Verified saves and source-access checks still apply.
-Adaptive playback prepares a five-second starting buffer and keeps up to ten seconds queued.
-Decoded multichannel tiles are reused from a bounded memory cache as well as the existing disk
-cache, instead of rereading and decoding a full tile for every half-second playback window.
-Listening and derived aligned audio use the same bounded, pitch-preserving audio tiles, not the
-ordinary pitch-changing affine resampler. Source-region processing origins and shared crossfades
-avoid restarting audio phase at playback-window boundaries. Fractional aligned ends retain every
-covered output frame instead of failing transcription with an invalid-sample error. Preparation
-failures identify the recording and aligned interval; no substitute audio is used.
-Remove file-local corrections before
-editing recorder-group timing. Shows now use schema 9; older shows require the normal backed-up
-migration before saving.
-
-Individual adaptive file-timing changes keep current episode IN/OUT values when the shared
-recorder map is unchanged. Older stale markers remain blocked until explicitly reviewed.
-If transcription reports that IN/OUT belong to older alignment, choose **Review episode IN/OUT…**
-above the timeline, then **Keep existing IN/OUT** or reset them to include all available audio.
-This is undoable and does not revalidate old transcripts, word marks, or cuts.
-
-In a recording's inspector or **Recordings & Speakers**, choose **Use as Timing Reference** to select
-one recorder for the next **Align Tracks** operation. The track sidebar distinguishes the
-**Current timing reference** from a **Next alignment reference** when they differ. Selecting a recorder
-does not move audio or change accepted timing, transcripts, cuts, or episode IN/OUT. Run **Align Tracks**
-and explicitly accept replacement alignment to switch; acceptance resets downstream work together
-as one undoable change. Analysis uses the selected recorder's original recording clock, not its
-previously accepted offset. An unavailable selected recorder blocks analysis rather than silently
-falling back to another recorder. Individual timing corrections and playback keep the current
-accepted reference. Without an explicit next selection, alignment keeps the accepted reference;
-for initial alignment, it chooses eligible speaker primaries, then the normal recorder order.
-With the same reference, unselected recordings keep their saved timing, including existing file-local
-corrections whose recorder/reference placement is unchanged. A different reference cannot silently
-carry those absolute placements forward. Adaptive timing follows the chosen speaker pair and changes
-only its target file; selecting a device brand or a Primary label does not automatically reverse that
-pair or certify hardware quality. Other speaker references must already have accepted timing; one
-review does not bootstrap through newly proposed, unaccepted relay timing.
-The action is also available in the **Source** menu while a source or recorder group is selected
-in Recordings & Speakers. The choice is saved with the show and supports Undo/Redo. Device brands
-and filenames never certify clock quality.
-The **Review Tracks Alignment** sheet resizes in both dimensions, with a minimum size and a results
-area that grows with the sheet.
-
-Click a covered point on an already timed speaker track, choose **Mark reference point**, then
-click the matching point on the same speaker's track in another recorder and choose **Link to
-reference marker…** in the inspector. Repeat at a second point and **Apply anchors** to fit offset and drift;
-the marker pairs are staged, not saved timing, until you apply them. Zoom into the waveform
-for precise clicks. Manual numeric editing remains available when no matching reference
-audio exists. Accepting one match never makes other proposals playable.
-If a previously accepted map reports a changed source dependency, alignment refuses rather
-than silently rebasing old timing. Confirm the original in Setup and restore it, or choose
-**Start fresh alignment…**, confirm that the accepted timing should no longer be used, wait
-for the show to save, and place the current groups again. The old map remains in history and
-the change is undoable; restoring the old selection cannot make a genuinely changed source
-current. Tiny metadata timestamp differences within the source-identity comparison tolerance
-no longer change newly recorded revision keys.
-A **Recording Segment** is one continuous-clock span of a recorder group, such as
-one uninterrupted take. Files sharing that recorder's clock use the group's recording
-segments; separate recorders can have different restart boundaries. Automatic placement
-of restarted recordings against overlapping recordings is a future feature, not a
-guarantee that neighboring segments are continuous or already aligned.
-For a recorder with restarted/overlapping source-time recording segments, only its first
-placeable recording segment is mapped initially; place later segments explicitly using **Advanced timing**.
-Select a track and drag its waveform, use the inspector's 10 ms nudge buttons, or type **Group move (ms)** to move all
-mapped recording segments of its recorder together in one undoable revision. A drag shows its shift in seconds and commits on
-release; the offset change is the pointer distance divided by the visible waveform width, multiplied by
-the visible span. Further drags add or subtract from the saved offset. Zoom to a shorter span for fine
-adjustment, or use the nudges. Positive moves place that recorder
-later. Unplaced audio is dashed, not implicitly synchronized. Enable/disable a recorder or track
-to show/hide and hear/mute it; speaker lanes have stable colors, with gray for unknown speakers.
-Changes to accepted timing save in the show document and can be undone or redone.
-
-**Play** mixes only confirmed enabled sources on the stored aligned map, starting at the shared
-playhead; **Pause**, **Stop**, click-to-seek, and typed aligned playhead are available. Unsupported
-or uncovered regions are silent. Playback reads witnessed five-second windows and may briefly
-buffer between windows; a source or map mismatch stops playback rather than substituting audio.
-Use the compact zoom and lane-height sliders beside **Fit timeline** above the ruler.
-Drag the playhead flag to seek, drag empty ruler space to pan without moving the playhead,
-or pinch the ruler to zoom around a time point. All recorder lanes share that viewport.
-**Fit timeline** shows the full episode in the main tracks; zoom in or type a time to load
-a distant measured window. The playhead is ready for **Play** afterward; panning does not play audio or change saved
-timing. Cached adjacent tiles translate without rebuilding their paths. An uncached section may
-take a moment to display; unavailable reads are reported rather than silently replaced.
-Windows outside a recording show its explicit unavailability;
-navigation remains within the supported minus-24-to-plus-24-hour aligned range. The inspector's
-**Compare Aligned Audio** control plays up to five seconds of reference/selected
-audio in separate channels for an internal listening check, not an export or cut authorization.
-
-There is no secondary episode overview. Zoomed-out main lanes use at most 2,048 measured amplitude
-bins per recording; precise windows remain available when zoomed in. Timing-only acceptance and
-Undo/Redo retain source-coordinate bins and reproject them after save/source verification instead
-of clearing and decoding every lane again. Changed sources still invalidate the display, gaps
-stay absent, and audio outside an accepted measured interval remains visibly unplaced, not playable.
-A full-scale scan supports up to 24 source hours per recording; exact navigation remains bounded
-to minus 86,400 through plus 86,400 aligned seconds without changing stored timing.
-
-This is an alignment workspace, not a DAW or complete editing workflow. PCM recordings support
-exact random-access waveform windows and aligned listening throughout an episode, without decoding
-the preceding hours. Other codecs retain the first-10-source-minutes limit (including inverse map
-offsets); later windows are explicitly refused until exact seeking is established. No persistent
-waveform cache is created; when a wider tile reaches a codec preview limit, a narrower exact
-window is tried before reporting unavailability. Local transcription is available in **Edit & Cleanup**;
-protected filler-word cuts remain separate, incomplete MVP work.
-
-## Edit & Cleanup: transcription and episode boundaries
-
-**Edit & Cleanup** (Cmd+3) shows only speaker Primaries, not Backup tracks. Every Primary must be
-assigned to a speaker, have a confirmed channel and original, and have current accepted alignment
-throughout its working range. The timeline reference counts as aligned. Unplaced audio, unsupported
-gaps, ambiguous placements, stale timing or inaccessible/changed originals block episode transcription;
-one ready speaker does not authorize the rest. Supported source rates are 8-192 kHz.
-
-Select **Mark In** or **Mark Out**, then click a waveform or the ruler to place that shared marker.
-**In at Playhead / Out at Playhead** set it at the current listening position; **Precise Tracks In / Out**
-opens numeric aligned-second fields. **IN/OUT are optional.** Without explicit markers, transcription
-includes each Primary's full available aligned range, including negative starts and offset ends.
-The implied episode boundaries cover the union of those ranges, not only the overlap shared by all
-recordings. Setting just IN or just OUT limits only that end; the other remains automatic. The range
-summary labels implied boundaries **automatic**. These undoable, saved markers exclude pre/post-recording banter from cleanup
-analysis; they never trim originals, change alignment, or imply an export cut. Shaded banter remains
-visible and playable outside the markers, so boundaries can be refined without resetting them.
-**Reset Range** returns to the automatic full-range default. Only explicit markers from an older
-alignment require review; legacy empty marker records do not block transcription or get rewritten.
-Each Primary needs at least 0.1 seconds of supported audio in the range.
-
-Hover **Transcribe Tracks** for its current readiness reason, including while disabled: pending
-alignment, source verification/access, read-only state, a missing local model, or stale explicit
-boundaries. Missing IN/OUT is never a blocker. Unplaced audio or unsupported timing still needs
-alignment rather than being silently omitted or extrapolated by transcription.
-
-Choose a model in **Settings > Transcription**, also reachable from Cleanup's **Transcription Settings**
-button. The dropdown applies to every episode; no file picker is needed. **Whisper Turbo Q5_0**
-(574,041,195 bytes) remains the recommended default for new setups. **Whisper Base English F16**
-(147,964,211 bytes) has the smallest download and memory reservation; **Whisper Small English F16**
-(487,614,201 bytes) uses larger English-only weights. **Whisper Large-v3 Q5_0**
-(1,081,140,203 bytes) is the full non-Turbo architecture with quantized weights, not an unquantized
-or higher-precision Turbo option. It requires the most memory and computation.
-An existing model bookmark/selection remains usable without choosing the file again. Changing the
-preference does not replace saved transcripts or change the model of an already-running job.
-Small English and Large-v3 have focused native compatibility controls, not comparative accuracy
-qualification. A larger model is not a promise of better recognition or filler retention on your
-recordings. See [model provenance and qualification](docs/research/whisper-model-choices.md) and the
-[upstream model comparison](https://github.com/openai/whisper#available-models-and-languages).
-
-**Download Model** explicitly fetches the selected MIT-licensed
-[whisper.cpp weights](https://huggingface.co/ggerganov/whisper.cpp) from an immutable repository revision
-over HTTPS, with byte progress,
-cancellation and retry. Merely selecting a model never starts a download. Completed weights are
-installed into the sandbox's `Application Support/WaveWrangler/WhisperModels` only after exact
-size/SHA-256 verification against `LocalWhisperWeights`; interrupted or rejected files never replace
-an existing model. Files are reused across episodes and app launches, with integrity checked again
-before transcription. Old external model bookmarks are retained as a compatibility path, not a
-required setup flow. Model bodies and device-local preferences/bookmarks are not saved in the show.
-The app has outgoing-network permission for model downloads, not a network-server entitlement.
-No audio or transcript is uploaded, and inference needs no network. The bundled engine is
-**whisper.cpp 1.6.2 with local timestamp/backend fixes**, English and a generic disfluency prompt.
-**Settings > Transcription > Hardware** offers **Automatic**, **CPU / Accelerate**, and
-**CPU + GPU / Metal**. Automatic chooses Metal on a supported Apple-family-7-or-newer GPU,
-otherwise CPU. CPU remains explicitly selectable. Both encoder and decoder tensor inference use
-the selected native backend; Metal still needs CPU audio preparation and decoding control.
-Initialization failure stops with choose-CPU-and-retry recovery, never silent substitution.
-Core ML / Neural Engine is not enabled: the encoder-only candidate needed extra converted weights
-and did not consistently improve on Metal. See the
-[measured acceleration report](docs/research/apple-silicon-transcription.md) for actual production-adapter
-scores, resource choices, provenance and limitations. These are not the older 1.9.4 research runner's
-scores, nor a promise for every Mac. Turbo CPU is particularly slow in Debug.
-
-**Settings > Transcription > Concurrent transcriptions** selects **1–4 workers** for all episodes
-(default **1**). Start with one; two improved throughput in our M5 Max pilot.
-**Whisper threads per worker** offers **1, 2, 4 or 8** (default **4**).
-Each worker transcribes one speaker's Primary with sequential bounded chunks, separately retained
-verified weights and native working memory. Model verification/loading occurs only after admission.
-The one app-wide pool also caps requested Whisper threads at the smaller of 16 and the active CPU
-count, Metal workers at **2**, and conservative memory reservations at one quarter of physical RAM
-(minimum 4 GiB, maximum 16 GiB). Reservations include **768 MiB/Base, 2 GiB/Small English,
-3 GiB/Turbo or 5 GiB/Large-v3** per worker,
-plus the actual source's multichannel render envelope; model-download verification uses this same pool.
-Large-v3 cannot fit a 4 GiB admission budget, including the budget on a 16 GiB Mac; choose a smaller
-model there. Download verification reserves twice the artifact size, not the inference envelope.
-These are admission budgets, not total OS-thread or unified-memory guarantees: Accelerate/Metal may
-use additional execution resources. Work can queue below the chosen worker maximum.
-Extra workers beyond an episode's speaker count can serve other episodes. More workers consume more
-CPU/RAM and are not guaranteed to improve throughput. New jobs capture model, requested/resolved
-hardware, thread count and per-job parallelism. Saved transcript recipes record actual backend and
-threads. Preference changes never retarget active/queued jobs or cancel them.
-Changing the global worker limit affects queued tracks; active tracks finish without being
-interrupted, even when lowering the limit. Cancellation removes queued work and drains active workers.
-Native context initialization is serialized for upstream shared FFT/backend setup, not inference.
-
-**Transcribe Episode** processes each aligned Primary separately, using the existing pitch-preserving
-renderer for accepted adaptive file timing. Near each planned 28-second core boundary, it prefers the
-center of a sustained low-energy pause within a four-second lookback, otherwise retaining the fixed
-boundary. Cores retain up to one second of context on either side; **every actual recognition input,
-including context, is at most 30 seconds**. Timed words are owned by their core, not duplicated by
-the context overlap. This is sentence-friendly, not grammatical sentence detection: it can still
-split a sentence, and never removes silence, quiet speech or fillers. No extra control is required.
-The [chunking and timing comparison](docs/research/transcription-chunking.md) documents the
-300 ms/relative-energy policy and mixed accuracy results; pause boundaries do not make word timings
-safe for automatic slicing.
-A pinned status panel stays visible while scrolling the tracks: it shows the current stage and every active speaker,
-speaker count/current chunk, aligned interval, completed audio and percentage across **all** Primaries,
-elapsed time, a measured remaining-time estimate, and cancellation. Percentages advance only after
-completed chunks, not fabricated intra-inference progress. Remaining time starts after a completed
-chunk and can vary with speakers, silence and hardware; final source/timing verification is shown
-separately before any result is published. Cancelling or failing never saves a partial transcript.
-Concurrent chunks contribute once to a shared progress total; completion order never changes speaker
-or word ordering. Queued jobs explicitly report waiting for the shared worker/memory/thread budget;
-loading verified weights is a separate active-speaker stage.
-The final chunk count is unknown until the last core is selected, rather than estimated as a fixed
-window total.
-Chunk planning and both aligned renderers pass exact 48 kHz frame ranges, rather than testing
-floating-point differences against the 30-second limit. Whisper receives bounded, already-aligned
-PCM buffers; no full-length temporary working recording is required.
-Analysis converts to mono 16 kHz and peak-normalizes only if resampling exceeds full scale.
-Original and playback audio remain unchanged. Recognizer text is preserved, including fillers when
-recognized; there is no guarantee that every filler is retained. Exact digital-zero windows are skipped,
-but this is not general silence detection or protection against hallucinations.
-Long repetitive output is marked **Uncertain recognition** in amber on the word timeline and in the
-speaker/word inspector; raw text, timing and source anchors remain available unchanged. Review hints
-also apply to existing saved transcripts without retranscribing. Six identical consecutive words,
-or four repetitions of a two-to-four-word phrase, trigger review; short stutters do not. Timed runs
-separate at gaps over one second or backwards timing. This text-only heuristic can flag genuine
-repetition and miss other hallucinations: it is not voice-activity detection, proof of silence,
-an accuracy/confidence score or cut permission. Listen before trusting flagged text.
-
-Alignment and Cleanup share the transport, editable aligned-time display, ruler navigation, logarithmic
-horizontal zoom, **Fit timeline**, waveform drawing and track-height controls. Cleanup uses compact
-DAW-style rows with speaker/source details to the left and words below each waveform, without track
-dragging or alignment/matching actions. Click to seek, pan empty ruler space, drag its playhead to
-scrub, or pinch to zoom. **Normalize view** scales displayed peaks only; it never changes playback.
-In Cleanup, horizontal slider and pinch zoom center on the current playhead, clamped at the episode's
-aligned-time edges. Zoom never seeks or interrupts playback; **Fit timeline** still shows the full span.
-Full-span measured overviews and bounded precise windows show only each assigned Primary channel.
-Hatched regions have no accepted timing, not measured silence. **Refresh audio** reloads measured data.
-
-**Play / Pause / Stop** and the five-second skip buttons control continuous Primary-only aligned
-playback, including recoverable banter. Playback buffers up to ten seconds before starting, then
-renders bounded five-second chunks ahead of time with at most two chunks queued and one preparing;
-seeking restarts at the requested aligned time and zooming/scaling does not
-interrupt audio. Individual speaker checkboxes mute playback only; they never exempt a Primary from
-episode transcription readiness. Backups are neither drawn nor heard in Cleanup.
-Approximate words appear beneath each Primary; select one for its aligned interval and original
-source-frame anchors and a matching highlight on that waveform. Word bars use their actual approximate
-start/end on the same viewport scale as the audio; readable labels stack without shifting the timing.
-At dense episode-wide zoom, a compact graphical word overview replaces overlapping labels; click it
-to seek and zoom in. Untimed segments remain separate and may repeat across overlapping windows.
-Saved transcripts retain Primary/channel, witnessed source identity, model recipe, alignment revision
-and analyzed range; changing those inputs makes old text stale rather than silently re-timing it.
-Results publish as one undoable episode update. Cancellation or changed document/source/timing
-publishes no partial transcript. Existing transcripts and markers use the ordinary backed-up schema
-upgrade and Save/autosave path.
-
-### Nondestructive filler timing review
-
-New episode transcription automatically proposes **audible-word** timing reviews for exact `um`,
-`uh`, `erm` and `er` tokens (case/edge-punctuation tolerant). **Find in saved transcript** adds these
-suggestions to an existing current transcript without inference. It is an explicit undoable action,
-not an edit triggered by merely opening the view; undo does not immediately regenerate suggestions.
-Multiword phrases, lexical `like`, substrings and untimed text are not automatically marked.
-The detector can miss fillers the recognizer omits or rewrites, and can flag mistaken recognition.
-
-Open the **Review panel** with the bottom-panel toolbar button or **Open review list** in the
-Transcript & Review sidebar. The resizable bottom table shows speaker, phrase, status, readable
-aligned time and duration; filter by text, speaker or status without hiding retained history.
-Selecting a row centers and zooms its complete word interval on the waveform and opens a focused
-inspector for that item. The sidebar no longer contains the entire review queue or an always-expanded
-full transcript. **Double-click a row to play its current segment** without added context; for a cut
-row, this reveals and auditions the removed audio without restoring the cut. Current listening choices
-apply, and uncut markers use their Loop setting. Panel visibility and divider height are remembered per
-episode on this Mac, not
-as document edits.
-
-**Auto Cut** on a row applies that row's current boundaries through the existing, undoable
-cross-track cut action. It does not run a new detector or silently cut other suggestions.
-After a new manual or review cut, the playhead moves half a second before its
-displayed seam, clamped to the timeline start. Playback stays stopped; continuing
-from there lets you hear the edit with context.
-**Restore** recovers a cut. Minus/plus on a row or marker toolbar contracts/expands both edges
-by 10 ms; independent handle dragging and 1 ms arrow-key adjustments remain available.
-Resizing an already-cut row adjusts the same shared cut and its linked marker as one Undo step.
-No action rewrites the original media, recognizer text, detected interval or captured provenance.
-
-Dotted start/end rails and a lightly highlighted region appear only in the relevant speaker's
-Primary waveform. Click a region or handle for its compact toolbar, anchored to the visible interval
-or clicked handle. Drag the start and end handles independently; the handle, dotted rail and highlighted
-region follow the pointer live, with one undoable timing edit on release. Or focus a handle and use
-Left/Right for 1 ms steps. Numeric aligned-second fields and separate 1 ms nudge buttons are available
-in the toolbar and inspector.
-At dense zoom levels, lightweight rails replace individual controls; click a marked interval to
-zoom in and inspect it, or zoom in manually for draggable handles.
-Dragged and nudged boundaries hard-stop at the neighboring interval in the same speaker lane;
-numeric entries cannot bypass that limit. Bounds cannot cross their opposite edge,
-leave the analyzed/working range, or cross unsupported accepted timing,
-source occurrences or recording segments. Adaptive timing and affine rates use the existing source-frame mapping;
-there is no amplitude snapping or new alignment.
-
-**Word** auditions the interval, **With context** adds up to 0.5 seconds of connected supported audio
-on each side, and **Loop** repeats that audition until stopped (unchecking it finishes the current pass).
-Audition uses the existing bounded
-Primary-only playback (and current speaker mute settings), never full-recording decode or a new asset.
-Changing a review stops playback. Mark **Reviewed unchanged**, adjust its bounds (**Adjusted**),
-choose **Not a filler**, or return it to **Needs review**. **Revert to detected** restores the immutable
-recognizer interval and pending state without changing raw `TranscriptWord` text/timing.
-
-To capture omissions, select a word and choose **Mark missed filler**, or select a speaker waveform
-and use that button to create a clearly **Manual** 200 ms starting interval at the playhead. Refine it
-by listening; this is a human proposal, never a fabricated detection. Untimed words acquire no automatic
-rails. Both initial manual placement and later adjustments retain original-source frame anchors.
-
-All reviews use ordinary show Save/autosave and Undo/Redo, with immutable source identity, Primary/channel,
-source rate, alignment revision, transcript/word identity and captured model/detector recipe where
-available. Transcription publishes every speaker's text and suggestions in one undoable update and
-retains earlier reviews. Re-transcription, same-ID word edits, changed sources/Primaries or accepted
-alignment do not silently overwrite, retime or reassociate human judgments: incompatible reviews stay
-in the review table as **Inactive**, inspectable but with no rails, editing, cutting or audition.
-Reviews outside new Tracks In/Out are similarly inactive; restoring their exact original dependencies
-can reactivate them. Manual proposals without a transcript are source/alignment-bound only.
-**Refresh** and returning to the view reverify source access, including after a review-only edit.
-Schema 5 and earlier shows require the normal explicit-consent, exact-byte-backed-up migration to
-schema 6; migration itself invents no reviews and preserves existing text and timing.
-
-**Review decisions alone do not accept cuts.** Human judgments are useful reference data, not proof
-of phonetic ground truth. A separate Auto Cut or manual cut action is required to shorten the shared
-timeline. No source deletion, automatic silence detection, export or upload is introduced.
-Reviewed configurable filler phrases, all-speaker long-silence detection and speaker-only silence are future work.
-Speaker-only silence must keep existing overlap in place, not slide later speech earlier.
-
-### Timeline keyboard controls
-
-With the workspace active and no text field, button, review table, boundary handle or other control
-owning the key, **Space** toggles Play/Pause. Held Space does not repeatedly toggle transport.
-In the track area, **Left/Right** jump backward/forward by the configured interval; the transport
-buttons use the same setting. **Settings > General > Timeline keyboard controls** offers 1, 2, 5,
-10, 15 or 30 seconds, defaulting to 5 seconds. Jumps stop at the available timeline bounds, including
-negative starts. Text editing, table navigation, modal sheets, and focused boundary handles retain
-their existing keyboard behavior.
-
-## Local development builds and file access
-
-Build and install the latest locally signed app in `/Applications`:
+Use a Mac with Xcode supporting the macOS 26 SDK and Swift 6, with its command-line
+tools selected. From a checkout:
 
 ```bash
-bash scripts/install-local.sh          # Debug
-bash scripts/install-local.sh Release  # Release
-open /Applications/WaveWrangler.app
-```
-
-Quit WaveWrangler first. The installer refuses to replace a running app, verifies the signed
-bundle and copied contents, and restores the previous installation if replacement fails.
-It uses ad-hoc signing with the existing sandbox entitlements, not notarized distribution signing.
-Build output defaults to `.build/LocalInstallDerivedData`, separate from test builds.
-Run the command again after source changes; it does not watch or fetch changes automatically.
-If `/Applications` is not writable, create `~/Applications` and use
-`WW_INSTALL_DIR="$HOME/Applications" bash scripts/install-local.sh`; do not build with `sudo`.
-`WW_JOBS` and `WW_DERIVED_DATA` retain their existing build overrides.
-
-Keep the app used for editing separate from the bundles rebuilt by tests:
-
-```bash
-WW_DERIVED_DATA="$PWD/.build/AppDerivedData" bash scripts/build.sh
+WW_JOBS=4 WW_DERIVED_DATA="$PWD/.build/AppDerivedData" bash scripts/build.sh
 open "$PWD/.build/AppDerivedData/Build/Products/Debug/WaveWrangler.app"
 ```
 
-Tests use `.build/DerivedData` by default. Quit the editing app before rebuilding its own bundle.
-The window subtitle shows the running app's version and build number, also available in
-**WaveWrangler > About WaveWrangler**. Every app build receives a UTC timestamp-based build number;
-`scripts/build.sh` prints the completed bundle's exact version, build number, and path.
-When reporting a newly launched build, use that number and confirm it matches the running window,
-not another app with the same name.
+This makes an ad-hoc-signed development build, not a notarized download.
+Keep this app's DerivedData separate from test builds, and quit it before
+rebuilding its bundle. For installation, tests, and development setup, see
+[Contributing](CONTRIBUTING.md) and
+[Engineering getting started](docs/engineering/getting-started.md).
 
-Replacing a running app's signed executable can prevent macOS from identifying its code signature;
-saved file permissions may stop resolving, and even **Grant Access** can fail for an unchanged file.
-Launch the freshly built app before retrying access. Do not delete device-access records, change file
-ownership, or grant Full Disk Access to work around a stale running build.
+## Documentation and license
 
-The vendored Whisper's token-timestamp VAD must check the token count,
-not the audio-sample count, before reading the next token. A trailing text token without an end
-timestamp could otherwise abort the app. The backend recipe identifies this as
-`1.6.2+ww-token-bounds-v1+metal-v1`; weight hashes, decoding settings and approximate-timing limitations are
-unchanged. `bash scripts/verify-whisper-native.sh` pins the exact patched source set.
-The compatible MIT-licensed Metal sources are bundled alongside the existing source. Shaders are
-compiled through public Metal APIs from signed SwiftPM resources, not the current directory or an
-environment override. No external Metal toolchain installation is needed.
-`bash scripts/test-whisper-timestamps.sh` exercises the actual private C++ routine with 80 generated
-token/energy cases and hardened bounds checking, without a model or recording. It also runs in
-the standard `scripts/test.sh` path.
-
-## Planning
-
-- [Editing-first transcription engine research: Gemma feasibility and measured Whisper filler retention](docs/research/transcription-engine-comparison.md)
-- [Apple Silicon transcription: CPU/Metal/Core ML measurements and shipped resource budgets](docs/research/apple-silicon-transcription.md)
-- [Development workflow](docs/planning/milestone-runbook.md)
-- [Historical milestone/issue snapshot](docs/planning/github-backlog.md) · [historical mapping](docs/planning/github-backlog.json)
-- [Public sanitized-provenance index](docs/planning/publication-provenance.json)
-- [Product brief](docs/planning/product-brief.md)
-- [Accepted decision ledger, historical research/reviews, and future experiments](docs/planning/research.md)
-- [Prioritized, dependency-aware backlog](docs/planning/backlog.md)
-- [First foundation batch: frozen holdout, native specification and remaining gates](docs/research/foundation-spikes.md) · [evidence mirror](docs/research/foundation-results.json)
-- [Native document spike: actual callbacks, policy boundaries and remaining gates](docs/research/native-document-spike.md) · [compact evidence mirror](docs/research/native-document-results.json)
-- [Windowed document UI batch: closed, partial/failed/blocked evidence and actual reviews](docs/research/windowed-document-spike.md) · [compact results](docs/research/windowed-document-results.json)
-- [Project format/recovery: full canonical work, actual read-only review and candidate limits](docs/research/project-format-recovery.md) · [sanitized-provenance results companion](docs/research/project-format-recovery-results.json)
-- [Parallel research reconciliation and owned remaining gates](docs/research/parallel-readiness-reconciliation.md)
-- [Native policy/library evidence](docs/research/native-policy-library-readiness.md) · [waveform estimation and retained clock failure](docs/research/waveform-clock-render-readiness.md) · [source reconstruction/speech choices](docs/research/source-reconstruction-speech-readiness.md) · [native review interaction contract](docs/research/native-review-contract-readiness.md)
-
-## Historical direction and evidence
-
-The material below records earlier decisions, not current execution instructions.
-On 2026-10-20 the Squad setup was removed and, at the user's explicit request,
-all 90 then-open GitHub issues were permanently deleted. Completed issues and
-pull requests were left unchanged. Historical issue counts and links below are
-not a live backlog or evidence that unfinished work is complete.
-
-### Accepted direction — 2026-10-04
-
-[Q01–Q10 are answered](docs/planning/research.md#approval-questions); the twenty decision facets distinguish approved policy from unmeasured implementation:
-
-- One durable show/project library with multiple episodes; source media referenced in place, portable copies deferred. **Cloud canonical documents are MVP**, with measured provider safeguards. Autosave **ON/configurable/off**, plus explicit Save; in-memory periodic saves are a research suggestion, not architecture or provider atomicity.
-- Evaluate **macOS 26+, Apple silicon only, English only**; 16 GB initial reference, not proven minimum, 8 GB later. Fair native Speech/local Whisper comparison; SpeechTranscriber eligible, not selected. Signed/notarized **direct download first**, App Store first launch deferred; artifact-specific signing/privacy/license clearance still required.
-- Human-accepted synchronized shortening is MVP default: **“Shorten when safe and by default, but allow the user to edit that point and choose a different method”**. One common map on every preview/export track, never independent ripple. Editable protected-overlap speaker-lift alternatives, undo/history/partial inverses/crossfades; overrides cannot waive meaningful/protected/other speech, uncertainty means manual/review/abstain.
-- **DAW-neutral** zero-origin speaker stems with identical rate/map/duration/rounded boundaries/silence padding plus an editable reconstructive cut record/source references/recipe/asset requirements and demonstrated restoration/regeneration when assets are available. Stems alone cannot restore removed audio; no required REAPER/native session or forced copies. Configurable **48 kHz/24-bit PCM WAV** default, feasible detected source settings/prefer 48 kHz, coherent mixed-rate output. Broad WAV compatibility is a goal, not universal fact; native adapters later.
-- Common macOS imports subject to validation: WAV/BWF/AIFF/CAF/AAC-M4A/MP3/optional supported FLAC are candidates, not promises. Priming/padding/time maps/rates/bit depth/channels/errors/build licenses need evidence; native decoding preferred if supported by evidence.
-- Automatic **source downloads ON/configurable/off**, accessible status/progress/unknown/offline/cancel/retry/native coordination and immutable originals. Default-OFF metadata fixture trials are separate tests, not product default or a generic provider classifier.
-- Numerical quality/accessibility goals provisionally approved; controlled calibration before holdout, explicit approval for weaker gates, including cloud and shortening coverage. Compare AppKit NSDocument + SwiftUI with SwiftUI document lifecycle for native/cloud-safe saves/autosave/recovery; no framework/file/package/JSON/SQLite choice adopted.
-
-### Historical delivery policy - user-directed 2026-10-04
-
-GitHub issues and six milestones were the operational backlog. The 2026-10-10 user decision superseded
-the earlier Squad/orchestrate delivery process: direct implementation now prioritizes saved manual
-alignment and playback; export and speech/cut work come later. File management
-and numeric tables alone do not satisfy the MVP. Existing M1/M2 evidence is retained; M3 and the full
-MVP are not complete. **First audio handoff is cleaned-track M4; no uncut M2 handoff.** Public
-signed/notarized distribution, actual macOS26/16GB and broader device/participant qualification are
-separate Release work, not pre-app gates.
-
-The old milestone kickoffs and their standing orchestration permissions are retired.
-Immutable sources, durable saves, protected speech, offline/privacy and essential
-native keyboard/accessibility remain product requirements. Recording/model/provider/
-native/GUI/signing/external publishing consent remains exact-scope; source-download
-ON is not agent sample permission.
-
-The old graph of **52 stable IDs / 203 acyclic edges / 49 open issues** is a
-historical snapshot only; it no longer governs development.
-
-**Public provenance:** published research JSON companions are pointer-redacted and **NOT byte-identical to archived originals**. [Original versus published hashes](docs/planning/publication-provenance.json) are separate; measurements, pins, artifact hashes and failed controls remain unchanged. Local evidence placeholders are descriptive, not accessible repository files.
-
-## Historical evidence snapshots
-
-**Latest finite integration — 2026-10-04: four parallel research lanes and actual Lead reconciliation complete.** [Dedicated reports and parent adjudication](docs/research/parallel-readiness-reconciliation.md) accept evidence/planning with limits, not architecture or production. Mac adds 53 local cases and one genuine windowless queued OFF/ON pair; Alignment processes actual generated waveforms but **falsely accepts 2/6 acoustic negatives, failing its WW-016 candidate gate**. Pipeline regenerates/restores original-source assets in seven cases, not quality-qualified SRC/DAW support; Design supplies a review contract and 24 pure-state scenarios, not native accessibility approval.
-
-**New load-bearing limits:** a bookmark can resolve a same-name replacement; the native OFF probe's nil no-publication callback is not safe Close/Quit adoption; merged fades need final-footprint protection validation; WhisperKit `download:false` does not prevent tokenizer network fallback. Two pinned speech download proposals are documented, **not approved**. WW-003 fixture coverage is stage-scoped for bounded research/design, not a waiver of applicable milestone tests. Statuses/owners/criteria and **51 IDs / 196 edges / 3 documentary-completed / 14 partial / 34 pending** remain unchanged. No issues, model bodies, providers, recordings or production code were used; all owned research work ended.
-
-**Historical project-format integration — 2026-10-04: batch closed, APPROVE WITH LIMITS.** [Actual Mac artifacts and Lead's read-only review](docs/research/project-format-recovery.md) retain **6,410/6,410 assertions, zero unexpected failures; 48 boundary groups ×100; 400 owned process exits**. The 100 WAL-copy assertions overlap those exits, not 500 crashes. Complete show/episode human work and durable library truth are compared separately from encoders/indexes; **native app tests 0**, no independent reproduction. One pre-freeze coverage correction separated 91/103 pilots; qualification had no corrections or weaker gates.
-
-**Candidate, not adoption:** single versioned JSON + coherent prior checkpoint + external derived cache; canonically durable library/backend open, device-local access records and rebuildable index separate. Packages require member/revision coherence and retention; SQLite main-only copies missed committed WAL revision8, and **new adapter construction may fail before corrupt-header fallback**. Complete history/primary/library-schema validation, provider/multi-process/stale-job concurrency, real identity/audio/undo and native/reference-device gates remain open. Cloud canonical MVP and accepted autosave/download/shortening/export policies are unchanged.
-
-WW-003/005/006/049 gain **partial evidence only**. Computed before/after **51 IDs / 196 acyclic edges; 3 documentary-completed / 14 partial / 34 pending**, with unchanged owners/criteria/dependencies. WW-007 stays pending: structural library is not native UI; WW-004 remains documentary-completed, WW-009/M1 unapproved. **Lead/Mac documentary handoff due 2026-10-05 is a recommendation, not new execution permission.** The separate parent-provided OFF/Save/ON policy follow-up remains partial (19 asynchronous assertions; dirty-race/dirty-Quit gaps), not reviewed or completed by this batch; historical failures below remain preserved.
-
-**Historical windowed integration — 2026-10-04: UI_BATCH_CLOSED, LOCAL partial evidence only.** The [windowed document report and actual Mac/Design reviews](docs/research/windowed-document-spike.md) retain all **14 IDs: 4 bounded pass / 5 pass-limited / 1 partial / 1 failed-candidate / 1 blocked / 2 not-executed**. One original plus two corrected launches are separate. Focused rename/document Undo/Redo and stock native ON saving were observed, but **~5s at second resolution/configured5s is not ≤2s**. Requested OFF **failed**: native saves continued with empty-type errors1004/Not Saved; unchanged passive bytes did not prove disablement. Explicit Save persisted revision4 and ON was restored. Named Save As/B/cancellation and consented Revert remain unestablished; Close/Quit were clean-only. Parent reports exact corrected no-PID closure and unchanged fixtures, not independent reviewer/Lead checks.
-
-WW-005/008/049 receive **evidence only**, all still PARTIAL; no status changes. **51 IDs / 196 acyclic edges; 3 documentary-completed / 14 partial / 34 pending** remain unchanged. WW-007/009/M1/WW-010–012 remain pending/unapproved. Mac's author-role review and Design's read-only evidence review are not reproduction, human or VoiceOver testing. Stock scheduling/publication/versions were retained in this separate windowed harness; subclass representations/edits/undo/policy remain research, not adopted architecture. Runtime26/16GB, cloud/provider, recovery and full accessibility gates remain open; no production or further GUI execution follows this integration.
-
-**Historical native integration — 2026-10-04: the separate bounded native document batch is closed and reported.** [Actual native evidence and reviews](docs/research/native-document-spike.md) support **28 finite passes / 0 failed assertions**: 24 native runtime cases, one SwiftUI public snapshot runtime case and three compile/control cases, with **nine overlapping blocked limits**, not 37 independent tests. Thirteen genuine NSDocument completions comprise ten Save/three autosave, nine successes/four expected errors. Last-edit-to-independent-coherent-disk observations **0.129026042 / 0.292939875 / 0.546012500s** meet ≤2s only in those three cases; two use custom timers. Stock safe publication was replaced by a research subclass policy, automatic scheduling suppressed and versions disabled. Callback success alone is not persistence; serial stale preflight has TOCTOU, retained-copy reopen is not crash recovery.
-
-Mac's author technical review and Design's actual **approve-with-limits** evidence review support **NSDocument + SwiftUI/versioned JSON values as a candidate, not adopted architecture**. DocumentGroup/packages remain viable; SQLite is untested in this native batch. No UI/accessibility, cloud/provider/two-machine, macOS26 runtime or 16GB evidence was added. WW-005/006/049 gain limited evidence; WW-008 is newly narrowly partial for target26 compilation/plain local bookmarks; WW-007 remains pending. Current backlog: **3 documentary-completed / 14 partial / 34 pending**, unchanged **51 IDs / 196 acyclic edges**. WW-009/M1/WW-010–012 remain pending and unapproved.
-
-**Keep the backlog local.** Brandon's 2026-10-04 direction makes future GitHub issue promotion conditional on completed planning/research, not authorized now. The report's owned permission gates are the next handoff; no experiment rerun, app scaffold or production implementation follows.
-
-**Historical foundation batch, preserved:** original and supplementary protocols retain **169 calibration / 5,728 primary heldout cases**, with all frozen code, inputs, truth, manifests and raw outputs byte-unchanged. Actual Design and Mac **18/18-task** reviews complete **WW-004's documentary specification only**, not native implementation or usability. Its final backlog snapshot was **3 documentary-completed / 13 partial / 35 pending**; no whole research spike or production gate closed.
-
-Historical [planning reviews](docs/planning/research.md#review-evidence-and-dispositions) remain separate from the [five actual foundation review dispositions](docs/research/foundation-spikes.md#review-ledger-and-next-handoff). Alignment approves original finite timing/mapping; Mac accepts only the tested LOCAL storage subset. Pipeline approves original finite edits and separately frozen v2 with nonblocking scope amendments: **336/336 adversarial refusals, 56/56 positive accepts, 32 sequential mode/boundary cases**, zero losses in **1,421 repeated finite frame observations**. Failed controls remain: 400 incoherent publications, 300 stale overwrites, 40 acoustic false accepts and eight original-guard false accepts on four cases already inside v2's 228. No rejection or author lockout occurred.
-
-**Foundation-specific remaining gates, not more execution in that batch:** v2's reload results cover stale/forged caches/assets and valid history-cursor roundtrips; omitted-boundary reload rejection was not isolated and malformed histories/cursors are not validated. The **0.004300041s publication operation** is not edit-to-quiescent latency; the **≤2s checkpoint gate was untested in foundation** (the later three native observations above do not establish product cadence or fault coverage). Sparse timing p95/max **0.1401/0.2006ms** shares 80 maps; estimated inverse maximum is **17.16 source frames**, not subframe accuracy. Half-up rounding and supplied uncut-array regeneration establish no general validator, original-media/DSP reconstruction, speech, native/provider/listening or encoded-DAW support. Host: macOS27.0.1/arm64/128GiB, not macOS26/16GB validation. [Bounded future approval requests](docs/research/foundation-spikes.md#bounded-next-approval-requests--no-execution) retain separate recording, metadata-only native Speech, exact model/runtime, disposable provider/two-machine, reference-device/accessibility and named production permissions.
+[Documentation](docs/README.md) connects the user and engineering guides.
+First-party source is [MIT licensed](LICENSE). Third-party software and model
+licenses remain separate; see the bundled notices and
+[export codec licensing and rebuild instructions](docs/engineering/export-codecs.md).

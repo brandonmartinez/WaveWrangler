@@ -34,6 +34,7 @@ import WWTimeMap
 ///   recording as Host's confirmed Primary and the other recording as a Backup.
 ///   `-WWUITestCleanupPublicSpeech <path>` optionally copies an explicitly supplied public 48 kHz
 ///   mono WAV (4-30 s) into that isolated fixture. Never supply private recordings.
+/// - `-WWUITestDocumentationFixture YES`: vary generated waveform envelopes for documentation.
 /// - `-WWUITestTranscriptFixture YES`: seed clearly synthetic timed and untimed text for the
 ///   cleanup fixture, bound to its verified source identities; no recognizer or model is used.
 ///   `-WWUITestTranscriptZoomFixture YES` uses longer sentences with touching word intervals.
@@ -485,6 +486,7 @@ enum LaunchFixtures {
         appendLittleEndian(UInt16(16), to: &data)
         data.append(contentsOf: "data".utf8)
         appendLittleEndian(dataByteCount, to: &data)
+        let documentation = UserDefaults.standard.bool(forKey: "WWUITestDocumentationFixture")
         for frame in 0..<frames {
             let value: Int16
             if let delay = eventDelayFrames {
@@ -492,6 +494,16 @@ enum LaunchFixtures {
                 let active = (0.6..<0.85).contains(time)
                     || (1.6..<1.85).contains(time) || (3.2..<3.45).contains(time)
                 value = active ? Int16(sin(time * 2 * .pi * 330) * 18_000) : 0
+            } else if documentation {
+                let time = Double(frame) / Double(sampleRate)
+                let shifted = time + Double(phase) / 23
+                let phrase = shifted.truncatingRemainder(dividingBy: 3.1)
+                let envelope = phrase < 2.45
+                    ? pow(abs(sin(shifted * .pi * 2.3)), 0.6)
+                        * (0.25 + 0.75 * pow(sin(shifted * .pi * 0.7), 2))
+                    : 0
+                let carrier = sin(time * 2 * .pi * 180) + 0.35 * sin(time * 2 * .pi * 407)
+                value = Int16(carrier * envelope * 14_000)
             } else {
                 value = Int16((((frame + phase) % 200) - 100) * 120)
             }

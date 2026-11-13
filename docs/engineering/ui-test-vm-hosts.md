@@ -1,84 +1,45 @@
-# Preferred macOS UI-test hosts
+# UI-test VM hosts
 
-**Current policy (2026-10-20):** use the VMs for functional UI tests,
-accessibility automation, and ordinary regression work. Do not use the Mac
-mini as a fallback when a VM is unavailable: report the readiness blocker.
-A physical-host run needs an explicit requirement that virtualization cannot
-meaningfully verify, such as physical audio-device behavior, unsupported GPU
-features, or representative hardware performance. Explain the limitation and
-obtain approval for the specific host and run. VM timings may be compared with
-other runs on the same VM configuration, but do not establish physical-device
-performance or a supported-hardware claim.
+Functional hosted/UI, accessibility and ordinary regression work runs in macOS
+VMs. An unavailable VM is a readiness blocker, **not permission to fall back
+to the user's desktop or Mac mini**.
 
-WaveWrangler has two provisioned functional GUI-test VM hosts on Macatron:
-`ww-ui-1` and `ww-ui-2`. They run macOS 27 under Tart
-(Virtualization.framework), each with a 1920x1200-point virtual display,
-four vCPUs, 16 GiB RAM and a 120 GB virtual disk. The combined CPU
-allocation is at most eight vCPUs. They run without host-side windows and
-do not take over the user's desktop.
+Physical execution requires a requirement virtualization cannot meaningfully
+verify, such as physical audio-device behavior, unavailable GPU functionality
+or representative hardware performance. Explain that limitation and obtain
+approval for the specific host/run. VM timings do not qualify physical hardware.
 
-The guests are based on Cirrus Labs'
-`ghcr.io/cirruslabs/macos-golden-gate-vanilla` image at
-`sha256:b78a521145ebef24e9916c0b3999e165bb12b587d11524c5fa3ba4fe7bf79bb9`
-(macOS 27.0). Each has a local copy of the development Mac's exact Xcode
-27.0 build 27A266a, SSH with a dedicated VM-only key, auto-login, sleep
-and lock disabled, and the `~/ww-uitest-runs/gui-lock` lease helper.
-The image's auto-login is already configured for its guest
-admin account (`sysadminctl -autologin status` confirms it, and
-`/etc/kcpassword` exists); its stored password is never read or copied.
-Guest loginwindow has `DisableScreenLockImmediate` enabled. Each guest's
-login session runs a persistent `caffeinate -di`
-LaunchAgent (`com.wavewrangler.keep-guest-display-awake`): `pmset -g assertions`
-must show `PreventUserIdleDisplaySleep 1` before dispatching XCUITests.
-The guest's virtual display can otherwise sleep despite `displaysleep 0`,
-preventing XCTest from bringing the app to the foreground.
-The console must also be unlocked: an auto-logged-in guest can retain a
-screen lock across restarts and leave the test app in `Running Background`.
-Tart's [personal-workstation license](https://tart.run/licensing/)
-is royalty-free; Apple's [macOS license](https://www.apple.com/legal/sla/docs/macOSGoldenGate.pdf)
-limits this Mac to two additional macOS virtualized instances.
+## Provisioned capacity
 
-The old M3/M4 relay-session lifetime exception is retired. Do not assume that
-the guests are still running or owned by an earlier session. Recheck readiness
-and process ownership before use; coordinate any restart with the current
-owner rather than stopping an active test.
+Macatron hosts Tart/Virtualization.framework guests `ww-ui-1` and `ww-ui-2`,
+each provisioned for macOS 27, four vCPUs, 16 GiB RAM and 120 GB disk with a
+virtual display. Combined CPU allocation is at most eight vCPUs. Do not add a
+third macOS VM or let competing heavy host builds exhaust this budget.
+Verify actual configuration/toolchain before labeling evidence; provisioning
+records are not live status or ownership.
 
-After a host reboot, start each guest in its **own** detached,
-session-independent background process. The VM service must not be owned by
-an app/agent session that can be archived later; otherwise archiving that
-session can stop the host. Use the Copilot app's background command mode for
-each guest separately: submit each `tart run` command as its own
-`functions.bash` invocation with `mode: "async"` and `detach: true` after the
-platform approves the independently running process. Do not combine the two
-guest launches into one attached shell snippet. Do not use `nohup`, `&`, or
-`disown`; those do not establish a host service independent of the launching
-disposable session.
+The guests use local Xcode, SSH aliases with dedicated VM-only keys, auto-login,
+the `~/ww-uitest-runs/gui-lock` helper and a display-awake LaunchAgent.
+Never read/copy stored guest passwords. Changing login/security/SSH setup
+requires explicit operational authority, not a test retry.
+Consult current [Tart licensing](https://tart.run/licensing/) and Apple's
+applicable macOS terms before changing virtualization capacity or distribution.
 
-```sh
-# Submit as a separate `functions.bash` invocation with mode: "async", detach: true.
-tart run --no-graphics --no-clipboard --no-audio ww-ui-1
+## Readiness gate
 
-# Submit as a separate `functions.bash` invocation with mode: "async", detach: true.
-tart run --no-graphics --no-clipboard --no-audio ww-ui-2
-```
+Before dispatch and after a reboot/restart, verify:
 
-For each guest, verify after launch and again after the launching session is
-shut down or archived: `tart list` reports it running; its SSH alias connects;
-the console check below reports unlocked; and
-`ssh ww-ui-N '~/ww-uitest-runs/gui-lock status'` succeeds. Archiving a launch
-session must neither own nor stop either host service. Use `tart ip ww-ui-1`
-(or `ww-ui-2`) for its address. The local SSH aliases are `ww-ui-1` and
-`ww-ui-2`. If an address changes, probe it with
-`ssh -o HostName="$(tart ip ww-ui-1)" ww-ui-1`, then update that alias's
-`HostName` in `~/.ssh/config` **before** copying Products or running the
-pipeline; the one-off override does not change later SSH or rsync commands.
-Keep its key and pinned host identity unchanged. Stop a guest only with
-`tart stop ww-ui-1` (similarly for `ww-ui-2`). Do not add a third macOS VM on
-this host.
+1. Guest process and current owner are known; its SSH alias reaches that guest.
+2. Xcode license is accepted and `xcodebuild -checkFirstLaunchStatus` exits zero.
+3. Console user is logged in and unlocked; display-awake assertion is active.
+4. The guest has a successful functional smoke result with identified Products.
+5. `~/ww-uitest-runs/gui-lock status` works and no other invocation owns the
+   lease. Obtain a fresh lease for this invocation.
 
-Check the guest's console lock before dispatching a test (substitute `ww-ui-2`
-as needed). The command succeeds only when a console user has finished logging
-in and the screen is unlocked; a locked or unavailable console fails closed:
+`pmset -g assertions` should report `PreventUserIdleDisplaySleep 1`. Disabling
+sleep in preferences alone does not ensure the virtual display is awake.
+Auto-login alone does not ensure the console is unlocked.
+Use this nonmutating guest probe (substitute the second alias if needed):
 
 ```sh
 ssh ww-ui-1 /usr/bin/swift - <<'SWIFT'
@@ -95,72 +56,49 @@ print("Guest console unlocked")
 SWIFT
 ```
 
-**Readiness gate:** do not dispatch tests to a VM until its Xcode license is
-accepted, `ssh ww-ui-N 'xcodebuild -checkFirstLaunchStatus'` exits 0, the
-console is unlocked, and the guest's first functional smoke-test `.xcresult`
-shows Passed. A configured VM without these checks is not an available GUI
-host. Resolve readiness or report a blocker; do not fall back to a physical host.
+`gui-lock run` also refuses a locked guest before ticket/lease acquisition.
+Do not interpret an app remaining Running Background on a locked guest as a
+product focus failure. Fix readiness or report the blocker.
 
-Direct public Accessibility API diagnostics require a separate Accessibility grant
-for the UI-test runner inside the guest. Working XCTest automation does not imply
-`AXIsProcessTrusted()`: verify trust before interpreting a failed public AX query.
-Obtain operator approval and enable the grant in the guest's System Settings;
-do not edit the protected TCC database, disable system protection, or change host
-permissions. Ad-hoc rebuilds can change the runner's signing identity, so recheck
-trust when reusing a grant. This diagnostic permission is not a prerequisite for
-ordinary XCTest automation.
+Direct public AX diagnostics additionally require guest Accessibility trust for
+the runner. Working XCTest does not imply `AXIsProcessTrusted()`. Request an
+operator-approved grant through guest System Settings; never edit TCC, disable
+system protections or change host permissions. Recheck after ad-hoc rebuilding
+changes identity. This diagnostic grant is not required for ordinary XCTest.
+VoiceOver/Full Keyboard Access settings are separate from audit plan admission.
 
-Follow the [GUI lease pipeline](gui-testing.md):
-build-for-testing on the development Mac (`-jobs 2`, isolated DerivedData, explicit test plan);
-record the source SHA and any uncommitted changes. Dirty-tree runs are
-development feedback, not exact-commit qualification; do not commit or push
-just to obtain a test label. Copy signed Products atomically to
-a per-run guest directory; verify `rsync -c` and both code signatures.
-On the guest, use one `gui-lock run` lease for one
-`xcodebuild test-without-building` invocation, then retrieve its
-`.xcresult`. The helper also rejects a locked VM before acquiring a ticket
-or lease, reporting `VM console locked`; it does not change the physical
-mini's preflight. Only synthetic fixtures are allowed inside the VMs: never
-mount or copy the user's recordings or test media. Label the result
-`VM ww-ui-N (Virtualization.framework, macOS 27, 4 vCPU)` with the SHA.
-If a GUI run loses its VM because a launching session was interrupted or
-archived, classify that run as **environment-invalid**, not a pass or product
-failure. Restore the detached host service before retrying. Reclaim a lease
-only through the `gui-lock` helper when its recorded PID is stale or dead;
-never unlink the lock guard.
+## Process lifetime and recovery
 
-**VM timings are not physical-device performance qualification.** Functional
-responsiveness regressions may run in a VM with the configuration recorded;
-an absolute hardware performance gate needs a separately approved,
-representative physical host, not an automatic Mac mini run. Keep the guests
-within their eight-vCPU combined budget and avoid competing heavy builds on
-the host.
+Do not assume an earlier agent/session still owns or runs either guest.
+Coordinate any restart/stop with the current owner. When startup is authorized,
+run each service separately:
 
-## Initial functional smoke (2026-10-08)
+```sh
+tart run --no-graphics --no-clipboard --no-audio ww-ui-1
+tart run --no-graphics --no-clipboard --no-audio ww-ui-2
+```
 
-Both guests ran `LibraryProviderConflictUITests` under their own `gui-lock`
-leases with signed Products built from pushed `origin/main` SHA
-`5ae7fa4a0430ab0780f5dc93dff0af34f79ec000`. Each `.xcresult`
-reports **2 passed, 0 failed, 0 skipped**:
+These are **two independent service launches**, not a combined attached shell.
+In an agent tool, use one separately approved `mode: "async", detach: true`
+invocation per guest so session archival cannot terminate the VM.
+Do not use `nohup`, `&`, `disown` or a disposable session-owned process as a
+substitute. If independent lifetime cannot be approved, report the limitation.
 
-| Evidence label | Guest result bundle |
-| --- | --- |
-| VM ww-ui-1 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008/result.xcresult` |
-| VM ww-ui-2 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-final/result.xcresult` |
+Verify Tart running status, SSH, console and lease helper after startup and
+after the launch session ends. If a guest IP changes, inspect `tart ip`,
+verify the pinned host identity and explicitly correct the known alias before
+copy/run operations. A one-off SSH HostName override does not update later
+rsync/SSH calls. Preserve dedicated keys and host checking.
+Stop only the specifically owned guest with `tart stop ww-ui-N` when authorized.
 
-No TCC or damaged-app prompts were observed. `ww-ui-2` required a one-time
-manual unlock of a persisted guest-console lock before its successful run;
-it stayed unlocked through two subsequent cold headless restarts. Both
-guests retained auto-login, `DisableScreenLockImmediate`, their display-awake
-assertion, and an unlocked console after **two cold restarts each**. A fresh
-leased `testNoNoticeWithoutConflicts` app-launch smoke passed **1/1** after
-each boot:
+Follow [build/stage/run/collect](gui-testing.md): checksum/signature-verified
+Products, unique run directory, probe, exact plan metadata and one lease per
+`test-without-building`. Never unlink the persistent guard; use the helper for
+stale/dead recorded ownership.
 
-| Evidence label | Cold boot 1 result | Cold boot 2 result |
-| --- | --- | --- |
-| VM ww-ui-1 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold1/result.xcresult` | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold2/result.xcresult` |
-| VM ww-ui-2 (Virtualization.framework, macOS 27, 4 vCPU) | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold1/result.xcresult` | `~/ww-uitest-runs/smoke-5ae7fa4-20261008-cold2/result.xcresult` |
-
-Recheck the console and display-awake assertion after future restarts. A
-locked or unavailable VirtualMac console is rejected by `gui-lock run`
-before starting the test or acquiring a lease.
+Lost guest lifetime, lock, bad transfer or stale runner makes a run
+environment-invalid, not a pass or product assertion failure. Restore readiness
+before a bounded retry. Synthetic fixtures are the default; no user media,
+transcripts, models or external speech may be copied/mounted without separate
+authorization. Label every result with actual VM configuration, SHA/dirty patch,
+selection/counts and result path rather than citing old smoke logs as readiness.

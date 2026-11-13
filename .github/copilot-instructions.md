@@ -1,20 +1,22 @@
-# WaveWrangler development
+# WaveWrangler
 
-- Work directly from the user's current request. Do not restore retired team
-  orchestration, milestone kickoffs, or issue-dispatch automation.
-- Use American English for first-party identifiers, comments, documentation,
-  and interface text. Preserve platform API names, third-party source bytes,
-  existing serialized keys, and quoted historical evidence.
-- Use Swift 6 concurrency and isolation, value types for domain state, and
-  small focused types. Prefer composition and existing shared helpers over
-  inheritance, duplicated logic, or speculative abstractions.
-- Keep original recordings immutable. Preserve explicit source authorization,
-  local-only inference, verified saves, schema compatibility, and Undo/Redo.
-- Use established build/test commands and bounded worker counts. Keep the
-  editing app's DerivedData separate from test builds.
-- Prefer the macOS VMs for UI tests. An unavailable VM is a blocker, not
-  permission to fall back to the Mac mini or the user's desktop. Use a physical
-  host only for a requirement that cannot be meaningfully verified in a VM,
-  explain why, and obtain approval for the specific run.
-- Historical planning and research record prior decisions and measurements;
-  they do not authorize new work, commits, pushes, merges, or media access.
+Read [AGENTS.md](../AGENTS.md) for shared agent rules and
+[CONTRIBUTING.md](../CONTRIBUTING.md) for setup and change workflow.
+Use the [engineering index](../docs/engineering/README.md) to route technical work.
+
+Essential boundaries when this file is loaded alone:
+
+- Work only from the current request; preserve dirty-worktree changes and
+  coordinate nonoverlapping writes. Retired plans grant no Git, network or media
+  permissions and must not restart orchestration or issue dispatch.
+- Use Swift 6 isolation, value-based domain state and American English;
+  preserve platform APIs, serialized names and third-party source bytes.
+- Keep recordings immutable. Source reads require explicit authorization and
+  the existing witnessed, read-only `WWDecode` gateway; caches are not grants.
+- Preserve unknown-newer refusal, consented migrations, exact-byte backups,
+  verified saves, named Undo/Redo, shared multiwindow state and native Audio
+  Unit capture barriers. Inference stays local.
+- Use bounded established build/test commands and separate editing/test
+  DerivedData. Ordinary hosted/UI tests require a ready leased VM; unavailable
+  VMs never authorize desktop/Mac mini fallback. Physical-host exceptions need
+  a hardware-specific reason and approval for the particular run.
