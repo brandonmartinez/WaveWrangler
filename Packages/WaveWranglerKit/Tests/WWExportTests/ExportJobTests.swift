@@ -7,6 +7,120 @@ import WWMix
 
 @Suite("Verified production export jobs", .serialized)
 struct ExportJobTests {
+    @Test func renderAndEncodeStayLocalUntilEveryDeliveryIsVerified() async throws {
+        let destination = try directory(), temporary = try directory()
+        defer {
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        let request = try request(destination, deliveries: [delivery("stereo.wav"), delivery("mono.wav", channels: 1)])
+        let result = try await ExportJob(temporaryDirectory: temporary).run(
+            request, isCurrent: { true }, render: render(request), progress: { value in
+                switch value.phase {
+                case .rendering, .converting, .verifying:
+                    do {
+                        #expect(try entries(destination).isEmpty)
+                        #expect(try FileManager.default.contentsOfDirectory(at: temporary,
+                            includingPropertiesForKeys: nil).contains {
+                                $0.lastPathComponent.hasPrefix(".ww-export-job-")
+                            })
+                    } catch { Issue.record(error) }
+                default: break
+                }
+            })
+        #expect(result.succeeded, "\(String(describing: result.problem)) \(result.cleanupErrors)")
+        #expect(result.retainedDirectory == nil)
+        #expect(try entries(destination) == ["mono.wav", "stereo.wav"])
+        #expect(try entries(temporary).isEmpty)
+        let stereo = try decode(destination.appendingPathComponent("stereo.wav"))
+        #expect(stereo[0].count == 48_003 && stereo[0].allSatisfy { $0 == 0.6 })
+        #expect(stereo[1].allSatisfy { $0 == -0.2 })
+    }
+
+    @Test(arguments: [ExportNormalization.off, .podcast])
+    func fullSourceValidationDoesNotScaleWithMeasurementConversionOrDecodeBlocks(normalization: ExportNormalization) async throws {
+        var validations: [Int] = [], currencyChecks: [Int] = []
+        for frames: Int64 in [48_000, 196_608] {
+            let root = try directory()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let delivery = try ExportDelivery(filename: "out.wav",
+                settings: ExportSettings(codec: .wave(.float32), sampleRate: 48_000, channels: 2),
+                normalization: normalization)
+            let request = try request(root, frames: 0..<frames, deliveries: [delivery])
+            let checks = Counter(), currency = Counter()
+            let result = try await ExportJob(temporaryDirectory: root).run(request,
+                isCurrent: { await currency.increment(); return true },
+                validateSources: { await checks.increment(); return true }, render: render(request))
+            #expect(result.succeeded)
+            validations.append(await checks.value)
+            currencyChecks.append(await currency.value)
+        }
+        #expect(validations[0] > 0 && validations[0] == validations[1])
+        #expect(currencyChecks[1] > currencyChecks[0])
+    }
+
+    @Test(arguments: [ExportJobPhase.verifying(delivery: 0), .publishing])
+    func sourceRevocationAtFullValidationBoundariesPreventsPublication(phase: ExportJobPhase) async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = try request(root, frames: 0..<48_000)
+        let currency = Currency()
+        let result = try await ExportJob(temporaryDirectory: root).run(
+            request, isCurrent: { true }, validateSources: { await currency.current },
+            render: render(request), progress: { value in
+                if value.phase == phase { await currency.invalidate() }
+            })
+        #expect(result.problem?.kind == .stale && result.published.isEmpty)
+        #expect(result.retainedDirectory == nil && result.cleanupErrors.isEmpty)
+        #expect(try entries(root).isEmpty)
+    }
+
+    @Test(arguments: [false, true])
+    func interruptedTransferNeverPublishesAndPreservesChangedDestinationBytes(tamper: Bool) async throws {
+        let destination = try directory(), temporary = try directory()
+        defer {
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        let request = try request(destination, frames: 0..<196_608)
+        let job = ExportJob(temporaryDirectory: temporary)
+        let once = TransferInterruption()
+        let replacement = Data("external destination write".utf8)
+        let result = try await job.run(request, isCurrent: {
+            guard await job.progress.phase == .publishing,
+                  let stage = try FileManager.default.contentsOfDirectory(at: destination,
+                    includingPropertiesForKeys: nil).first(where: {
+                        $0.lastPathComponent.hasPrefix(".ww-export-publish-")
+                    }) else { return true }
+            let path = stage.appendingPathComponent("out.wav")
+            guard (try path.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) > 0,
+                  await once.claim() else { return true }
+            if tamper {
+                let file = try FileHandle(forWritingTo: path)
+                try file.write(contentsOf: replacement)
+                try file.synchronize()
+                try file.close()
+            } else { await job.cancel() }
+            return true
+        }, render: render(request))
+        #expect(result.published.isEmpty && !result.succeeded)
+        #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("out.wav").path))
+        if tamper {
+            #expect(result.problem?.kind == .destination && !result.cleanupErrors.isEmpty)
+            let retained = try #require(result.retainedDirectory)
+            let encoded = try #require(FileManager.default.contentsOfDirectory(at: retained,
+                includingPropertiesForKeys: nil).first).appendingPathComponent("encoded.wav")
+            #expect(try decode(encoded)[0].allSatisfy { $0 == 0.6 })
+            let stage = try #require(FileManager.default.contentsOfDirectory(at: destination,
+                includingPropertiesForKeys: nil).first)
+            #expect(try Data(contentsOf: stage.appendingPathComponent("out.wav")).prefix(replacement.count) == replacement)
+        } else {
+            #expect(result.problem?.kind == .canceled && result.cleanupErrors.isEmpty)
+            #expect(result.retainedDirectory == nil)
+            #expect(try entries(destination).isEmpty && entries(temporary).isEmpty)
+        }
+    }
+
     @Test(arguments: [ExportJobPhase.cleaning, .converting(delivery: 0), .measuring(delivery: 0)])
     func sameInodeIntermediateEditsArePreservedAndRefuseLaterReads(phase: ExportJobPhase) async throws {
         let root = try directory()
@@ -14,7 +128,7 @@ struct ExportJobTests {
         let output = try ExportDelivery(filename: "out.wav", settings: .init(codec: .wave(.float32)),
                                        normalization: phase == .measuring(delivery: 0) ? .podcast : .off)
         let request = try request(root, frames: 0..<4_800, deliveries: [output])
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: render(request), progress: { value in
             guard value.phase == phase, value.completedFrames == 0 else { return }
             do { try overwriteIntermediate(root, samples: 9_600) }
             catch { Issue.record(error) }
@@ -32,7 +146,7 @@ struct ExportJobTests {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let request = try request(root, frames: 0..<100)
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: { sink in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: { sink in
             try await sink(0, [[Float](repeating: 0.1, count: complete ? 100 : 50),
                                [Float](repeating: 0.1, count: complete ? 100 : 50)])
             try overwriteIntermediate(root, samples: complete ? 200 : 100)
@@ -51,7 +165,7 @@ struct ExportJobTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let request = try request(root, frames: 0..<48_000,
                                   deliveries: [delivery("first.wav"), delivery("second.wav")])
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: render(request), progress: { value in
             guard value.phase == .converting(delivery: laterPass ? 1 : 0),
                   laterPass ? value.completedFrames == 0 : value.completedFrames > 0 else { return }
             do { try overwriteIntermediate(root, samples: 96_000) }
@@ -69,7 +183,7 @@ struct ExportJobTests {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let request = try request(root, frames: 0..<100)
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: { sink in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: { sink in
             try await sink(0, [[Float](repeating: 0.1, count: 50), [Float](repeating: 0.2, count: 50)])
             if changed { try overwriteIntermediate(root, samples: 100) }
             throw ExportFailure.encoder("Renderer failed after partial output")
@@ -142,7 +256,7 @@ struct ExportJobTests {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let request = try request(root, frames: 0..<100)
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: render(request), progress: { value in
             guard value.phase == .cleaning else { return }
             do {
                 let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
@@ -168,7 +282,7 @@ struct ExportJobTests {
         let original = external.appendingPathComponent("encoded.wav")
         try Data("immutable original".utf8).write(to: original)
         let request = try request(root, frames: 0..<100)
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: render(request), progress: { value in
             guard value.phase == .publishing else { return }
             do {
                 let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
@@ -181,6 +295,7 @@ struct ExportJobTests {
         })
         #expect(result.problem?.kind == .destination && result.published.isEmpty)
         #expect(!result.cleanupErrors.isEmpty)
+        #expect(result.retainedDirectory == nil)
         #expect(try String(contentsOf: original, encoding: .utf8) == "immutable original")
         #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("out.wav").path))
     }
@@ -189,7 +304,7 @@ struct ExportJobTests {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let request = try request(root, frames: 0..<100)
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: render(request), progress: { value in
             guard value.phase == .cleaning else { return }
             do {
                 let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
@@ -353,7 +468,7 @@ struct ExportJobTests {
         #expect(await counter.value == 0)
         #expect(try Data(contentsOf: existing) == Data("external".utf8))
         try FileManager.default.removeItem(at: existing)
-        let raced = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+        let raced = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: render(request), progress: { value in
             if value.phase == .publishing {
                 do { try Data("racer".utf8).write(to: existing, options: .withoutOverwriting) }
                 catch { Issue.record(error) }
@@ -361,15 +476,17 @@ struct ExportJobTests {
         })
         #expect(raced.problem?.kind == .destination)
         #expect(raced.published.isEmpty && raced.cleanupErrors.isEmpty)
+        let retained = try #require(raced.retainedDirectory)
+        #expect(FileManager.default.fileExists(atPath: retained.path))
         #expect(try Data(contentsOf: existing) == Data("racer".utf8))
-        #expect(try entries(root) == ["out.wav"])
+        #expect(try entries(root) == [retained.lastPathComponent, "out.wav"].sorted())
     }
 
     @Test func partialPublicationReportsOnlyCommittedFilesAndNeverRollsBackExternalChanges() async throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }
         let request = try request(root, frames: 0..<4_800, deliveries: [delivery("first.wav"), delivery("second.wav")])
-        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true }, render: render(request), progress: { value in
             if value.phase == .publishing {
                 do { try Data("external".utf8).write(to: root.appendingPathComponent("second.wav")) }
                 catch { Issue.record(error) }
@@ -378,7 +495,8 @@ struct ExportJobTests {
         #expect(result.problem?.kind == .destination)
         #expect(result.published.map(\.url.lastPathComponent) == ["first.wav"])
         #expect(result.cleanupErrors.isEmpty)
-        #expect(try entries(root) == ["first.wav", "second.wav"])
+        let retained = try #require(result.retainedDirectory)
+        #expect(try entries(root) == [retained.lastPathComponent, "first.wav", "second.wav"].sorted())
         #expect(try Data(contentsOf: root.appendingPathComponent("second.wav")) == Data("external".utf8))
     }
 
@@ -470,4 +588,13 @@ private actor Counter {
 private actor Currency {
     var current = true
     func invalidate() { current = false }
+}
+
+private actor TransferInterruption {
+    private var claimed = false
+    func claim() -> Bool {
+        guard !claimed else { return false }
+        claimed = true
+        return true
+    }
 }

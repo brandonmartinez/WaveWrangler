@@ -5,15 +5,15 @@ import Foundation
 final class ExportEncoderStaging {
     let directory: URL
     private let parent: Int32
-    private let descriptor: Int32
+    let descriptor: Int32
     private let identity: stat
     private var artifacts: [String: ExportOwnedArtifact] = [:]
     private var removed = false
 
-    init(parent directory: URL) throws {
+    init(parent directory: URL, prefix: String = "ww-export-") throws {
         let parent = open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
         guard parent >= 0 else { throw Self.failure("Open encoder staging parent") }
-        let name = "ww-export-\(UUID().uuidString)"
+        let name = "\(prefix)\(UUID().uuidString)"
         guard mkdirat(parent, name, 0o700) == 0 else {
             let error = Self.failure("Create encoder staging")
             Darwin.close(parent)
@@ -46,6 +46,15 @@ final class ExportEncoderStaging {
         guard fd >= 0 else { throw Self.failure("Create owned encoder output") }
         try record(name, descriptor: fd)
         return directory.appendingPathComponent(name)
+    }
+
+    func artifact(named name: String) throws -> ExportOwnedArtifact {
+        try validateDirectory()
+        guard let artifact = artifacts[name] else {
+            throw ExportFailure.destination("Untracked export output: \(name)")
+        }
+        try artifact.validate(in: descriptor)
+        return artifact
     }
 
     /// Only call after a successful framework export, never for a failed or still-running remux.
@@ -112,7 +121,7 @@ final class ExportEncoderStaging {
         try report(errors)
     }
 
-    private func validateDirectory() throws {
+    func validateDirectory() throws {
         var current = stat()
         var path = stat()
         guard fstatat(parent, directory.lastPathComponent, &current, AT_SYMLINK_NOFOLLOW) == 0,

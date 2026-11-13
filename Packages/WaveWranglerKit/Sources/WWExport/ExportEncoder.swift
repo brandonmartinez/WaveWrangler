@@ -187,6 +187,11 @@ public actor ExportEncoder {
         }
     }
 
+    func validateFinishedOutput() throws {
+        guard state == .finished else { throw ExportFailure.invalidState }
+        try staging.validateArtifacts()
+    }
+
     /// Idempotent disposal, including a finished staging result. Cleanup failures are reported.
     /// The coordinator must dispose this directory after copying/publishing the verified file.
     public func cancel() async throws {

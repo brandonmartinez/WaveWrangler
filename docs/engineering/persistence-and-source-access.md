@@ -139,6 +139,13 @@ Never write, rename, move, replace or delete an original. Never substitute a
 same-name file or infer an unknown channel. Device access records are keyed by
 `(ShowID, SourceID)` and are not portable document content.
 
+Built-in access stores expose `DeviceAccessRevisionStore` for cheap mutation
+detection without decoding permission JSON. A revision is not a grant or an
+admission cache. Export compares frozen relevant `DeviceAccessSnapshot` values
+when the shared revision changes, preserving unrelated-show edits while refusing
+revoke/restore ABA. Actual source reads and export publication still require
+full current admission checks; see [export](export-codecs.md#frozen-production-jobs).
+
 `ForbiddenAPITests` recursively scans package modules and app code for alternate
 content readers. Memory-only PCM conversion in `WWDecode/PCMResampling.swift`
 and `WWSpeech/LocalWhisper.swift` is not an alternate file-opening entitlement.

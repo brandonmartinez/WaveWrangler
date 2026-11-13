@@ -5,6 +5,62 @@ import WWCore
 
 @Suite("Conditional import access publication", .serialized)
 struct DeviceAccessImportTests {
+    @Test func mutationRevisionsDetectRevocationAndEqualRecordRestoration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ww-access-revision-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let stores: [any DeviceAccessImportStore & DeviceAccessRevisionStore] = [
+            InMemoryDeviceAccessStore(), FileDeviceAccessStore(fileURL: root.appendingPathComponent("access.json"))
+        ]
+        for store in stores {
+            let source = record()
+            try await store.save(source)
+            let original = try await store.mutationRevision()
+            #expect(try await store.mutationRevision() == original)
+            try await store.save(source)
+            #expect(try await store.mutationRevision() != original)
+            let rewritten = try await store.mutationRevision()
+            try await store.removeRecord(for: source.key)
+            #expect(try await store.mutationRevision() != rewritten)
+            try await store.save(source)
+            #expect(try await store.record(for: source.key) == source)
+            #expect(try await store.mutationRevision() != original)
+        }
+    }
+
+    @Test func revisionsObserveOtherStoreWritersWithoutChangingUnrelatedSnapshots() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ww-access-external-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("access.json")
+        let reader = FileDeviceAccessStore(fileURL: url), writer = FileDeviceAccessStore(fileURL: url)
+        let source = record(), unrelated = record()
+        try await reader.save(source)
+        let frozen = try await reader.snapshot(for: source.key)
+        let original = try await reader.mutationRevision()
+        try await writer.save(unrelated)
+        #expect(try await reader.mutationRevision() != original)
+        #expect(try await reader.snapshot(for: source.key) == frozen)
+        let updated = try await reader.mutationRevision()
+        try await writer.removeRecord(for: source.key)
+        try await writer.save(source)
+        #expect(try await reader.mutationRevision() != updated)
+        #expect(try await reader.snapshot(for: source.key) != frozen)
+    }
+
+    @Test func fileMutationWitnessDoesNotDecodeOrAuthorizeCorruptRecords() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("ww-access-witness-\(UUID())")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let url = root.appendingPathComponent("access.json")
+        let store = FileDeviceAccessStore(fileURL: url)
+        let source = record()
+        try await store.save(source)
+        let original = try await store.mutationRevision()
+        try Data("invalid access records".utf8).write(to: url, options: .atomic)
+        #expect(try await store.mutationRevision() != original)
+        await #expect(throws: DeviceAccessStoreError.self) { try await store.record(for: source.key) }
+        try FileManager.default.removeItem(at: url)
+        await #expect(throws: DeviceAccessStoreError.self) { try await store.mutationRevision() }
+    }
+
     private func record() -> DeviceAccessRecord {
         .init(showID: ShowID(), sourceID: SourceID(), createdAt: Date(timeIntervalSince1970: 100))
     }

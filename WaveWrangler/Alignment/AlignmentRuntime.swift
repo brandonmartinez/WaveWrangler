@@ -1414,6 +1414,30 @@ actor AlignmentRuntime {
         try await verifyProductionSources(recipe: recipe, model: model)
     }
 
+    func productionAccessRevision() async throws -> DeviceAccessRevision {
+        guard let store = accessStore as? any DeviceAccessRevisionStore else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
+        return try await store.mutationRevision()
+    }
+
+    func productionAccessSnapshots(recipe: MixerRecipe, showID: ShowID) async throws -> [DeviceAccessSnapshot] {
+        guard let store = accessStore as? any DeviceAccessSnapshotStore else {
+            throw NativeSourcePreparationFailure.notAuthorized
+        }
+        let keys = Set((recipe.routes.map(\.source.source) + recipe.audioSources.map(\.source)).map {
+            DeviceAccessKey(showID: showID, sourceID: $0)
+        }).sorted { $0.description < $1.description }
+        var snapshots: [DeviceAccessSnapshot] = []
+        for key in keys {
+            guard let snapshot = try await store.snapshot(for: key) else {
+                throw NativeSourcePreparationFailure.notAuthorized
+            }
+            snapshots.append(snapshot)
+        }
+        return snapshots
+    }
+
     /// Revalidate the frozen recipe without reconstructing program geometry and routes. Those pure
     /// values are already bound to the exact processing inputs; access and source format are not.
     private func verifyProductionSources(recipe: MixerRecipe, model: ShowDocumentModel) async throws {
@@ -1462,17 +1486,17 @@ actor AlignmentRuntime {
         isCurrent: @escaping @Sendable () async throws -> Bool,
         sink: @escaping @Sendable (MixerPCMOutput) async throws -> Void
     ) async throws {
+        try await verifyProductionSources(recipe: recipe, model: model)
         try await withProductionConsumer(recipe: recipe, model: model) { [self] consumer in
-            try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { [self] in
-                guard try await isCurrent() else { return false }
-                try await verifyProductionSources(recipe: recipe, model: model)
-                return true
-            },
+            // productionPCM checks admitted sources across each window; the caller checks the
+            // frozen document here and fully revalidates sources before accepting the render.
+            try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: isCurrent,
                 input: { [self] frames in
                     try await productionPCM(recipe: recipe, model: model, frames: frames, consumer: consumer)
                 },
                 sink: sink)
         }
+        try await verifyProductionSources(recipe: recipe, model: model)
     }
 
     func dependentCounts(episode episodeID: EpisodeID) async -> DependentCounts {
