@@ -354,7 +354,7 @@ private struct LibraryEntryDetail: View {
     var body: some View {
         let rows = state.selectedRows
         if rows.count == 1, let row = rows.first {
-            if let show = state.episodeManagementState, show.store.model.show.id == row.showID {
+            if let show = state.episodeManagementState, show.store.residentModel.show.id == row.showID {
                 LibraryShowDetail(state: state, show: show)
             } else {
                 detail(row)

@@ -214,7 +214,7 @@ enum NativeHoldoutRunner {
             document.store.apply("Holdout Edit") { _ in next }
             expected = next
         }
-        try check(document.store.model == expected, "edits not applied")
+        try check(document.store.residentModel == expected, "edits not applied")
 
         // Library for the acknowledgment (P7: interrupted at its L6 boundary, before the derived index update).
         let libraryDir = dir.appending(path: "Library", directoryHint: .isDirectory)
@@ -316,7 +316,7 @@ enum NativeHoldoutRunner {
             default:
                 break
             }
-            try check(document.store.model == history[cursor], "shared model differs from the expected state after step \(step)")
+            try check(document.store.residentModel == history[cursor], "shared model differs from the expected state after step \(step)")
             if step == operations - 1 || rng.int(0...2) == 0 {
                 let error = await save(document, to: url, .saveOperation)
                 try check(error == nil, "save failed: \(String(describing: error))")

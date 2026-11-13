@@ -52,7 +52,7 @@ struct ManualCutsHostedTests {
         f.model.listening.selection = 1...2
         cleanup.applyManualCut()
         try #require(cleanup.error == nil)
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let gate = SaveWorkerGate()
         ShowDocument.debugBeforeSaveEncoding = { gate.pauseOnce() }
         defer {
@@ -74,16 +74,16 @@ struct ManualCutsHostedTests {
         let cutStarted = ContinuousClock.now
         cleanup.applyManualCut()
         let cutLatency = cutStarted.duration(to: .now)
-        let secondCut = f.document.store.model
+        let secondCut = f.document.store.residentModel
         let cutError = cleanup.error
         #expect(cutError == nil && secondCut != snapshot)
         #expect(cutLatency < .milliseconds(100), "A cut must not wait for the stalled autosave.")
         let undoStarted = ContinuousClock.now
         undo.undo()
-        let undone = f.document.store.model == snapshot
+        let undone = f.document.store.residentModel == snapshot
         undo.redo()
         let undoLatency = undoStarted.duration(to: .now)
-        let redone = f.document.store.model == secondCut
+        let redone = f.document.store.residentModel == secondCut
         #expect(undone && redone)
         #expect(undoLatency < .milliseconds(150), "Undo/Redo must not wait for the stalled autosave.")
         try await wait { f.model.hasUsableWaveformPresentation || f.model.lastError != nil }
@@ -94,7 +94,7 @@ struct ManualCutsHostedTests {
         gate.resume()
         try await saving.value
         let verified = f.document.verifiedModel
-        let current = f.document.store.model
+        let current = f.document.store.residentModel
         let dirty = f.document.isDocumentEdited
         let saved = f.document.status.saveStatus.state.isVerifiedOnDisk
         #expect(verified == snapshot && current == secondCut && dirty && !saved)
@@ -107,7 +107,7 @@ struct ManualCutsHostedTests {
             cleanupPrimaries: 1, durationSeconds: 600, extraSources: 2)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms && !f.model.isLoadingOverview && f.model.canApplyManualCuts }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
@@ -162,7 +162,7 @@ struct ManualCutsHostedTests {
         defer { f.close() }
         f.model.ensureWaveformOverview()
         try await wait { !f.model.isLoadingOverview && !f.model.waveformOverviewTracks.isEmpty }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let revision = try #require(episode.alignment?.acceptedRevision)
         f.model.waveformStartSeconds = 0
         f.model.waveformDurationSeconds = 6
@@ -216,8 +216,8 @@ struct ManualCutsHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 6)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let revision = try #require(episode.alignment?.acceptedRevision)
         let cuts = (0..<100).map {
             ManualEpisodeCut(alignmentRevision: revision,
@@ -264,10 +264,10 @@ struct ManualCutsHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 6)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let revision = try #require(episode.alignment?.acceptedRevision)
         let cut = ManualEpisodeCut(alignmentRevision: revision, startFrame: 48_000, endFrame: 96_000)
         let other = ManualEpisodeCut(alignmentRevision: revision, startFrame: 192_000, endFrame: 240_000)
@@ -284,7 +284,7 @@ struct ManualCutsHostedTests {
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
         try #require(!f.model.enabledSources.isEmpty)
-        let saved = f.document.store.model
+        let saved = f.document.store.residentModel
         for mode: ManualCutAudition in [.removed, .original] {
             f.model.selectProductionMix()
             cleanup.auditionManualCut(cut.id, mode: mode)
@@ -296,7 +296,7 @@ struct ManualCutsHostedTests {
             #expect(status == "Finished selection audition.")
             #expect(error == nil)
             #expect(cleanup.cutTimeline.removals == [other.startFrame..<other.endFrame])
-            #expect(f.document.store.model == saved)
+            #expect(f.document.store.residentModel == saved)
         }
     }
 
@@ -308,8 +308,8 @@ struct ManualCutsHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let original = f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let original = f.document.store.residentModel
         let originalBytes = try f.files.map { try Data(contentsOf: $0) }
         let episode = try #require(original.episode(f.model.episodeID))
         let sources = episode.sources.map(\.id)
@@ -334,8 +334,8 @@ struct ManualCutsHostedTests {
         #expect(alignmentPlayhead == expectedPlayhead && cleanupPlayhead == expectedPlayhead,
             "Use the configured jump-back interval, clamping at the timeline start.")
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        try await wait { f.document.verifiedModel == f.document.store.model }
-        let edited = f.document.store.model
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
+        let edited = f.document.store.residentModel
         let savedURL = try #require(f.document.fileURL)
         let savedMatches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(savedURL)).payload == edited
         #expect(savedMatches)
@@ -378,7 +378,7 @@ struct ManualCutsHostedTests {
         #expect(reopened.cutTimeline == cleanup.cutTimeline.cuts)
         cleanup.restoreManualCut(cut.id)
         try #require(cleanup.error == nil && cleanup.activeManualCuts.isEmpty)
-        let restored = try await f.runtime.sourceAuditions(model: f.document.store.model, episode: episode.id,
+        let restored = try await f.runtime.sourceAuditions(model: f.document.store.residentModel, episode: episode.id,
             sources: sources, outputFrames: 24_000..<48_000)
         for source in sources { #expect(restored[source]?.samples == before[source]?.samples) }
         #expect(try f.files.map { try Data(contentsOf: $0) } == originalBytes)
@@ -388,7 +388,7 @@ struct ManualCutsHostedTests {
     func speakersOnlyMutesNonPrimariesWithoutChangingPrimaryChoices(primaryCount: Int) async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: primaryCount, durationSeconds: 6)
         defer { f.close() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let episode = try #require(original.episode(f.model.episodeID))
         let primaries = f.model.primaryWaveformSources
         let nonPrimaries = Set(episode.sources.map(\.id)).subtracting(primaries)
@@ -403,7 +403,7 @@ struct ManualCutsHostedTests {
         for primary in primaries {
             #expect(playback.isAudible(primary, in: episode) == prior.isAudible(primary, in: episode))
         }
-        #expect(f.document.store.model == original, "Layout-triggered mutes are session state, not saved source edits")
+        #expect(f.document.store.residentModel == original, "Layout-triggered mutes are session state, not saved source edits")
         f.model.muteNonPrimaryTracks()
         #expect(f.model.listening.playback == playback)
         f.model.restoreListeningChoices()
@@ -414,10 +414,10 @@ struct ManualCutsHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let episode = try #require(original.episode(f.model.episodeID))
         let revision = try #require(episode.alignment?.acceptedRevision)
         let sources = episode.sources.map(\.id)
@@ -432,7 +432,7 @@ struct ManualCutsHostedTests {
         defer { cleanup.cancel() }
         await cleanup.refresh()
         cleanup.synchronizeCutTimeline()
-        try await wait { f.document.verifiedModel == f.document.store.model }
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
         try await wait { !f.model.isLoadingWaveforms }
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms }
@@ -448,7 +448,7 @@ struct ManualCutsHostedTests {
         #expect(f.model.cutTimeline == cleanup.cutTimeline.cuts)
         #expect(f.model.waveformPlayheadSeconds == 3.5)
         #expect(cleanup.listening.selection == 1...2)
-        #expect(f.document.store.model == saved && f.document.store.modelGeneration == generation && !undo.canUndo)
+        #expect(f.document.store.residentModel == saved && f.document.store.modelGeneration == generation && !undo.canUndo)
         try await wait { !f.model.isLoadingWaveforms }
         let revealed = try await f.runtime.sourceAuditions(model: saved, episode: episode.id,
             sources: sources, outputFrames: 24_000..<240_000, revealingCut: first.id)
@@ -479,12 +479,12 @@ struct ManualCutsHostedTests {
         #expect(cleanup.listening.selection == 1.01...1.99)
         undo.undo()
         cleanup.synchronizeCutTimeline()
-        #expect(f.document.store.model == saved && cleanup.expandedManualCut == first)
+        #expect(f.document.store.residentModel == saved && cleanup.expandedManualCut == first)
         undo.redo()
         cleanup.synchronizeCutTimeline()
-        let adjustedModel = f.document.store.model
+        let adjustedModel = f.document.store.residentModel
         cleanup.showManualCut(first.id, expanded: false)
-        #expect(f.document.store.model == adjustedModel && cleanup.expandedManualCut == nil)
+        #expect(f.document.store.residentModel == adjustedModel && cleanup.expandedManualCut == nil)
         #expect(cleanup.cutTimeline.cuts == (try adjustedModel.episodes[0].manualCutTimeline()))
         cleanup.showManualCut(first.id, expanded: true)
         undo.beginUndoGrouping()
@@ -498,7 +498,7 @@ struct ManualCutsHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture()
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
@@ -512,11 +512,11 @@ struct ManualCutsHostedTests {
         #expect(cleanup.error == nil && cleanup.activeManualCuts.count == 1)
         let cut = try #require(cleanup.activeManualCuts.first)
         let playhead = f.model.waveformPlayheadSeconds
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         cleanup.zoomToManualCut(cut.id)
         #expect(cleanup.error == nil && f.model.waveformDurationSeconds == 2)
         #expect(f.model.waveformStartSeconds == 0 && f.model.waveformPlayheadSeconds == playhead)
-        #expect(cleanup.expandedManualCut == nil && f.document.store.model == edited)
+        #expect(cleanup.expandedManualCut == nil && f.document.store.residentModel == edited)
         f.model.waveformOffsetMilliseconds += 1
         cleanup.listening.select(from: 2, to: 3, within: 0...40)
         #expect(!cleanup.canApplyManualCut, "An alignment preview is not an editable accepted timeline")
@@ -527,7 +527,7 @@ struct ManualCutsHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
@@ -538,7 +538,7 @@ struct ManualCutsHostedTests {
         cleanup.listening.select(from: 1, to: 2, within: 0...40)
         cleanup.applyManualCut()
         let cut = try #require(cleanup.activeManualCuts.first)
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         let originalBytes = try f.files.map { try Data(contentsOf: $0) }
         let undo = try #require(f.document.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
@@ -560,7 +560,7 @@ struct ManualCutsHostedTests {
                 #expect(f.model.waveformStartSeconds == cleanup.windowStart)
                 #expect(f.model.waveformDurationSeconds == cleanup.visibleDuration)
             }
-            #expect(f.document.store.model == edited && !undo.canUndo)
+            #expect(f.document.store.residentModel == edited && !undo.canUndo)
         }
         cleanup.zoomToManualCut(UUID())
         #expect(cleanup.error != nil, "A stale cut reports an error instead of silently changing the view")

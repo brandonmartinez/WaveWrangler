@@ -158,7 +158,7 @@ final class EpisodeCleanupModel {
         playhead = alignment.waveformPlayheadSeconds
     }
 
-    var episode: Episode? { state.store.model.episode(episodeID) }
+    var episode: Episode? { state.store.residentModel.episode(episodeID) }
     var canNavigate: Bool {
         state.store.document != nil
             && plan?.alignmentRevision != nil && plan?.lanes.isEmpty == false
@@ -233,7 +233,7 @@ final class EpisodeCleanupModel {
         plan = nil
         selectedWord = nil
         if !isPublishing, let workSnapshot,
-           !state.store.model.hasSameMediaInputs(as: workSnapshot, in: episodeID, includingWorkingRange: true) {
+           !state.store.residentModel.hasSameMediaInputs(as: workSnapshot, in: episodeID, includingWorkingRange: true) {
             cancel()
             message = "Source, assignment, timing or working-range inputs changed. Transcription was canceled; no partial result was saved."
         }
@@ -264,7 +264,7 @@ final class EpisodeCleanupModel {
         transcriptionSettings.refreshAvailability()
         let token = UUID()
         refreshGeneration = token
-        let snapshot = state.store.model
+        let snapshot = state.store.residentModel
         isRefreshing = true
         readinessError = nil
         defer { if refreshGeneration == token { isRefreshing = false } }
@@ -293,7 +293,7 @@ final class EpisodeCleanupModel {
             let prepared = try await runtime.prepareCleanup(model: snapshot, episode: episodeID, requireReady: false)
             try Task.checkCancellation()
             guard token == refreshGeneration,
-                  state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true) else { return }
+                  state.store.residentModel.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true) else { return }
             plan = prepared.plan
             identities = prepared.identities
             error = nil
@@ -312,7 +312,7 @@ final class EpisodeCleanupModel {
             return
         } catch {
             guard token == refreshGeneration,
-                  state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true) else { return }
+                  state.store.residentModel.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true) else { return }
             self.error = "Cleanup readiness could not be verified: \(Self.describe(error))"
             readinessError = self.error
             plan = nil
@@ -416,7 +416,7 @@ final class EpisodeCleanupModel {
             error = transcriptionReadinessMessage
             return
         }
-        let snapshot = state.store.model
+        let snapshot = state.store.residentModel
         Task {
             if episode?.cleanup?.transcripts.isEmpty == false || episode?.cleanup?.transcriptHistory?.isEmpty == false {
                 guard await Dialogs.confirm(
@@ -425,7 +425,7 @@ final class EpisodeCleanupModel {
                     confirmTitle: "Transcribe Tracks"
                 ) else { return }
             }
-            guard state.store.model == snapshot else {
+            guard state.store.residentModel == snapshot else {
                 error = "The episode changed while confirming transcription. Review current work and try again."
                 return
             }
@@ -470,7 +470,7 @@ final class EpisodeCleanupModel {
         let configuration: TranscriptionConfiguration
         do { configuration = try transcriptionSettings.captureConfiguration() }
         catch { self.error = Self.describe(error); return }
-        let snapshot = state.store.model
+        let snapshot = state.store.residentModel
         let token = UUID()
         generation = token
         workSnapshot = snapshot
@@ -497,7 +497,7 @@ final class EpisodeCleanupModel {
                 }
                 try Task.checkCancellation()
                 guard generation == token,
-                      state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true),
+                      state.store.residentModel.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true),
                       state.canEdit,
                       document === state.store.document else { throw CancellationError() }
                 guard try publishTranscripts(result, expecting: snapshot)
@@ -516,7 +516,7 @@ final class EpisodeCleanupModel {
 
     /// Called only after all speakers and live source/timing verification have finished.
     func publishTranscripts(_ result: [SpeakerTranscript], expecting snapshot: ShowDocumentModel) throws(DomainError) -> Bool {
-        let live = state.store.model
+        let live = state.store.residentModel
         guard live.hasSameMediaInputs(as: snapshot, in: episodeID, includingWorkingRange: true),
               live.episode(episodeID)?.cleanup?.transcripts == snapshot.episode(episodeID)?.cleanup?.transcripts,
               live.episode(episodeID)?.cleanup?.transcriptHistory == snapshot.episode(episodeID)?.cleanup?.transcriptHistory
@@ -624,7 +624,7 @@ final class EpisodeCleanupModel {
         let token = UUID()
         if overview { overviewGeneration = token; isLoadingOverview = true }
         else { waveformGeneration = token; isLoadingWaveforms = true }
-        let snapshot = state.store.model
+        let snapshot = state.store.residentModel
         let revealingCut = listening.expandedManualCutID
         let cuts = cutTimeline.cuts
         let task = Task { [weak self] in
@@ -665,7 +665,7 @@ final class EpisodeCleanupModel {
                 }
                 try Task.checkCancellation()
                 guard (overview ? overviewGeneration : waveformGeneration) == token,
-                      state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID) else { return }
+                      state.store.residentModel.hasSameMediaInputs(as: snapshot, in: episodeID) else { return }
                 if overview {
                     overviewStrokes = projected
                     overviewIndices = indices
@@ -795,7 +795,7 @@ final class EpisodeCleanupModel {
             return
         }
         let cycling = listening.cycleEnabled && interval == listening.cycleRange
-        let snapshot = state.store.model
+        let snapshot = state.store.residentModel
         let token = UUID()
         let revealingCut = listening.expandedManualCutID
         playbackGeneration = token
@@ -818,7 +818,7 @@ final class EpisodeCleanupModel {
                     while started, scheduledDuration - elapsedPlayback >= 5 {
                         try await Task.sleep(for: .milliseconds(50))
                     }
-                    guard playbackGeneration == token, state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID),
+                    guard playbackGeneration == token, state.store.residentModel.hasSameMediaInputs(as: snapshot, in: episodeID),
                           document === state.store.document else { throw CancellationError() }
                     try enqueue(audio, first: first)
                     first = false
@@ -841,7 +841,7 @@ final class EpisodeCleanupModel {
                 playhead = applyingCuts ? end : cutTimeline.editedTime(forAlignedTime: end)
                 stopPlayback(updatePlayhead: false)
                 if loop, (cycling ? listening.cycleEnabled && listening.cycleRange == interval : loopsFillerAudition),
-                   state.store.model.hasSameMediaInputs(as: snapshot, in: episodeID) {
+                   state.store.residentModel.hasSameMediaInputs(as: snapshot, in: episodeID) {
                     play(interval: start...end, loop: true, applyingCuts: applyingCuts)
                 } else {
                     transportMessage = interval == nil

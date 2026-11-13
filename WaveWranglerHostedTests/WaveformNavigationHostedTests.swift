@@ -12,7 +12,7 @@ struct WaveformNavigationHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 4)
         defer { f.close() }
         let store = f.document.store
-        let episode = try #require(store.model.episode(f.model.episodeID))
+        let episode = try #require(store.residentModel.episode(f.model.episodeID))
         let reference = try #require(episode.speakerAssignments.first?.primary)
         let track = try #require(f.model.waveformTracks.first { $0.id == reference.sourceID })
         let snapshot = f.model.waveformTilesVersion
@@ -63,7 +63,7 @@ struct WaveformNavigationHostedTests {
     @Test func zoomReturnsToThePlayheadAfterPanningWithoutSeekingOrEditing() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         try #require(f.model.previewWaveformPlayhead(to: 2))
         f.model.waveformStartSeconds = 18
@@ -74,7 +74,7 @@ struct WaveformNavigationHostedTests {
         try #require(f.model.zoomWaveformViewport(magnification: 0.5))
         #expect(f.model.waveformStartSeconds == -2 && f.model.waveformDurationSeconds == 8)
         #expect(f.model.waveformPlayheadSeconds == 2)
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
         #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
     }
 
@@ -198,8 +198,8 @@ struct WaveformNavigationHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let prepared = try await f.runtime.prepareCleanup(model: f.document.store.model, episode: f.model.episodeID)
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let prepared = try await f.runtime.prepareCleanup(model: f.document.store.residentModel, episode: f.model.episodeID)
         let lane = try #require(prepared.plan.lanes.first)
         let identity = try #require(prepared.identities[lane.primary.sourceID])
         let revision = try #require(prepared.plan.alignmentRevision)
@@ -217,7 +217,7 @@ struct WaveformNavigationHostedTests {
                                         in: f.model.episodeID)
         })
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        try await wait { f.document.verifiedModel == f.document.store.model }
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
         f.model.waveformStartSeconds = 18
         f.model.waveformDurationSeconds = 5
         try #require(f.model.previewWaveformPlayhead(to: 19))
@@ -260,7 +260,7 @@ struct WaveformNavigationHostedTests {
         #expect(f.model.waveformStartSeconds == 2 && f.model.waveformDurationSeconds == 5,
                 "Explicit reveal pans only far enough to include the chosen marker, without changing zoom")
         cleanup.selectFiller(edited.id, reveal: false, movePlayhead: false)
-        let beforeZoom = f.document.store.model
+        let beforeZoom = f.document.store.residentModel
         let playhead = f.model.waveformPlayheadSeconds
         let bounds = try #require(cleanup.selectedFiller?.bounds)
         cleanup.zoomToFiller(edited.id)
@@ -270,7 +270,7 @@ struct WaveformNavigationHostedTests {
         #expect(f.model.waveformStartSeconds + f.model.waveformDurationSeconds >= bounds.alignedEnd)
         #expect(f.model.waveformDurationSeconds == 0.5)
         #expect(f.model.waveformPlayheadSeconds == playhead)
-        #expect(f.document.store.model == beforeZoom && cleanup.selectedFillerID == edited.id)
+        #expect(f.document.store.residentModel == beforeZoom && cleanup.selectedFillerID == edited.id)
         #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
     }
 

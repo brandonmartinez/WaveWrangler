@@ -21,6 +21,13 @@ extension Probe {
                 throw PersistenceError.malformed("Storage must be package or flat")
             }
             let flatCopy = args["flat-copy"].map { URL(fileURLWithPath: $0) }
+            let indexedCopy = args["indexed-copy"].map { URL(fileURLWithPath: $0) }
+            if let indexedCopy {
+                guard storage == "package", indexedCopy != file, indexedCopy != flatCopy,
+                      !LocalFileOperations().exists(indexedCopy) else {
+                    throw PersistenceError.malformed("Indexed comparison requires a new, distinct path and package primary")
+                }
+            }
             if let flatCopy {
                 guard storage == "package", flatCopy != file, !LocalFileOperations().exists(flatCopy) else {
                     throw PersistenceError.malformed("Flat comparison requires a new, distinct path and package primary")
@@ -36,11 +43,14 @@ extension Probe {
                 try LocalFileOperations().writeNew(
                     JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 1), to: flatCopy)
             }
+            if let indexedCopy {
+                try LocalFileOperations().writeNew(ShowCatalogCoder().encode(ShowCatalog(model), revision: 1), to: indexedCopy)
+            }
             emit(["result": "generated", "storage": storage, "episodes": count,
                 "currentWords": count * words, "historicalWords": count * words,
                 "currentTranscripts": count, "historicalTranscripts": count,
                 "artworkBytes": artwork.count, "artworkImages": 1, "snapshotBytes": bytes.count,
-                "identicalModelFlatCopy": flatCopy != nil])
+                "identicalModelFlatCopy": flatCopy != nil, "identicalModelIndexedCopy": indexedCopy != nil])
             return 0
         } catch {
             emit(["result": "generationFailed", "detail": "\(error)"])
@@ -51,9 +61,11 @@ extension Probe {
     func catalogMemory() -> Int32 {
         do {
             let storage = args["storage"] ?? "package"
+            if storage == "indexed" { return try indexedCatalogMemory() }
             guard storage == "package" || storage == "flat" else {
                 throw PersistenceError.malformed("Storage must be package or flat")
             }
+
             let baseline = try catalogMemorySample()
             let start = ContinuousClock.now
             let (document, fingerprint, snapshotBytes) = try autoreleasepool {
@@ -101,6 +113,62 @@ extension Probe {
             emit(["result": "measurementFailed", "detail": "\(error)"])
             return 1
         }
+    }
+
+    private func indexedCatalogMemory() throws -> Int32 {
+        let baseline = try catalogMemorySample()
+        let start = ContinuousClock.now
+        let (document, fingerprint, snapshotBytes) = try autoreleasepool {
+            let bytes = try LocalFileOperations().read(file)
+            return (try ShowCatalogCoder().decode(bytes), RevisionFingerprint(of: bytes), bytes.count)
+        }
+        let openSeconds = seconds(.now - start)
+        let catalog = document.payload
+        var result: [String: Any] = ["result": "measured", "scope": "headlessIndexedCatalogAndVerifiedPublisher",
+            "storage": "indexed", "baseline": baseline, "openRetained": try catalogMemorySample(),
+            "openSeconds": openSeconds, "snapshotBytes": snapshotBytes, "episodes": catalog.episodes.count,
+            "residentEpisodes": 0, "currentWordsLoaded": 0, "historicalWordsLoaded": 0,
+            "artworkBytes": catalog.header.show.publication?.artwork?.image?.data.count ?? 0,
+            "peakScope": "getrusage process-lifetime maximum RSS, not phase-local or physical-footprint peak"]
+        var loaded: Episode?
+        if args["episode"] == "1" {
+            let episodeStart = ContinuousClock.now
+            guard let stored = catalog.episodes.first else { throw PersistenceError.malformed("Empty catalog fixture") }
+            loaded = try autoreleasepool { try stored.load(in: catalog.header) }
+            result["episodeOpenSeconds"] = seconds(.now - episodeStart)
+            result["episodeRetained"] = try catalogMemorySample()
+            result["residentEpisodes"] = 1
+            result["currentWordsLoaded"] = loaded?.cleanup?.transcripts.reduce(0) { $0 + $1.words.count } ?? 0
+            result["historicalWordsLoaded"] = loaded?.cleanup?.transcriptHistory?.reduce(0) { $0 + $1.words.count } ?? 0
+        }
+        if args["save"] == "1" {
+            guard let recovery, var edited = loaded else {
+                throw PersistenceError.malformed("Indexed save requires an explicitly loaded episode and recovery")
+            }
+            let saveStart = ContinuousClock.now
+            try autoreleasepool {
+                edited.title = "Single episode memory save \(document.revision + 1)"
+                let draft = ShowCatalogDraft(header: catalog.header,
+                    episodes: [.resident(edited)] + catalog.episodes.dropFirst().map { .stored($0) }, archiveOwner: catalog)
+                let candidate = try draft.resolved()
+                let receipt = try DocumentPublisher(coder: ShowCatalogCoder(), recovery: recovery).publish(
+                    candidate, revision: document.revision + 1, key: .show(catalog.header.show.id), to: file,
+                    target: .inPlace(expectedBase: fingerprint))
+                let saved = try ShowCatalogCoder().decode(LocalFileOperations().read(receipt.url)).payload
+                guard Array(saved.episodes.dropFirst()) == Array(catalog.episodes.dropFirst()),
+                      try saved.episodes.first?.load(in: saved.header) == edited else {
+                    throw PersistenceError.malformed("Single-episode save changed unvisited data")
+                }
+                result["unvisitedStoredComponentsPreserved"] = true
+            }
+            result["saveSeconds"] = seconds(.now - saveStart)
+            result["saveRetained"] = try catalogMemorySample()
+        }
+        try withExtendedLifetime((document, loaded)) {
+            result["final"] = try catalogMemorySample()
+            emit(result)
+        }
+        return 0
     }
 
     private func catalogMemorySample() throws -> [String: UInt64] {

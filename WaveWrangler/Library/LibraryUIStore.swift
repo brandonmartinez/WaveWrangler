@@ -2,6 +2,7 @@ import AppKit
 import Foundation
 import Observation
 import WWCore
+import struct WWPersistence.ShowLastOpenSummary
 import WWOrganizer
 
 /// Main-actor model behind the Library window. Library edits (collections, order, removal) use the
@@ -194,9 +195,10 @@ final class LibraryUIStore {
     /// the library has loaded and is editable.
     /// `hasUnsavedChanges`: the window's document has edits not yet coherently saved, so its in-memory
     /// title must not become the library's title (P6); only recents are updated then.
-    func showDidOpen(id: ShowID, model: ShowDocumentModel, fileURL: URL?, hasUnsavedChanges: Bool) {
+    func showDidOpen(id: ShowID, model: ShowDocumentModel, fileURL: URL?, hasUnsavedChanges: Bool,
+                     catalogSummary: ShowLastOpenSummary? = nil) {
         // The location is always recorded; the summary only from coherently saved content.
-        services.entries.noteOpenShow(id: id, model: hasUnsavedChanges ? nil : model, fileURL: fileURL)
+        services.entries.noteOpenShow(id: id, summary: hasUnsavedChanges ? nil : catalogSummary ?? PersistentLibraryEntryObserver.summary(model), fileURL: fileURL)
         services.entries.noteOpened(id: id)
         let item = LibrarySession.Bookkeeping.opened(
             id, confirmedTitle: hasUnsavedChanges ? nil : model.show.title, provisionalTitle: model.show.title
@@ -205,8 +207,9 @@ final class LibraryUIStore {
     }
 
     /// Called only after a coherent save (D1) so the library never runs ahead of the show on disk (P6).
-    func showDidSaveCoherently(id: ShowID, model: ShowDocumentModel, fileURL: URL?) {
-        services.entries.noteOpenShow(id: id, model: model, fileURL: fileURL)
+    func showDidSaveCoherently(id: ShowID, model: ShowDocumentModel, fileURL: URL?,
+                             catalogSummary: ShowLastOpenSummary? = nil) {
+        services.entries.noteOpenShow(id: id, summary: catalogSummary ?? PersistentLibraryEntryObserver.summary(model), fileURL: fileURL)
         if session.record(.confirmedTitle(id, title: model.show.title), allowsEdits: allowsEdits) { persistFlushed() }
     }
 

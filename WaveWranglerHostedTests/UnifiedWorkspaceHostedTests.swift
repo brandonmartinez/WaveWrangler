@@ -29,19 +29,19 @@ struct UnifiedWorkspaceHostedTests {
         f.model.placeGroupsAtSourceTime()
         try await wait {
             !f.model.isWorking && !f.model.isLoadingWaveforms
-                && f.document.verifiedModel == f.document.store.model
+                && f.document.verifiedModel == f.document.store.residentModel
         }
         f.model.synchronizeWaveforms()
         try await wait { !f.model.isLoadingWaveforms }
         try #require(f.model.previewWaveformPlayhead(to: 2))
         try #require(f.model.previewWaveformWindow(start: 1))
-        let speaker = try #require(f.document.store.model.speakers.first?.id)
+        let speaker = try #require(f.document.store.residentModel.speakers.first?.id)
         let originals = try f.files.map { try Data(contentsOf: $0) }
         try #require(f.document.store.apply("Change speaker appearance") { model throws(DomainError) in
             try model.settingSpeakerAppearance(.init(color: .teal), for: speaker, in: f.model.episodeID)
         })
         f.document.updateChangeCount(.changeDone)
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         try #require(!f.document.status.saveStatus.state.isVerifiedOnDisk)
         #expect(f.model.previewWaveformPlayhead(to: 3))
         #expect(f.model.previewWaveformWindow(start: 2),
@@ -58,14 +58,14 @@ struct UnifiedWorkspaceHostedTests {
         #expect(!f.model.previewWaveformPlayhead(to: .nan))
         #expect(!f.model.previewWaveformWindow(start: .infinity))
         #expect(f.model.waveformPlayheadSeconds == 5 && f.model.waveformStartSeconds == 4)
-        #expect(f.document.store.model == edited)
+        #expect(f.document.store.residentModel == edited)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
     @Test func alignmentPublicationPreservesLiveAppearanceAndRefusesChangedLocks() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let report = try await f.runtime.prepareManual(model: before, episode: f.model.episodeID)
         let epoch = try #require(report.plan.epochs.first { $0.group != report.plan.reference?.group })
         let accepted = try await f.runtime.accept(model: before, episode: f.model.episodeID,
@@ -75,8 +75,8 @@ struct UnifiedWorkspaceHostedTests {
             try model.settingSpeakerAppearance(.init(color: .teal), for: speaker, in: f.model.episodeID)
         })
         #expect(f.model.publishAlignment(accepted, expecting: before, actionName: "Accept timing"))
-        try await wait { f.document.verifiedModel == f.document.store.model }
-        #expect(f.document.store.model.speakerAppearance(speaker, in: f.model.episodeID)?.color == .teal)
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
+        #expect(f.document.store.residentModel.speakerAppearance(speaker, in: f.model.episodeID)?.color == .teal)
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
         f.model.selectWaveform(target)
         #expect(f.model.positionIsLocked(target.group))
@@ -85,20 +85,20 @@ struct UnifiedWorkspaceHostedTests {
         f.model.startNewEpochAtSelectedAnchor()
         #expect(f.model.lastError?.contains("before splitting") == true && !f.model.isWorking)
         f.model.setPositionLocked(false, group: target.group)
-        let unlocked = f.document.store.model
+        let unlocked = f.document.store.residentModel
         let correction = try await f.runtime.shiftGroup(model: unlocked, episode: f.model.episodeID,
                                                        group: target.group, microseconds: 1_000)
         f.model.setPositionLocked(true, group: target.group)
-        let relocked = f.document.store.model
+        let relocked = f.document.store.residentModel
         #expect(!f.model.publishAlignment(correction, expecting: unlocked, actionName: "Late correction"))
-        #expect(f.document.store.model == relocked)
+        #expect(f.document.store.residentModel == relocked)
     }
 
     @Test func nativeWorkspaceHasOneTransportAndKeepsCachedAudioDuringNavigation() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let state = ShowWindowState(store: f.document.store, episodeID: f.model.episodeID)
         let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
         cleanup.connectWorkspace(to: f.model)
@@ -116,7 +116,7 @@ struct UnifiedWorkspaceHostedTests {
         #expect(f.model.waveformStartSeconds == cleanup.windowStart && f.model.waveformDurationSeconds == 1,
                 "Inspector and dense-marker navigation use the main waveform transform.")
         try host.capture("Unified all-source workspace with protected reference and native Solo Mute")
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let originalBytes = try f.files.map { try Data(contentsOf: $0) }
         f.model.listening.select(from: 1, to: 1.5, within: f.model.waveformViewingBounds)
         f.model.listening.cycleRange = 2...2.3
@@ -151,7 +151,7 @@ struct UnifiedWorkspaceHostedTests {
         cleanup.stop()
         #expect(cleanup.playhead == f.model.waveformStartSeconds
                 && f.model.waveformPlayheadSeconds == cleanup.playhead)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         #expect(cleanup.windowStrokes.isEmpty && cleanup.overviewStrokes.isEmpty,
                 "The integrated transcript service does not decode a competing timeline.")
         #expect(try f.files.map { try Data(contentsOf: $0) } == originalBytes)

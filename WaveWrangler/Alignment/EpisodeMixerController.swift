@@ -61,7 +61,7 @@ final class EpisodeMixerController {
     }
 
     func prepareForEditing() async throws {
-        guard let model = document?.store.model, let episode = model.episode(episodeID) else {
+        guard let model = document?.store.residentModel, let episode = model.episode(episodeID) else {
             throw MixerFailure.staleDependencies
         }
         let composition = try await runtime.programComposition(model: model, episode: episodeID)
@@ -142,7 +142,7 @@ final class EpisodeMixerController {
         editorPolling = nil
         state = .loading
         guard let document else { throw MixerFailure.staleDependencies }
-        let model = document.store.model
+        let model = document.store.residentModel
         do {
             guard document.verifiedModel?.hasSameMediaInputs(as: model, in: episodeID) == true else {
                 throw MixerFailure.staleDependencies
@@ -157,7 +157,7 @@ final class EpisodeMixerController {
             startup?.record(.processor, since: processorStarted)
             try Task.checkCancellation()
             guard self.generation == generation,
-                  document.store.model.hasSameProcessingInputs(as: model, in: episodeID) else {
+                  document.store.residentModel.hasSameProcessingInputs(as: model, in: episodeID) else {
                 throw MixerFailure.staleDependencies
             }
             processor = loaded
@@ -232,7 +232,7 @@ final class EpisodeMixerController {
     }
 
     private func liveControls() throws -> MixerLiveControls {
-        guard let processor, let episode = document?.store.model.episode(episodeID) else {
+        guard let processor, let episode = document?.store.residentModel.episode(episodeID) else {
             throw MixerFailure.staleDependencies
         }
         let mix = episode.mix ?? EpisodeMixState()
@@ -478,7 +478,7 @@ final class EpisodeMixerController {
                                        coalescing key: String?, authoritative: Bool = false) throws {
         try validateCurrent()
         guard let document else { throw MixerFailure.staleDependencies }
-        guard let episode = document.store.model.episode(episodeID) else { throw MixerFailure.staleDependencies }
+        guard let episode = document.store.residentModel.episode(episodeID) else { throw MixerFailure.staleDependencies }
         var mix = episode.mix ?? EpisodeMixState()
         let originalMix = mix
         let expectedIDs = Set((mix.speakers.flatMap(\.inserts)
@@ -615,7 +615,7 @@ final class EpisodeMixerController {
     private func currentDependencyFailure() -> String? {
         guard let document, !document.mixerTransactions.isClosed,
               let snapshot, let recipe = processor?.recipe, let expectedMix,
-              let episode = document.store.model.episode(episodeID) else {
+              let episode = document.store.residentModel.episode(episodeID) else {
             return "the originating document, episode, or prepared instance is unavailable"
         }
         guard EpisodeProcessingInputs(episode).hasSameProgramInputs(as: recipe.dependencies) else {

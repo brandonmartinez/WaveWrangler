@@ -25,9 +25,9 @@ struct FlattenedPlaybackHostedTests {
         f.model.placeGroupsAtSourceTime()
         try await wait(f.model.lastError ?? f.model.waveformMessage) {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.document.verifiedModel == f.document.store.model
+                && f.document.verifiedModel == f.document.store.residentModel
         }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let track = try #require(f.model.waveformTracks.first { $0.id == f.target })
         let reference = try #require(episode.speakerAssignments.first?.primary?.sourceID)
         var aligned = 0.0
@@ -48,7 +48,7 @@ struct FlattenedPlaybackHostedTests {
         let index = try #require(timing.maps.firstIndex { $0.revision == timing.acceptedRevision })
         timing.maps[index].sourceCorrections = [correction]
         let changed = timing
-        let episodeIndex = try #require(f.document.store.model.episodes.firstIndex { $0.id == episode.id })
+        let episodeIndex = try #require(f.document.store.residentModel.episodes.firstIndex { $0.id == episode.id })
         try #require(f.document.store.apply("Install Synthetic Adaptive Timing") { model throws(DomainError) in
             var result = model
             result.episodes[episodeIndex].alignment = changed
@@ -58,7 +58,7 @@ struct FlattenedPlaybackHostedTests {
         f.model.loadWaveforms(keepingSnapshot: true)
         try await wait(f.model.lastError ?? f.model.waveformMessage) {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.document.verifiedModel == f.document.store.model
+                && f.document.verifiedModel == f.document.store.residentModel
         }
         return f
     }
@@ -225,7 +225,7 @@ struct FlattenedPlaybackHostedTests {
         let f = try await fixture()
         defer { f.close() }
         let originals = try f.files.map { try Data(contentsOf: $0) }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let words = (0..<40_000).map { index in
             TranscriptWord(text: "synthetic", alignedStart: Double(index) / 10, alignedEnd: Double(index) / 10 + 0.08)
         }
@@ -250,7 +250,7 @@ struct FlattenedPlaybackHostedTests {
         try await wait(f.model.lastError ?? f.model.auditionLabel) { !f.model.canStopAudition || f.model.lastError != nil }
         #expect(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         #expect(f.model.waveformPlayheadSeconds == end)
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -268,13 +268,13 @@ struct FlattenedPlaybackHostedTests {
         let changed = editor.setBoundaryTimes(range: range, speakerIn: 0.5, speakerOut: 4)
         try #require(changed, "\(editor.error ?? "")")
         editor.refresh()
-        let saved = f.document.store.model
+        let saved = f.document.store.residentModel
         f.document.undoManager?.undo()
         editor.refresh()
         #expect(editor.episode?.productionRange == nil)
         f.document.undoManager?.redo()
         editor.refresh()
-        #expect(f.document.store.model == saved)
+        #expect(f.document.store.residentModel == saved)
         try await MixerHostedTests().save(f.document)
         f.model.selectProductionMix()
         f.model.seekDisplayClock("19", clock: .episode)
@@ -292,7 +292,7 @@ struct FlattenedPlaybackHostedTests {
     @Test func sourceRevalidationDoesNotRebuildTheFrozenProductionRecipe() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let model = f.document.store.model
+        let model = f.document.store.residentModel
         let episode = f.model.episodeID
         let recipe = try await f.runtime.mixerRecipe(model: model, episode: episode, programFrames: 0..<192_000)
         let constructions = await f.runtime.productionRecipeConstructionCount
@@ -380,7 +380,7 @@ struct FlattenedPlaybackHostedTests {
         let f = try await fixture(sourceIO: io)
         defer { f.close() }
         defer { io.release.signal() }
-        let model = f.document.store.model
+        let model = f.document.store.residentModel
         let recipe = try await f.runtime.mixerRecipe(model: model, episode: f.model.episodeID,
                                                    programFrames: 0..<192_000)
         io.stage.store(1, ordering: .relaxed)

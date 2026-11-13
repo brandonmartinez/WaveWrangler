@@ -24,7 +24,7 @@ final class AutoInputGainController {
     func refusal(for key: Key) -> String? {
         guard let store, store.canEdit, store.document != nil else { return "Open an editable show first." }
         guard store.document?.mixerTransactions.isBusy != true else { return "Wait for the mixer transaction to finish." }
-        guard let episode = store.model.episode(key.episode),
+        guard let episode = store.residentModel.episode(key.episode),
               let assignment = episode.assignment(for: key.speaker),
               assignment.primaryConfirmation == .userConfirmed,
               let primary = assignment.primary, let channel = primary.channel.value, channel >= 0,
@@ -49,7 +49,7 @@ final class AutoInputGainController {
         }
         guard let store, let document = store.document else { return }
         let generation = store.modelGeneration
-        let model = store.model
+        let model = store.residentModel
         let id = UUID()
         request = id
         active = key
@@ -80,7 +80,7 @@ final class AutoInputGainController {
                         await self?.updateProgress(value, request: id)
                     })
                 try self.validate(key, request: id, generation: generation, document: document)
-                guard let primary = store.model.episode(key.episode)?.assignment(for: key.speaker)?.primary else {
+                guard let primary = store.residentModel.episode(key.episode)?.assignment(for: key.speaker)?.primary else {
                     throw GainApplicationFailure.changed
                 }
                 store.endCoalescing()

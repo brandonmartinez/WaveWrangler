@@ -12,12 +12,12 @@ struct PublicationInspector: View {
     @State private var importing = false
     @State private var error: String?
 
-    private var episode: Episode? { episodeID.flatMap { store.model.episode($0) } }
+    private var episode: Episode? { episodeID.flatMap { store.residentModel.episode($0) } }
     private var metadata: PublicationMetadata {
         if episodeID != nil { return episode?.publication?.metadata ?? .init() }
-        return store.model.show.publication ?? .init()
+        return store.residentModel.show.publication ?? .init()
     }
-    private var defaults: PublicationMetadata { store.model.show.publication ?? .init() }
+    private var defaults: PublicationMetadata { store.residentModel.show.publication ?? .init() }
     private var effective: PublicationMetadata {
         episodeID == nil ? metadata : metadata.inheriting(from: defaults)
     }
@@ -309,7 +309,7 @@ private struct EpisodePublicationDetails: View {
     @State private var seasonError: String?
     @FocusState private var seasonFocused: Bool
 
-    private var episode: Episode? { episodeID.flatMap { store.model.episode($0) } }
+    private var episode: Episode? { episodeID.flatMap { store.residentModel.episode($0) } }
 
     var body: some View {
         if let episode {

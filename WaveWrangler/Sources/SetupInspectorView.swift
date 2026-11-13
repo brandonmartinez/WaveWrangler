@@ -167,7 +167,7 @@ private struct SourceInspector: View {
             }
 
             roleRow
-            if let definitions = model.store.model.show.profile?.recorderDefinitions, !definitions.isEmpty {
+            if let definitions = model.store.residentModel.show.profile?.recorderDefinitions, !definitions.isEmpty {
                 Menu("Apply saved source definition") {
                     ForEach(definitions) { definition in
                         Section(definition.name) {
@@ -210,7 +210,7 @@ private struct SourceInspector: View {
         .setupFont(.body)
         .onAppear(perform: resetDrafts)
         .onChange(of: source) { resetDrafts() }
-        .onChange(of: model.store.model.episode(model.episodeID)?.epochNumber(of: source.id)) { resetDrafts() }
+        .onChange(of: model.store.residentModel.episode(model.episodeID)?.epochNumber(of: source.id)) { resetDrafts() }
         .onChange(of: model.inspectorFocusRequest, initial: true) {
             // Also on first appearance: Return may have just opened the collapsed details.
             if model.consumeInspectorFocus(), let field = firstFocusableField { Task { @MainActor in focus = field } }
@@ -547,7 +547,7 @@ private struct GroupInspector: View {
             Text(count == 1 ? "1 source isn't in a recorder group." : "\(count) sources aren't in a recorder group.")
                 .setupFont(.body)
             Button("New Recorder Group…") { model.sheet = .name(NameSheetContext(kind: .newGroup, initial: "")) }
-            if let definitions = model.store.model.show.profile?.recorderDefinitions, !definitions.isEmpty {
+            if let definitions = model.store.residentModel.show.profile?.recorderDefinitions, !definitions.isEmpty {
                 Menu("Add saved recorder") {
                     ForEach(definitions) { definition in
                         Button(definition.name) {
@@ -639,7 +639,7 @@ private struct SpeakerInspector: View {
         EmptyView()
             .onAppear { nameDraft = model.speakerName(speakerID) }
             .onChange(of: speakerID) { nameDraft = model.speakerName(speakerID) }
-            .onChange(of: model.store.model.speaker(speakerID)?.name) { nameDraft = model.speakerName(speakerID) }
+            .onChange(of: model.store.residentModel.speaker(speakerID)?.name) { nameDraft = model.speakerName(speakerID) }
             .onChange(of: model.inspectorFocusRequest, initial: true) {
                 if model.consumeInspectorFocus() { Task { @MainActor in nameFocused = true } }
             }

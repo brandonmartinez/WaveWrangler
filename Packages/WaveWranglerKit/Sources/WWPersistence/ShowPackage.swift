@@ -1,4 +1,5 @@
 import Compression
+import CryptoKit
 import Darwin
 import Foundation
 import WWCore
@@ -8,7 +9,7 @@ import WWCore
 public enum ShowPackage {
     public static let manifestName = "Manifest.json"
     public static let componentsName = "Components"
-    public static let version = 1
+    public static let version = 2
     public static let typeIdentifier = "com.brandonmartinez.wavewrangler.show-package"
     private static let identifier = typeIdentifier
     private static let magic = Data("WWPKG001".utf8)
@@ -16,13 +17,13 @@ public enum ShowPackage {
     private static let snapshotLimit = 512 * 1_024 * 1_024
     private static let entryLimit = 20_002
 
-    private struct Header: Codable {
+    struct Header: Codable {
         var format: String
         var schemaVersion: Int
         var modelSchemaVersion: Int
     }
 
-    private struct Component: Codable {
+    struct Component: Codable, Sendable, Equatable {
         var digest: String
         var byteCount: Int
         var encoding: String
@@ -36,7 +37,7 @@ public enum ShowPackage {
 
     private struct Manifest: Codable {
         var format = identifier
-        var schemaVersion = version
+        var schemaVersion = 1
         var modelSchemaVersion = SchemaVersion.show
         var revision: Int
         var publicationID: UUID
@@ -46,7 +47,7 @@ public enum ShowPackage {
         var episodes: [EpisodeEntry]
     }
 
-    private struct Snapshot {
+    struct Snapshot {
         var manifest: Data
         var files: [String: Data]
     }
@@ -54,7 +55,7 @@ public enum ShowPackage {
     public static func isSnapshot(_ data: Data) -> Bool { data.starts(with: magic) }
 
     /// Reads the frozen version header before any component or version-specific manifest fields.
-    private static func checkHeader(_ data: Data) throws {
+    static func checkHeader(_ data: Data) throws {
         try StrictJSON.validate(data)
         let header = try JSONDecoder().decode(Header.self, from: data)
         guard header.format == identifier else {
@@ -66,7 +67,7 @@ public enum ShowPackage {
         guard header.modelSchemaVersion <= SchemaVersion.show else {
             throw PersistenceError.unknownNewerSchema(found: header.modelSchemaVersion, supported: SchemaVersion.show)
         }
-        guard header.schemaVersion == version, header.modelSchemaVersion == SchemaVersion.show else {
+        guard (1...version).contains(header.schemaVersion), header.modelSchemaVersion == SchemaVersion.show else {
             throw PersistenceError.malformed("Unsupported package version")
         }
     }
@@ -106,13 +107,13 @@ public enum ShowPackage {
         return try frame(Snapshot(manifest: JSONEnvelopeCoder<ShowDocumentModel>.makeEncoder().encode(manifest), files: files))
     }
 
-    private static func detachArtwork(_ metadata: inout PublicationMetadata?, files: inout [String: Data]) throws -> Component? {
+    static func detachArtwork(_ metadata: inout PublicationMetadata?, files: inout [String: Data]) throws -> Component? {
         guard let artwork = metadata?.artwork?.image else { return nil }
         metadata?.artwork = nil
         return try component(artwork.data, compress: false, files: &files)
     }
 
-    private static func component(_ data: Data, compress: Bool = true, files: inout [String: Data]) throws -> Component {
+    static func component(_ data: Data, compress: Bool = true, files: inout [String: Data]) throws -> Component {
         guard data.count <= componentLimit else { throw PersistenceError.encodingFailed("Package component exceeds 64 MiB") }
         var stored = data
         var encoding = "raw"
@@ -134,7 +135,11 @@ public enum ShowPackage {
         return Component(digest: digest, byteCount: data.count, encoding: encoding)
     }
 
-    static func canonicalEnvelope(_ data: Data) throws -> Data {
+    static func decode(_ data: Data) throws -> DecodedDocument<ShowDocumentModel> {
+        if try storageVersion(of: data) == 2 {
+            let document = try ShowCatalogCoder().decode(data)
+            return DecodedDocument(payload: try document.payload.materializedModel(), publication: document.publication)
+        }
         let snapshot = try unframe(data)
         try checkHeader(snapshot.manifest)
         let decoder = JSONEnvelopeCoder<ShowDocumentModel>.makeDecoder()
@@ -169,13 +174,37 @@ public enum ShowPackage {
         if let newer = model.newerEmbeddedTimeMapSchema() {
             throw PersistenceError.unknownNewerSchema(found: newer.found, supported: newer.supported)
         }
-        let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
-            model, revision: manifest.revision, publicationID: manifest.publicationID)
-        guard encoded.publication.checksum == manifest.checksum else { throw PersistenceError.checksumMismatch }
-        return encoded.data
+        guard manifest.revision >= 1 else { throw PersistenceError.invalidRevision(manifest.revision) }
+        guard try canonicalChecksum(model) == manifest.checksum else { throw PersistenceError.checksumMismatch }
+        let issues = model.validationIssues() + model.embeddedMapIssues()
+        guard issues.isEmpty else { throw PersistenceError.invalidPayload(issues) }
+        return DecodedDocument(payload: model, publication: PublicationStamp(revision: manifest.revision,
+            publicationID: manifest.publicationID, checksum: manifest.checksum))
     }
 
-    private static func decodeComponent<T: Codable>(_ type: T.Type, _ reference: Component,
+    /// Match the legacy canonical payload without retaining a whole-catalog JSON allocation.
+    static func canonicalChecksum(_ model: ShowDocumentModel) throws -> String {
+        var hash = SHA256()
+        let encoder = JSONEnvelopeCoder<ShowDocumentModel>.makeEncoder()
+        func append(_ bytes: Data) { hash.update(data: bytes) }
+        append(Data("{\"episodes\":[".utf8))
+        for (index, episode) in model.episodes.enumerated() {
+            if index > 0 { append(Data([44])) }
+            try autoreleasepool { append(try encoder.encode(episode)) }
+        }
+        append(Data("],\"history\":".utf8))
+        append(try encoder.encode(model.history))
+        append(Data(",\"schemaVersion\":".utf8))
+        append(try encoder.encode(model.schemaVersion))
+        append(Data(",\"show\":".utf8))
+        append(try encoder.encode(model.show))
+        append(Data(",\"speakers\":".utf8))
+        append(try encoder.encode(model.speakers))
+        append(Data([125]))
+        return "sha256:" + hash.finalize().map { String(format: "%02x", $0) }.joined()
+    }
+
+    static func decodeComponent<T: Codable>(_ type: T.Type, _ reference: Component,
         snapshot: Snapshot, used: inout Set<String>, remaining: inout Int) throws -> T {
         let data = try bytes(reference, snapshot: snapshot, used: &used, remaining: &remaining)
         try StrictJSON.validate(data)
@@ -184,7 +213,7 @@ public enum ShowPackage {
         return value
     }
 
-    private static func requireRecognized<T: Encodable>(_ data: Data, value: T) throws {
+    static func requireRecognized<T: Encodable>(_ data: Data, value: T) throws {
         let decoder = JSONDecoder()
         let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.makeEncoder().encode(value)
         guard try decoder.decode(JSONValue.self, from: data) == decoder.decode(JSONValue.self, from: encoded) else {
@@ -192,7 +221,7 @@ public enum ShowPackage {
         }
     }
 
-    private static func bytes(_ reference: Component, snapshot: Snapshot, used: inout Set<String>, remaining: inout Int) throws -> Data {
+    static func bytes(_ reference: Component, snapshot: Snapshot, used: inout Set<String>, remaining: inout Int) throws -> Data {
         guard (0...componentLimit).contains(reference.byteCount),
               reference.byteCount <= remaining,
               let stored = snapshot.files[reference.digest],
@@ -229,7 +258,14 @@ public enum ShowPackage {
         return data.subdata(in: 16..<(16 + Int(size)))
     }
 
-    private static func frame(_ snapshot: Snapshot) throws -> Data {
+    public static func storageVersion(of data: Data) throws -> Int? {
+        guard isSnapshot(data) else { return nil }
+        guard let header = envelopeHeader(data) else { throw PersistenceError.malformed("Invalid package snapshot") }
+        try checkHeader(header)
+        return try JSONDecoder().decode(Header.self, from: header).schemaVersion
+    }
+
+    static func frame(_ snapshot: Snapshot) throws -> Data {
         guard snapshot.manifest.count <= componentLimit, snapshot.files.count <= entryLimit else {
             throw PersistenceError.malformed("Package exceeds storage limits")
         }
@@ -253,7 +289,7 @@ public enum ShowPackage {
         for shift in stride(from: 56, through: 0, by: -8) { data.append(UInt8(truncatingIfNeeded: UInt64(count) >> shift)) }
     }
 
-    private static func unframe(_ data: Data) throws -> Snapshot {
+    static func unframe(_ data: Data) throws -> Snapshot {
         guard data.count <= snapshotLimit, let manifest = envelopeHeader(data) else {
             throw PersistenceError.malformed("Invalid package snapshot")
         }
@@ -392,10 +428,14 @@ public struct ShowPackageCoder: CanonicalDocumentCoding {
     }
 
     public func encodeDocument(_ payload: ShowDocumentModel, revision: Int, publicationID: UUID) throws(PersistenceError) -> EncodedDocument {
-        let envelope = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(payload, revision: revision, publicationID: publicationID)
         do {
-            let data = try ShowPackage.encode(DecodedDocument(payload: payload, publication: envelope.publication))
-            return EncodedDocument(data: data, publication: envelope.publication)
+            guard revision >= 1 else { throw PersistenceError.invalidRevision(revision) }
+            let issues = payload.validationIssues() + payload.embeddedMapIssues()
+            guard issues.isEmpty else { throw PersistenceError.invalidPayload(issues) }
+            let publication = PublicationStamp(revision: revision, publicationID: publicationID,
+                checksum: try ShowPackage.canonicalChecksum(payload))
+            let data = try ShowPackage.encode(DecodedDocument(payload: payload, publication: publication))
+            return EncodedDocument(data: data, publication: publication)
         } catch let error as PersistenceError { throw error }
         catch { throw .encodingFailed(error.localizedDescription) }
     }

@@ -19,7 +19,7 @@ struct EpisodeCleanupModelTests {
         defer { base.cancel() }
         let document = ShowDocument()
         defer { document.updateChangeCount(.changeCleared); document.close() }
-        var snapshot = base.state.store.model
+        var snapshot = base.state.store.residentModel
         snapshot.episodes[0].cleanup?.workingRange = nil
         document.store.replaceLoadedModel(snapshot)
         let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
@@ -61,12 +61,12 @@ struct EpisodeCleanupModelTests {
 
     @Test func markersAreSharedOnlyWithinTheirEpisodeAndDoNotTouchAlignment() throws {
         let model = fixture()
-        let original = model.state.store.model
+        let original = model.state.store.residentModel
         model.saveRange(inValue: 1, outValue: 4)
         #expect(model.error == nil)
         #expect(model.episode?.cleanup?.workingRange?.tracksIn == 1)
         #expect(model.episode?.alignment == original.episodes[0].alignment)
-        #expect(model.state.store.model.episodes[1] == original.episodes[1])
+        #expect(model.state.store.residentModel.episodes[1] == original.episodes[1])
         model.saveRange(inValue: 4, outValue: 1)
         #expect(model.error != nil)
         #expect(model.episode?.cleanup?.workingRange?.tracksIn == 1)
@@ -79,21 +79,21 @@ struct EpisodeCleanupModelTests {
         let model = fixture()
         defer { model.cancel() }
         let range = EpisodeWorkingRange(alignmentRevision: 2, tracksIn: 1.25, tracksOut: 4.75)
-        let before = model.state.store.model
+        let before = model.state.store.residentModel
         try #require(model.state.store.apply("Synthetic older boundaries", { document throws(DomainError) in
             try document.settingCleanup(EpisodeCleanup(workingRange: range), in: model.episodeID)
         }))
         #expect(model.hasStaleWorkingRange)
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         model.resolveStaleWorkingRange(keeping: keeping, expectedRange: range, expectedRevision: 99)
-        #expect(model.state.store.model == snapshot)
+        #expect(model.state.store.residentModel == snapshot)
         #expect(model.error?.contains("changed") == true)
         model.resolveStaleWorkingRange(keeping: keeping, expectedRange: range, expectedRevision: 1)
         #expect(model.error == nil && !model.hasStaleWorkingRange)
         #expect(model.episode?.cleanup?.workingRange == (keeping
             ? EpisodeWorkingRange(alignmentRevision: 1, tracksIn: 1.25, tracksOut: 4.75) : nil))
         #expect(model.episode?.alignment == before.episodes[0].alignment)
-        #expect(model.state.store.model.episodes[1] == before.episodes[1])
+        #expect(model.state.store.residentModel.episodes[1] == before.episodes[1])
     }
 
     @Test func invalidNavigationIsAnExplicitErrorAndNeverReadsAudio() {
@@ -214,13 +214,13 @@ struct EpisodeCleanupModelTests {
         let model = try timelineFixture()
         defer { model.cancel() }
         model.playhead = 2
-        let original = model.state.store.model
+        let original = model.state.store.residentModel
         model.fitTimeline()
         #expect(model.windowStart == -2 && model.windowDuration == 30)
         #expect(model.playhead == 2)
         model.seek(to: 20)
         #expect(model.playhead == 20, "Tracks Out does not hide recoverable banter")
-        #expect(model.state.store.model == original, "Navigation never moves tracks or changes saved timing")
+        #expect(model.state.store.residentModel == original, "Navigation never moves tracks or changes saved timing")
         model.setWindow(start: -2, duration: 0.5)
         #expect(model.visibleDuration == 0.5)
         model.setWindow(start: .nan, duration: 1)
@@ -231,7 +231,7 @@ struct EpisodeCleanupModelTests {
     func zoomCentersCurrentPlayheadAndClampsWithoutChangingTransportOrDocument(playing: Bool) throws {
         let model = try timelineFixture(offset: ExactRational(numerator: -19, denominator: 8))
         defer { model.cancel() }
-        let original = model.state.store.model
+        let original = model.state.store.residentModel
         let snapshot = model.waveformSnapshot
         let selected = TranscriptWord(text: "synthetic", alignedStart: 7.125, alignedEnd: 7.5)
         model.selectedWord = selected
@@ -256,7 +256,7 @@ struct EpisodeCleanupModelTests {
                 }
             }
         }
-        #expect(model.state.store.model == original)
+        #expect(model.state.store.residentModel == original)
         #expect(model.selectedWord == selected && model.waveformSnapshot == snapshot)
     }
 
@@ -355,12 +355,12 @@ struct EpisodeCleanupModelTests {
     @Test func mutingDoesNotWeakenAllPrimaryReadinessOrChangeTheDocument() throws {
         let model = try timelineFixture()
         let speaker = try #require(model.plan?.lanes.first?.speaker)
-        let original = model.state.store.model
+        let original = model.state.store.residentModel
         #expect(model.plan?.isReady == true)
         model.setSpeaker(speaker, enabled: false)
         #expect(model.mutedSpeakers == [speaker])
         #expect(model.plan?.isReady == true)
-        #expect(model.state.store.model == original)
+        #expect(model.state.store.residentModel == original)
         model.setSpeaker(speaker, enabled: true)
         #expect(model.mutedSpeakers.isEmpty)
         #expect(!model.canTranscribe, "A view-only mute never grants missing live-source/model admission")
@@ -389,7 +389,7 @@ struct EpisodeCleanupModelTests {
             }))
         }
         try save(transcript)
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         #expect(model.uncertainWordIDs(for: lane) == Set(words.map(\.id)))
         #expect(model.uncertainWordIDs(for: lane) == Set(words.map(\.id)), "Cached review returns the same IDs")
         #expect(model.visibleWords(for: lane) == words)
@@ -397,7 +397,7 @@ struct EpisodeCleanupModelTests {
         model.select(words[0], speaker: lane.speaker)
         #expect(model.selectedWord == words[0] && model.state.inspectorPresented)
         #expect(model.playhead == words[0].alignedStart)
-        #expect(model.state.store.model == snapshot, "Review never deletes, retimes, accepts cuts or republishes text")
+        #expect(model.state.store.residentModel == snapshot, "Review never deletes, retimes, accepts cuts or republishes text")
         transcript.words = Array(words.prefix(5))
         try save(transcript)
         #expect(model.transcript(for: lane)?.id == transcript.id)
@@ -406,7 +406,7 @@ struct EpisodeCleanupModelTests {
 
     private func fillerFixture(adaptiveGap: Bool? = nil) throws -> EpisodeCleanupModel {
         let model = try timelineFixture()
-        var snapshot = model.state.store.model
+        var snapshot = model.state.store.residentModel
         if let adaptiveGap {
             let lane = try #require(model.plan?.lanes.first)
             let region = try #require(lane.regions.first)
@@ -456,7 +456,7 @@ struct EpisodeCleanupModelTests {
         let review = try #require(model.fillerReviews.first)
         var cleanup = try #require(model.episode?.cleanup)
         cleanup.manualCuts = [ManualEpisodeCut(alignmentRevision: 1, startFrame: 0, endFrame: 48_000)]
-        model.state.store.replaceLoadedModel(try model.state.store.model.settingCleanup(cleanup, in: model.episodeID))
+        model.state.store.replaceLoadedModel(try model.state.store.residentModel.settingCleanup(cleanup, in: model.episodeID))
         model.synchronizeCutTimeline()
         let range = try #require(model.displayRange(start: review.bounds.alignedStart, end: review.bounds.alignedEnd))
         try #require(abs(range.lowerBound - 1) < 0.000_000_001
@@ -474,7 +474,7 @@ struct EpisodeCleanupModelTests {
         }
         cleanup.manualCuts = (cleanup.manualCuts ?? []) + [ManualEpisodeCut(alignmentRevision: 1,
             startFrame: 96_000, endFrame: 105_600)]
-        model.state.store.replaceLoadedModel(try model.state.store.model.settingCleanup(cleanup, in: model.episodeID))
+        model.state.store.replaceLoadedModel(try model.state.store.residentModel.settingCleanup(cleanup, in: model.episodeID))
         model.synchronizeCutTimeline()
         model.windowStart = 0
         model.windowDuration = 10
@@ -508,12 +508,12 @@ struct EpisodeCleanupModelTests {
             let currentUncertain = model.uncertainWordIDs(for: lane)
             #expect(currentRows == rows && currentUncertain == uncertain)
         }
-        var renamedEpisode = model.state.store.model
+        var renamedEpisode = model.state.store.residentModel
         renamedEpisode.episodes[0].title = "Title only"
         model.state.store.replaceLoadedModel(renamedEpisode)
         _ = model.reviewRows
         _ = model.uncertainWordIDs(for: lane)
-        model.state.store.replaceLoadedModel(model.state.store.model)
+        model.state.store.replaceLoadedModel(model.state.store.residentModel)
         _ = model.reviewRows
         _ = model.uncertainWordIDs(for: lane)
         let after = preparations()
@@ -535,7 +535,7 @@ struct EpisodeCleanupModelTests {
         model.proposeFillers()
         let lane = try #require(model.plan?.lanes.first)
         let originalPlan = model.plan
-        let original = model.state.store.model
+        let original = model.state.store.residentModel
         let originalIdentities = model.identities
         _ = model.reviewRows
         _ = model.uncertainWordIDs(for: lane)
@@ -601,7 +601,7 @@ struct EpisodeCleanupModelTests {
         try #require(initiallyActive)
         let indexPreparations = model.fillerTranscriptPreparationCount
         let wordPreparations = model.fillerWordPreparationCount
-        var moved = model.state.store.model
+        var moved = model.state.store.residentModel
         let transcripts = moved.episodes[0].cleanup?.transcripts
         moved.episodes[0].cleanup?.transcriptHistory = transcripts
         moved.episodes[0].cleanup?.transcripts = []
@@ -626,9 +626,9 @@ struct EpisodeCleanupModelTests {
         let review = try #require(model.fillerReviews.first)
         #expect(model.fillerReviews.count == 1, "Untimed uh has no invented rails")
         #expect(model.fillerIssue(review) == nil)
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         model.proposeFillers()
-        #expect(model.state.store.model == snapshot)
+        #expect(model.state.store.residentModel == snapshot)
         model.selectFiller(review.id)
         model.nudgeFiller(review.id, edge: .start, seconds: -0.001)
         #expect(model.selectedFiller?.bounds.alignedEnd == review.bounds.alignedEnd)
@@ -656,7 +656,7 @@ struct EpisodeCleanupModelTests {
         model.windowStart = 1
         model.windowDuration = 3
         let review = try #require(model.fillerReviews.first)
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         let generation = model.state.store.modelGeneration
         let host = HostedTimelineWindow(width: 900, height: 96,
             content: FillerTimingOverlay(model: model, reviews: model.fillerReviews))
@@ -696,7 +696,7 @@ struct EpisodeCleanupModelTests {
                 }
             }
             #expect(railPixels > 10, "The dotted rail must redraw at the preview position before release")
-            #expect(model.state.store.model == snapshot, "A preview is not a saved timing edit")
+            #expect(model.state.store.residentModel == snapshot, "A preview is not a saved timing edit")
             #expect(model.state.store.modelGeneration == generation)
         }
         try host.capture("Live filler boundary preview before mouse up")
@@ -731,10 +731,10 @@ struct EpisodeCleanupModelTests {
             edge: endEdge ? .end : .start, original: updated.bounds))
         #expect(endEdge ? limits.lowerBound > updated.bounds.alignedStart
             : limits.upperBound < updated.bounds.alignedEnd)
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         model.setFillerBounds(review.id, start: endEdge ? updated.bounds.alignedStart : 1.7,
             end: endEdge ? 2.6 : updated.bounds.alignedEnd)
-        #expect(model.error != nil && model.state.store.model == snapshot,
+        #expect(model.error != nil && model.state.store.residentModel == snapshot,
             "Typed bounds must not bypass the drag and keyboard neighbor stops.")
     }
 
@@ -748,7 +748,7 @@ struct EpisodeCleanupModelTests {
         model.addManualFiller(speaker: review.speaker, start: 2.5, end: 2.75)
         model.windowStart = 1
         model.windowDuration = 3
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         let host = HostedTimelineWindow(width: 900, height: 96,
             content: FillerTimingOverlay(model: model, reviews: [review]))
         defer { host.close() }
@@ -766,7 +766,7 @@ struct EpisodeCleanupModelTests {
             abs($0.midX - limitX) < 1 && $0.minY == moving.minY
         })
         #expect(host.controlFrames.contains(stationary))
-        #expect(model.state.store.model == snapshot, "Dragging must not save partial timing edits.")
+        #expect(model.state.store.residentModel == snapshot, "Dragging must not save partial timing edits.")
         try host.capture("Filler boundary hard stop \(endEdge ? "end" : "start")")
         try await host.mouse([(.leftMouseUp, pastNeighbor)])
         let updated = try #require(model.fillerReviews.first { $0.id == review.id })
@@ -794,10 +794,10 @@ struct EpisodeCleanupModelTests {
         defer { model.cancel() }
         model.proposeFillers()
         let review = try #require(model.fillerReviews.first)
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         model.setFillerBounds(review.id, start: start, end: end)
         #expect(model.error != nil)
-        #expect(model.state.store.model == snapshot)
+        #expect(model.state.store.residentModel == snapshot)
     }
 
     @Test func preciseFieldsDoNotRoundUntouchedEdgesAndManualMissesHaveNoDetectedTimes() throws {
@@ -815,9 +815,9 @@ struct EpisodeCleanupModelTests {
         #expect(model.selectedFiller?.bounds.alignedStart == 2.124)
         #expect(model.selectedFiller?.bounds.alignedEnd == 2.234567891)
         model.fillerEndText = "not a time"
-        let snapshot = model.state.store.model
+        let snapshot = model.state.store.residentModel
         model.applyFillerText()
-        #expect(model.error != nil && model.state.store.model == snapshot)
+        #expect(model.error != nil && model.state.store.residentModel == snapshot)
         #expect(model.selectedFiller?.detectedBounds == nil)
     }
 
@@ -853,11 +853,11 @@ struct EpisodeCleanupModelTests {
         let audition = try #require(model.fillerAuditionRange(adjusted, context: 0.5))
         if adaptiveGap {
             #expect(audition.upperBound == 4, "Context stops at the accepted run's edge, not inside a gap")
-            let snapshot = model.state.store.model
+            let snapshot = model.state.store.residentModel
             model.setFillerBounds(review.id, start: 3.7, end: 6.2)
-            #expect(model.error != nil && model.state.store.model == snapshot)
+            #expect(model.error != nil && model.state.store.residentModel == snapshot)
             model.setFillerBounds(review.id, start: 6.2, end: 6.4)
-            #expect(model.error != nil && model.state.store.model == snapshot, "Cannot teleport across unsupported timing")
+            #expect(model.error != nil && model.state.store.residentModel == snapshot, "Cannot teleport across unsupported timing")
         } else {
             #expect(audition.upperBound == 4.75, "Context follows connected adaptive segments")
         }
@@ -871,7 +871,7 @@ struct EpisodeCleanupModelTests {
         model.proposeFillers()
         let review = try #require(model.fillerReviews.first)
         model.setFillerBounds(review.id, start: 1.99, end: 2.21)
-        let saved = model.state.store.model
+        let saved = model.state.store.residentModel
         let adjusted = try #require(model.fillerReviews.first)
         let lane = try #require(model.plan?.lanes.first)
         let initiallyActive = model.reviewRows.first?.issue == nil
@@ -890,7 +890,7 @@ struct EpisodeCleanupModelTests {
             #expect(inactiveCachedRow)
             #expect(model.visibleFillers(for: lane).isEmpty)
             model.setFillerBounds(review.id, start: 1.98, end: 2.22)
-            #expect(model.state.store.model == replacement && model.error != nil)
+            #expect(model.state.store.residentModel == replacement && model.error != nil)
             #expect(model.fillerReviews.first == adjusted)
         }
         model.state.store.replaceLoadedModel(saved)
@@ -908,7 +908,7 @@ struct EpisodeCleanupModelTests {
         defer { base.cancel() }
         let document = ShowDocument()
         defer { document.updateChangeCount(.changeCleared); document.close() }
-        document.store.replaceLoadedModel(base.state.store.model)
+        document.store.replaceLoadedModel(base.state.store.residentModel)
         let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
         defer { model.cancel() }
         model.plan = base.plan
@@ -918,26 +918,26 @@ struct EpisodeCleanupModelTests {
         undo.removeAllActions()
         undo.groupsByEvent = false
         defer { undo.groupsByEvent = true }
-        let original = document.store.model
+        let original = document.store.residentModel
         undo.beginUndoGrouping()
         model.proposeFillers()
         undo.endUndoGrouping()
-        let proposed = document.store.model
+        let proposed = document.store.residentModel
         let review = try #require(model.fillerReviews.first)
         undo.beginUndoGrouping()
         model.setFillerBounds(review.id, start: 1.99, end: 2.21)
         undo.endUndoGrouping()
-        let adjusted = document.store.model
+        let adjusted = document.store.residentModel
         #expect(document.isDocumentEdited && adjusted != proposed)
         let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
         #expect(try coder.decode(coder.encode(adjusted, revision: 1)).payload == adjusted)
         undo.undo()
-        #expect(document.store.model == proposed)
+        #expect(document.store.residentModel == proposed)
         undo.undo()
-        #expect(document.store.model == original, "Undo of finding candidates is not immediately re-proposed")
+        #expect(document.store.residentModel == original, "Undo of finding candidates is not immediately re-proposed")
         undo.redo()
         undo.redo()
-        #expect(document.store.model == adjusted)
+        #expect(document.store.residentModel == adjusted)
     }
 
     @Test func cuttingTheEntirePrimaryDoesNotInventPaddingAudio() throws {
@@ -948,7 +948,7 @@ struct EpisodeCleanupModelTests {
         cleanup.manualCuts = [ManualEpisodeCut(alignmentRevision: 1,
             startFrame: Int64((originalBounds.lowerBound * 48_000).rounded()),
             endFrame: Int64((originalBounds.upperBound * 48_000).rounded()))]
-        model.state.store.replaceLoadedModel(try model.state.store.model.settingCleanup(cleanup, in: model.episodeID))
+        model.state.store.replaceLoadedModel(try model.state.store.residentModel.settingCleanup(cleanup, in: model.episodeID))
         model.synchronizeCutTimeline()
         #expect(model.bounds.lowerBound == model.bounds.upperBound)
         #expect(!model.canNavigate)
@@ -959,7 +959,7 @@ struct EpisodeCleanupModelTests {
         defer { base.cancel() }
         let document = ShowDocument()
         defer { document.updateChangeCount(.changeCleared); document.close() }
-        document.store.replaceLoadedModel(base.state.store.model)
+        document.store.replaceLoadedModel(base.state.store.residentModel)
         let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
         defer { model.cancel() }
         model.plan = base.plan
@@ -971,14 +971,14 @@ struct EpisodeCleanupModelTests {
         undo.removeAllActions()
         undo.groupsByEvent = false
         defer { undo.groupsByEvent = true }
-        let original = document.store.model
+        let original = document.store.residentModel
         model.activateFillerMarker(review.id)
         try #require(model.canApplyManualCut)
         undo.beginUndoGrouping()
         model.applyManualCut()
         undo.endUndoGrouping()
         #expect(model.error == nil)
-        let edited = document.store.model
+        let edited = document.store.residentModel
         let cut = try #require(model.activeManualCuts.first)
         #expect(cut.markerID == review.id)
         #expect(cut.startFrame == 96_000 && cut.endFrame == 105_600)
@@ -992,11 +992,11 @@ struct EpisodeCleanupModelTests {
         #expect(try coder.decode(coder.encode(edited, revision: 1)).payload == edited)
         undo.undo()
         model.modelDidChange()
-        #expect(document.store.model == original && model.cutTimeline == .unedited)
+        #expect(document.store.residentModel == original && model.cutTimeline == .unedited)
         #expect(model.fillerReviews.first == review)
         undo.redo()
         model.modelDidChange()
-        #expect(document.store.model == edited && model.activeManualCuts == [cut])
+        #expect(document.store.residentModel == edited && model.activeManualCuts == [cut])
         undo.beginUndoGrouping()
         model.restoreManualCut(cut.id)
         undo.endUndoGrouping()
@@ -1012,7 +1012,7 @@ struct EpisodeCleanupModelTests {
         defer { base.cancel() }
         let document = ShowDocument()
         defer { document.updateChangeCount(.changeCleared); document.close() }
-        document.store.replaceLoadedModel(base.state.store.model)
+        document.store.replaceLoadedModel(base.state.store.residentModel)
         let model = EpisodeCleanupModel(state: ShowWindowState(store: document.store), episodeID: base.episodeID)
         defer { model.cancel() }
         model.plan = base.plan
@@ -1021,7 +1021,7 @@ struct EpisodeCleanupModelTests {
         let review = try #require(model.fillerReviews.first)
         model.activateFillerMarker(review.id)
         model.applyManualCut()
-        let original = document.store.model
+        let original = document.store.residentModel
         let cut = try #require(model.activeManualCuts.first)
         let undo = try #require(document.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
@@ -1038,18 +1038,18 @@ struct EpisodeCleanupModelTests {
         #expect(model.fillerReviews.first?.initialBounds == review.initialBounds)
         #expect(model.fillerReviews.first?.word == review.word)
         #expect(model.episode?.cleanup?.transcripts == original.episodes[0].cleanup?.transcripts)
-        let saved = document.store.model
+        let saved = document.store.residentModel
         #expect(!model.adjustManualCut(cut, start: 2.01, end: 2.19), "A stale edit cannot overwrite another boundary change")
         #expect(!model.adjustManualCut(adjusted, start: .nan, end: 2.2))
         #expect(!model.adjustManualCut(adjusted, start: 2.2, end: 2))
         #expect(!model.adjustManualCut(adjusted, start: -3, end: 2.2))
-        #expect(document.store.model == saved)
+        #expect(document.store.residentModel == saved)
         undo.undo()
         model.synchronizeCutTimeline()
-        #expect(document.store.model == original)
+        #expect(document.store.residentModel == original)
         undo.redo()
         model.synchronizeCutTimeline()
-        #expect(document.store.model == saved)
+        #expect(document.store.residentModel == saved)
         undo.beginUndoGrouping()
         model.restoreManualCut(adjusted.id)
         undo.endUndoGrouping()
@@ -1059,7 +1059,7 @@ struct EpisodeCleanupModelTests {
         #expect(model.listening.selection == adjusted.alignedStart...adjusted.alignedEnd)
         undo.undo()
         model.synchronizeCutTimeline()
-        #expect(document.store.model == saved && model.activeManualCuts == [adjusted])
+        #expect(document.store.residentModel == saved && model.activeManualCuts == [adjusted])
     }
 
     @Test func changedAcceptedRevisionPrimaryAndWorkingRangeDisableWithoutRebasing() throws {
@@ -1067,7 +1067,7 @@ struct EpisodeCleanupModelTests {
         defer { model.cancel() }
         model.proposeFillers()
         let review = try #require(model.fillerReviews.first)
-        let saved = model.state.store.model
+        let saved = model.state.store.residentModel
         let mutations: [(inout Episode) -> Void] = [
             { $0.cleanup?.workingRange?.tracksOut = 2.1 },
             { $0.speakerAssignments[0].primary = ChannelReference(sourceID: review.primary.sourceID, statedChannel: 1) },
@@ -1094,7 +1094,7 @@ struct EpisodeCleanupModelTests {
             #expect(model.fillerAuditionRange(review, context: 0.5) == nil)
             model.selectFiller(review.id)
             model.markMissedFiller()
-            #expect(model.error != nil && model.state.store.model == changed,
+            #expect(model.error != nil && model.state.store.residentModel == changed,
                     "An inactive historical selection cannot silently seed a new manual interval")
             model.state.store.replaceLoadedModel(saved)
             #expect(model.fillerIssue(review) == nil)

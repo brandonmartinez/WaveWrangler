@@ -18,7 +18,7 @@ struct AlignmentSourceAccessHostedTests {
         let sources = [SourceRecord(displayNameHint: "older-one.wav"), SourceRecord(displayNameHint: "older-two.wav")]
         let episode = Episode(id: fixture.episode, title: "Older recordings", sources: sources)
         fixture.document.store.replaceLoadedModel(ShowDocumentModel(
-            show: fixture.document.store.model.show, episodes: [episode]))
+            show: fixture.document.store.residentModel.show, episodes: [episode]))
         for source in sources {
             let url = fixture.folder.appending(path: source.displayNameHint)
             try Data(repeating: 3, count: 64).write(to: url)
@@ -27,14 +27,14 @@ struct AlignmentSourceAccessHostedTests {
                 return
             }
             try await store.save(DeviceAccessRecord(
-                showID: fixture.document.store.model.show.id, sourceID: source.id,
+                showID: fixture.document.store.residentModel.show.id, sourceID: source.id,
                 bookmark: context.io.makeReadOnlyBookmark(for: url), lastKnownPath: url.path,
                 recordedIdentity: RecordedIdentity(fingerprint: metadata.fingerprint,
                     confirmation: .provisional, recordedAt: Date()), createdAt: Date()
             ))
         }
         let engine = WWSourcesSetupEngine(
-            showID: fixture.document.store.model.show.id, store: store, context: context,
+            showID: fixture.document.store.residentModel.show.id, store: store, context: context,
             captureRawIdentity: { url, fingerprint in
                 try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
             })
@@ -81,12 +81,12 @@ struct AlignmentSourceAccessHostedTests {
         fixture.model.groupUngroupedSource(original.id, newName: "Field recorder")
         undo.endUndoGrouping()
         #expect(fixture.model.ungroupedSources.isEmpty)
-        let grouped = try #require(fixture.document.store.model.episode(fixture.episode)?.source(original.id))
+        let grouped = try #require(fixture.document.store.residentModel.episode(fixture.episode)?.source(original.id))
         #expect(grouped.id == original.id)
         #expect(grouped.displayNameHint == original.displayNameHint)
         #expect(grouped.placement.recorderGroupID != nil)
         #expect(grouped.placement.epochID != nil, "Only explicit grouping creates an ordinary epoch")
-        #expect(fixture.document.store.model.episode(fixture.episode)?.alignment == nil)
+        #expect(fixture.document.store.residentModel.episode(fixture.episode)?.alignment == nil)
         undo.undo()
         #expect(fixture.model.ungroupedSources == [original])
         #expect(fixture.model.availableRecorderGroups.isEmpty)
@@ -105,7 +105,7 @@ struct AlignmentSourceAccessHostedTests {
         fixture.model.groupUngroupedSource(original.id, existing: group.id)
         undo.endUndoGrouping()
         #expect(fixture.model.ungroupedSources.isEmpty)
-        #expect(fixture.document.store.model.episode(fixture.episode)?.source(original.id)?.placement.recorderGroupID == group.id)
+        #expect(fixture.document.store.residentModel.episode(fixture.episode)?.source(original.id)?.placement.recorderGroupID == group.id)
         undo.undo()
         #expect(fixture.model.ungroupedSources == [original])
         #expect(fixture.model.availableRecorderGroups == [group])
@@ -115,7 +115,7 @@ struct AlignmentSourceAccessHostedTests {
         let fixture = try await fixture(corrupt: true)
         defer { fixture.close() }
         await #expect(throws: AlignmentSourceAccessFailure.self) {
-            try await fixture.runtime.inspect(model: fixture.document.store.model, episode: fixture.episode)
+            try await fixture.runtime.inspect(model: fixture.document.store.residentModel, episode: fixture.episode)
         }
         fixture.model.load()
         let deadline = Date().addingTimeInterval(5)
@@ -132,7 +132,7 @@ struct AlignmentSourceAccessHostedTests {
         let fixture = try await fixture(corrupt: false)
         defer { fixture.close() }
         let prepared = try await fixture.runtime.inspect(
-            model: fixture.document.store.model, episode: fixture.episode
+            model: fixture.document.store.residentModel, episode: fixture.episode
         )
         #expect(prepared.sources.count == 1)
         #expect(prepared.sources.first?.availability == .off)
@@ -150,7 +150,7 @@ struct AlignmentSourceAccessHostedTests {
             document.close()
             try? FileManager.default.removeItem(at: folder)
             try? FileManager.default.removeItem(
-                at: PersistenceEnvironment.caches("Derived/\(document.store.model.show.id)")
+                at: PersistenceEnvironment.caches("Derived/\(document.store.residentModel.show.id)")
             )
         }
     }
@@ -164,7 +164,7 @@ struct AlignmentSourceAccessHostedTests {
         let document = ShowDocument()
         document.store.replaceLoadedModel(ShowDocumentModel(show: Show(title: "Synthetic"), episodes: [episode]))
         let runtime = try await AlignmentRuntime.make(
-            showID: document.store.model.show.id, accessStore: FileDeviceAccessStore(fileURL: accessURL),
+            showID: document.store.residentModel.show.id, accessStore: FileDeviceAccessStore(fileURL: accessURL),
             access: SourceAccessContext(io: SystemSourceIO())
         )
         return Fixture(folder: folder, document: document, episode: episode.id, runtime: runtime,

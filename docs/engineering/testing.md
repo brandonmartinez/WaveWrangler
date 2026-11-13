@@ -103,6 +103,23 @@ Use the unhosted runner, not the sandboxed editor's hosted runner: generating
 fixtures in an external staging directory does not grant the editor sandbox
 access to that directory. Do not disable sandboxing for measurements.
 
+For indexed storage, add `--indexed-copy "$RUN/indexed.wwshow"` when generating
+the identical-model comparisons. `catalog-memory --storage indexed` measures
+catalog-only open; add `--episode 1 --save 1 --recovery "$RUN/indexed-recovery"`
+to load/edit/save one episode and verify all unvisited stored records unchanged.
+`WW_LAZY_CATALOG_MEMORY_TESTS=1` selects three fresh-process repetitions of
+catalog-only, indexed single-episode save, version-1 package save and flat save
+for each 1/8/32-episode workload in the same leased unhosted harness.
+
+`LazyCatalogHostedTests` covers native unloaded saves, shared-window pins,
+archived Undo, unloaded reorder/deletion and archival backpressure. Its opt-in
+`nativeDocumentStoreMemory()` selector takes `WW_LAZY_CATALOG_FIXTURE` and
+`WW_LAZY_CATALOG_RESULT`, both pointing to newly owned generated paths inside
+the app's sandbox container. Run that selector alone in a fresh hosted process
+per repetition. It samples actual application-hosted `ShowDocument`/store
+open, one episode's residency and native verified save, but not editor layout,
+waveform/audio runtime, or representative physical-hardware performance.
+
 ## Resource and isolation limits
 
 - `WW_JOBS` defaults to four; `WW_TEST_WORKERS` defaults to four and controls

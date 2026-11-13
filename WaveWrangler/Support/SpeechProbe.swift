@@ -31,7 +31,7 @@ extension AppSpeech {
                 guard let store, let document, store.document === document,
                       NSDocumentController.shared.documents.contains(where: { $0 === document })
                 else { return nil }
-                return store.model
+                return store.residentModel
             },
             modelPath: modelPath
         )

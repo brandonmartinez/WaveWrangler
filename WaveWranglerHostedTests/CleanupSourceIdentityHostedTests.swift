@@ -13,12 +13,12 @@ struct CleanupSourceIdentityHostedTests {
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
         let deadline = ContinuousClock.now.advanced(by: .seconds(30))
-        while (f.model.isWorking || f.document.verifiedModel != f.document.store.model
+        while (f.model.isWorking || f.document.verifiedModel != f.document.store.residentModel
             || f.model.waveformNeedsRefreshAfterSave), ContinuousClock.now < deadline {
             try await Task.sleep(for: .milliseconds(10))
         }
-        try #require(!f.model.isWorking && f.document.verifiedModel == f.document.store.model)
-        let snapshot = f.document.store.model
+        try #require(!f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel)
+        let snapshot = f.document.store.residentModel
         let store = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
         let key = DeviceAccessKey(showID: snapshot.show.id, sourceID: f.target)
         var record = try #require(try await store.record(for: key))
@@ -49,7 +49,7 @@ struct CleanupSourceIdentityHostedTests {
             try model.settingCleanup(EpisodeCleanup(transcripts: [transcript]).proposingFillers(), in: f.model.episodeID)
         }
         try #require(seeded)
-        let saved = f.document.store.model
+        let saved = f.document.store.residentModel
         let runtime = try await AlignmentRuntime.make(showID: saved.show.id, accessStore: store,
             access: SourceAccessContext())
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
@@ -59,7 +59,7 @@ struct CleanupSourceIdentityHostedTests {
         let review = try #require(cleanup.fillerReviews.first)
         #expect(cleanup.fillerIssue(review) == nil)
         #expect(cleanup.transcript(for: lane) == transcript)
-        #expect(f.document.store.model == saved, "Readiness must not rewrite a saved origin or timing revision")
+        #expect(f.document.store.residentModel == saved, "Readiness must not rewrite a saved origin or timing revision")
         #expect(try await store.record(for: key) == record, "Mount-local changes must not rewrite source authorization")
 
         json["inode"] = witness.inode + 1
@@ -68,6 +68,6 @@ struct CleanupSourceIdentityHostedTests {
         try await store.save(record)
         await cleanup.refresh()
         #expect(cleanup.fillerIssue(review) != nil, "A different persistent file identity must remain inactive")
-        #expect(f.document.store.model == saved)
+        #expect(f.document.store.residentModel == saved)
     }
 }

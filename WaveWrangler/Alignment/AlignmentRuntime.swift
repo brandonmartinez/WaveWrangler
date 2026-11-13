@@ -2011,7 +2011,8 @@ enum AlignmentRuntimeProvider {
         for document: ShowDocument,
         episode episodeID: EpisodeID
     ) async throws -> AlignmentRuntime {
-        let showID = document.store.model.show.id
+        try await document.ensureVerifiedEpisodeLoaded(episodeID)
+        let showID = document.store.residentModel.show.id
         let runtime: AlignmentRuntime
         if let existing = runtimes[showID] {
             runtime = existing
@@ -2055,14 +2056,23 @@ enum AlignmentRuntimeProvider {
     }
 
     static func reconcileActive(for document: ShowDocument) {
-        guard let runtime = runtimes[document.store.model.show.id],
-              let model = document.verifiedModel, let publication = document.publication else { return }
+        guard let runtime = runtimes[document.store.residentModel.show.id],
+              let publication = document.publication else { return }
         let documentID = ObjectIdentifier(document)
         Task {
             for episode in await runtime.openedEpisodes(for: documentID) {
-                await runtime.activateOpened(
-                    model, episode: episode, documentID: documentID, publication: publication
-                )
+                do {
+                    try await document.ensureVerifiedEpisodeLoaded(episode)
+                    guard document.publication == publication, let model = document.verifiedModel else { return }
+                    await runtime.activateOpened(
+                        model, episode: episode, documentID: documentID, publication: publication
+                    )
+                } catch is CancellationError {
+                    return
+                } catch {
+                    document.presentError(error)
+                    return
+                }
             }
         }
     }

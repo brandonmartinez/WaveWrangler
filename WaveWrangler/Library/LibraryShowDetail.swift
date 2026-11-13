@@ -13,7 +13,7 @@ struct LibraryShowDetail: View {
                     .padding()
             }
             HStack {
-                Text(show.store.model.show.title)
+                Text(show.store.residentModel.show.title)
                     .wwFont(.title2)
                     .accessibilityAddTraits(.isHeader)
                     .lineLimit(2)
@@ -46,6 +46,8 @@ struct LibraryShowDetail: View {
                         } else if let episode = show.selectedEpisode {
                             EpisodeInspector(state: show, episodeID: episode.id)
                                 .id(episode.id)
+                        } else if let id = show.selectedEpisodeID, show.store.containsEpisode(id) {
+                            EpisodeLoadingContent(store: show.store, episodeID: id)
                         }
                     }
                     .padding()
@@ -61,7 +63,7 @@ struct LibraryShowDetail: View {
         .onChange(of: show.episodeListFocused) { _, focused in
             if focused { state.focusedRegion = .episodes }
         }
-        .onChange(of: show.store.model.episodes.map(\.id)) { old, _ in
+        .onChange(of: show.store.episodeSummaries.map(\.id)) { old, _ in
             show.reconcileSelection(previousOrder: old)
         }
         .onChange(of: show.saveStatus.state) { old, new in
@@ -71,13 +73,13 @@ struct LibraryShowDetail: View {
 
     private var openEpisodeButton: some View {
         Button("Open Episode", systemImage: "arrow.up.forward.square") { state.openSelectedEpisode() }
-            .disabled(show.selectedEpisode == nil)
+            .disabled(show.selectedEpisodeID.map { !show.store.containsEpisode($0) } ?? true)
             .keyboardShortcut(state.focusedRegion == .episodes ? .defaultAction : nil)
             .accessibilityIdentifier("ww.library.episode.open")
     }
 
     private var revealShowButton: some View {
         Button("Show in Finder") { state.revealSelectedInFinder() }
-            .disabled(!state.store.services.entries.canRevealShow(show.store.model.show.id))
+            .disabled(!state.store.services.entries.canRevealShow(show.store.residentModel.show.id))
     }
 }

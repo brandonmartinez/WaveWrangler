@@ -304,8 +304,8 @@ struct AudioTimelineControlsTests {
         defer { f.close() }
         let originals = try f.files.map { try Data(contentsOf: $0) }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let snapshot = f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let snapshot = f.document.store.residentModel
         let prepared = try await f.runtime.prepareCleanup(
             model: snapshot, episode: f.model.episodeID)
         let revision = try #require(prepared.plan.alignmentRevision)

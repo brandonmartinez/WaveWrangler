@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import WWCore
+import WWPersistence
 import WWOrganizer
 
 /// One episode's editor. Browsing and episode management live in Library.
@@ -148,10 +149,10 @@ private struct ShowWindowContent: View {
         // visible; let the sidebar, detail and inspector lay out inside the window instead.
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(WindowBinder(state: state))
-        .onChange(of: store.model.episodes.map(\.id)) { old, _ in
+        .onChange(of: store.episodeSummaries.map(\.id)) { old, _ in
             state.reconcileSelection(previousOrder: old)
         }
-        .onChange(of: store.model) { _, _ in state.updateSubtitle() }
+        .onChange(of: store.residentModel) { _, _ in state.updateSubtitle() }
         .onChange(of: state.sidebarSelection) { _, _ in state.updateSubtitle() }
         .onChange(of: state.saveStatus.state) { old, new in state.saveStateDidChange(from: old, to: new) }
     }
@@ -165,7 +166,7 @@ struct LibraryEpisodeList: View {
     @FocusState private var listFocused: Bool
 
     var body: some View {
-        let episodes = state.store.model.episodes
+        let episodes = state.store.episodeSummaries
         List(selection: $state.sidebarSelection) {
             Section {
                 Text("Show")
@@ -214,7 +215,7 @@ struct LibraryEpisodeList: View {
         .accessibilityIdentifier("ww.library.episodes")
         .contextMenu(forSelectionType: ShowWindowState.SidebarSelection.self) { selections in
             if selections.count == 1, let selection = selections.first, case .episode(let id) = selection,
-               let episode = state.store.model.episode(id) {
+               let episode = state.store.episodeSummaries.first(where: { $0.id == id }) {
                 episodeMenu(episode)
             }
         } primaryAction: { selections in
@@ -223,7 +224,7 @@ struct LibraryEpisodeList: View {
     }
 
     @ViewBuilder
-    private func episodeMenu(_ episode: Episode) -> some View {
+    private func episodeMenu(_ episode: CatalogEpisodeSummary) -> some View {
         Button("Open Episode") { openEpisode(episode.id) }
         Divider()
         Button("Rename") {
@@ -236,13 +237,13 @@ struct LibraryEpisodeList: View {
             state.showEpisodeInfo()
         }
         Divider()
-        if state.store.model.canMoveEpisode(episode.id, by: -1) {
+        if state.store.canMoveEpisode(episode.id, by: -1) {
             Button("Move Up") {
                 state.sidebarSelection = .episode(episode.id)
                 state.moveSelectedEpisode(by: -1)
             }
         }
-        if state.store.model.canMoveEpisode(episode.id, by: 1) {
+        if state.store.canMoveEpisode(episode.id, by: 1) {
             Button("Move Down") {
                 state.sidebarSelection = .episode(episode.id)
                 state.moveSelectedEpisode(by: 1)
@@ -259,7 +260,7 @@ struct LibraryEpisodeList: View {
 
 private struct EpisodeSidebarRow: View {
     @Bindable var state: ShowWindowState
-    let episode: Episode
+    let episode: CatalogEpisodeSummary
     @State private var draft = ""
     @FocusState private var fieldFocused: Bool
 
@@ -312,8 +313,9 @@ private struct ShowDetailContent: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
-        let model = state.store.model
-        if state.boundEpisodeID != nil, state.selectedEpisode == nil {
+        if let id = state.selectedEpisodeID, state.store.containsEpisode(id), state.selectedEpisode == nil {
+            EpisodeLoadingContent(store: state.store, episodeID: id)
+        } else if let id = state.boundEpisodeID, !state.store.containsEpisode(id) {
             ContentUnavailableView {
                 Label("Episode Unavailable", systemImage: "music.mic")
             } description: {
@@ -330,7 +332,7 @@ private struct ShowDetailContent: View {
             } else {
                 ContentUnavailableView("No Episode Selected", systemImage: "music.mic")
             }
-        } else if model.episodes.isEmpty {
+        } else if state.store.episodeSummaries.isEmpty {
             ContentUnavailableView {
                 Label("No episodes yet", systemImage: "music.mic")
             } description: {
@@ -340,6 +342,7 @@ private struct ShowDetailContent: View {
                     .disabled(!state.canEdit)
                     .accessibilityIdentifier("ww.show.empty.newEpisode")
             }
+
             .wwFont(.body)
         } else if let panel = state.destination.blockedPanel {
             BlockedDestinationView(destination: state.destination, panel: panel) { state.select(.setup) }
@@ -354,6 +357,32 @@ private struct ShowDetailContent: View {
             ContentUnavailableView("No Episode Selected", systemImage: "music.mic", description: Text("Select an episode in the sidebar."))
                 .wwFont(.body)
         }
+    }
+}
+
+struct EpisodeLoadingContent: View {
+    let store: ShowDocumentStore
+    let episodeID: EpisodeID
+
+    var body: some View {
+        if let error = store.episodeLoadErrors[episodeID] {
+            ContentUnavailableView {
+                Label("Could Not Load Episode", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text(error)
+            } actions: {
+                Button("Try Again") { store.retryEpisodeLoading(episodeID) }
+            }
+        } else {
+            ProgressView("Loading Episode…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+}
+
+extension ShowSidebarPresentation {
+    static func episodeRowTitle(_ episode: CatalogEpisodeSummary) -> String {
+        episode.number.map { "\($0) \(episode.title)" } ?? episode.title
     }
 }
 
@@ -398,7 +427,7 @@ private struct ShowInfoSummary: View {
     @Bindable var state: ShowWindowState
 
     var body: some View {
-        let model = state.store.model
+        let model = state.store.residentModel
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 Text(model.show.title)

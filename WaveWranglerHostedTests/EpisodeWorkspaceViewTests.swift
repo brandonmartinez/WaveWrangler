@@ -40,7 +40,7 @@ struct EpisodeWorkspaceViewTests {
         #expect(reopened.workspaceInspector == .transcript && !reopened.inspectorPresented && reopened.recordingsPresented)
         #expect(reopened.listeningState(for: episode.id).playback == .init(), "Saved views do not restore an old Solo/Mute mix")
         #expect(reopened.listeningState(for: other.id).workspace == EpisodeWorkspaceViewState())
-        #expect(store.model == model && store.modelGeneration == 0, "View changes are not document edits or Undo entries")
+        #expect(store.residentModel == model && store.modelGeneration == 0, "View changes are not document edits or Undo entries")
         let differentShow = ShowWindowState(store: ShowDocumentStore(model: ShowDocumentModel(
             show: Show(title: "Different"), episodes: [episode])), episodeID: episode.id)
         #expect(differentShow.listeningState(for: episode.id).workspace == EpisodeWorkspaceViewState())

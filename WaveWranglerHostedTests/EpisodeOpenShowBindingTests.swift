@@ -22,6 +22,7 @@ struct EpisodeOpenShowBindingTests {
 
         func close() {
             NSDocumentController.shared.removeDocument(document)
+            document.close()
             try? FileManager.default.removeItem(at: folder)
         }
     }
@@ -30,8 +31,8 @@ struct EpisodeOpenShowBindingTests {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let url = folder.appendingPathComponent("open.wwshow")
-        let encoded = try ShowPackageCoder().encodeDocument(
-            model, revision: 1, publicationID: UUID()
+        let encoded = try ShowCatalogCoder().encodeDocument(
+            ShowCatalog(model), revision: 1, publicationID: UUID()
         )
         try LocalFileOperations().writeNew(encoded.data, to: url)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: url, ofType: DocumentTypes.show)
@@ -83,6 +84,8 @@ struct EpisodeOpenShowBindingTests {
         let accepted = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episode.id)
         let opened = try open(model: accepted)
         defer { opened.close() }
+        opened.document.store.pinEpisode(episode.id, owner: UUID())
+        try await opened.document.store.ensureEpisodeLoaded(episode.id)
         let key = DeviceAccessKey(showID: accepted.show.id, sourceID: source.id)
         try await SetupEngineProvider.store.save(DeviceAccessRecord(
             showID: key.showID, sourceID: key.sourceID, bookmark: try io.makeReadOnlyBookmark(for: media),
@@ -133,8 +136,8 @@ struct EpisodeOpenShowBindingTests {
         let copy = opened.folder.appendingPathComponent("old-copy.wwshow")
         try LocalFileOperations().writeNew(opened.data, to: copy)
         let binding = try OpenShowSourceBinding.capture(for: opened.document)
-        let newBytes = try ShowPackageCoder().encodeDocument(
-            opened.document.store.model, revision: 2, publicationID: UUID()
+        let newBytes = try ShowCatalogCoder().encodeDocument(
+            #require(opened.document.verifiedCatalog), revision: 2, publicationID: UUID()
         ).data
         try ShowPackage.fileWrapper(for: newBytes).write(to: opened.url, options: [.atomic], originalContentsURL: nil)
         #expect(RevisionFingerprint(of: try LocalFileOperations().read(copy)) == RevisionFingerprint(of: opened.data))
@@ -153,8 +156,8 @@ struct EpisodeOpenShowBindingTests {
         let opened = try open()
         defer { opened.close() }
         let binding = try OpenShowSourceBinding.capture(for: opened.document)
-        let replaced = try ShowPackageCoder().encodeDocument(
-            opened.document.store.model, revision: 1, publicationID: UUID()
+        let replaced = try ShowCatalogCoder().encodeDocument(
+            #require(opened.document.verifiedCatalog), revision: 1, publicationID: UUID()
         )
         try ShowPackage.fileWrapper(for: replaced.data).write(to: opened.url, options: [.atomic], originalContentsURL: nil)
         await #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
@@ -201,7 +204,7 @@ struct EpisodeOpenShowBindingTests {
     @Test func duplicateShowIDAcrossOpenDocumentsRefusesRatherThanChooseOne() throws {
         let opened = try open()
         defer { opened.close() }
-        let other = try open(model: opened.document.store.model)
+        let other = try open(model: opened.document.store.residentModel)
         defer { other.close() }
         #expect(throws: EpisodeSourceAccessRefusal.changedDuringVerification) {
             try OpenShowSourceBinding.capture(for: opened.document)

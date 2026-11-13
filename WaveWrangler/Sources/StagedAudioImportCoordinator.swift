@@ -124,7 +124,7 @@ final class StagedAudioImportCoordinator {
         guard canBeginImport, state.canEdit, let window = state.window else { return }
         operation = UUID()
         let id = operation
-        let initialModel = store.model, initialGeneration = store.modelGeneration
+        let initialModel = store.residentModel, initialGeneration = store.modelGeneration
         self.state = state
         originWindow = window
         error = nil
@@ -137,14 +137,14 @@ final class StagedAudioImportCoordinator {
             do {
                 let urls = try await locations()
                 try validateOwner(id)
-                guard store.model == initialModel, store.modelGeneration == initialGeneration else {
+                guard store.residentModel == initialModel, store.modelGeneration == initialGeneration else {
                     throw Refusal("The drop destination changed while receiving file locations. Drop the files again.")
                 }
                 if let document = store.document, document.mixerTransactions.needsBarrier {
                     try await document.mixerTransactions.barrier(replacingInstances: true, episode: episodeID) {}
                 }
                 try validateOwner(id)
-                expected = store.model
+                expected = store.residentModel
                 expectedGeneration = store.modelGeneration
                 SetupEngineProvider.watchClose(of: window)
                 let shared = await acquireEngine(for: window)
@@ -154,12 +154,12 @@ final class StagedAudioImportCoordinator {
                 }
                 engine = shared
                 shared.activeSourceIDs = { [weak store] in
-                    store.map { Set($0.model.episodes.flatMap(\.sources).map(\.id)) }
+                    store?.allSourceIDs
                 }
                 let audioScan = try await shared.scanForAudioImport(urls, in: episodeID) { [weak self] in
                     guard let self else { throw CancellationError() }
                     try self.validateDestination(id)
-                    return self.store.model
+                    return self.store.residentModel
                 }
                 let scan = audioScan.scan
                 do { try validateDestination(id) } catch {
@@ -168,7 +168,7 @@ final class StagedAudioImportCoordinator {
                 }
                 scanToken = scan.token
                 let candidates = scan.candidates.filter { $0.isRecording && audioScan.choices[$0.id]?.canImport == true }
-                let tracks = store.model.episode(episodeID)?.audioArrangement?.tracks ?? []
+                let tracks = store.residentModel.episode(episodeID)?.audioArrangement?.tracks ?? []
                 review = .init(scan: scan, tracks: tracks, choices: audioScan.choices, selected: Set(candidates.map(\.id)),
                     order: scan.candidates.map(\.id),
                     track: destination.track == .defaultTrack
@@ -297,18 +297,18 @@ final class StagedAudioImportCoordinator {
                 }
                 published = true
                 publicationPending = true
-                expected = store.model
+                expected = store.residentModel
                 expectedGeneration = store.modelGeneration
                 let publishedSources = sources
                 let publishedArrangement = arrangement
                 try await engine.adoptPendingAudioImports(tokens) { [weak self] in
                     guard let self else { throw CancellationError() }
                     try self.validateDestination(id)
-                    guard let current = self.store.model.episode(self.episodeID),
+                    guard let current = self.store.residentModel.episode(self.episodeID),
                           current.sources == publishedSources, current.audioArrangement == publishedArrangement else {
                         throw Refusal("The published audio references were replaced.")
                     }
-                    return self.store.model
+                    return self.store.residentModel
                 }
                 try validateDestination(id)
                 importedWaveforms.merge(waveforms) { _, new in new }
@@ -356,7 +356,7 @@ final class StagedAudioImportCoordinator {
         #if DEBUG
         if let sourceEngineForTesting { return sourceEngineForTesting }
         #endif
-        return await SetupEngineProvider.engine(for: window, show: store.model.show.id)
+        return await SetupEngineProvider.engine(for: window, show: store.residentModel.show.id)
     }
 
     private func validateOwner(_ id: UUID) throws {
@@ -372,8 +372,8 @@ final class StagedAudioImportCoordinator {
 
     private func validateDestination(_ id: UUID) throws {
         try validateOwner(id)
-        guard expectedGeneration == store.modelGeneration, expected == store.model,
-              store.model.episode(episodeID) != nil else {
+        guard expectedGeneration == store.modelGeneration, expected == store.residentModel,
+              store.residentModel.episode(episodeID) != nil else {
             throw Refusal("The show changed during audio import, including Undo, restore, or native effect capture. Choose the audio again.")
         }
     }

@@ -125,10 +125,10 @@ struct SpeakerAppearanceEditor: View {
     @State private var error: String?
 
     private var episodeOverride: Bool {
-        store.model.episode(episodeID)?.speakerAppearanceOverrides?.contains { $0.speaker == speakerID } == true
+        store.residentModel.episode(episodeID)?.speakerAppearanceOverrides?.contains { $0.speaker == speakerID } == true
     }
     private var appearance: SpeakerAppearance? {
-        store.model.speakerAppearance(speakerID, in: episodeOverride ? episodeID : nil)
+        store.residentModel.speakerAppearance(speakerID, in: episodeOverride ? episodeID : nil)
     }
 
     var body: some View {
@@ -136,7 +136,7 @@ struct SpeakerAppearanceEditor: View {
             VStack(alignment: .leading, spacing: 8) {
                 if showsHostMembership {
                     Toggle("Show host · default in new episodes", isOn: Binding(
-                    get: { store.model.show.profile?.hosts.contains(speakerID) == true },
+                    get: { store.residentModel.show.profile?.hosts.contains(speakerID) == true },
                     set: { value in apply("Change Show Hosts") { model throws(DomainError) in
                         try model.settingHost(speakerID, isHost: value)
                     } }
@@ -154,7 +154,7 @@ struct SpeakerAppearanceEditor: View {
                 ))
                 .accessibilityIdentifier("workspace.speaker.override")
                 HStack(alignment: .center, spacing: 10) {
-                    SpeakerAvatarView(name: store.model.speaker(speakerID)?.name ?? "", appearance: appearance, size: 56)
+                    SpeakerAvatarView(name: store.residentModel.speaker(speakerID)?.name ?? "", appearance: appearance, size: 56)
                         .overlay(Circle().stroke(dropTargeted ? Color.accentColor : .clear, lineWidth: 3))
                         .onDrop(of: [UTType.image.identifier, UTType.fileURL.identifier], isTargeted: $dropTargeted, perform: acceptDrop)
                         .accessibilityLabel("Speaker avatar. Drop an image here, or use Choose image or Paste.")

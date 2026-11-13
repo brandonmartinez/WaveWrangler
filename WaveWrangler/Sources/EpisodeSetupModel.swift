@@ -171,9 +171,9 @@ final class EpisodeSetupModel {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
-           store.model.show.title == "Synthetic Review Binding Fixture",
-           store.model.episodes.first?.id == episodeID,
-           let speaker = store.model.speakers.first(where: { $0.name == "Synthetic review speaker" }) {
+           store.residentModel.show.title == "Synthetic Review Binding Fixture",
+           store.residentModel.episodes.first?.id == episodeID,
+           let speaker = store.residentModel.speakers.first(where: { $0.name == "Synthetic review speaker" }) {
             speakerSelection = [speaker.id]
         }
         #endif
@@ -181,10 +181,10 @@ final class EpisodeSetupModel {
 
     // MARK: Derived state
 
-    var episode: Episode? { store.model.episode(episodeID) }
+    var episode: Episode? { store.residentModel.episode(episodeID) }
 
     var timingReferenceSelection: TimingReferenceSelection {
-        TimingReferenceSelection.read(model: store.model, episodeID: episodeID)
+        TimingReferenceSelection.read(model: store.residentModel, episodeID: episodeID)
     }
 
     var timingReferenceCandidate: RecorderGroupID? {
@@ -196,7 +196,7 @@ final class EpisodeSetupModel {
     }
 
     var presentation: SetupPresentation {
-        SetupPresentation(model: store.model, episodeID: episodeID, statuses: statuses, onlyNeedingAttention: onlyNeedingAttention, sortOrder: sortOrder)
+        SetupPresentation(model: store.residentModel, episodeID: episodeID, statuses: statuses, onlyNeedingAttention: onlyNeedingAttention, sortOrder: sortOrder)
     }
 
     var downloadsAutomatically: Bool { preference.downloadsAutomatically }
@@ -252,7 +252,7 @@ final class EpisodeSetupModel {
         }
     }
 
-    func speakerName(_ id: SpeakerID) -> String { store.model.speaker(id)?.name ?? "Unknown speaker" }
+    func speakerName(_ id: SpeakerID) -> String { store.residentModel.speaker(id)?.name ?? "Unknown speaker" }
 
     func groupName(_ id: RecorderGroupID?) -> String {
         guard let id else { return "Ungrouped" }
@@ -372,8 +372,8 @@ final class EpisodeSetupModel {
     func ensureConfirmedOverviews(force: Bool = false) {
         guard isOnScreen, let document = store.document,
               document.status.saveStatus.state.isVerifiedOnDisk,
-              document.verifiedModel == store.model,
-              let episode = store.model.episode(episodeID) else { return }
+              document.verifiedModel == store.residentModel,
+              let episode = store.residentModel.episode(episodeID) else { return }
         let confirmed = Set(episode.alignmentSources.compactMap { source in
             statuses[source.id]?.allowsWaveformOverview == true ? source.id : nil
         })
@@ -392,7 +392,7 @@ final class EpisodeSetupModel {
         let generation = overviewGeneration
         requestedOverviewEpisode = episode
         requestedOverviewSources = confirmed
-        let snapshot = store.model
+        let snapshot = store.residentModel
         overviewTask = Task { [weak self] in
             guard let self else { return }
             defer { if generation == overviewGeneration { overviewTask = nil } }
@@ -403,7 +403,7 @@ final class EpisodeSetupModel {
                     startSeconds: 0, durationSeconds: 1, overview: true
                 )
                 guard !Task.isCancelled, generation == overviewGeneration,
-                      store.model == snapshot else { return }
+                      store.residentModel == snapshot else { return }
                 if let refusal = loaded.refusals.first(where: { confirmed.contains($0.id) }) {
                     message = "Episode overview unavailable for \(refusal.name): \(refusal.reason)"
                 }
@@ -590,7 +590,7 @@ final class EpisodeSetupModel {
         isScanning = true
         message = nil
         let ids = episode.sources.map(\.id)
-        let speakers = store.model.speakers.map(\.name)
+        let speakers = store.residentModel.speakers.map(\.name)
         let title = episode.title
         Task { [engine] in
             do {

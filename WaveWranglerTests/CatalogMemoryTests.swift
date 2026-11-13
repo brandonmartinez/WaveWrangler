@@ -3,11 +3,13 @@ import Testing
 
 @Suite("Generated catalog persistence memory (opt-in)", .serialized)
 struct CatalogMemoryTests {
-    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_CATALOG_MEMORY_TESTS"] == "1"),
+    @Test(.enabled(if: ProcessInfo.processInfo.environment["WW_CATALOG_MEMORY_TESTS"] == "1"
+                  || ProcessInfo.processInfo.environment["WW_LAZY_CATALOG_MEMORY_TESTS"] == "1"),
           arguments: [1, 8, 32])
     func freshProcessCodecAndPublisherMeasurements(episodes: Int) async throws {
         let environment = ProcessInfo.processInfo.environment
         let probe = try #require(environment["WW_PROBE"])
+        let lazy = environment["WW_LAZY_CATALOG_MEMORY_TESTS"] == "1"
         let root = URL(fileURLWithPath: try #require(environment["WW_CATALOG_MEMORY_ROOT"]), isDirectory: true)
         try await Task.detached {
             let available = try #require(root.resourceValues(forKeys: [.volumeAvailableCapacityKey]).volumeAvailableCapacity)
@@ -37,12 +39,18 @@ struct CatalogMemoryTests {
 
             let package = run.appendingPathComponent("package.wwshow").path
             let flat = run.appendingPathComponent("flat.wwshow").path
+            let indexed = run.appendingPathComponent("indexed.wwshow").path
             try invoke(["catalog-generate", "--file", package, "--flat-copy", flat,
-                        "--episodes", "\(episodes)", "--words", "8000"])
+                        "--episodes", "\(episodes)", "--words", "8000"] + (lazy ? ["--indexed-copy", indexed] : []))
             for repetition in 1...3 {
+                if lazy {
+                    try invoke(["catalog-memory", "--file", indexed, "--storage", "indexed"])
+                    try invoke(["catalog-memory", "--file", indexed, "--storage", "indexed", "--episode", "1",
+                                "--save", "1", "--recovery", run.appendingPathComponent("indexed-recovery").path])
+                }
                 for storage in repetition == 2 ? ["flat", "package"] : ["package", "flat"] {
                     let fixture = storage == "package" ? package : flat
-                    try invoke(["catalog-memory", "--file", fixture, "--storage", storage])
+                    if !lazy { try invoke(["catalog-memory", "--file", fixture, "--storage", storage]) }
                     try invoke(["catalog-memory", "--file", fixture, "--storage", storage,
                                 "--save", "1", "--recovery", run.appendingPathComponent("\(storage)-recovery").path])
                 }
@@ -56,8 +64,15 @@ struct CatalogMemoryTests {
             #expect(measured.count == 12)
             for record in measured {
                 #expect(record["episodes"] as? Int == episodes)
-                #expect(record["currentWords"] as? Int == episodes * 8_000)
-                #expect(record["historicalWords"] as? Int == episodes * 8_000)
+                if record["storage"] as? String == "indexed" {
+                    let loaded = record["residentEpisodes"] as? Int ?? -1
+                    #expect(record["currentWordsLoaded"] as? Int == loaded * 8_000)
+                    #expect(record["historicalWordsLoaded"] as? Int == loaded * 8_000)
+                    if loaded == 1 { #expect(record["unvisitedStoredComponentsPreserved"] as? Bool == true) }
+                } else {
+                    #expect(record["currentWords"] as? Int == episodes * 8_000)
+                    #expect(record["historicalWords"] as? Int == episodes * 8_000)
+                }
                 #expect((record["openSeconds"] as? Double ?? 0) > 0)
             }
         }.value

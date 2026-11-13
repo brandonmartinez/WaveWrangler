@@ -3,6 +3,7 @@ import Foundation
 import Observation
 import UniformTypeIdentifiers
 import WWCore
+import struct WWPersistence.ShowLastOpenSummary
 import WWOrganizer
 
 // Seams between the library UI and the persistence lane (library store, reconciliation, location).
@@ -35,7 +36,7 @@ protocol LibraryEntryObserving: LibraryEntryChecking {
     func canRevealShow(_ id: ShowID) -> Bool
     /// Reconciliation input from an open show window: the document is authoritative for show content.
     /// `model` is `nil` when the window has unsaved edits (only the location and open time are recorded).
-    func noteOpenShow(id: ShowID, model: ShowDocumentModel?, fileURL: URL?)
+    func noteOpenShow(id: ShowID, summary: ShowLastOpenSummary?, fileURL: URL?)
     /// The show was opened (for "Last Opened").
     func noteOpened(id: ShowID)
 }
@@ -174,10 +175,10 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
     }
 
     /// Records what an open show window knows ("as of last open").
-    func noteOpenShow(id: ShowID, model: ShowDocumentModel?, fileURL: URL?) {
+    func noteOpenShow(id: ShowID, summary: ShowLastOpenSummary?, fileURL: URL?) {
         // Two open files with the same show identity (e.g. a Finder copy): surface it, never merge.
         let others = NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.filter {
-            $0.store.model.show.id == id && $0.presentedFileURL != nil && $0.presentedFileURL?.standardizedFileURL != fileURL?.standardizedFileURL
+            $0.store.residentModel.show.id == id && $0.presentedFileURL != nil && $0.presentedFileURL?.standardizedFileURL != fileURL?.standardizedFileURL
         }
         if let other = others.first, fileURL != nil {
             details[id] = LibraryEntryDetails(
@@ -190,8 +191,8 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
             return
         }
         if let fileURL { locations[id] = fileURL }
-        let episodes = model.map { $0.episodes.map { EpisodeSummary(id: $0.id, number: $0.number, title: $0.title) } } ?? details[id]?.episodes
-        let refs = model.map { $0.episodes.reduce(0) { $0 + $1.sources.count } } ?? details[id]?.sourceReferenceCount
+        let episodes = summary?.episodes?.map { EpisodeSummary(id: $0.id, number: $0.number, title: $0.title) } ?? details[id]?.episodes
+        let refs = summary?.sourceReferenceCount ?? details[id]?.sourceReferenceCount
         details[id] = LibraryEntryDetails(
             state: .available,
             locationDisplayName: fileURL.map { $0.deletingLastPathComponent().lastPathComponent },
@@ -214,7 +215,7 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
         let interval = OpenSignposts.begin("library.openShow")
         defer { OpenSignposts.end(interval) }
         let (document, alreadyOpen) = try await NSDocumentController.shared.openDocument(withContentsOf: url, display: display)
-        guard let show = document as? ShowDocument, show.store.model.show.id == id else {
+        guard let show = document as? ShowDocument, show.store.residentModel.show.id == id else {
             if !alreadyOpen { document.close() }
             throw LibraryBackendError.differentShow
         }
@@ -237,7 +238,7 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
         guard await panel.begin() == .OK, let url = panel.url else { return }
         let document = try await NSDocumentController.shared.openDocument(withContentsOf: url, display: true)
         guard let show = document.0 as? ShowDocument else { throw LibraryBackendError.notAShowFile }
-        guard show.store.model.show.id == id else { throw LibraryBackendError.differentShow }
+        guard show.store.residentModel.show.id == id else { throw LibraryBackendError.differentShow }
     }
 
     func moveLibrary(to folder: URL?) async -> LibraryMoveResult {

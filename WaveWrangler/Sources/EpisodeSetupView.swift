@@ -57,7 +57,7 @@ struct EpisodeSetupContent: View {
         guard !connecting else { return }
         connecting = true
         Task { @MainActor in
-            let engine = await SetupEngineProvider.engine(for: window, show: store.model.show.id)
+            let engine = await SetupEngineProvider.engine(for: window, show: store.residentModel.show.id)
             let state = ShowWindowRegistry.state(for: window)
             guard visible, state == nil || (
                 (state?.destination == .setup || state?.destination == .alignment)
@@ -70,10 +70,10 @@ struct EpisodeSetupContent: View {
             if let real = engine as? WWSourcesSetupEngine {
                 real.activeSourceIDs = { [weak store] in
                     guard let store else { return nil }
-                    return Set(store.model.episodes.flatMap { $0.sources.map(\.id) })
+                    return store.allSourceIDs
                 }
                 real.sourceNames = { [weak store] id in
-                    store?.model.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
+                    store?.residentModel.episodes.lazy.compactMap { $0.source(id)?.displayNameHint }.first ?? "another source"
                 }
             }
             let controller = EpisodeSetupViewController(model: model)
@@ -480,7 +480,7 @@ private struct SourcesTable: View {
                     ForEach(Self.flattened(group.children ?? [])) { row in
                         if let sourceID = row.id.sourceID {
                             TableRow(row)
-                                .draggable(SetupSourceDrag(showID: model.store.model.show.id,
+                                .draggable(SetupSourceDrag(showID: model.store.residentModel.show.id,
                                     episodeID: model.episodeID, sourceID: sourceID))
                                 .dropDestination(for: SetupSourceDrop.self) { items in
                                     model.acceptSourceRowDrop(items, on: row.id)

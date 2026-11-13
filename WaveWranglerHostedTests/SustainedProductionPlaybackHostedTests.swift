@@ -21,7 +21,7 @@ struct SustainedProductionPlaybackHostedTests {
     }
 
     private func installTiming(in f: AlignmentWaveformRetentionHostedTests.Fixture) throws -> Int {
-        let currentEpisode = f.document.store.model.episode(f.model.episodeID)
+        let currentEpisode = f.document.store.residentModel.episode(f.model.episodeID)
         let episode = try #require(currentEpisode)
         let targetTrack = f.model.waveformTracks.first { $0.id == f.target }
         let target = try #require(targetTrack)
@@ -52,7 +52,7 @@ struct SustainedProductionPlaybackHostedTests {
         let accepted = try #require(acceptedIndex)
         timing.maps[accepted].sourceCorrections = [correction]
         let changed = timing
-        let episodeIndex = f.document.store.model.episodes.firstIndex { $0.id == episode.id }
+        let episodeIndex = f.document.store.residentModel.episodes.firstIndex { $0.id == episode.id }
         let index = try #require(episodeIndex)
         let applied = f.document.store.apply("Install Sustained Synthetic Timing") { model throws(DomainError) in
             var result = model
@@ -65,7 +65,7 @@ struct SustainedProductionPlaybackHostedTests {
 
     private func saveAndVerify(_ document: ShowDocument) async throws {
         try await MixerHostedTests().save(document)
-        let expected = document.store.model
+        let expected = document.store.residentModel
         let verified = document.verifiedModel == expected
         let saved = document.status.saveStatus.state.isVerifiedOnDisk
         let edited = document.isDocumentEdited
@@ -82,7 +82,7 @@ struct SustainedProductionPlaybackHostedTests {
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
         try await wait("Verified teardown fixture timing") {
-            !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
         }
         f.model.synchronizeWaveforms()
         try await wait("Teardown fixture waveforms loaded") { !f.model.isLoadingWaveforms }
@@ -199,7 +199,7 @@ struct SustainedProductionPlaybackHostedTests {
                 sourceIdentity: identity, alignmentRevision: try #require(plan.alignmentRevision),
                 model: "synthetic-transcript-cut-soak/1", workingRange: nil, words: words)
         }
-        let previous = f.document.store.model.episode(f.model.episodeID)?.cleanup ?? EpisodeCleanup()
+        let previous = f.document.store.residentModel.episode(f.model.episodeID)?.cleanup ?? EpisodeCleanup()
         let replacement = try previous.replacingTranscripts(transcripts)
         let published = f.document.store.apply("Install Synthetic Soak Transcripts") { model throws(DomainError) in
             try model.settingCleanup(replacement, in: f.model.episodeID)
@@ -246,7 +246,7 @@ struct SustainedProductionPlaybackHostedTests {
         try #require(timeline.removals.count == expectedCuts && cuts.count == expectedCuts
             && removedFrames == expectedRemovedFrames && editedEndFrame == 43_200_000 - expectedRemovedFrames)
         try await saveAndVerify(f.document)
-        let persisted = f.document.store.model.episode(f.model.episodeID)?.cleanup
+        let persisted = f.document.store.residentModel.episode(f.model.episodeID)?.cleanup
         let persistedMatches = persisted?.transcripts == transcripts && (persisted?.manualCuts ?? []) == cuts
         try #require(persistedMatches)
         print("TRANSCRIPT_CUT_SETUP seed=\(seed) tracks=2 wordsPerTrack=4500 suggestionsPerTrack=100 "
@@ -313,16 +313,16 @@ struct SustainedProductionPlaybackHostedTests {
         f.model.placeGroupsAtSourceTime()
         try await wait("Verified initial synthetic timing") {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.document.verifiedModel == f.document.store.model
+                && f.document.verifiedModel == f.document.store.residentModel
         }
         let mapBytes = try installTiming(in: f)
         try await saveAndVerify(f.document)
         f.model.loadWaveforms(keepingSnapshot: true)
         try await wait("Reloaded synthetic adaptive timing") {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.document.verifiedModel == f.document.store.model
+                && f.document.verifiedModel == f.document.store.residentModel
         }
-        let currentEpisode = f.document.store.model.episode(f.model.episodeID)
+        let currentEpisode = f.document.store.residentModel.episode(f.model.episodeID)
         let episode = try #require(currentEpisode)
         if episodeSoak {
             let editor = f.model.audioEditor
@@ -393,7 +393,7 @@ struct SustainedProductionPlaybackHostedTests {
             }
             try await saveAndVerify(f.document)
         }
-        let initial = f.document.store.model
+        let initial = f.document.store.residentModel
         let initialCleanup = initial.episode(episode.id)?.cleanup
         let timing = initial.episode(episode.id)?.alignment
         let coldStates = await f.runtime.coordinator.states()
@@ -520,14 +520,14 @@ struct SustainedProductionPlaybackHostedTests {
                     explicitEdits += 1
                     if position > 21 { lateExplicitEdits += 1 }
                 } else {
-                    let priorState = f.document.store.model.episode(episode.id)?.mix?.master.inserts
+                    let priorState = f.document.store.residentModel.episode(episode.id)?.mix?.master.inserts
                         .first { $0.id == slots[2].id }?.documentState
                     let beforeCapture = captures
                     try await processor.setParameter(slot: slots[2].id, address: parameter.address, value: finalValue)
                     // No explicit capture here: normal editor observation must publish the native edit.
                     try await wait("Normal observation captured the native parameter edit", timeout: .seconds(5)) {
                         captures > beforeCapture
-                            && f.document.store.model.episode(episode.id)?.mix?.master.inserts
+                            && f.document.store.residentModel.episode(episode.id)?.mix?.master.inserts
                                 .first { $0.id == slots[2].id }?.documentState != priorState
                     }
                     observedEdits += 1
@@ -643,20 +643,20 @@ struct SustainedProductionPlaybackHostedTests {
             "Playback must prepare cold adaptive tiles across the full episode.")
         print("PLAYBACK_FINAL_CHECK phase=post-playback-save")
         try await saveAndVerify(f.document)
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         undo.endUndoGrouping()
         let changed = edited != initial
         try #require(changed)
         print("PLAYBACK_FINAL_CHECK phase=undo")
         undo.undo()
         try await wait("Undo restored the complete pre-playback document") {
-            f.document.store.model == initial && controller.processor == nil
+            f.document.store.residentModel == initial && controller.processor == nil
                 && !f.document.mixerTransactions.isBusy
         }
         print("PLAYBACK_FINAL_CHECK phase=redo")
         undo.redo()
         try await wait("Redo restored the captured live edits") {
-            f.document.store.model == edited && !f.document.mixerTransactions.isBusy
+            f.document.store.residentModel == edited && !f.document.mixerTransactions.isBusy
         }
         print("PLAYBACK_FINAL_CHECK phase=recall")
         try await saveAndVerify(f.document)
@@ -666,8 +666,8 @@ struct SustainedProductionPlaybackHostedTests {
         let recalled = try #require(recalledValue)
         #expect(abs(recalled - finalValue) < 0.1)
         print("PLAYBACK_FINAL_CHECK phase=source-integrity")
-        let unchangedTiming = f.document.store.model.episode(episode.id)?.alignment == timing
-        let unchangedCleanup = f.document.store.model.episode(episode.id)?.cleanup == initialCleanup
+        let unchangedTiming = f.document.store.residentModel.episode(episode.id)?.alignment == timing
+        let unchangedCleanup = f.document.store.residentModel.episode(episode.id)?.cleanup == initialCleanup
         let unchangedOriginals = try f.files.map { try Data(contentsOf: $0) } == originals
         #expect(unchangedTiming && unchangedCleanup && unchangedOriginals)
         print("SUSTAINED_PRODUCTION seconds=\(programSeconds) units=\(unitCount) segments=4097 mapBytes=\(mapBytes) "

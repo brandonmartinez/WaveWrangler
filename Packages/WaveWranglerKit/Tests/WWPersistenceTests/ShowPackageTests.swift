@@ -67,6 +67,20 @@ struct ShowPackageTests {
         #expect(stamp.revision == 17)
     }
 
+    @Test func streamedPackageChecksumMatchesIndependentLegacyCanonicalEncoding() throws {
+        var models = [ShowDocumentModel.untitled(), try Self.richShow()]
+        models[0].show.notes = "Escapes: \" \\ \n and non-ASCII: caf\u{e9}"
+        for model in models {
+            let id = UUID()
+            let flat = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(model, revision: 3, publicationID: id)
+            let package = try coder.encodeDocument(model, revision: 3, publicationID: id)
+            #expect(package.publication == flat.publication)
+            let decoded = try coder.decode(package.data)
+            let matches = decoded.payload == model
+            #expect(matches)
+        }
+    }
+
     @Test func metadataAndSingleEpisodeEditsReuseUnchangedComponentWrappers() throws {
         let model = try Self.richShow()
         let first = try ShowPackage.fileWrapper(for: coder.encode(model, revision: 1))
@@ -150,7 +164,7 @@ struct ShowPackageTests {
     func unknownNewerPackageOrModelRefusesBeforePayloadOrRecovery(_ kind: Int) throws {
         let directory = TempDirectory()
         let url = directory.sub("Newer.wwshow")
-        let packageVersion = kind == 1 ? 2 : 1
+        let packageVersion = kind == 1 ? ShowPackage.version + 1 : 1
         let modelVersion = kind == 2 ? SchemaVersion.show + 1 : SchemaVersion.show
         let manifest = Data("""
         {"format":"com.brandonmartinez.wavewrangler.show-package","schemaVersion":\(packageVersion),"modelSchemaVersion":\(modelVersion),"futurePayload":"not this version's shape"}
@@ -162,8 +176,8 @@ struct ShowPackageTests {
             Issue.record("Expected an unknown-newer refusal, not recovery")
             return
         }
-        #expect(found == (kind == 1 ? 2 : SchemaVersion.show + 1))
-        #expect(supported == (kind == 1 ? 1 : SchemaVersion.show))
+        #expect(found == (kind == 1 ? ShowPackage.version + 1 : SchemaVersion.show + 1))
+        #expect(supported == (kind == 1 ? ShowPackage.version : SchemaVersion.show))
         #expect(try Data(contentsOf: url.appending(path: ShowPackage.manifestName)) == manifest)
     }
 

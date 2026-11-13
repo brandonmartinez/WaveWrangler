@@ -35,21 +35,44 @@ New `.wwshow` documents use `com.brandonmartinez.wavewrangler.show-package`,
 conforming to `com.apple.package`, not JSON. The legacy show UTI and serialized
 `com.brandonmartinez.wavewrangler.show` identifier remain unchanged; open panels
 accept both, but new saves use the package type. A distinct UTI avoids competing
-JSON declarations from older installed builds. Package storage version **1** is independent of model schema
+JSON declarations from older installed builds. Native package storage version **2** is independent of model schema
 14. `Manifest.json` indexes `Components/<SHA256>` files: a catalog without
 episodes, one component per episode, and original binary artwork. JSON
 components use bounded LZFSE only when smaller; artwork stays uncompressed.
 Historical transcripts, individual word IDs and review provenance remain intact.
-This factors persistence; the app still loads and encodes the complete model.
-It does not yet provide lazy episode loading or bounded catalog-size memory.
+The indexed catalog contains complete ordered episode summaries and global identity/reference
+inventories. Native open does not decode episode transcripts. Editors pin shared episode
+revisions; loading, failure and deletion are distinct states. An explicit load validates
+strict episode JSON, summary parity, domain values and embedded maps before use.
 
 The manifest records model/package versions, publication identity, canonical
-model checksum and component encodings/uncompressed lengths. Readers inspect
+index checksum and component encodings/uncompressed lengths. Readers inspect
 the frozen version header before opening any components, reject unknown content,
-verify stored component digests, and independently validate the reconstructed
-model/checksum. Reads reject links and nonregular children through read-only,
+verify all stored component digests/bounds and the complete index, then validate
+episode semantics on demand. Untouched components are preserved exactly, not
+replaced with empty values; an opaque, hash-valid but semantically invalid episode
+fails visibly when opened. Catalog-only save does not certify its deferred semantics.
+Version-1 compatibility readers validate the complete reconstructed model/checksum.
+Reads reject links and nonregular children through read-only,
 directory-relative descriptors. Limits are 64 MiB per component, 10,000 episodes
 and 512 MiB for either the framed snapshot or total expanded content.
+
+`ShowCatalog` owns immutable device-local backing files. Captured drafts retain
+all slots and serialize only changed resident episodes; routine catalog or
+single-episode edits never decode/re-encode unvisited episodes. Undo retains
+logical revision handles, not permanently resident transcript graphs. Unpinned
+revisions are archived on the shared serial persistence lane and evicted;
+at most four unarchived historical/unpinned revisions are admitted before
+edits visibly wait for archival. Current pinned episodes remain resident across
+windows. Backing storage has a shared process-wide 1 GiB admission limit.
+Closing cancels residency work and drains the shared persistence lane.
+
+These are decoded-working-set bounds, not constant total process memory:
+summaries scale with episode/source counts, each open editor demands its episode,
+and active jobs may retain their admitted snapshots. Reads/publications still
+materialize complete encoded snapshots; native `FileWrapper` caches and exact
+recovery checkpoints also scale with stored package size. Explicit migrations
+and exceptional damaged-document recovery can materialize the complete model.
 
 Publication/recovery uses a deterministic internal snapshot containing the exact
 manifest and stored component bytes. Its fingerprint distinguishes even
@@ -60,7 +83,7 @@ safe replacement and the same independent read-back check. Wrapper reuse keeps
 unchanged components distinguishable, but atomic writes may still replace their
 inodes. It does not establish reduced physical writes or network transfer.
 
-Flat schema-14 shows also require the existing explicit **Update** consent.
+Flat and version-1 package shows require the existing explicit **Update** consent.
 The storage-only migration preserves the complete payload, keeps exact original
 bytes locally, rechecks the originally opened base, and publishes a package at
 the same URL with the next revision. Schemas 1-13 use their existing migration

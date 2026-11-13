@@ -22,7 +22,7 @@ final class EpisodeWindowController: NSWindowController {
         let window = EpisodeEditorWindow(contentViewController: hosting)
         window.originatingState = state
         window.identifier = NSUserInterfaceItemIdentifier(
-            "ww.episode.\(state.store.model.show.id).\(UUID().uuidString)")
+            "ww.episode.\(state.store.residentModel.show.id).\(UUID().uuidString)")
         window.styleMask = [.titled, .closable, .miniaturizable, .resizable]
         window.contentMinSize = NSSize(width: 760, height: 440)
         #if DEBUG
@@ -44,13 +44,13 @@ final class EpisodeWindowController: NSWindowController {
 
     override func encodeRestorableState(with coder: NSCoder) {
         super.encodeRestorableState(with: coder)
-        coder.encode(state.store.model.show.id.description, forKey: Self.showStateKey)
+        coder.encode(state.store.residentModel.show.id.description, forKey: Self.showStateKey)
         coder.encode(state.boundEpisodeID?.description, forKey: Self.episodeStateKey)
     }
 
     override func restoreState(with coder: NSCoder) {
         super.restoreState(with: coder)
-        guard let id = Self.restoredEpisode(from: coder, in: state.store.model),
+        guard let id = Self.restoredEpisode(from: coder, in: state.store),
               id != state.boundEpisodeID else { return }
         state.reviewWindowDidClose()
         state = ShowWindowState(store: state.store, episodeID: id)
@@ -61,16 +61,24 @@ final class EpisodeWindowController: NSWindowController {
     }
 
     static func restoredEpisode(from coder: NSCoder, in model: ShowDocumentModel) -> EpisodeID? {
+        restoredEpisode(from: coder, show: model.show.id, contains: { model.episode($0) != nil })
+    }
+
+    static func restoredEpisode(from coder: NSCoder, in store: ShowDocumentStore) -> EpisodeID? {
+        restoredEpisode(from: coder, show: store.header.show.id, contains: store.containsEpisode)
+    }
+
+    private static func restoredEpisode(from coder: NSCoder, show: ShowID, contains: (EpisodeID) -> Bool) -> EpisodeID? {
         if coder.containsValue(forKey: showStateKey) {
             guard let value = coder.decodeObject(of: NSString.self, forKey: showStateKey) as String?,
-                  ShowID(uuidString: value) == model.show.id else {
+                  ShowID(uuidString: value) == show else {
                 restorationLog.warning("Ignored episode restoration for a different or invalid show identity.")
                 return nil
             }
         }
         guard coder.containsValue(forKey: episodeStateKey),
               let value = coder.decodeObject(of: NSString.self, forKey: episodeStateKey) as String?,
-              let id = EpisodeID(uuidString: value), model.episode(id) != nil else {
+              let id = EpisodeID(uuidString: value), contains(id) else {
             restorationLog.warning("Ignored episode restoration for an episode absent from the loaded show.")
             return nil
         }

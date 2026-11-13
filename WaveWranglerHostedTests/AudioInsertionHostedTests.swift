@@ -18,11 +18,11 @@ struct AudioInsertionHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 4)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await helper.wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await helper.wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
         let bed = try await importBed(f)
         defer { Task { await bed.engine.shutdown() } }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let revision = try #require(episode.alignment?.acceptedRevision)
         let cut = ManualEpisodeCut(alignmentRevision: revision, startFrame: 48_000, endFrame: 96_000)
         try #require(f.document.store.apply("Synthetic saved cut") { model throws(DomainError) in
@@ -61,7 +61,7 @@ struct AudioInsertionHostedTests {
         let file = f.folder.appendingPathComponent("synthetic-bed.wav")
         try AudioClipEditorHostedTests.wave(rate: 48_000, frames: 48_000 * seconds).write(to: file)
         let context = SourceAccessContext(io: SystemSourceIO())
-        let engine = WWSourcesSetupEngine(showID: f.document.store.model.show.id,
+        let engine = WWSourcesSetupEngine(showID: f.document.store.residentModel.show.id,
             store: FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json")), context: context,
             captureRawIdentity: { url, fingerprint in
                 try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
@@ -90,7 +90,7 @@ struct AudioInsertionHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 4)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await helper.wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await helper.wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
         let undo = try undoManager(f)
         defer { undo.groupsByEvent = true }
@@ -103,7 +103,7 @@ struct AudioInsertionHostedTests {
         defer { cleanup.cancel() }
         await cleanup.refresh()
         let originals = try (f.files + [bed.file]).map { try Data(contentsOf: $0) }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let episode = try #require(editor.episode)
         let bins = editor.waveforms.mapValues(\.id)
         let choices = f.model.listening.playback
@@ -118,7 +118,7 @@ struct AudioInsertionHostedTests {
         #expect(bed.owner.state.cleanupModel === cleanup && bed.owner.state.alignmentModel === f.model)
         editor.requestInsertion(intro: true, programSeconds: nil)
         let session = try #require(editor.insertionSession)
-        #expect(session.position == 0 && f.document.store.model == before)
+        #expect(session.position == 0 && f.document.store.residentModel == before)
         #expect(!f.model.canStopAudition && f.model.listening.playback == choices)
         let gapOnly = try editor.insertionPreview(session, position: "0", length: "10",
             usingEnd: false, retarget: false, removing: false)
@@ -126,12 +126,12 @@ struct AudioInsertionHostedTests {
         let preview = try editor.insertionPreview(session, position: "0", length: "10",
             usingEnd: false, retarget: true, removing: false)
         #expect(preview.after.clips[0].programFrames == 0..<1_920_000)
-        #expect(f.document.store.model == before && f.model.waveformPlayheadSeconds == 1)
+        #expect(f.document.store.residentModel == before && f.model.waveformPlayheadSeconds == 1)
         try #require(editor.commitInsertion(session, position: "0", length: "10",
             usingEnd: false, retarget: true, removing: false), Comment(rawValue: editor.error ?? ""))
         f.model.load()
         try await helper.wait { f.model.trackProcessingOperation == nil }
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         let current = try #require(editor.episode)
         #expect(current.alignment == episode.alignment && current.cleanup == episode.cleanup)
         #expect(current.sources == episode.sources && current.recorderGroups == episode.recorderGroups)
@@ -149,10 +149,10 @@ struct AudioInsertionHostedTests {
         #expect(undo.undoActionName == "Insert Intro")
         undo.undo()
         f.model.load()
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         undo.redo()
         f.model.load()
-        #expect(f.document.store.model == after)
+        #expect(f.document.store.residentModel == after)
         try await helper.wait { f.model.trackProcessingOperation == nil }
         try await helper.save(f.document)
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
@@ -162,7 +162,7 @@ struct AudioInsertionHostedTests {
         let savedURL = try #require(f.document.fileURL)
         let reopenedDocument = try #require(try NSDocumentController.shared.makeDocument(
             withContentsOf: savedURL, ofType: DocumentTypes.show) as? ShowDocument)
-        #expect(reopenedDocument.store.model == after)
+        #expect(reopenedDocument.store.residentModel == after)
         reopenedDocument.close()
         let recipe = try await f.runtime.mixerRecipe(model: after, episode: episode.id, programFrames: 0..<1_920_000)
         let intro = try await f.runtime.productionPCM(recipe: recipe, model: after, frames: 0..<512)
@@ -235,7 +235,7 @@ struct AudioInsertionHostedTests {
             "An explicitly retargeted selected pin moves to the shown start and retains its pin.")
         #expect(f.model.listening.playback == listening && !f.model.trackEnabled(f.target))
         let sources = initial.alignmentSources.map(\.id)
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let originalDialogue = try await f.runtime.sourceAuditions(model: snapshot, episode: initial.id,
             sources: sources, outputFrames: 48_000..<48_512, applyingCuts: false)
         let shiftedDialogue = try await f.runtime.sourceAuditions(model: snapshot, episode: initial.id,
@@ -272,19 +272,19 @@ struct AudioInsertionHostedTests {
         f.model.waveformPlayheadSeconds = 1.5
         editor.requestInsertionEdit(region.region.id)
         let removal = try #require(editor.insertionSession)
-        let beforeRemoval = f.document.store.model
+        let beforeRemoval = f.document.store.residentModel
         try #require(editor.commitInsertion(removal, position: "unused", length: "unused", usingEnd: false,
             retarget: false, removing: true))
         f.model.load()
         #expect(f.model.waveformPlayheadSeconds == 1)
         #expect(editor.composition?.timeline.insertions.isEmpty == true)
         #expect(editor.selected?.clip.trim == originalClip.trim)
-        #expect(f.document.store.model.episode(initial.id)?.alignment == initial.alignment)
-        #expect(f.document.store.model.episode(initial.id)?.cleanup?.manualCuts == [cut])
+        #expect(f.document.store.residentModel.episode(initial.id)?.alignment == initial.alignment)
+        #expect(f.document.store.residentModel.episode(initial.id)?.cleanup?.manualCuts == [cut])
         #expect(undo.undoActionName == "Remove Inserted Time")
         undo.undo()
         f.model.load()
-        #expect(f.document.store.model == beforeRemoval)
+        #expect(f.document.store.residentModel == beforeRemoval)
         undo.redo()
         f.model.load()
         #expect(editor.composition?.timeline.insertions.isEmpty == true)
@@ -305,10 +305,10 @@ struct AudioInsertionHostedTests {
             editor.requestInsertion(intro: true, programSeconds: nil)
             let pending = editor.insertionSession, refusal = editor.error
             let session = try #require(pending, Comment(rawValue: refusal ?? "Insertion preview was not presented."))
-            let before = f.document.store.model, action = undo.undoActionName
+            let before = f.document.store.residentModel, action = undo.undoActionName
             #expect(!editor.commitInsertion(session, position: "0", length: length,
                 usingEnd: false, retarget: false, removing: false))
-            #expect(editor.error != nil && f.document.store.model == before && undo.undoActionName == action)
+            #expect(editor.error != nil && f.document.store.residentModel == before && undo.undoActionName == action)
             editor.dismissInsertion()
         }
         for replaceLoaded in [false, true] {
@@ -320,7 +320,7 @@ struct AudioInsertionHostedTests {
             editor.requestInsertion(intro: true, programSeconds: nil)
             let pending = editor.insertionSession, refusal = editor.error
             let session = try #require(pending, Comment(rawValue: refusal ?? "Insertion preview was not presented."))
-            let before = f.document.store.model
+            let before = f.document.store.residentModel
             if replaceLoaded { f.document.store.replaceLoadedModel(before) }
             else {
                 try #require(f.document.store.apply("Temporary track") { model throws(DomainError) in
@@ -329,10 +329,10 @@ struct AudioInsertionHostedTests {
                 undo.undo()
             }
             editor.refresh()
-            #expect(f.document.store.model == before)
+            #expect(f.document.store.residentModel == before)
             #expect(!editor.commitInsertion(session, position: "0", length: "1",
                 usingEnd: false, retarget: false, removing: false))
-            #expect(editor.error?.contains("changed") == true && f.document.store.model == before)
+            #expect(editor.error?.contains("changed") == true && f.document.store.residentModel == before)
             editor.dismissInsertion()
         }
     }
@@ -361,10 +361,10 @@ struct AudioInsertionHostedTests {
             editor.refresh()
             editor.requestInsertion(intro: true, programSeconds: nil)
             let session = try #require(editor.insertionSession)
-            let before = f.document.store.model
+            let before = f.document.store.residentModel
             #expect(!editor.commitInsertion(session, position: "0", length: "1",
                 usingEnd: false, retarget: false, removing: false))
-            #expect(f.document.store.model == before && f.model.mixer.processor != nil)
+            #expect(f.document.store.residentModel == before && f.model.mixer.processor != nil)
             #expect(editor.error?.contains("Audio Unit") == true)
         } catch { bodyFailure = error }
         do {

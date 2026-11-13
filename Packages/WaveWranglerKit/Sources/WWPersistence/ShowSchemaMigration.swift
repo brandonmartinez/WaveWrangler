@@ -617,6 +617,7 @@ extension DocumentMigrator where Coder == ShowPackageCoder {
             guard !ShowPackage.isSnapshot(original) else {
                 throw PersistenceError.malformed("This show is already a package")
             }
+
             let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(original)
             return (decoded.payload, decoded.revision)
         }, expectations: { original, migrated in

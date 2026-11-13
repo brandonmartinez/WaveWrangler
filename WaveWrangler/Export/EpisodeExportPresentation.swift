@@ -39,7 +39,7 @@ final class EpisodeExportPresentation {
     var isPresented: Bool { owner != nil }
     var resolved: ResolvedPublicationMetadata? {
         guard let document, let episodeID else { return nil }
-        return try? document.store.model.resolvedPublication(for: episodeID)
+        return try? document.store.residentModel.resolvedPublication(for: episodeID)
     }
     var artwork: PublicationArtwork? { overrides.artwork?.image ?? (overrides.artwork == nil ? resolved?.metadata.artwork?.image : nil) }
 
@@ -97,7 +97,7 @@ final class EpisodeExportPresentation {
         preparedModel = nil
         acceptedOmissions = []
         defer { if preparationID == preparation { preparing = false } }
-        let snapshot = document.store.model
+        let snapshot = document.store.residentModel
         do {
             let active = try await AlignmentRuntimeProvider.runtime(for: document, episode: episodeID)
             #if DEBUG
@@ -115,7 +115,7 @@ final class EpisodeExportPresentation {
                 throw ExportFailure.invalidSettings("Set a resolved Episode Start and Episode End before exporting.")
             }
             try Task.checkCancellation()
-            guard preparationID == preparation, isPresented, snapshot == document.store.model else { return }
+            guard preparationID == preparation, isPresented, snapshot == document.store.residentModel else { return }
             runtime = active
             frames = range
             preparedModel = snapshot
@@ -216,7 +216,7 @@ final class EpisodeExportPresentation {
 
     func start() {
         guard !isRunning, validationMessage == nil, let document, let episodeID, let directory,
-              let runtime, preparedModel == document.store.model else {
+              let runtime, preparedModel == document.store.residentModel else {
             message = "Export is not ready. Check the range, folder, and metadata omissions."
             return
         }
@@ -250,7 +250,7 @@ final class EpisodeExportPresentation {
     }
 
     private func preferences(_ document: ShowDocument) -> EpisodeExportPreferenceStore {
-        .init(defaults: PersistenceEnvironment.preferences, show: document.store.model.show.id)
+        .init(defaults: PersistenceEnvironment.preferences, show: document.store.residentModel.show.id)
     }
 }
 
@@ -261,7 +261,7 @@ extension ShowWindowState {
         if document.exportInterface.isPresented { return "The export sheet is open in another window of this show." }
         if recordingsPresented { return "Close Recordings & Speakers before exporting." }
         if document.mixerTransactions.isClosed { return "This show is closing." }
-        if document.verifiedModel?.hasSameMediaInputs(as: store.model, in: episode.id) != true {
+        if document.verifiedModel?.hasSameMediaInputs(as: store.residentModel, in: episode.id) != true {
             return "Save the show to verify its current recordings before exporting."
         }
         return nil

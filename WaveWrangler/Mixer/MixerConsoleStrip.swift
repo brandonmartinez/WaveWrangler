@@ -14,7 +14,7 @@ struct MixerConsoleStrip: View {
     private var canEditMix: Bool { canEdit && presentation.usesProductionMix }
     private var speaker: Speaker? {
         guard case .speaker(let id) = bus else { return nil }
-        return presentation.state?.store.model.speaker(id)
+        return presentation.state?.store.residentModel.speaker(id)
     }
     private var name: String {
         switch bus {
@@ -25,7 +25,7 @@ struct MixerConsoleStrip: View {
     }
     private var appearance: SpeakerAppearance? {
         guard let speaker else { return nil }
-        return presentation.state?.store.model.speakerAppearance(speaker.id, in: presentation.episode?.id)
+        return presentation.state?.store.residentModel.speakerAppearance(speaker.id, in: presentation.episode?.id)
     }
     private var color: Color { appearance?.color.swiftUIColor ?? (bus == .master ? .secondary : .teal) }
     private var gain: Binding<Double> {

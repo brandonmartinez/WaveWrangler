@@ -135,7 +135,7 @@ final class EpisodeMixerPresentation {
 
     func updateTitle() {
         detachedWindow?.window?.title = "\(episode?.title ?? "Episode Unavailable") - Mixer"
-        detachedWindow?.window?.subtitle = state?.store.model.show.title ?? ""
+        detachedWindow?.window?.subtitle = state?.store.residentModel.show.title ?? ""
     }
 
     func modelDidChange(from prior: ShowDocumentModel) {

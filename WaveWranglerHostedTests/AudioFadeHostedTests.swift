@@ -26,7 +26,7 @@ struct AudioFadeHostedTests {
         let file = f.folder.appendingPathComponent("synthetic-f8-stereo.wav")
         try AudioClipEditorHostedTests.wave(rate: 44_100, frames: 88_200).write(to: file)
         let context = SourceAccessContext(io: SystemSourceIO())
-        let engine = WWSourcesSetupEngine(showID: f.document.store.model.show.id,
+        let engine = WWSourcesSetupEngine(showID: f.document.store.residentModel.show.id,
             store: FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json")), context: context,
             captureRawIdentity: { url, fingerprint in
                 try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
@@ -84,7 +84,7 @@ struct AudioFadeHostedTests {
         defer { Task { await bed.engine.shutdown() } }
         let editor = f.model.audioEditor, undo = try undoManager(f)
         defer { undo.groupsByEvent = true }
-        let original = f.document.store.model, bytes = try Data(contentsOf: bed.file)
+        let original = f.document.store.residentModel, bytes = try Data(contentsOf: bed.file)
         try await helper.wait {
             editor.canPlaceDroppedAudio && editor.selected != nil && editor.store.canEdit
                 && TrackProcessingOperation.current(alignment: f.model, cleanup: bed.owner.state.cleanupModel) == nil
@@ -96,7 +96,7 @@ struct AudioFadeHostedTests {
         draft.length = "0.5"
         let defaultPreview = try editor.fadePreview(incoming, draft: draft)
         #expect(defaultPreview.envelope.points.map(\.amplitude) == [0, 1])
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
         try #require(editor.commitFade(incoming, draft: draft))
         undo.undo()
         editor.refresh()
@@ -104,7 +104,7 @@ struct AudioFadeHostedTests {
             editor.canPlaceDroppedAudio && editor.selected != nil && editor.store.canEdit
                 && TrackProcessingOperation.current(alignment: f.model, cleanup: bed.owner.state.cleanupModel) == nil
         }
-        let undoneDefault = f.document.store.model
+        let undoneDefault = f.document.store.residentModel
         #expect(undoneDefault == original)
 
         await editor.requestFade(.fadeIn, programSeconds: 2)
@@ -127,15 +127,15 @@ struct AudioFadeHostedTests {
         draft.startLevel = "0.7"
         draft.level = "0.2"
         draft.silence = false
-        let beforeOut = f.document.store.model
+        let beforeOut = f.document.store.residentModel
         try #require(editor.commitFade(outgoing, draft: draft))
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         undo.undo()
-        let undone = f.document.store.model
+        let undone = f.document.store.residentModel
         #expect(undone == beforeOut)
         undo.redo()
         editor.refresh()
-        let redone = f.document.store.model
+        let redone = f.document.store.residentModel
         #expect(redone == after)
         let selected = try #require(editor.selected)
         let evaluator = try AudioEnvelopeEvaluator(envelope: selected.clip.envelope, durationFrames: 96_000)
@@ -168,21 +168,21 @@ struct AudioFadeHostedTests {
         defer { Task { await bed.engine.shutdown() } }
         let undo = try undoManager(f)
         defer { undo.groupsByEvent = true }
-        let editor = f.model.audioEditor, before = f.document.store.model
+        let editor = f.model.audioEditor, before = f.document.store.residentModel
         let episode = try #require(editor.episode)
         let bytes = try (f.files + [bed.file]).map { try Data(contentsOf: $0) }
         let bins = editor.waveforms.mapValues(\.id), overview = f.model.waveformOverviewSnapshotID
         try await fade(editor, start: 2.25, duration: "0.5", level: "0.25")
-        let low = f.document.store.model
+        let low = f.document.store.residentModel
         try await fade(editor, start: 3, duration: "0.5", level: "0")
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         #expect(undo.undoActionName == "Fade Out")
         undo.undo()
         f.model.load()
-        #expect(f.document.store.model == low)
+        #expect(f.document.store.residentModel == low)
         undo.redo()
         f.model.load()
-        #expect(f.document.store.model == after)
+        #expect(f.document.store.residentModel == after)
         #expect(editor.episode?.alignment == episode.alignment && editor.episode?.cleanup == episode.cleanup)
         #expect(editor.episode?.sources == episode.sources && editor.episode?.recorderGroups == episode.recorderGroups)
         #expect(editor.waveforms.mapValues(\.id) == bins && f.model.waveformOverviewSnapshotID == overview)
@@ -212,7 +212,7 @@ struct AudioFadeHostedTests {
         #expect(savedMatches)
         let reopened = try #require(try NSDocumentController.shared.makeDocument(
             withContentsOf: url, ofType: DocumentTypes.show) as? ShowDocument)
-        #expect(reopened.store.model == after)
+        #expect(reopened.store.residentModel == after)
         reopened.close()
         #expect(try (f.files + [bed.file]).map { try Data(contentsOf: $0) } == bytes)
     }
@@ -226,7 +226,7 @@ struct AudioFadeHostedTests {
         defer { undo.groupsByEvent = true }
         try await fade(editor, start: 2.25, duration: "0.5", level: "0.25")
         try await fade(editor, start: 3.5, duration: "0.25", level: "0")
-        let before = f.document.store.model, original = try #require(editor.selected?.clip)
+        let before = f.document.store.residentModel, original = try #require(editor.selected?.clip)
         let samples = try Data(contentsOf: bed.file)
         let bins = editor.waveforms.mapValues(\.id)
         let action = undo.undoActionName
@@ -237,23 +237,23 @@ struct AudioFadeHostedTests {
         #expect(!openedSheet)
         for frames: Int64 in [480, 1200, 2400] {
             let previewed = editor.previewAutomationGesture(frames: frames, levelDelta: 0.5)
-            let live = f.document.store.model
+            let live = f.document.store.residentModel
             #expect(previewed && live == before && undo.undoActionName == action)
             let levels = editor.automationGesture?.previewClip.envelope.points.map(\.amplitude)
             #expect(levels == original.envelope.points.map(\.amplitude))
         }
         let committed = editor.completeAutomationGesture()
         try #require(committed)
-        let afterTime = f.document.store.model, moved = try #require(editor.selected?.clip)
+        let afterTime = f.document.store.residentModel, moved = try #require(editor.selected?.clip)
         #expect(undo.undoActionName == "Move Fade Point")
         #expect(moved.envelope.points[1].frame == original.envelope.points[1].frame + 2400)
         #expect(moved.anchor == original.anchor && moved.trim == original.trim && moved.outputWindow == original.outputWindow)
         undo.undo()
-        let undone = f.document.store.model
+        let undone = f.document.store.residentModel
         #expect(undone == before)
         undo.redo()
         editor.refresh()
-        let redone = f.document.store.model
+        let redone = f.document.store.residentModel
         #expect(redone == afterTime)
         let levelBegan = await editor.beginAutomationGesture(clip: original.id, target: .level(first: 1, last: 2))
         try #require(levelBegan)
@@ -267,7 +267,7 @@ struct AudioFadeHostedTests {
         #expect(undo.undoActionName == "Adjust Fade Level")
         #expect(editor.waveforms.mapValues(\.id) == bins)
         try await helper.save(f.document)
-        let savedURL = f.document.fileURL, savedModel = f.document.store.model
+        let savedURL = f.document.fileURL, savedModel = f.document.store.residentModel
         let saved = try LocalFileOperations().read(#require(savedURL))
         #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(saved).payload == savedModel)
         #expect(try Data(contentsOf: bed.file) == samples)
@@ -281,20 +281,20 @@ struct AudioFadeHostedTests {
         let editor = f.model.audioEditor, undo = try undoManager(f)
         defer { undo.groupsByEvent = true }
         try await fade(editor, start: 2.25, duration: "0.5", level: "0.25")
-        let before = f.document.store.model, action = undo.undoActionName
+        let before = f.document.store.residentModel, action = undo.undoActionName
         let began = await editor.beginAutomationGesture(clip: bed.clip.clip.id, target: .point(1))
         try #require(began)
         let previewed = editor.previewAutomationGesture(frames: 2400)
         #expect(previewed)
         editor.cancelAutomationGesture()
-        let canceled = f.document.store.model
+        let canceled = f.document.store.residentModel
         let hasGesture = editor.automationGesture != nil
         #expect(canceled == before && undo.undoActionName == action && !hasGesture)
         let noOp = await editor.beginAutomationGesture(clip: bed.clip.clip.id, target: .point(1))
         try #require(noOp)
         let noOpCommitted = editor.completeAutomationGesture()
         #expect(noOpCommitted)
-        let unchanged = f.document.store.model
+        let unchanged = f.document.store.residentModel
         #expect(unchanged == before && undo.undoActionName == action)
         for ownerChanged in [false, true] {
             try await helper.wait {
@@ -308,7 +308,7 @@ struct AudioFadeHostedTests {
             if ownerChanged { bed.owner.state.alignmentModel = nil }
             else { f.document.store.replaceLoadedModel(before) }
             let committed = editor.completeAutomationGesture()
-            let current = f.document.store.model, refusal = editor.error
+            let current = f.document.store.residentModel, refusal = editor.error
             #expect(!committed && current == before && refusal?.contains("changed") == true)
             bed.owner.state.alignmentModel = f.model
             editor.refresh()
@@ -330,23 +330,23 @@ struct AudioFadeHostedTests {
         let item = AudioAutomationCanvas.Item(projected: clip,
             frame: .init(x: 0, y: 0, width: 640, height: 100), key: key, geometry: geometry)
         let input = AudioAutomationInput(editor: editor)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         input.begin(item, target: .point(1))
         try await helper.wait { editor.automationGesture != nil }
         input.change(.init(x: 40, y: 20))
         try await helper.wait { editor.automationGesture.map { $0.previewClip != clip.clip } == true }
-        let during = f.document.store.model
+        let during = f.document.store.residentModel
         let preview = editor.automationGesture?.previewClip
         #expect(during == before && preview != clip.clip)
         input.cancel()
         input.end(.zero)
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         let stillDragging = editor.automationGesture != nil
         #expect(after == before && !stillDragging)
         input.begin(item, target: .point(1))
         input.end(.init(x: 40, y: 20))
-        try await helper.wait { f.document.store.model != before }
-        let finished = f.document.store.model
+        try await helper.wait { f.document.store.residentModel != before }
+        let finished = f.document.store.residentModel
         #expect(finished != before && !input.tracking)
     }
 
@@ -362,9 +362,9 @@ struct AudioFadeHostedTests {
             let session = try requireFadeSession(editor)
             var draft = AudioFadeDraft(session: session)
             draft.length = text
-            let before = f.document.store.model, action = undo.undoActionName
+            let before = f.document.store.residentModel, action = undo.undoActionName
             #expect(!editor.commitFade(session, draft: draft))
-            #expect(editor.error != nil && f.document.store.model == before && undo.undoActionName == action)
+            #expect(editor.error != nil && f.document.store.residentModel == before && undo.undoActionName == action)
             editor.dismissFade()
         }
         for position: Double? in [nil, .nan, .infinity, 1.99, 4] {
@@ -374,7 +374,7 @@ struct AudioFadeHostedTests {
         for scenario in 0..<5 {
             await editor.requestFade(.fadeOut, programSeconds: 2)
             let session = try requireFadeSession(editor)
-            let before = f.document.store.model
+            let before = f.document.store.residentModel
             switch scenario {
             case 0:
                 editor.selectedClip = nil
@@ -390,7 +390,7 @@ struct AudioFadeHostedTests {
             }
             editor.refresh()
             #expect(!editor.commitFade(session, draft: AudioFadeDraft(session: session)))
-            #expect(editor.error?.contains("changed") == true && f.document.store.model == before)
+            #expect(editor.error?.contains("changed") == true && f.document.store.residentModel == before)
             bed.owner.state.alignmentModel = f.model
             editor.dismissFade()
         }
@@ -401,9 +401,9 @@ struct AudioFadeHostedTests {
         draft.length = "0.25"
         draft.level = "0"
         draft.silence = true
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         #expect(try editor.fadePreview(session, draft: draft).requiresReplacement)
-        #expect(!editor.commitFade(session, draft: draft) && f.document.store.model == before)
+        #expect(!editor.commitFade(session, draft: draft) && f.document.store.residentModel == before)
         draft.replacing = true
         #expect(editor.commitFade(session, draft: draft))
     }
@@ -425,7 +425,7 @@ struct AudioFadeHostedTests {
         })
         editor.refresh()
         editor.resizeSelected(start: "2", end: "90000")
-        let before = f.document.store.model, selected = try #require(editor.selected)
+        let before = f.document.store.residentModel, selected = try #require(editor.selected)
         let point = try #require(try editor.fadePoints().get().first(where: \.editable))
         await editor.requestFadePoint(point.index)
         let session = try requireFadeSession(editor)
@@ -442,7 +442,7 @@ struct AudioFadeHostedTests {
         #expect(undo.undoActionName == "Edit Fade Point")
         undo.undo()
         editor.refresh()
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         undo.redo()
         editor.refresh()
         await editor.requestFadePoint(point.index)
@@ -583,10 +583,10 @@ struct AudioFadeHostedTests {
             let ownsPendingObservation = f.model.mixer.hasObservedState && f.model.mixer.processor === lateProcessor
             #expect(ownsPendingObservation)
             try await lateProcessor.setParameter(slot: slot.id, address: parameter.address, value: parameter.value)
-            let before = f.document.store.model
+            let before = f.document.store.residentModel
             let lateApplied = editor.commitFade(late, draft: draft)
             let lateRefusal = editor.error
-            let after = f.document.store.model
+            let after = f.document.store.residentModel
             #expect(!lateApplied)
             #expect(lateRefusal?.contains("Audio Unit") == true && after == before)
             outcome = .success(())

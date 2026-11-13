@@ -87,7 +87,7 @@ struct EpisodeInspector: View {
     enum Field: Hashable { case title, number, notes }
 
     private var store: ShowDocumentStore { state.store }
-    private var episode: Episode? { store.model.episode(episodeID) }
+    private var episode: Episode? { store.residentModel.episode(episodeID) }
 
     var body: some View {
         if let episode {
@@ -326,18 +326,18 @@ struct ShowInfoInspector: View {
         .disabled(!state.canEdit)
         .accessibilityIdentifier("ww.inspector.showInfo")
         .onAppear {
-            titleDraft = store.model.show.title
-            notesDraft = store.model.show.notes
-            appliedTitle = store.model.show.title
-            appliedNotes = store.model.show.notes
+            titleDraft = store.residentModel.show.title
+            notesDraft = store.residentModel.show.notes
+            appliedTitle = store.residentModel.show.title
+            appliedNotes = store.residentModel.show.notes
         }
         .onChange(of: titleDraft) { _, value in applyTitle(value) }
         .onChange(of: notesDraft) { _, value in
-            guard value != store.model.show.notes else { return }
+            guard value != store.residentModel.show.notes else { return }
             appliedNotes = value
             store.apply(UndoActionName.editShowInfo, coalescing: "show-notes") { model throws(DomainError) in model.settingShowNotes(value) }
         }
-        .onChange(of: store.model.show) { _, show in
+        .onChange(of: store.residentModel.show) { _, show in
             // Refresh fields that aren't being edited; a change that didn't come from the focused field (Revert,
             // undo, another window) also replaces its draft, so a discarded edit can't come back (#86).
             let externalTitle = show.title != appliedTitle
@@ -354,7 +354,7 @@ struct ShowInfoInspector: View {
             guard old != nil else { return }
             store.endCoalescing()
             if old == .title {
-                titleDraft = store.model.show.title
+                titleDraft = store.residentModel.show.title
                 titleError = nil
             }
         }
@@ -369,7 +369,7 @@ struct ShowInfoInspector: View {
             return
         }
         titleError = nil
-        guard title != store.model.show.title else { return }
+        guard title != store.residentModel.show.title else { return }
         appliedTitle = title
         store.apply(UndoActionName.editShowInfo, coalescing: "show-title") { model throws(DomainError) in try model.renamingShow(to: title) }
     }

@@ -18,9 +18,9 @@ struct CleanupTranscriptionTimingTests {
         f.model.placeGroupsAtSourceTime()
         try await wait {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.model
+                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.residentModel
         }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let episode = try #require(before.episode(f.model.episodeID))
         let version = try #require(episode.alignment?.acceptedMap)
         let map = try before.timeMap(revision: version.revision, in: episode.id)
@@ -51,7 +51,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(await probe.allSamplesValid)
         #expect(await probe.lastProgress == 1)
         #expect(transcripts.first { $0.primary.sourceID == f.target }?.words.first?.alignedStart == 0.375)
-        #expect(f.document.store.model == corrected && f.document.verifiedModel == corrected)
+        #expect(f.document.store.residentModel == corrected && f.document.verifiedModel == corrected)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -62,7 +62,7 @@ struct CleanupTranscriptionTimingTests {
         f.model.placeGroupsAtSourceTime()
         try await wait {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.model
+                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.residentModel
         }
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
         f.model.setPositionLocked(false, group: target.group)
@@ -70,7 +70,7 @@ struct CleanupTranscriptionTimingTests {
         f.model.applyNumeric(ratePPM: 0, offsetMilliseconds: -2250)
         try await wait {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.model
+                && f.model.waveformMap != nil && f.document.verifiedModel == f.document.store.residentModel
         }
         let defaults = try #require(UserDefaults(suiteName: "ww.implicit-range.\(UUID().uuidString)"))
         let modelDirectory = f.folder.appendingPathComponent("synthetic-model-availability")
@@ -87,7 +87,7 @@ struct CleanupTranscriptionTimingTests {
         try #require(plan.isReady, "\(cleanup.transcriptionReadinessMessage)")
         #expect(plan.alignedRange == -2.25...12)
         #expect(plan.lanes.first { $0.primary.sourceID == f.target }.map { $0.start...$0.end } == -2.25...9.75)
-        #expect(f.document.store.model.episodes[0].cleanup?.workingRange == nil)
+        #expect(f.document.store.residentModel.episodes[0].cleanup?.workingRange == nil)
         #expect(cleanup.workingRangeSummary.contains("(automatic)"))
         #expect(!cleanup.canTranscribe && cleanup.transcriptionReadinessMessage.contains("local model"))
         let host = HostedTimelineWindow(width: 800, height: 60,
@@ -123,7 +123,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(busy.accessibilityHelp() == cleanup.transcriptionReadinessMessage)
         cleanup.isBusy = false
 
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let probe = TranscriptionFrameProbe()
         let transcripts = try await f.runtime.transcribeCleanup(model: snapshot, episode: f.model.episodeID,
             modelRevision: "synthetic-automatic-boundaries", chunking: .fixed,
@@ -132,7 +132,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(await probe.counts == [12 * 48_000, 12 * 48_000])
         #expect(await probe.allSamplesValid)
         #expect(transcripts.first { $0.primary.sourceID == f.target }?.words.first?.alignedStart == -2)
-        #expect(f.document.store.model == snapshot)
+        #expect(f.document.store.residentModel == snapshot)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
 
         let revision = try #require(snapshot.episodes[0].alignment?.acceptedRevision)
@@ -142,7 +142,7 @@ struct CleanupTranscriptionTimingTests {
         }))
         await cleanup.refresh()
         #expect(cleanup.canTranscribe && !cleanup.hasStaleWorkingRange)
-        let legacy = try await f.runtime.transcribeCleanup(model: f.document.store.model, episode: f.model.episodeID,
+        let legacy = try await f.runtime.transcribeCleanup(model: f.document.store.residentModel, episode: f.model.episodeID,
             modelRevision: "synthetic-legacy-empty-boundaries", chunking: .fixed,
             transcribeWindow: { _ in PCMTranscript(segments: []) }, progress: { _ in })
         #expect(legacy.allSatisfy { $0.workingRange == nil && $0.isValid })
@@ -152,7 +152,7 @@ struct CleanupTranscriptionTimingTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
             episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
@@ -160,7 +160,7 @@ struct CleanupTranscriptionTimingTests {
         await cleanup.refresh()
         try #require(cleanup.plan?.isReady == true)
         let originalAudio = try f.files.map { try Data(contentsOf: $0) }
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let transcripts = try await f.runtime.transcribeCleanup(
             model: snapshot, episode: f.model.episodeID, modelRevision: "synthetic-filler-review",
             transcribeWindow: { _ in PCMTranscript(segments: [
@@ -175,20 +175,20 @@ struct CleanupTranscriptionTimingTests {
         undo.beginUndoGrouping()
         #expect(try cleanup.publishTranscripts(transcripts, expecting: snapshot))
         undo.endUndoGrouping()
-        let published = f.document.store.model
+        let published = f.document.store.residentModel
         #expect(cleanup.fillerReviews.count == 2)
         #expect(cleanup.fillerReviews.allSatisfy { $0.origin == .detected && $0.humanBounds == nil })
         undo.undo()
-        #expect(f.document.store.model == snapshot, "All speakers' transcripts and suggestions undo together")
+        #expect(f.document.store.residentModel == snapshot, "All speakers' transcripts and suggestions undo together")
         undo.redo()
-        #expect(f.document.store.model == published)
+        #expect(f.document.store.residentModel == published)
         await cleanup.refresh()
         let review = try #require(cleanup.fillerReviews.first)
         undo.beginUndoGrouping()
         cleanup.setFillerBounds(review.id, start: 0.98, end: 1.27)
         undo.endUndoGrouping()
         #expect(cleanup.error == nil)
-        let adjusted = f.document.store.model
+        let adjusted = f.document.store.residentModel
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
         let savedMatches = try coder.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload == adjusted
@@ -201,7 +201,7 @@ struct CleanupTranscriptionTimingTests {
             let reopened = try #require(raw as? ShowDocument)
             defer { reopened.close() }
             #expect(reopened !== f.document)
-            #expect(reopened.store.model == adjusted && reopened.verifiedModel == adjusted)
+            #expect(reopened.store.residentModel == adjusted && reopened.verifiedModel == adjusted)
             #expect(!reopened.isDocumentEdited && reopened.status.formatUpdate == nil)
         }
         var replacement = transcripts
@@ -213,9 +213,9 @@ struct CleanupTranscriptionTimingTests {
         #expect(historical == adjusted.episodes[0].cleanup?.fillerReviews?.first)
         #expect(cleanup.fillerIssue(historical) == nil)
         #expect(cleanup.fillerReviews.count == 2, "The adjusted judgment stays active at its exact timing; only undecided suggestions regenerate")
-        let beforeLateResult = f.document.store.model
+        let beforeLateResult = f.document.store.residentModel
         #expect(try !cleanup.publishTranscripts(transcripts, expecting: snapshot))
-        #expect(f.document.store.model == beforeLateResult, "An obsolete job cannot overwrite new reviews")
+        #expect(f.document.store.residentModel == beforeLateResult, "An obsolete job cannot overwrite new reviews")
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         let lateSavedMatches = try coder.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload == beforeLateResult
         #expect(lateSavedMatches)
@@ -238,7 +238,7 @@ struct CleanupTranscriptionTimingTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
             episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
@@ -269,14 +269,14 @@ struct CleanupTranscriptionTimingTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
             episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 0, outValue: 5)
         await cleanup.refresh()
         try #require(cleanup.plan?.isReady == true)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let transcripts = try await f.runtime.transcribeCleanup(
             model: before, episode: f.model.episodeID, modelRevision: "synthetic-audition",
             transcribeWindow: { _ in PCMTranscript(segments: [
@@ -288,7 +288,7 @@ struct CleanupTranscriptionTimingTests {
         let interval = try #require(cleanup.fillerAuditionRange(review, context: 0.5))
         #expect(interval.lowerBound == review.bounds.alignedStart - 0.5)
         #expect(interval.upperBound == review.bounds.alignedEnd + 0.5)
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         cleanup.loopsFillerAudition = true
         cleanup.auditionFiller(review.id, context: 0)
@@ -306,7 +306,7 @@ struct CleanupTranscriptionTimingTests {
         try await wait { !cleanup.isPlaying && !cleanup.isPreparingPlayback || cleanup.error != nil }
         #expect(cleanup.error == nil)
         #expect(cleanup.transportMessage == "Finished filler timing audition.")
-        #expect(f.document.store.model == snapshot, "Playback preferences and looping are not document edits")
+        #expect(f.document.store.residentModel == snapshot, "Playback preferences and looping are not document edits")
         cleanup.loopsFillerAudition = true
         cleanup.auditionFiller(review.id)
         try await wait { cleanup.isPlaying || cleanup.error != nil }
@@ -371,7 +371,7 @@ struct CleanupTranscriptionTimingTests {
         defer { f.close() }
         let originals = try f.files.map { try Data(contentsOf: $0) }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let state = ShowWindowState(store: f.document.store)
         let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
@@ -385,7 +385,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(min(lane.end, legacyCursor + 28 + 1) - max(lane.start, legacyCursor - 1) > 30,
                 "The former seconds-based scheduler rejects this same aligned interval")
         #expect(second.audioFrames.count == 30 * 48_000)
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let probe = TranscriptionFrameProbe()
         let transcripts = try await f.runtime.transcribeCleanup(
             model: snapshot, episode: f.model.episodeID, modelRevision: "synthetic-window-probe",
@@ -411,7 +411,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(transcript.words.allSatisfy { $0.sourceStartFrame != nil && $0.sourceEndFrame != nil })
         #expect(transcript.words[0].alignedStart == lane.start + 0.25)
         #expect(transcript.words[2].alignedStart == Double(second.audioFrames.lowerBound) / 48_000 + 1.25)
-        #expect(f.document.store.model == snapshot, "Rendering does not publish a partial transcript or alter timing")
+        #expect(f.document.store.residentModel == snapshot, "Rendering does not publish a partial transcript or alter timing")
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
         await #expect(throws: (any Error).self) {
             try await f.runtime.cleanupPreview(model: snapshot, episode: f.model.episodeID,
@@ -425,8 +425,8 @@ struct CleanupTranscriptionTimingTests {
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
         f.model.selectWaveform(target)
         f.model.applyNumeric(ratePPM: 0, offsetMilliseconds: 0.001)
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let snapshot = f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let snapshot = f.document.store.residentModel
         let prepared = try await f.runtime.prepareCleanup(model: snapshot, episode: f.model.episodeID, requireReady: false)
         let lane = try #require(prepared.plan.lanes.first { $0.primary.sourceID == f.target })
         let end = try #require(lane.regions.last?.alignedEnd)
@@ -436,7 +436,7 @@ struct CleanupTranscriptionTimingTests {
             start: start, duration: 1.0 / 48_000, respectWorkingRange: false)
         #expect(preview.channels.count == 2)
         #expect(preview.channels.values.allSatisfy { $0.count == 1 && $0[0] == 0 })
-        #expect(f.document.store.model == snapshot)
+        #expect(f.document.store.residentModel == snapshot)
     }
 
     @Test func actualPausePreferredPCMRetainsSilenceCoverageFillersAndSourceAnchors() async throws {
@@ -444,7 +444,7 @@ struct CleanupTranscriptionTimingTests {
             durationSeconds: 70, pauses: [26..<27, 51..<52])
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
             episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
@@ -452,7 +452,7 @@ struct CleanupTranscriptionTimingTests {
         await cleanup.refresh()
         try #require(cleanup.plan?.isReady == true)
         let lane = try #require(cleanup.plan?.lanes.first)
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         let probe = TranscriptionFrameProbe()
         let transcripts = try await f.runtime.transcribeCleanup(model: snapshot, episode: f.model.episodeID,
@@ -490,7 +490,7 @@ struct CleanupTranscriptionTimingTests {
             #expect(word.sourceStartFrame == lane.sourceRange(start: audioStart + 1.25, end: audioStart + 1.5)?.lowerBound)
             #expect(word.sourceEndFrame == lane.sourceRange(start: audioStart + 1.25, end: audioStart + 1.5)?.upperBound)
         }
-        #expect(f.document.store.model == snapshot)
+        #expect(f.document.store.residentModel == snapshot)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -498,7 +498,7 @@ struct CleanupTranscriptionTimingTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
             episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
@@ -506,7 +506,7 @@ struct CleanupTranscriptionTimingTests {
         await cleanup.refresh()
         try #require(cleanup.plan?.isReady == true, "\(cleanup.error ?? "")")
         let probe = TranscriptionFrameProbe()
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let result = try await f.runtime.transcribeCleanup(model: snapshot,
             episode: f.model.episodeID, modelRevision: "synthetic-progress-probe",
             transcribeWindow: { await probe.transcribe($0) }, progress: { await probe.progress($0) })
@@ -517,7 +517,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(completed.map(\.speakerIndex) == [1, 2])
         #expect(completed.map(\.completedSeconds) == [5, 10])
         #expect(updates.allSatisfy { $0.totalSeconds == 10 && $0.speakerCount == 2 })
-        #expect(f.document.store.model == snapshot, "Progress never publishes intermediate words")
+        #expect(f.document.store.residentModel == snapshot, "Progress never publishes intermediate words")
     }
 
     @Test(arguments: [ParallelTranscriptionOutcome.success, .failure, .cancellation])
@@ -525,14 +525,14 @@ struct CleanupTranscriptionTimingTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
             episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 0, outValue: 5)
         await cleanup.refresh()
         try #require(cleanup.plan?.isReady == true, "\(cleanup.error ?? "")")
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         let reference = try await f.runtime.transcribeCleanup(model: snapshot,
             episode: f.model.episodeID, modelRevision: "parallel-probe",
@@ -580,7 +580,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(await probe.active == 0)
         let workers = await pool.snapshot
         #expect(workers.active == 0 && workers.waiting == 0 && workers.peakActive == 2)
-        #expect(f.document.store.model == snapshot, "No parallel worker publishes a partial result")
+        #expect(f.document.store.residentModel == snapshot, "No parallel worker publishes a partial result")
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -588,14 +588,14 @@ struct CleanupTranscriptionTimingTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
             episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 0, outValue: 5)
         await cleanup.refresh()
         try #require(cleanup.plan?.isReady == true)
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let pool = TranscriptionWorkerPool(concurrency: .four,
             budget: .init(memoryBytes: 10, cpuThreads: 4, metalWorkers: 1))
         let cost = TranscriptionResources(memoryBytes: 10, cpuThreads: 4, metalWorkers: 1)
@@ -630,7 +630,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(drained.active == 0 && drained.waiting == 0 && drained.reservedBytes == 0)
         #expect(drained.activeCPUThreads == 0 && drained.activeMetalWorkers == 0)
         #expect(await probe.sawLoading)
-        #expect(f.document.store.model == snapshot, "Model/backend failure cannot publish partial words")
+        #expect(f.document.store.residentModel == snapshot, "Model/backend failure cannot publish partial words")
     }
 
     private func wait(_ condition: () -> Bool) async throws {

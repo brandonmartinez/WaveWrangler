@@ -19,7 +19,7 @@ struct WaveformRefinementHostedTests {
         f.model.placeGroupsAtSourceTime()
         try await wait(f.model.lastError ?? f.model.waveformMessage) {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.isLoadingOverview
-                && f.document.verifiedModel == f.document.store.model && f.model.waveformMap != nil
+                && f.document.verifiedModel == f.document.store.residentModel && f.model.waveformMap != nil
         }
         return f
     }
@@ -27,7 +27,7 @@ struct WaveformRefinementHostedTests {
     @Test func slowPanRefinementKeepsVerifiedWaveformsAndNavigationInteractive() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let overview = f.model.waveformOverviewSnapshotID
         let indices = f.model.waveformOverviewIndices.mapValues(\.id)
         f.model.waveformPublicationDelayForTesting = .seconds(2)
@@ -52,7 +52,7 @@ struct WaveformRefinementHostedTests {
         #expect(f.model.previewWaveformViewport(start: 26, duration: 1))
         f.model.cancelWaveforms(keepingSnapshot: true)
         #expect(f.model.hasUsableWaveformPresentation)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
     }
 
     @Test func coldPreparationStillBlocksAndAReadyWindowDoesNotWaitForTheOverview() async throws {
@@ -83,7 +83,7 @@ struct WaveformRefinementHostedTests {
         cleanup.connectWorkspace(to: f.model)
         defer { cleanup.cancel() }
         await cleanup.refresh()
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let originalBins = f.model.waveformOverviewTracks.map { track in
             track.envelope.bins.withUnsafeBufferPointer { Int(bitPattern: $0.baseAddress) }
         }
@@ -102,7 +102,7 @@ struct WaveformRefinementHostedTests {
         try await Task.sleep(for: .milliseconds(250))
         #expect(f.model.waveformOverviewSnapshotID == projection)
         #expect(!f.model.isLoadingOverview)
-        #expect(f.document.store.model.episodes[0].alignment == before.episodes[0].alignment)
+        #expect(f.document.store.residentModel.episodes[0].alignment == before.episodes[0].alignment)
         #expect(f.model.cutTimeline.removals == [48_000..<96_000])
     }
 }

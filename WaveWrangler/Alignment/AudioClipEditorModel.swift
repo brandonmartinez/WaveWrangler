@@ -79,7 +79,7 @@ final class AudioClipEditorModel {
         importer = StagedAudioImportCoordinator(store: store, episodeID: episodeID, runtime: runtime)
     }
 
-    var episode: Episode? { store.model.episode(episodeID) }
+    var episode: Episode? { store.residentModel.episode(episodeID) }
     var tracks: [AudioTrack] { episode?.audioArrangement?.tracks ?? [] }
     var selected: ProgramAudioClip? { composition?.clips.first { $0.clip.id == selectedClip } }
     var hasArrangement: Bool { episode?.audioArrangement != nil }
@@ -110,7 +110,7 @@ final class AudioClipEditorModel {
             projectionTask?.cancel()
             projectionGeneration = UUID()
             let projectionID = projectionGeneration
-            let snapshot = store.model, generation = store.modelGeneration
+            let snapshot = store.residentModel, generation = store.modelGeneration
             do {
                 if episode.alignment?.acceptedMap == nil
                     || compositionEpisode?.alignment?.acceptedMap == episode.alignment?.acceptedMap,
@@ -128,7 +128,7 @@ final class AudioClipEditorModel {
                             let next = try await runtime.programComposition(model: snapshot, episode: episodeID)
                             try Task.checkCancellation()
                             guard projectionGeneration == projectionID,
-                                  store.modelGeneration == generation, store.model == snapshot else { return }
+                                  store.modelGeneration == generation, store.residentModel == snapshot else { return }
                             composition = next
                             compositionEpisode = episode
                             compositionGeneration = generation
@@ -239,7 +239,7 @@ final class AudioClipEditorModel {
         waveforms.merge(imported) { _, new in new }
         let missing = assets.filter { waveforms[$0.source] == nil }
         guard !missing.isEmpty else { isPreparingWaveforms = false; return }
-        let snapshot = store.model
+        let snapshot = store.residentModel
         isPreparingWaveforms = true
         preparationFraction = 0
         waveformTask = Task { [weak self] in

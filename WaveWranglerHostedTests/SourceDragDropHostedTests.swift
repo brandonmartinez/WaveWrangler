@@ -85,10 +85,10 @@ struct SourceDragDropHostedTests {
             return
         }
         #expect(engine.calls.contains(.scan(count: 2)))
-        #expect(document.store.model == original)
+        #expect(document.store.residentModel == original)
         #expect(!setup.importDroppedURLs([URL(filePath: "/synthetic/another.wav")]))
         setup.cancelImport(review)
-        #expect(document.store.model == original && setup.sheet == nil)
+        #expect(document.store.residentModel == original && setup.sheet == nil)
         #expect(!engine.calls.contains { if case .commitImport = $0 { true } else { false } })
     }
 
@@ -104,21 +104,21 @@ struct SourceDragDropHostedTests {
         let row = try #require(review.rows.first)
         review.setGroup(row.id, "Rodecaster")
         #expect(review.groupOptions(existing: []).contains("Rodecaster"))
-        #expect(document.store.model == original)
+        #expect(document.store.residentModel == original)
         let undo = try #require(document.undoManager)
         undo.groupsByEvent = false
         undo.beginUndoGrouping()
         setup.commitImport(review)
         undo.endUndoGrouping()
-        let imported = document.store.model
+        let imported = document.store.residentModel
         let group = try #require(imported.episodes[0].recorderGroups.first)
         #expect(group.name == "Rodecaster" && imported.episodes[0].sources.count == 1)
         #expect(imported.episodes[0].sources[0].placement.recorderGroupID == group.id)
         try await wait { engine.calls.contains(.commitImport(count: 1)) }
         undo.undo()
-        #expect(document.store.model == original)
+        #expect(document.store.residentModel == original)
         undo.redo()
-        #expect(document.store.model == imported)
+        #expect(document.store.residentModel == imported)
     }
 
     @Test func regroupingPreservesEpochSpeakerChannelAndRoleAndIsUndoable() async throws {
@@ -144,7 +144,7 @@ struct SourceDragDropHostedTests {
         undo.beginUndoGrouping()
         #expect(setup.acceptSourceRowDrop([.recording(drag), .recording(drag)], on: .source(target.id)))
         undo.endUndoGrouping()
-        let moved = document.store.model
+        let moved = document.store.residentModel
         let actual = try #require(moved.episodes[0].source(source.id))
         var expected = try #require(original.episodes[0].source(source.id))
         expected.placement.recorderGroupID = b.id
@@ -154,11 +154,11 @@ struct SourceDragDropHostedTests {
         #expect(moved.episodes[0].speakerAssignments == original.episodes[0].speakerAssignments)
         #expect(setup.selection == [.source(source.id)] && !setup.collapsedRows.contains(.group(b.id)))
         undo.undo()
-        #expect(document.store.model == original)
+        #expect(document.store.residentModel == original)
         undo.redo()
-        #expect(document.store.model == moved)
+        #expect(document.store.residentModel == moved)
         #expect(setup.acceptSourceRowDrop([.recording(drag)], on: .group(nil)))
-        #expect(document.store.model.episodes[0].source(source.id)?.placement.recorderGroupID == nil)
+        #expect(document.store.residentModel.episodes[0].source(source.id)?.placement.recorderGroupID == nil)
     }
 
     @Test func foreignMissingAndMixedDragsAreRejectedAtomically() throws {
@@ -175,12 +175,12 @@ struct SourceDragDropHostedTests {
             SetupSourceDrag(showID: original.show.id, episodeID: episode.id, sourceID: SourceID()),
         ] {
             #expect(!setup.acceptSourceRowDrop([.recording(valid), .recording(invalid)], on: .group(group.id)))
-            #expect(document.store.model == original && setup.message != nil)
+            #expect(document.store.residentModel == original && setup.message != nil)
         }
         #expect(!setup.acceptSourceRowDrop([.recording(valid), .file(.init(url: URL(filePath: "/synthetic/new.wav")))],
             on: .group(group.id)))
         #expect(!setup.acceptSourceRowDrop([.recording(valid)], on: .group(RecorderGroupID())))
         #expect(!setup.importDroppedURLs([try #require(URL(string: "https://example.invalid/recording.wav"))]))
-        #expect(document.store.model == original && engine.calls.isEmpty)
+        #expect(document.store.residentModel == original && engine.calls.isEmpty)
     }
 }

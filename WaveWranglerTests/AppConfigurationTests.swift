@@ -102,7 +102,7 @@ struct AppConfigurationTests {
         )
         #expect(source.contains("NSDocumentController.shared.documents.contains(where: { $0 === document })"))
         #expect(source.contains("currentModel: { [weak store, weak document] in"))
-        #expect(source.contains("return store.model"))
+        #expect(source.contains("return store.residentModel"))
     }
 
     @Test func showDocumentRoundTripsThroughAFileInATemporaryDirectory() throws {
@@ -174,7 +174,7 @@ struct UITestHooksDebugOnlyTests {
             #expect(source.contains("workspace?.positionLocks == prior.episode(episodeID)?.workspace?.positionLocks"))
             #expect(source.contains("merged.episodes[index].alignment = result.alignment"))
             let store = try UITestHooksDebugOnlyTests.source("Document/ShowDocumentStore.swift")
-            #expect(store.contains("SharedModelPublication.decide(live: model, expected: expected) == .publish"))
+            #expect(store.contains("SharedModelPublication.decide(live: residentModel, expected: expected) == .publish"))
         }
 
         @Test func inspectionNeverActivatesTheMutableLiveModel() throws {
@@ -204,7 +204,7 @@ struct UITestHooksDebugOnlyTests {
             let start = try #require(source.range(of: "private func adoptUncertainPublication()"))
             let end = try #require(source[start.upperBound...].range(of: "\n    override func writeSafely("))
             let body = source[start.lowerBound..<end.lowerBound]
-            #expect(body.contains("verifiedModel = document.payload"))
+            #expect(body.contains("adoptVerifiedCatalog(document.payload, captured: captured)"))
             #expect(body.contains("AlignmentRuntimeProvider.reconcileActive(for: self)"))
 
             let runtime = try Self.runtimeSource()
