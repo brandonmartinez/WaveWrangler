@@ -58,6 +58,14 @@ struct MixerHostedTests {
         } catch let error as CocoaError {
             #expect(error.code == .fileWriteUnknown)
         }
+        do {
+            _ = try await Task.detached {
+                _ = try document.fileWrapper(ofType: DocumentTypes.show)
+            }.value
+            Issue.record("Background document wrappers must require a captured save snapshot.")
+        } catch let error as CocoaError {
+            #expect(error.code == .fileWriteUnknown)
+        }
     }
 
     @Test(arguments: [false, true])
@@ -70,8 +78,8 @@ struct MixerHostedTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appendingPathComponent("Synthetic.wwshow")
         let original = ShowDocumentModel.untitled()
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
-            original, revision: 1, publicationID: UUID()).data.write(to: url)
+        try LocalFileOperations().writeNew(
+            ShowPackageCoder().encode(original, revision: 1), to: url)
         let document = try #require(NSDocumentController.shared.makeDocument(
             withContentsOf: url, ofType: DocumentTypes.show) as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
@@ -103,7 +111,10 @@ struct MixerHostedTests {
             try model.renamingShow(to: "Second later edit")
         })
         let data = try await Task.detached {
-            try document.data(ofType: DocumentTypes.show)
+            let data = try document.data(ofType: DocumentTypes.show)
+            let wrapper = try document.fileWrapper(ofType: DocumentTypes.show)
+            try #require(wrapper.isDirectory && wrapper.fileWrappers?[ShowPackage.manifestName] != nil)
+            return data
         }.value
         #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(data).payload == captured)
         gate.resume()
@@ -111,7 +122,7 @@ struct MixerHostedTests {
         let verified = document.verifiedModel
         let edited = document.hasUnsavedModelChanges
         #expect(verified == captured && edited)
-        #expect(try Data(contentsOf: url) == data)
+        #expect(try LocalFileOperations().read(url) == data)
         let currentTitle = document.store.model.show.title
         #expect(currentTitle == "Second later edit")
         undo.undo()

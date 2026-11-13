@@ -159,9 +159,10 @@ enters `super.save` synchronously. AppKit's writing callback explicitly calls
 `unblockUserInteraction()` **before** encoding or waiting for the app-wide
 persistence lane. Merely enabling asynchronous writing does not release the
 UI. Worker code uses captured inputs and synchronized candidate/receipt storage,
-never live main-actor model or status. The `data(ofType:)` override is explicitly
-nonisolated because AppKit invokes it on its writing worker. It returns only the
-encoded captured candidate there; without a snapshot, background calls throw
+never live main-actor model or status. Both `data(ofType:)` and
+`fileWrapper(ofType:)` are explicitly nonisolated because AppKit invokes them on
+its writing worker. They use only the encoded captured candidate and synchronized
+wrapper cache there; without a snapshot, background calls throw
 instead of reading the live model. Direct main-actor serialization remains
 available outside a save. Keep stock `super.writeSafely`,
 `AlreadyCoordinated`, exact-base conflict checks and independent read-back.

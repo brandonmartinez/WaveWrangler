@@ -159,6 +159,8 @@ struct Probe {
         case "offer": return offer()
         case "package-trial": return packageTrial()
         case "package-convert": return packageConvert()
+        case "catalog-generate": return catalogGenerate()
+        case "catalog-memory": return catalogMemory()
         default:
             emit(["error": "unknown command \(args.command)"])
             return 2

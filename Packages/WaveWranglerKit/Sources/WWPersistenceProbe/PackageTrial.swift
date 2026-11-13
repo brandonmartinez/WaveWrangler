@@ -39,12 +39,13 @@ extension Probe {
         return files
     }
 
-    private func syntheticPackageShow() throws -> ShowDocumentModel {
+    func syntheticPackageShow(episodes: Int = 8, wordsPerGeneration: Int = 2_000,
+        artwork: Data? = nil) throws -> ShowDocumentModel {
         var model = ShowDocumentModel.untitled(title: "Synthetic package trial")
-        for index in 0..<8 {
+        for index in 0..<episodes {
             let source = SourceRecord(displayNameHint: "generated-placeholder-\(index).wav")
             var words: [TranscriptWord] = []
-            for position in 0..<2_000 {
+            for position in 0..<wordsPerGeneration {
                 let start = Double(position) / 10
                 words.append(TranscriptWord(text: position.isMultiple(of: 7) ? "um" : "generated",
                     sourceStartFrame: Int64(position * 4_800), sourceEndFrame: Int64(position * 4_800 + 4_000),
@@ -68,7 +69,7 @@ extension Probe {
             model = try model.addingEpisode(episode)
         }
         let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")!
-        model.show.publication = .init(artwork: .image(try PublicationArtwork(data: png)))
+        model.show.publication = .init(artwork: .image(try PublicationArtwork(data: artwork ?? png)))
         return model
     }
 

@@ -421,7 +421,7 @@ final class ShowDocument: NSDocument {
         }
     }
 
-    override func fileWrapper(ofType typeName: String) throws -> FileWrapper {
+    nonisolated override func fileWrapper(ofType typeName: String) throws -> FileWrapper {
         let data = try data(ofType: typeName)
         return try packageWrapper.withLock { prior in
             let wrapper = try ShowPackage.fileWrapper(for: data, reusing: prior)
