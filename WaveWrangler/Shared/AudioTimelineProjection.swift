@@ -294,21 +294,36 @@ struct AudioTimelineProjection: Sendable, Equatable {
     }
 
     func project(_ strokes: [AlignmentWaveformStroke]) -> [AlignmentWaveformStroke] {
-        strokes.flatMap { stroke in
-            guard stroke.mapped else { return [stroke] }
-            return originalRanges(in: stroke.displayRange).map { span in
-                let full = stroke.displayRange.upperBound - stroke.displayRange.lowerBound
-                let scale = full > 0 ? (stroke.groupRange.upperBound - stroke.groupRange.lowerBound) / full : 0
+        var result: [AlignmentWaveformStroke] = []
+        result.reserveCapacity(strokes.count)
+        for stroke in strokes {
+            guard stroke.mapped else {
+                result.append(stroke)
+                continue
+            }
+            let full = stroke.displayRange.upperBound - stroke.displayRange.lowerBound
+            let scale = full > 0 ? (stroke.groupRange.upperBound - stroke.groupRange.lowerBound) / full : 0
+            func append(_ span: ClosedRange<Double>) {
                 let groupStart = stroke.groupRange.lowerBound + (span.lowerBound - stroke.displayRange.lowerBound) * scale
                 let groupEnd = stroke.groupRange.lowerBound + (span.upperBound - stroke.displayRange.lowerBound) * scale
                 let source = stroke.sourceSeconds + (groupStart + groupEnd) / 2 - stroke.groupSeconds
                 let display = displayRange(forOriginalRange: span)
-                return AlignmentWaveformStroke(sourceSeconds: source,
+                result.append(AlignmentWaveformStroke(sourceSeconds: source,
                     groupSeconds: (groupStart + groupEnd) / 2,
                     displaySeconds: (display.lowerBound + display.upperBound) / 2,
                     low: stroke.low, high: stroke.high, mapped: true, epoch: stroke.epoch,
-                    displayRange: display, groupRange: groupStart...groupEnd)
+                    displayRange: display, groupRange: groupStart...groupEnd))
+            }
+            let cut = Self.firstIndex(in: cutGeometry.ends) { $0 > stroke.displayRange.lowerBound }
+            let boundary = Self.firstIndex(in: dialogueBoundaries) { $0 > stroke.displayRange.lowerBound }
+            // Most bins do not straddle an edit. Avoid building temporary split arrays for each one.
+            if (cut == cutGeometry.ranges.count || cutGeometry.ranges[cut].lowerBound > stroke.displayRange.upperBound),
+               (boundary == dialogueBoundaries.count || dialogueBoundaries[boundary] >= stroke.displayRange.upperBound) {
+                append(stroke.displayRange)
+            } else {
+                for span in originalRanges(in: stroke.displayRange) { append(span) }
             }
         }
+        return result
     }
 }

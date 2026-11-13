@@ -7,13 +7,21 @@ import WWCore
 struct AlignmentWaveformCacheTests {
     @Test func viewportProjectionMatchesFullGeometryAcrossCutsAndRestoration() async throws {
         let source = SourceID(), epoch = RecordingEpochID()
-        let strokes = (0..<2000).map { frame in
+        let bins = (0..<2000).map { frame in
             let start = Double(frame) / 100
             let amplitude: Float = (100..<200).contains(frame) ? 0.9 : 0.2
             return AlignmentWaveformStroke(sourceSeconds: start + 0.005, groupSeconds: start + 0.005,
                 displaySeconds: start + 0.005, low: -amplitude, high: amplitude, mapped: true, epoch: epoch,
                 displayRange: start...(start + 0.009), groupRange: start...(start + 0.009))
         }
+        let strokes = bins + [
+            AlignmentWaveformStroke(sourceSeconds: 3, groupSeconds: 3,
+                displaySeconds: 3, low: -0.8, high: 0.8, mapped: true, epoch: epoch,
+                displayRange: 0...6, groupRange: 0...6),
+            AlignmentWaveformStroke(sourceSeconds: 1.5, groupSeconds: 1.5,
+                displaySeconds: 1.5, low: -0.3, high: 0.3, mapped: false, epoch: epoch,
+                displayRange: 1...2, groupRange: 1...2),
+        ]
         let aligned = AlignmentWaveformStrokeIndex(strokes: strokes)
         let cuts = try ManualCutTimeline(cuts: [
             .init(alignmentRevision: 1, startFrame: 48_000, endFrame: 96_000),
@@ -26,11 +34,14 @@ struct AlignmentWaveformCacheTests {
             #expect(rebuilt.strokes[source] == full.strokes)
             #expect(rebuilt.gains[source] == full.normalizedGain)
             for start in [0.0, 0.75, 1, 2.75, 3, 10] {
-                let expected = full.visible(start: start, duration: 0.5)
-                #expect(aligned.projectedVisible(projection, start: start, duration: 0.5) == expected)
-                let preview = try await AlignmentWaveformProjection.reproject(alignedIndices: [source: aligned],
-                    projection: projection, window: start...(start + 0.5))
-                #expect(preview.strokes[source] == expected)
+                for duration in [0.5, 6, 20] {
+                    let expected = full.visible(start: start, duration: duration)
+                    #expect(aligned.projectedVisible(projection, start: start, duration: duration) == expected)
+                    let preview = try await AlignmentWaveformProjection.reproject(alignedIndices: [source: aligned],
+                        projection: projection, window: start...(start + duration))
+                    #expect(preview.strokes[source] == expected,
+                        "A bin spanning multiple kept segments must be projected once; unmapped audio stays visible.")
+                }
             }
         }
         #expect(aligned.strokes == strokes, "Undo and Show Cut must retain the removed geometry.")

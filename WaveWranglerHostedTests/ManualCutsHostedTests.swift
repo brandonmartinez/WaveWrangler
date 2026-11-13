@@ -10,6 +10,61 @@ import WWPersistence
 @MainActor
 @Suite("Manual cut production listening and waveform path", .serialized)
 struct ManualCutsHostedTests {
+    @Test func longRecordingCutKeepsTheVisibleWaveformsResponsive() async throws {
+        let f = try await AlignmentWaveformRetentionHostedTests().fixture(
+            cleanupPrimaries: 1, durationSeconds: 600, extraSources: 2)
+        defer { f.close() }
+        f.model.placeGroupsAtSourceTime()
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        f.model.synchronizeWaveforms()
+        try await wait { !f.model.isLoadingWaveforms && !f.model.isLoadingOverview && f.model.canApplyManualCuts }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        cleanup.connectWorkspace(to: f.model)
+        defer { cleanup.cancel() }
+        await cleanup.refresh()
+        f.model.waveformStartSeconds = 0
+        f.model.waveformDurationSeconds = 600
+        let host = HostedTimelineWindow(width: 1200, height: 900,
+            content: AlignmentWaveformView(model: f.model, cleanup: cleanup, showInspector: {}))
+        defer { host.close() }
+        try await host.settle()
+        f.model.listening.selection = 5...6
+        try #require(cleanup.canApplyManualCut)
+        var longestUITick = Duration.zero
+        let heartbeat = Task { @MainActor in
+            var previous = ContinuousClock.now
+            do {
+                while !Task.isCancelled {
+                    try await Task.sleep(for: .milliseconds(10))
+                    let now = ContinuousClock.now
+                    longestUITick = max(longestUITick, previous.duration(to: now))
+                    previous = now
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                Issue.record(error)
+            }
+        }
+        defer { heartbeat.cancel() }
+        await Task.yield()
+        let started = ContinuousClock.now
+        cleanup.applyManualCut()
+        let synchronous = started.duration(to: .now)
+        try #require(cleanup.error == nil)
+        try await wait { f.model.hasUsableWaveformPresentation || f.model.lastError != nil }
+        let visible = started.duration(to: .now)
+        #expect(synchronous < .milliseconds(100), "A cut must not block the UI actor: \(synchronous)")
+        #expect(visible < .milliseconds(500), "The waveform must not wait for full reconstruction: \(visible)")
+        try await wait { !f.model.isLoadingWaveforms }
+        try await host.settle()
+        let uiTick = longestUITick
+        print("LONG_RECORDING_CUT synchronous=\(synchronous) visible=\(visible) longest_ui_tick=\(uiTick)")
+        #expect(uiTick < .milliseconds(150), "Preview and detail publication must keep the UI responsive: \(uiTick)")
+        #expect(f.model.lastError == nil)
+    }
+
     @Test func cutViewportPublishesBeforeBackgroundDetailAndRemainsInteractive() async throws {
         let f = try await MixerHostedTests().ready(durationSeconds: 12)
         defer { f.close() }

@@ -456,7 +456,12 @@ already stopped seeks to Episode Start (including its program/display projection
 not the visible viewport's left edge; pressing Stop twice stops and then returns.
 
 Waveform projection/reprojection runs off the main actor with cancellation and
-snapshot checks before publication. Waveform pixel aggregation and path drawing
+snapshot checks before publication. Cut projection appends into one reserved output
+buffer and takes a no-split path for bins that cross neither a cut nor a program
+boundary, instead of allocating intermediate range/stroke arrays for every bin.
+Viewport queries sort and deduplicate matching bin indices without a per-bin hash
+set; bins crossing multiple kept spans are still projected only once.
+Waveform pixel aggregation and path drawing
 use an asynchronous Canvas. Transcript preparation projects and indexes words once
 per input/cut snapshot; pan/zoom queries use binary viewport lookup, preserving
 overlapping words and stable ordering. Each prepared word index retains one
@@ -472,6 +477,14 @@ pass rather than pairwise scans. Listening reuses the existing bounded, witnesse
 PCM cache, including adjacent/overlapping cached windows for indexed seeks.
 Cache hits still require current source identity, format/channel, and map-revision
 verification; no full-file audio copies or source-authorization shortcuts are added.
+
+A synthetic four-track, ten-minute hosted cut in a 1,200-point-wide window on
+`ww-ui-1` (Debug) reduced preview readiness from 710 ms to 388 ms. The cut command
+returned in 1.4 ms, and the longest main-actor heartbeat interval through preview
+and full-detail publication was 137 ms. A separate 100,000-bin, 100-cut projection
+fell from 218 ms to 50 ms. These measurements do not establish instantaneous
+redraws or a latency bound for every episode; the hosted regression requires a
+sub-500-ms preview and checks responsiveness while the remaining work completes.
 
 Waveform canvases are viewport-sized, including at close zoom; cached tiles are
 clipped in viewport coordinates rather than rendered into oversized surfaces and
