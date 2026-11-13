@@ -1,4 +1,5 @@
 import AVFoundation
+import Darwin
 import Foundation
 import Testing
 import WWCore
@@ -119,6 +120,150 @@ struct ExportJobTests {
             #expect(result.retainedDirectory == nil)
             #expect(try entries(destination).isEmpty && entries(temporary).isEmpty)
         }
+    }
+
+    @Test(arguments: DestinationMetadataPoint.allCases)
+    func destinationMetadataChangesReverifyBytesBeforePublication(point: DestinationMetadataPoint) async throws {
+        let destination = try directory(), temporary = try directory()
+        defer {
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        let request = try request(destination, frames: 0..<196_608)
+        let job = ExportJob(temporaryDirectory: temporary)
+        let once = TransferInterruption()
+        let result = try await job.run(request, isCurrent: {
+            guard point != .beforeCommit, await job.progress.phase == .publishing,
+                  let path = try publicationOutput(destination) else { return true }
+            let bytes = try path.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+            guard bytes > 0, (bytes >= 196_608 * 8) == (point == .duringVerification),
+                  await once.claim() else { return true }
+            try changeMetadata(path)
+            return true
+        }, validateSources: {
+            guard point == .beforeCommit, await job.progress.phase == .publishing,
+                  let path = try publicationOutput(destination),
+                  await once.claim() else { return true }
+            try changeMetadata(path)
+            return true
+        }, render: render(request))
+        #expect(await once.didClaim)
+        try #require(result.succeeded, "\(String(describing: result.problem)) \(result.cleanupErrors)")
+        #expect(result.published.count == 1 && result.retainedDirectory == nil)
+        #expect(try entries(destination) == ["out.wav"] && entries(temporary).isEmpty)
+        let samples = try decode(destination.appendingPathComponent("out.wav"))
+        #expect(samples[0].count == 196_608 && samples[0].allSatisfy { $0 == 0.6 })
+        #expect(samples[1].allSatisfy { $0 == -0.2 })
+    }
+
+    @Test(arguments: [false, true])
+    func destinationContentChangesWithRestoredModificationTimeArePreserved(beforeCommit: Bool) async throws {
+        let destination = try directory(), temporary = try directory()
+        defer {
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        let request = try request(destination, frames: 0..<196_608)
+        let job = ExportJob(temporaryDirectory: temporary)
+        let once = TransferInterruption()
+        let replacement = Data("external destination write".utf8)
+        let result = try await job.run(request, isCurrent: {
+            guard !beforeCommit, await job.progress.phase == .publishing,
+                  let path = try publicationOutput(destination),
+                  (try path.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) > 0,
+                  await once.claim() else { return true }
+            try overwritePreservingModificationTime(path, with: replacement)
+            return true
+        }, validateSources: {
+            guard beforeCommit, await job.progress.phase == .publishing,
+                  let path = try publicationOutput(destination),
+                  await once.claim() else { return true }
+            try overwritePreservingModificationTime(path, with: replacement)
+            return true
+        }, render: render(request))
+        #expect(await once.didClaim)
+        #expect(result.problem?.kind == .destination && result.published.isEmpty)
+        #expect(result.retainedDirectory != nil && !result.cleanupErrors.isEmpty)
+        let path = try #require(try publicationOutput(destination))
+        #expect(try Data(contentsOf: path).prefix(replacement.count) == replacement)
+        #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("out.wav").path))
+    }
+
+    @Test(arguments: [false, true])
+    func destinationMetadataReverificationIsBoundedAndCancelable(cancel: Bool) async throws {
+        let destination = try directory(), temporary = try directory()
+        defer {
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        let request = try request(destination, frames: 0..<196_608)
+        let job = ExportJob(temporaryDirectory: temporary)
+        let changes = Counter()
+        let result = try await job.run(request, isCurrent: {
+            guard await job.progress.phase == .publishing,
+                  let path = try publicationOutput(destination),
+                  (try path.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0) > 0 else { return true }
+            await changes.increment()
+            let count = await changes.value
+            try changeMetadata(path, value: UInt8(clamping: count))
+            if cancel, count == 2 { await job.cancel() }
+            return true
+        }, render: render(request))
+        let count = await changes.value
+        #expect(count >= 2 && count <= 4)
+        #expect(result.problem?.kind == (cancel ? .canceled : .destination))
+        #expect(result.published.isEmpty && !result.cleanupErrors.isEmpty)
+        #expect((result.retainedDirectory == nil) == cancel)
+        #expect(try publicationOutput(destination) != nil)
+        #expect(!FileManager.default.fileExists(atPath: destination.appendingPathComponent("out.wav").path))
+    }
+
+    @Test func sourceRevocationDuringDestinationMetadataReverificationPreventsCommit() async throws {
+        let destination = try directory(), temporary = try directory()
+        defer {
+            try? FileManager.default.removeItem(at: destination)
+            try? FileManager.default.removeItem(at: temporary)
+        }
+        let request = try request(destination, frames: 0..<4_800)
+        let job = ExportJob(temporaryDirectory: temporary)
+        let admissions = Counter()
+        let result = try await job.run(request, isCurrent: { true }, validateSources: {
+            guard await job.progress.phase == .publishing,
+                  let path = try publicationOutput(destination) else { return true }
+            await admissions.increment()
+            guard await admissions.value == 1 else { return false }
+            try changeMetadata(path)
+            return true
+        }, render: render(request))
+        #expect(await admissions.value == 2)
+        #expect(result.problem?.kind == .stale && result.published.isEmpty)
+        #expect(result.retainedDirectory == nil && result.cleanupErrors.isEmpty)
+        #expect(try entries(destination).isEmpty && entries(temporary).isEmpty)
+    }
+
+    private func publicationOutput(_ destination: URL) throws -> URL? {
+        guard let stage = try FileManager.default.contentsOfDirectory(at: destination,
+            includingPropertiesForKeys: nil).first(where: {
+                $0.lastPathComponent.hasPrefix(".ww-export-publish-")
+            }) else { return nil }
+        let path = stage.appendingPathComponent("out.wav")
+        return FileManager.default.fileExists(atPath: path.path) ? path : nil
+    }
+
+    private func changeMetadata(_ path: URL, value: UInt8 = 1) throws {
+        var value = value
+        try #require(setxattr(path.path, "com.wavewrangler.export-test", &value, 1, 0, 0) == 0)
+    }
+
+    private func overwritePreservingModificationTime(_ path: URL, with bytes: Data) throws {
+        var before = stat()
+        try #require(lstat(path.path, &before) == 0)
+        let file = try FileHandle(forWritingTo: path)
+        try file.write(contentsOf: bytes)
+        try file.synchronize()
+        try file.close()
+        let times = [before.st_atimespec, before.st_mtimespec]
+        try #require(utimensat(AT_FDCWD, path.path, times, AT_SYMLINK_NOFOLLOW) == 0)
     }
 
     @Test(arguments: [ExportJobPhase.cleaning, .converting(delivery: 0), .measuring(delivery: 0)])
@@ -592,9 +737,14 @@ private actor Currency {
 
 private actor TransferInterruption {
     private var claimed = false
+    var didClaim: Bool { claimed }
     func claim() -> Bool {
         guard !claimed else { return false }
         claimed = true
         return true
     }
+}
+
+enum DestinationMetadataPoint: Sendable, CaseIterable {
+    case duringCopy, duringVerification, beforeCommit
 }

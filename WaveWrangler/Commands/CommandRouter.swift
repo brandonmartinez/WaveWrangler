@@ -320,7 +320,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
             guard let show = documentState else { return false }
             // #159: Save As would make another file this older show's revision before its update; Duplicate stays.
             if item.action == #selector(saveShowAs(_:)), show.store.document?.isAwaitingFormatUpdate == true { return false }
-            return show.saveStatus.state.allowsDuplicateOrSaveAs && show.store.document?.isInViewingMode != true
+            return show.saveStatus.state.allowsDuplicateOrSaveAs && show.store.document?.isViewingForEditing != true
         case #selector(importSources(_:)):
             guard let show, show.canEdit, let episode = show.selectedEpisodeID else { return false }
             return SourceCommands.handler.canImportSources(store: show.store, episode: episode)

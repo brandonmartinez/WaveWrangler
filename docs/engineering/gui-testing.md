@@ -4,6 +4,9 @@ Ordinary hosted/UI execution uses ready, exclusively leased
 [macOS VMs](ui-test-vm-hosts.md), normally `ww-ui-1` or `ww-ui-2`.
 Neither the development desktop nor Mac mini is an unavailable-VM fallback.
 Build and inspect results outside the lease; one invocation owns one lease.
+Follow the host guide's [per-feature lifecycle](ui-test-vm-hosts.md#per-feature-lifecycle):
+inspect ownership and guest cleanliness, start and verify, test, preserve evidence,
+clean owned artifacts, then stop owned guests and verify they stopped.
 
 ## Select a plan, not an assumed full suite
 

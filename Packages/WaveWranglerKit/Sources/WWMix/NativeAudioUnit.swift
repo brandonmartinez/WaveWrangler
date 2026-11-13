@@ -148,6 +148,7 @@ final class NativeAudioUnit: @unchecked Sendable {
     let channels: Int
     let latencyFrames: Int
     let tailFrames: Int
+    let maximumFrames: Int
     private let input: UnitPullInput
     private let output: AVAudioPCMBuffer
     private let outputPointers: [UnsafeMutablePointer<Float>]
@@ -164,7 +165,7 @@ final class NativeAudioUnit: @unchecked Sendable {
     private var dryDelays: [FrameDelay]
 
     static func load(_ slot: AudioUnitSlot, channels: Int, policy: MixerRenderPolicy,
-                     supportsLiveBypass: Bool = false) async throws -> NativeAudioUnit {
+                     supportsLiveBypass: Bool = false, offlineRendering: Bool = false) async throws -> NativeAudioUnit {
         try Task.checkCancellation()
         guard slot.isValid else { throw MixerFailure.state(slot.id, "invalid portable slot") }
         var d = AudioComponentDescription(componentType: slot.component.type, componentSubType: slot.component.subtype,
@@ -191,11 +192,14 @@ final class NativeAudioUnit: @unchecked Sendable {
         }
         try Task.checkCancellation()
         return try NativeAudioUnit(slot: slot, unit: box.unit, channels: channels, policy: policy,
-                                  supportsLiveBypass: supportsLiveBypass)
+                                  supportsLiveBypass: supportsLiveBypass, offlineRendering: offlineRendering)
     }
 
     init(slot: AudioUnitSlot, unit: AUAudioUnit, channels: Int, policy: MixerRenderPolicy,
-         supportsLiveBypass: Bool = false) throws {
+         supportsLiveBypass: Bool = false, offlineRendering: Bool = false) throws {
+        guard !offlineRendering || !supportsLiveBypass else {
+            throw MixerFailure.invalidRecipe("offline effects cannot support live bypass")
+        }
         self.slot = slot
         self.unit = unit
         self.channels = channels
@@ -208,13 +212,14 @@ final class NativeAudioUnit: @unchecked Sendable {
             let layout = channels == 1 ? "mono" : channels == 2 ? "stereo" : "\(channels)-channel"
             return .format(slot.id, "\(slot.productName ?? "Audio Unit") needs 48 kHz \(layout) audio. \(reason)")
         }
+        let requestedFrames = offlineRendering ? MixerRecipe.offlineBlockFrames : MixerRecipe.blockFrames
         guard (1...2).contains(channels),
               let format = AVAudioFormat(standardFormatWithSampleRate: Double(MixerRecipe.sampleRate),
                 channels: AVAudioChannelCount(channels)),
               let inputBuffer = AVAudioPCMBuffer(pcmFormat: format,
-                frameCapacity: AVAudioFrameCount(MixerRecipe.blockFrames)),
+                frameCapacity: AVAudioFrameCount(requestedFrames)),
               let outputBuffer = AVAudioPCMBuffer(pcmFormat: format,
-                frameCapacity: AVAudioFrameCount(MixerRecipe.blockFrames)),
+                frameCapacity: AVAudioFrameCount(requestedFrames)),
               let outputData = outputBuffer.floatChannelData else {
             throw formatFailure("Only mono speaker inserts and stereo Master inserts are supported.")
         }
@@ -254,9 +259,15 @@ final class NativeAudioUnit: @unchecked Sendable {
         guard auxiliaryInputs.allSatisfy({ !unit.inputBusses[$0].isEnabled }) else {
             throw formatFailure("The effect requires an auxiliary input, but sidechain routing is not supported.")
         }
-        unit.maximumFramesToRender = AVAudioFrameCount(MixerRecipe.blockFrames)
+        unit.isRenderingOffline = offlineRendering
+        unit.maximumFramesToRender = AVAudioFrameCount(requestedFrames)
         do { try unit.allocateRenderResources() }
         catch { throw MixerFailure.loading(slot.id, error.localizedDescription) }
+        maximumFrames = min(requestedFrames, Int(unit.maximumFramesToRender))
+        guard maximumFrames > 0, unit.isRenderingOffline == offlineRendering else {
+            unit.deallocateRenderResources()
+            throw formatFailure("The effect refused the requested rendering mode or block capacity.")
+        }
         guard unit.inputBusses[0].format == format, unit.outputBusses[0].format == format else {
             unit.deallocateRenderResources()
             throw formatFailure("The effect changed the requested input/output format during allocation.")
@@ -358,7 +369,7 @@ final class NativeAudioUnit: @unchecked Sendable {
 
     func render(_ samples: [[Float]]) throws -> [[Float]] {
         let frames = samples.first?.count ?? 0
-        guard samples.count == channels, frames > 0, frames <= MixerRecipe.blockFrames,
+        guard samples.count == channels, frames > 0, frames <= maximumFrames,
               samples.allSatisfy({ $0.count == frames }) else { throw MixerFailure.incompletePCM }
         if bypassed && !supportsLiveBypass { return samples }
         let dry = supportsLiveBypass ? samples.indices.map { dryDelays[$0].process(samples[$0]) } : []

@@ -120,21 +120,42 @@ final class ExportJobStorage {
         }
         guard let publication else { throw ExportFailure.invalidState }
         _ = try publication.create(filename)
-        let target = try publication.artifact(named: filename)
+        let target = try publication.retainedArtifact(named: filename)
+        func compareCopy(_ byteCount: Int64) async throws -> Bool {
+            var buffer = [UInt8](repeating: 0, count: 262_144)
+            var comparison = buffer
+            var offset: Int64 = 0
+            while offset < byteCount {
+                try await check()
+                try validateDestination()
+                try validateSource()
+                try publication.validateDirectory()
+                let count = Int(min(Int64(buffer.count), byteCount - offset))
+                try Self.read(source, into: &buffer, count: count, offset: offset)
+                try Self.read(target.descriptor, into: &comparison, count: count, offset: offset)
+                guard buffer.prefix(count).elementsEqual(comparison.prefix(count)) else { return false }
+                try validateSource()
+                offset += Int64(count)
+            }
+            return true
+        }
+        func validateTarget(verifyBytes: Bool = false) async throws {
+            try publication.validateDirectory()
+            try await target.validateDestinationCopy(in: publication.descriptor, verifyBytes: verifyBytes,
+                                                       compare: compareCopy)
+        }
         var buffer = [UInt8](repeating: 0, count: 262_144)
-        var comparison = buffer
         var offset: Int64 = 0
         while offset < file.byteCount {
             try await check()
             try validateDestination()
             try validateSource()
-            try publication.validateDirectory()
-            try target.validate(in: publication.descriptor)
+            try await validateTarget()
             let count = Int(min(Int64(buffer.count), file.byteCount - offset))
             try Self.read(source, into: &buffer, count: count, offset: offset)
             var written = 0
             while written < count {
-                try target.validate(in: publication.descriptor)
+                try await validateTarget()
                 let result = buffer.withUnsafeBytes {
                     pwrite(target.descriptor, $0.baseAddress!.advanced(by: written), count - written, off_t(offset))
                 }
@@ -146,37 +167,25 @@ final class ExportJobStorage {
             }
             try validateSource()
         }
-        try target.validate(in: publication.descriptor)
+        try await validateTarget()
         guard fsync(target.descriptor) == 0 else { throw Self.failure("Synchronize destination export") }
-        try target.validate(in: publication.descriptor)
         // Byte-for-byte verification transfers the local decode verification to this exact copy.
-        offset = 0
-        while offset < file.byteCount {
-            try await check()
+        try await validateTarget(verifyBytes: true)
+        for _ in 0..<3 {
+            try await validateTarget()
+            try await beforeCommit()
             try validateDestination()
             try validateSource()
             try publication.validateDirectory()
-            try target.validate(in: publication.descriptor)
-            let count = Int(min(Int64(buffer.count), file.byteCount - offset))
-            try Self.read(source, into: &buffer, count: count, offset: offset)
-            try Self.read(target.descriptor, into: &comparison, count: count, offset: offset)
-            guard buffer.prefix(count).elementsEqual(comparison.prefix(count)) else {
-                throw ExportFailure.verification("Destination copy differs from the verified local output")
+            // Metadata revalidation may await; repeat source admission before a synchronous commit.
+            guard try target.destinationCopyIsCurrent(in: publication.descriptor) else { continue }
+            guard renameatx_np(publication.descriptor, filename, descriptor, filename, UInt32(RENAME_EXCL)) == 0 else {
+                throw Self.failure("Publish \(filename) without overwriting")
             }
-            try validateSource()
-            try target.validate(in: publication.descriptor)
-            offset += Int64(count)
+            // The rename is the per-file commit point. Never roll it back on later failure.
+            return destination.appendingPathComponent(filename)
         }
-        try await beforeCommit()
-        try validateDestination()
-        try validateSource()
-        try publication.validateDirectory()
-        try target.validate(in: publication.descriptor)
-        guard renameatx_np(publication.descriptor, filename, descriptor, filename, UInt32(RENAME_EXCL)) == 0 else {
-            throw Self.failure("Publish \(filename) without overwriting")
-        }
-        // The rename is the per-file commit point. Never roll it back on later failure.
-        return destination.appendingPathComponent(filename)
+        throw ExportFailure.destination("Destination metadata kept changing before publication: \(filename). Its bytes were preserved.")
     }
 
     func cleanupPublication() throws {

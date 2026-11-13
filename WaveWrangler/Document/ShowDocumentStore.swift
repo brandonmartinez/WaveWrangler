@@ -48,7 +48,7 @@ final class ShowDocumentStore {
 
     var canEdit: Bool {
         guard let document else { return true }
-        return !document.isInViewingMode && !document.saveStatus.state.isReadOnly
+        return !document.isViewingForEditing && !document.saveStatus.state.isReadOnly
     }
 
     /// Replaces the value after reading from disk; not an undoable edit.

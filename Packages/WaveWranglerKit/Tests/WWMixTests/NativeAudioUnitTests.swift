@@ -55,9 +55,11 @@ struct NativeAudioUnitTests {
         #expect(MixerAudioUnits.compactName("Missing Effect", shortName: nil, manufacturer: nil) == "Missing Effect")
     }
 
-    @Test func appleMonoAndStereoRenderAndRecallOpaqueDocumentState() async throws {
+    @Test(arguments: [false, true])
+    func appleMonoAndStereoRenderAndRecallOpaqueDocumentState(offlineRendering: Bool) async throws {
         for channels in [1, 2] {
-            let unit = try await NativeAudioUnit.load(slot(), channels: channels, policy: .init())
+            let unit = try await NativeAudioUnit.load(slot(), channels: channels, policy: .init(),
+                                                     offlineRendering: offlineRendering)
             #expect(unit.status.channels == channels)
             let parameters = try unit.parameters()
             let cutoff = try #require(parameters.first { $0.address == UInt64(kLowPassParam_CutoffFrequency) })
@@ -65,12 +67,16 @@ struct NativeAudioUnitTests {
             let captured = try unit.capture()
             #expect(captured.isValid)
             #expect(try unit.capture().documentState == captured.documentState)
-            let recalled = try await NativeAudioUnit.load(captured, channels: channels, policy: .init())
+            let recalled = try await NativeAudioUnit.load(captured, channels: channels, policy: .init(),
+                                                         offlineRendering: offlineRendering)
             let recalledParameters = try recalled.parameters()
             #expect(try #require(recalledParameters.first { $0.address == cutoff.address }).value == 1700)
-            let samples = Array(repeating: (0..<512).map { Float(sin(Double($0) * 0.2)) * 0.25 }, count: channels)
+            let frames = offlineRendering ? 4096 : 512
+            let samples = Array(repeating: (0..<frames).map { Float(sin(Double($0) * 0.2)) * 0.25 }, count: channels)
             let rendered = try recalled.render(samples)
-            #expect(rendered.count == channels && rendered.allSatisfy { $0.count == 512 })
+            let actualMode = recalled.unit.isRenderingOffline
+            #expect(actualMode == offlineRendering)
+            #expect(rendered.count == channels && rendered.allSatisfy { $0.count == frames })
             #expect(rendered.flatMap { $0 }.allSatisfy { $0.isFinite })
             #expect(rendered[0] != samples[0])
         }

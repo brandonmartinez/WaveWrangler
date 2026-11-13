@@ -82,6 +82,13 @@ storage, then creates and verifies every selected format there. Allow local disk
 space for the uncompressed mix and encoded files, in addition to destination
 space. Only completed, verified files are copied to the selected folder; each
 copy is checked before its final filename appears.
+Rendering uses independent effects in offline mode, larger processing blocks
+where supported, and bounded preparation of the next audio window. It is not
+paced to playback, but source preparation and effect complexity still affect
+completion time; some effects use different processing quality when offline.
+Cloud-provider metadata-only updates trigger another byte comparison rather
+than rejecting an otherwise identical copy. Changed contents or file identity
+still stop export; repeated metadata changes can also prevent publication.
 
 Wait for completion and review the result and reported omissions. Lossy formats
 may include encoder priming/padding, so their decoded duration is not exact

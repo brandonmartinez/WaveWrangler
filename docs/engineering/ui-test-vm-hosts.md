@@ -25,6 +25,60 @@ requires explicit operational authority, not a test retry.
 Consult current [Tart licensing](https://tart.run/licensing/) and Apple's
 applicable macOS terms before changing virtualization capacity or distribution.
 
+## Per-feature lifecycle
+
+Use the complete lifecycle: **inspect, start, verify, test, collect, clean up,
+stop, verify stopped**. Starting Tart is not proof of guest readiness,
+and submitting a test command is not proof that tests executed.
+
+1. **Inspect ownership and cleanliness before starting work.** On the Tart host,
+   check `tart list`, `tart get ww-ui-N` and the specific guest's runner process.
+   For a running guest, check SSH, `~/ww-uitest-runs/gui-lock status`, queued
+   invocations and active Xcode/test/app processes before restarting or stopping
+   anything. Coordinate with an existing owner; neither a running VM nor an
+   empty lease alone establishes ownership. An unreachable running guest has
+   unknown ownership, not permission to force a restart.
+2. **Start only the guests needed for the feature.** Obtain operational
+   authorization and use the independent service launches below. Record which
+   guests this invocation started or explicitly took over; a borrowed guest
+   must be handed back rather than stopped without agreement.
+3. **Verify actual running state and readiness.** Recheck `tart list`, the
+   runner process, `tart ip`, pinned SSH identity and every readiness gate below.
+   Inspect free space with `df -h` and staged-run usage with
+   `du -sh ~/ww-uitest-runs`. Allow room for incoming Products, test scratch and
+   result bundles, not merely the transfer size. Check for abandoned
+   `Products.incoming` directories, incomplete results, generated fixtures and
+   leftover test applications. Investigate unexpected residue before testing.
+4. **Use a fresh, verified run.** Build from the current source, stage into a
+   unique directory and run a small functional smoke with those Products before
+   broader selection. Record its result; an older smoke does not qualify a new
+   build. Acquire a fresh lease for each invocation, with bounded workers and
+   explicit selectors. Follow [build/stage/run/collect](gui-testing.md).
+5. **Collect evidence before cleanup.** Retrieve results, logs, attachments and
+   the source/dirty-patch identity. Confirm the local copies are readable and
+   sufficient to investigate failures. Record executed identities and counts,
+   environment-invalid attempts and remaining blockers.
+6. **Clean only owned feature artifacts.** Once no invocation holds the lease
+   and this run's test processes have exited, remove only explicitly identified
+   staging, results and generated-fixture paths owned by this feature whose
+   needed evidence is preserved. Clean incomplete transfers too. Never blanket
+   delete `~/ww-uitest-runs`, another feature's results, shared helpers, installed
+   tooling, permission state or lease/queue files. Reclaim stale ownership only
+   through `gui-lock`. Unknown leftovers require owner confirmation; being old
+   does not authorize deletion. Recheck free space and leftover processes.
+7. **Stop and verify.** After evidence collection and cleanup, recheck leases,
+   queued work and ownership, then `tart stop ww-ui-N` only for each specifically
+   owned guest. Verify `tart list` reports `stopped` and its runner has exited.
+   Do not leave detached guests running after feature work unless an explicit
+   handoff or ongoing task requires it. Record any intentionally retained
+   artifacts or guest handoff.
+
+A clean guest need not be a freshly provisioned guest or have no historical
+results. It must have known ownership, no conflicting workload or unexplained
+test state, enough free space and a fresh verified run directory. Disk pressure
+or unexplained residue is a readiness blocker, not authority to delete history,
+reset the VM, change security settings or fall back to physical-host tests.
+
 ## Readiness gate
 
 Before dispatch and after a reboot/restart, verify:

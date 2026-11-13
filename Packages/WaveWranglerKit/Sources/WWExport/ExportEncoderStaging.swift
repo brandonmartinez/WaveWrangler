@@ -48,12 +48,12 @@ final class ExportEncoderStaging {
         return directory.appendingPathComponent(name)
     }
 
-    func artifact(named name: String) throws -> ExportOwnedArtifact {
+    /// The caller validates the retained artifact under its strict or destination-copy policy.
+    func retainedArtifact(named name: String) throws -> ExportOwnedArtifact {
         try validateDirectory()
         guard let artifact = artifacts[name] else {
             throw ExportFailure.destination("Untracked export output: \(name)")
         }
-        try artifact.validate(in: descriptor)
         return artifact
     }
 

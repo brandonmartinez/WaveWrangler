@@ -66,6 +66,23 @@ tail declarations refuse. Offline rendering uses an independent processor with
 the same recipe and bounded input; current export ends at the exact program
 boundary rather than appending an undeclared effect tail.
 
+Export effects explicitly set `isRenderingOffline` before resource allocation
+and request 4,096-frame blocks. The processor uses the smallest allocated effect
+capacity, capped at 4,096 frames, while playback retains 512-frame blocks and
+real-time effect mode. Latency and applicable tail declarations are still checked
+before and after every native block; larger blocks amortize synchronous
+out-of-process render and property calls without caching timing declarations.
+Effects may select vendor-specific offline processing quality.
+
+The offline renderer prepares at most one next source window while the current
+window is mixed and written. Each input window is at most 240,000 frames, with
+at most two retained input windows and one current mixed output. Source reads
+remain serial with each other, and the effect graph remains serial and
+sample-continuous. Structured child work is canceled and joined before failure
+or cancellation returns, before source retentions can be released. Recheck
+currency after prefetch and processing; full source validation across each
+prepared window and the final render boundary remains required.
+
 ## Native state ownership
 
 Each loaded episode chain has one controller. Docked/detached UI and multiple

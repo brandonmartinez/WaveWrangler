@@ -192,7 +192,7 @@ struct MixerReviewRegressionTests {
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
         undo.removeAllActions()
         f.document.debugViewingMode = true
-        #expect(f.document.isInViewingMode && !owner.state.canEdit && !f.document.store.canEdit)
+        #expect(f.document.isViewingForEditing && !owner.state.canEdit && !f.document.store.canEdit)
         #expect(!f.document.store.setRecordingInputGain(12, reference: reference, in: f.model.episodeID))
         #expect(f.document.store.model == original && !undo.canUndo)
         f.document.debugViewingMode = false

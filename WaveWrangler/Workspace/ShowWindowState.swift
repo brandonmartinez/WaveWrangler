@@ -222,7 +222,7 @@ final class ShowWindowState {
 
     /// ST-14: read-only states disable every editing command.
     var isReadOnly: Bool {
-        saveStatus.state.isReadOnly || store.document?.isInViewingMode == true
+        saveStatus.state.isReadOnly || store.document?.isViewingForEditing == true
     }
 
     // MARK: - Selection
