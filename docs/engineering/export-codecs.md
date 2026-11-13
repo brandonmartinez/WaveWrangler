@@ -43,7 +43,10 @@ hold the Xing/LAME gapless/seek tag at these rates and channel counts.
    surfaced. Dropping the actor closes native resources but is not disk cleanup.
 
 Cancellation is checked at append/finalize/decode boundaries. Canceling during an
-M4A remux cancels that session; no finalized result can then be returned. No actor
+M4A remux immediately forwards both owning-task cancellation and explicit
+`ExportJob.cancel()` to the active framework session and its export task.
+The framework operation is joined before cleanup or a terminal job result;
+no finalized result can then be returned. No actor
 method suspends during native encoding, so queued cancellation takes effect at the
 next bounded block. No desktop app or user recordings are needed for qualification.
 
@@ -150,7 +153,15 @@ production renderer rather than a second mixer or arbitrary source reader.
 The sink writes finite, contiguous stereo Float32 to a private mode-0600 disk
 intermediate within a unique mode-0700 directory on the destination volume.
 Memory stays bounded by the production window and converter buffers, not episode
-duration. Deliveries are processed sequentially from that intermediate. Mono is
+duration. Its original descriptor remains retained through cleanup, and it uses
+the same file-ownership witness as encoded output: device/inode, size, modification
+and change timestamps, regular-file type and a single link. Each bounded write
+validates prior ownership and checkpoints only its successful byte count; failed
+writes and finalization never adopt later external changes. Every read/pass and
+removal revalidates the witness. Replaced or in-place edited PCM is preserved,
+later encoding/publication is refused, and cleanup errors identify retained
+staging for inspection.
+Deliveries are processed sequentially from that intermediate. Mono is
 the arithmetic average `(left + right) / 2`, not a selected channel or an
 unattenuated sum. Rate conversion follows the 48 kHz mix, drains EOF, and emits
 the nearest whole number of frames for the requested rate and episode duration.

@@ -112,16 +112,24 @@ public actor ExportJob {
     private var running = false
     private var canceled = false
     private var deliveryFrames: Int64 = 0
+    private var activeEncoder: ExportEncoder?
+    private let remuxFactory: ExportRemuxOperation.Factory
 
-    public init() {}
-    public func cancel() { if running { canceled = true } }
+    public init() { remuxFactory = ExportRemuxOperation.system }
+    init(remuxFactory: @escaping ExportRemuxOperation.Factory) { self.remuxFactory = remuxFactory }
+    public func cancel() async {
+        if running {
+            canceled = true
+            await activeEncoder?.requestCancellation()
+        }
+    }
 
     public func run(_ request: ExportJobRequest, isCurrent: @escaping Currency,
                     render: @escaping Renderer, progress notify: @escaping Progress = { _ in }) async throws -> ExportJobResult {
         guard !running else { throw ExportFailure.invalidState }
         running = true
         canceled = false
-        defer { running = false }
+        defer { running = false; activeEncoder = nil }
         let scope = request.directory.startAccessingSecurityScopedResource()
         defer { if scope { request.directory.stopAccessingSecurityScopedResource() } }
         var storage: ExportJobStorage?
@@ -137,7 +145,6 @@ public actor ExportJob {
             storage = owned
             let pcm = try ExportIntermediate(directory: owned.directory, frames: request.productionFrames)
             intermediate = pcm
-            try owned.registerIntermediate()
             await update(.rendering, total: request.productionFrames.count64, notify: notify)
             try await render { [self] first, stereo in
                 try await check(isCurrent)
@@ -190,8 +197,9 @@ public actor ExportJob {
                     try await check(isCurrent)
                     try owned.validateOwnership()
                     let encoder = try ExportEncoder(stagingDirectory: owned.directory,
-                                                    settings: delivery.settings, metadata: delivery.metadata)
+                        settings: delivery.settings, metadata: delivery.metadata, remuxFactory: remuxFactory)
                     encoders.append(encoder)
+                    activeEncoder = encoder
                     try await pcm.convert(delivery: delivery, gainDB: gainDB) { [self] samples in
                         try await check(isCurrent)
                         try await encoder.append(interleaved: samples)
@@ -199,7 +207,9 @@ public actor ExportJob {
                                                  index: index, total: expected, notify: notify)
                     }
                     await update(.verifying(delivery: index), total: expected, notify: notify)
+                    try await check(isCurrent)
                     let file = try await encoder.finish { [self] in try await check(isCurrent) }
+                    activeEncoder = nil
                     try await check(isCurrent)
                     if let targets, let peak = file.loudness.truePeakDBTP,
                        peak > targets.ceiling - ExportLoudnessMeter.ceilingReserveDB {
@@ -229,6 +239,7 @@ public actor ExportJob {
             }
             await update(.publishing, total: request.productionFrames.count64, notify: notify)
             try await check(isCurrent)
+            try await pcm.validate()
             for (index, file) in verified.enumerated() {
                 try await check(isCurrent)
                 let url = try owned.publish(file, filename: request.deliveries[index].filename)
@@ -238,7 +249,7 @@ public actor ExportJob {
             }
         } catch {
             let kind: ExportJobProblem.Kind
-            if error is CancellationError { kind = .canceled }
+            if canceled || Task.isCancelled || error is CancellationError { kind = .canceled }
             else if let value = error as? ExportJobProblem { kind = value.kind }
             else {
                 switch progress.phase {
@@ -250,11 +261,13 @@ public actor ExportJob {
             problem = .init(kind: kind, message: String(describing: error))
         }
         await update(.cleaning, total: request.productionFrames.count64, notify: notify)
-        do { try await intermediate?.close() }
-        catch { cleanupErrors.append(String(describing: error)) }
         var mayClean = true
         do { try storage?.validateOwnership() }
         catch { mayClean = false; cleanupErrors.append(String(describing: error)) }
+        do { if mayClean { try await intermediate?.cleanup() } }
+        catch { cleanupErrors.append(String(describing: error)) }
+        do { try await intermediate?.close() }
+        catch { cleanupErrors.append(String(describing: error)) }
         for encoder in encoders where mayClean {
             do { try await encoder.cancel() }
             catch { cleanupErrors.append(String(describing: error)) }

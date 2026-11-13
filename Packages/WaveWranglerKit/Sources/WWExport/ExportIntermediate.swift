@@ -5,21 +5,53 @@ import Foundation
 /// Owns only a freshly created raw stereo Float32 file. There is deliberately no arbitrary-URL reader.
 actor ExportIntermediate {
     private let handle: FileHandle
+    private let directory: URL
+    private let directoryDescriptor: Int32
+    private let directoryIdentity: stat
+    private let artifact: ExportOwnedArtifact
     private let frames: Range<Int64>
+    private var writtenBytes: Int64 = 0
     private(set) var writtenFrames: Int64 = 0
     private var finished = false
 
     init(directory: URL, frames: Range<Int64>) throws {
-        let url = directory.appendingPathComponent("production.f32")
-        let descriptor = Darwin.open(url.path, O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
+        let parent = Darwin.open(directory.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+        guard parent >= 0 else { throw ExportFailure.destination("Cannot open private intermediate directory") }
+        var identity = stat()
+        guard fstat(parent, &identity) == 0 else {
+            Darwin.close(parent)
+            throw ExportFailure.destination("Cannot inspect private intermediate directory")
+        }
+        let descriptor = openat(parent, "production.f32", O_RDWR | O_CREAT | O_EXCL | O_NOFOLLOW | O_CLOEXEC, 0o600)
         guard descriptor >= 0 else {
+            Darwin.close(parent)
             throw ExportFailure.destination("Cannot exclusively create private production intermediate: \(String(cString: strerror(errno)))")
         }
-        handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        do {
+            let artifact = try ExportOwnedArtifact(descriptor: descriptor, name: "production.f32")
+            let reader = fcntl(descriptor, F_DUPFD_CLOEXEC, 0)
+            guard reader >= 0 else {
+                let failure = ExportFailure.destination("Cannot retain private intermediate read descriptor: \(String(cString: strerror(errno)))")
+                do { try artifact.remove(in: parent, missingAllowed: false) }
+                catch { throw ExportFailure.destination("\(failure); intermediate cleanup failed: \(error)") }
+                throw failure
+            }
+            self.artifact = artifact
+            handle = FileHandle(fileDescriptor: reader, closeOnDealloc: true)
+        } catch {
+            Darwin.close(parent)
+            throw error
+        }
+        self.directory = directory
+        directoryDescriptor = parent
+        directoryIdentity = identity
         self.frames = frames
     }
 
+    deinit { Darwin.close(directoryDescriptor) }
+
     func append(firstFrame: Int64, stereo: [[Float]]) throws {
+        try validate()
         guard !finished, stereo.count == 2, !stereo[0].isEmpty,
               stereo[0].count <= 240_000, stereo[0].count == stereo[1].count,
               firstFrame == frames.lowerBound + writtenFrames,
@@ -32,16 +64,47 @@ actor ExportIntermediate {
             interleaved[frame * 2] = stereo[0][frame]
             interleaved[frame * 2 + 1] = stereo[1][frame]
         }
-        try interleaved.withUnsafeBytes { try handle.write(contentsOf: $0) }
+        try interleaved.withUnsafeBytes { bytes in
+            guard let base = bytes.baseAddress else { throw ExportFailure.invalidState }
+            var offset = 0
+            while offset < bytes.count {
+                try validate()
+                let count = pwrite(artifact.descriptor, base.advanced(by: offset),
+                                   bytes.count - offset, off_t(writtenBytes))
+                if count < 0, errno == EINTR { continue }
+                guard count > 0 else {
+                    throw ExportFailure.destination("Write private production intermediate: \(String(cString: strerror(errno)))")
+                }
+                offset += count
+                writtenBytes += Int64(count)
+                try artifact.checkpoint(in: directoryDescriptor, expectedBytes: writtenBytes)
+            }
+        }
         writtenFrames += Int64(stereo[0].count)
     }
 
     func finish() throws {
+        try validate()
         guard !finished, writtenFrames == frames.count64 else {
             throw ExportFailure.invalidPCM("Renderer did not deliver the complete Episode Start/End range")
         }
         try handle.synchronize()
+        try validate()
         finished = true
+    }
+
+    func validate() throws {
+        var current = stat()
+        guard lstat(directory.path, &current) == 0, current.st_mode & S_IFMT == S_IFDIR,
+              current.st_dev == directoryIdentity.st_dev, current.st_ino == directoryIdentity.st_ino else {
+            throw ExportFailure.destination("Private intermediate directory changed; its contents were preserved")
+        }
+        try artifact.validate(in: directoryDescriptor)
+    }
+
+    func cleanup() throws {
+        try validate()
+        try artifact.remove(in: directoryDescriptor, missingAllowed: false)
     }
 
     func close() throws { try handle.close() }
@@ -50,8 +113,10 @@ actor ExportIntermediate {
     func convert(delivery: ExportDelivery, gainDB: Double = 0, measuring: Bool = false,
                  sink: @Sendable ([Float]) async throws -> Void) async throws {
         guard finished else { throw ExportFailure.invalidState }
+        try validate()
         try handle.seek(toOffset: 0)
-        let reader = IntermediateConversionInput(handle: handle, channels: delivery.settings.channels)
+        let reader = IntermediateConversionInput(handle: handle, channels: delivery.settings.channels,
+            validate: { try self.validate() })
         guard let inputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: 48_000,
                                              channels: AVAudioChannelCount(delivery.settings.channels), interleaved: false),
               let outputFormat = AVAudioFormat(commonFormat: .pcmFormatFloat32,
@@ -70,11 +135,13 @@ actor ExportIntermediate {
         let gain = pow(10, gainDB / 20)
         while true {
             try Task.checkCancellation()
+            try validate()
             var error: NSError?
             let status = converter.convert(to: output, error: &error) { count, status in
                 reader.next(count: count, format: inputFormat, status: status)
             }
             if let failure = reader.failure { throw failure }
+            try validate()
             if let error { throw ExportFailure.encoder("Delivery conversion failed: \(error)") }
             let count = min(Int64(output.frameLength), expected - delivered)
             if count > 0 {
@@ -102,6 +169,7 @@ actor ExportIntermediate {
                     }
                 }
                 try await sink(samples)
+                try validate()
                 delivered += count
                 emptyTurns = 0
             } else {
@@ -122,14 +190,19 @@ private final class IntermediateConversionInput {
     let channels: Int
     var failure: (any Error)?
     var readFrames: Int64 = 0
-    init(handle: FileHandle, channels: Int) { self.handle = handle; self.channels = channels }
+    let validate: () throws -> Void
+    init(handle: FileHandle, channels: Int, validate: @escaping () throws -> Void) {
+        self.handle = handle; self.channels = channels; self.validate = validate
+    }
 
     func next(count: AVAudioPacketCount, format: AVAudioFormat,
               status: UnsafeMutablePointer<AVAudioConverterInputStatus>) -> AVAudioBuffer? {
         do {
+            try validate()
             let frames = min(Int(count), 4_096)
             guard frames > 0 else { throw ExportFailure.invalidPCM("Converter requested an empty input block") }
             let data = try handle.read(upToCount: frames * 8) ?? Data()
+            try validate()
             guard data.count % 8 == 0 else { throw ExportFailure.invalidPCM("Truncated private intermediate") }
             if data.isEmpty { status.pointee = .endOfStream; return nil }
             let length = data.count / 8
