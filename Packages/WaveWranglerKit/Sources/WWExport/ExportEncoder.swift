@@ -3,6 +3,41 @@ import Darwin
 import Foundation
 import WWLameNative
 
+/// Internal framework boundary also used by deterministic in-flight cancellation tests.
+struct ExportRemuxOperation: Sendable {
+    typealias Factory = @Sendable (URL, URL, [AVMetadataItem]) throws -> ExportRemuxOperation
+    let run: @Sendable () async throws -> Void
+    let cancel: @Sendable () -> Void
+
+    static let system: Factory = { input, output, metadata in
+        let operation = try SystemExportRemux(input: input, output: output, metadata: metadata)
+        return ExportRemuxOperation(run: { try await operation.run() }, cancel: { operation.cancel() })
+    }
+}
+
+// Configured before sharing, run exactly once, then joined before disposal. The only concurrent
+// access is AVAssetExportSession's cancellation API, which is designed to interrupt active export.
+private final class SystemExportRemux: @unchecked Sendable {
+    private let session: AVAssetExportSession
+    private let output: URL
+
+    init(input: URL, output: URL, metadata: [AVMetadataItem]) throws {
+        guard let session = AVAssetExportSession(asset: AVURLAsset(url: input),
+                                                presetName: AVAssetExportPresetPassthrough) else {
+            throw ExportFailure.encoder("System M4A metadata remux is unavailable")
+        }
+        session.metadata = metadata
+        self.session = session
+        self.output = output
+    }
+
+    func run() async throws {
+        try Task.checkCancellation()
+        try await session.export(to: output, as: .m4a)
+    }
+    func cancel() { session.cancelExport() }
+}
+
 /// Serial, non-realtime encoder. The caller owns authorization, conversion, mixing and publication.
 /// A unique child of `stagingDirectory` is owned here; no delivery file is created or overwritten.
 public actor ExportEncoder {
@@ -17,11 +52,18 @@ public actor ExportEncoder {
     private var writerMayHaveChanged = false
     private enum State { case encoding, finishing, finished, canceled, failed }
     private var state = State.encoding
-    private var remux: AVAssetExportSession?
+    private let remuxFactory: ExportRemuxOperation.Factory
+    private var remux: ExportRemuxOperation?
     private var remuxTask: Task<Void, Error>?
     private var disposed = false
 
     public init(stagingDirectory: URL, settings: ExportSettings, metadata: ExportMetadata = .init()) throws {
+        try self.init(stagingDirectory: stagingDirectory, settings: settings, metadata: metadata,
+                      remuxFactory: ExportRemuxOperation.system)
+    }
+
+    init(stagingDirectory: URL, settings: ExportSettings, metadata: ExportMetadata,
+         remuxFactory: @escaping ExportRemuxOperation.Factory) throws {
         try metadata.validate(for: settings.codec)
         guard stagingDirectory.isFileURL,
               try stagingDirectory.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]).isDirectory == true,
@@ -48,6 +90,7 @@ public actor ExportEncoder {
         directory = staging.directory
         self.staging = staging
         self.output = output
+        self.remuxFactory = remuxFactory
     }
 
     /// Interleaved Float32. Float WAV preserves finite over-range values; other codecs require [-1, 1].
@@ -103,21 +146,24 @@ public actor ExportEncoder {
             var verifiedURL = output
             if case .aacLC = settings.codec, !metadata.m4aItems.isEmpty {
                 let tagged = directory.appendingPathComponent("tagged.m4a")
-                guard let session = AVAssetExportSession(asset: AVURLAsset(url: output),
-                                                        presetName: AVAssetExportPresetPassthrough) else {
-                    throw ExportFailure.encoder("System M4A metadata remux is unavailable")
-                }
-                remux = session
-                session.metadata = metadata.m4aItems
+                let operation = try remuxFactory(output, tagged, metadata.m4aItems)
+                remux = operation
                 let task = Task {
-                    try await session.export(to: tagged, as: .m4a)
+                    try Task.checkCancellation()
+                    try await operation.run()
                     try staging.recordCompletedRemux("tagged.m4a")
                 }
                 remuxTask = task
-                try await task.value
+                let result = await withTaskCancellationHandler(operation: {
+                    await task.result
+                }, onCancel: {
+                    operation.cancel()
+                    task.cancel()
+                })
                 remux = nil
                 try Task.checkCancellation()
                 guard state == .finishing else { throw CancellationError() }
+                try result.get()
                 try staging.remove(output.lastPathComponent)
                 verifiedURL = tagged
             }
@@ -132,8 +178,9 @@ public actor ExportEncoder {
             state = .finished
             return result
         } catch {
+            if state == .canceled { throw CancellationError() }
             if state != .canceled { state = .failed }
-            remux?.cancelExport()
+            remux?.cancel()
             remux = nil
             // Explicit cancel also retries cleanup if a filesystem error prevented it.
             throw abort(error)
@@ -144,8 +191,7 @@ public actor ExportEncoder {
     /// The coordinator must dispose this directory after copying/publishing the verified file.
     public func cancel() async throws {
         guard !disposed else { return }
-        remux?.cancelExport()
-        state = .canceled
+        requestCancellation()
         // Join the framework operation before touching any remux artifacts. Its error belongs to finish().
         if let remuxTask { _ = await remuxTask.result }
         var errors: [String] = []
@@ -157,6 +203,13 @@ public actor ExportEncoder {
         do { try staging.cleanup(); disposed = true }
         catch { errors.append(String(describing: error)) }
         if !errors.isEmpty { throw ExportFailure.destination(errors.joined(separator: "; ")) }
+    }
+
+    /// Interrupt framework work without racing its writes with disposal.
+    func requestCancellation() {
+        state = .canceled
+        remux?.cancel()
+        remuxTask?.cancel()
     }
 
     private func abort(_ error: Error) -> Error {

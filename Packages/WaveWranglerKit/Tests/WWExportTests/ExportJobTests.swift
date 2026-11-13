@@ -7,6 +7,99 @@ import WWMix
 
 @Suite("Verified production export jobs", .serialized)
 struct ExportJobTests {
+    @Test(arguments: [ExportJobPhase.cleaning, .converting(delivery: 0), .measuring(delivery: 0)])
+    func sameInodeIntermediateEditsArePreservedAndRefuseLaterReads(phase: ExportJobPhase) async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let output = try ExportDelivery(filename: "out.wav", settings: .init(codec: .wave(.float32)),
+                                       normalization: phase == .measuring(delivery: 0) ? .podcast : .off)
+        let request = try request(root, frames: 0..<4_800, deliveries: [output])
+        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+            guard value.phase == phase, value.completedFrames == 0 else { return }
+            do { try overwriteIntermediate(root, samples: 9_600) }
+            catch { Issue.record(error) }
+        })
+        #expect(!result.succeeded && !result.cleanupErrors.isEmpty)
+        #expect(result.problem?.kind == (phase == .cleaning ? .cleanup : .encoding))
+        #expect(result.published.count == (phase == .cleaning ? 1 : 0))
+        let file = try intermediate(root)
+        #expect(try Data(contentsOf: file) == finiteReplacement(samples: 9_600))
+        if phase != .cleaning { #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("out.wav").path)) }
+    }
+
+    @Test(arguments: [false, true])
+    func intermediateEditsDuringRenderingAreNotAdoptedByNextWriteOrFinalization(complete: Bool) async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = try request(root, frames: 0..<100)
+        let result = try await ExportJob().run(request, isCurrent: { true }, render: { sink in
+            try await sink(0, [[Float](repeating: 0.1, count: complete ? 100 : 50),
+                               [Float](repeating: 0.1, count: complete ? 100 : 50)])
+            try overwriteIntermediate(root, samples: complete ? 200 : 100)
+            if !complete {
+                try await sink(50, [[Float](repeating: 0.2, count: 50), [Float](repeating: 0.2, count: 50)])
+            }
+        })
+        #expect(result.problem?.kind == .rendering && result.published.isEmpty)
+        #expect(!result.cleanupErrors.isEmpty)
+        #expect(try Data(contentsOf: intermediate(root)) == finiteReplacement(samples: complete ? 200 : 100))
+    }
+
+    @Test(arguments: [false, true])
+    func intermediateEditsDuringReadOrBetweenDeliveriesDiscardEveryUnpublishedOutput(laterPass: Bool) async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = try request(root, frames: 0..<48_000,
+                                  deliveries: [delivery("first.wav"), delivery("second.wav")])
+        let result = try await ExportJob().run(request, isCurrent: { true }, render: render(request), progress: { value in
+            guard value.phase == .converting(delivery: laterPass ? 1 : 0),
+                  laterPass ? value.completedFrames == 0 : value.completedFrames > 0 else { return }
+            do { try overwriteIntermediate(root, samples: 96_000) }
+            catch { Issue.record(error) }
+        })
+        #expect(result.problem?.kind == .encoding && result.published.isEmpty)
+        #expect(!result.cleanupErrors.isEmpty)
+        #expect(try Data(contentsOf: intermediate(root)) == finiteReplacement(samples: 96_000))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("first.wav").path))
+        #expect(!FileManager.default.fileExists(atPath: root.appendingPathComponent("second.wav").path))
+    }
+
+    @Test(arguments: [false, true])
+    func partialRenderFailureCleansOnlyUnchangedPCM(changed: Bool) async throws {
+        let root = try directory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let request = try request(root, frames: 0..<100)
+        let result = try await ExportJob().run(request, isCurrent: { true }, render: { sink in
+            try await sink(0, [[Float](repeating: 0.1, count: 50), [Float](repeating: 0.2, count: 50)])
+            if changed { try overwriteIntermediate(root, samples: 100) }
+            throw ExportFailure.encoder("Renderer failed after partial output")
+        })
+        #expect(result.problem?.kind == .rendering && result.published.isEmpty)
+        #expect(result.cleanupErrors.isEmpty == !changed)
+        if changed {
+            #expect(try Data(contentsOf: intermediate(root)) == finiteReplacement(samples: 100))
+        } else {
+            #expect(try entries(root).isEmpty)
+        }
+    }
+
+    private func intermediate(_ root: URL) throws -> URL {
+        let staging = try #require(FileManager.default.contentsOfDirectory(at: root,
+            includingPropertiesForKeys: nil).first { $0.lastPathComponent.hasPrefix(".ww-export-job-") })
+        return staging.appendingPathComponent("production.f32")
+    }
+
+    private func finiteReplacement(samples: Int) -> Data {
+        [Float](repeating: 0.375, count: samples).withUnsafeBytes { Data($0) }
+    }
+
+    private func overwriteIntermediate(_ root: URL, samples: Int) throws {
+        let file = try FileHandle(forWritingTo: intermediate(root))
+        try file.write(contentsOf: finiteReplacement(samples: samples))
+        try file.synchronize()
+        try file.close()
+    }
+
     @Test func productionRendererUsesPersistentTrackMixAndRefusesMissingEffect() async throws {
         let root = try directory()
         defer { try? FileManager.default.removeItem(at: root) }

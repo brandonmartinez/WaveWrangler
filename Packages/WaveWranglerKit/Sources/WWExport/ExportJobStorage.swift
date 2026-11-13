@@ -8,7 +8,6 @@ final class ExportJobStorage {
     private let descriptor: Int32
     private let identity: stat
     private let ownedIdentity: stat
-    private var intermediateIdentity: stat?
     private var removed = false
 
     init(request: ExportJobRequest) throws {
@@ -75,17 +74,6 @@ final class ExportJobStorage {
         self.destination = destination
     }
 
-    func registerIntermediate() throws {
-        try validateOwnership()
-        var metadata = stat()
-        guard fstatat(descriptor, directory.lastPathComponent + "/production.f32",
-                      &metadata, AT_SYMLINK_NOFOLLOW) == 0,
-              metadata.st_mode & S_IFMT == S_IFREG, metadata.st_nlink == 1 else {
-            throw ExportFailure.destination("Private intermediate was replaced")
-        }
-        intermediateIdentity = metadata
-    }
-
     deinit { Darwin.close(descriptor) }
 
     func validateOwnership() throws {
@@ -142,15 +130,6 @@ final class ExportJobStorage {
         guard fstat(fd, &current) == 0, current.st_dev == ownedIdentity.st_dev,
               current.st_ino == ownedIdentity.st_ino else {
             throw ExportFailure.destination("Private staging changed before cleanup")
-        }
-        if let intermediateIdentity {
-            var file = stat()
-            guard fstatat(fd, "production.f32", &file, AT_SYMLINK_NOFOLLOW) == 0,
-                  file.st_dev == intermediateIdentity.st_dev, file.st_ino == intermediateIdentity.st_ino,
-                  file.st_mode & S_IFMT == S_IFREG, file.st_nlink == 1 else {
-                throw ExportFailure.destination("Private intermediate changed; it was not removed")
-            }
-            guard unlinkat(fd, "production.f32", 0) == 0 else { throw Self.failure("Remove owned intermediate") }
         }
         guard unlinkat(descriptor, directory.lastPathComponent, AT_REMOVEDIR) == 0 else {
             throw Self.failure("Remove empty owned staging; unexpected files were preserved")

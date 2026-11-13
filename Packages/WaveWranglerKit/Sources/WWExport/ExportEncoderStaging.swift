@@ -7,12 +7,7 @@ final class ExportEncoderStaging {
     private let parent: Int32
     private let descriptor: Int32
     private let identity: stat
-    private struct Artifact {
-        let descriptor: Int32
-        var witness: ExportOutputWitness
-        var changed = false
-    }
-    private var artifacts: [String: Artifact] = [:]
+    private var artifacts: [String: ExportOwnedArtifact] = [:]
     private var removed = false
 
     init(parent directory: URL) throws {
@@ -41,7 +36,6 @@ final class ExportEncoderStaging {
     }
 
     deinit {
-        for artifact in artifacts.values { Darwin.close(artifact.descriptor) }
         Darwin.close(descriptor)
         Darwin.close(parent)
     }
@@ -63,13 +57,11 @@ final class ExportEncoderStaging {
     }
 
     private func record(_ name: String, descriptor fd: Int32) throws {
-        var metadata = stat()
-        guard fstat(fd, &metadata) == 0, metadata.st_mode & S_IFMT == S_IFREG,
-              metadata.st_nlink == 1, artifacts[name] == nil else {
+        guard artifacts[name] == nil else {
             Darwin.close(fd)
             throw ExportFailure.destination("Cannot establish exclusive ownership of encoder output")
         }
-        artifacts[name] = Artifact(descriptor: fd, witness: ExportOutputWitness(metadata))
+        artifacts[name] = try ExportOwnedArtifact(descriptor: fd, name: name)
     }
 
     /// Check before every writer mutation; a changed file must never become owned again via checkpoint.
@@ -77,7 +69,7 @@ final class ExportEncoderStaging {
         try validateDirectory()
         var errors: [String] = []
         for name in artifacts.keys.sorted() {
-            do { try validate(name, missingAllowed: missingAllowed) }
+            do { try artifacts[name]?.validate(in: descriptor, missingAllowed: missingAllowed) }
             catch { errors.append(String(describing: error)) }
         }
         try report(errors)
@@ -88,32 +80,19 @@ final class ExportEncoderStaging {
         try validateDirectory()
         var errors: [String] = []
         for name in artifacts.keys.sorted() {
-            guard var artifact = artifacts[name], !artifact.changed else { continue }
-            var current = stat()
-            var owned = stat()
-            let result = fstatat(descriptor, name, &current, AT_SYMLINK_NOFOLLOW)
-            if result != 0, errno == ENOENT, missingAllowed { continue }
-            guard result == 0,
-                  fstat(artifact.descriptor, &owned) == 0,
-                  current.st_dev == artifact.witness.device, current.st_ino == artifact.witness.inode,
-                  current.st_mode & S_IFMT == S_IFREG, current.st_nlink == 1,
-                  ExportOutputWitness(current) == ExportOutputWitness(owned) else {
-                artifacts[name]?.changed = true
-                errors.append("Encoder output changed during writing: \(name); it was preserved")
-                continue
-            }
-            artifact.witness = ExportOutputWitness(owned)
-            artifacts[name] = artifact
+            do { try artifacts[name]?.checkpoint(in: descriptor, missingAllowed: missingAllowed) }
+            catch { errors.append(String(describing: error)) }
         }
         try report(errors)
     }
 
     func remove(_ name: String) throws {
         try validateDirectory()
-        if try validate(name, missingAllowed: true) {
-            guard unlinkat(descriptor, name, 0) == 0 else { throw Self.failure("Remove owned \(name)") }
+        guard let artifact = artifacts[name] else {
+            throw ExportFailure.destination("Refusing to remove untracked encoder output: \(name)")
         }
-        if let artifact = artifacts.removeValue(forKey: name) { Darwin.close(artifact.descriptor) }
+        try artifact.remove(in: descriptor)
+        artifacts.removeValue(forKey: name)
     }
 
     func cleanup() throws {
@@ -131,25 +110,6 @@ final class ExportEncoderStaging {
             errors.append("\(Self.failure("Remove empty encoder staging")); unexpected or changed entries were preserved")
         }
         try report(errors)
-    }
-
-    @discardableResult
-    private func validate(_ name: String, missingAllowed: Bool) throws -> Bool {
-        guard let artifact = artifacts[name], !artifact.changed else {
-            throw ExportFailure.destination("Encoder output changed: \(name); it was preserved")
-        }
-        var current = stat()
-        if fstatat(descriptor, name, &current, AT_SYMLINK_NOFOLLOW) != 0 {
-            if errno == ENOENT, missingAllowed { return false }
-            artifacts[name]?.changed = true
-            throw Self.failure("Inspect owned \(name)")
-        }
-        guard current.st_mode & S_IFMT == S_IFREG, current.st_nlink == 1,
-              ExportOutputWitness(current) == artifact.witness else {
-            artifacts[name]?.changed = true
-            throw ExportFailure.destination("Encoder output changed: \(name); it was preserved")
-        }
-        return true
     }
 
     private func validateDirectory() throws {
