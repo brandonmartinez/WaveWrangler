@@ -48,6 +48,7 @@ struct EpisodeExportSheet: View {
         }
         .frame(width: 660, height: 620)
         .interactiveDismissDisabled(model.isRunning)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.export.sheet")
         .task(id: document.store.modelGeneration) { await model.prepare() }
         .confirmationDialog("Cancel this export?", isPresented: $confirmingCancel) {
@@ -272,6 +273,8 @@ struct EpisodeExportSheet: View {
                     .font(.caption).foregroundStyle(.secondary)
             }.padding(.top, 8)
         }
+        .padding(.leading, 16)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("ww.export.metadata")
     }
 
@@ -347,7 +350,8 @@ struct EpisodeExportSheet: View {
             Text(EpisodeExportWording.resultTitle(result)).font(.headline)
                 .accessibilityIdentifier("ww.export.result")
             if let problem = result.problem {
-                Text(problem.message).textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+                Text(problem.kind == .canceled ? "Export was canceled." : problem.message)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
             }
             ForEach(result.cleanupErrors, id: \.self) { error in
                 Text("Cleanup problem: \(error)").textSelection(.enabled).fixedSize(horizontal: false, vertical: true)

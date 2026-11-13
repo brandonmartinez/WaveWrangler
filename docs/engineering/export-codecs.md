@@ -387,6 +387,179 @@ acceptOmissions,start,cancel,close,progress.phase,result,message}` and
 `ww.licenses.{window,list,text}`. Intrinsic layout and real UI interactions are
 not certified by compilation or the unhosted tests.
 
+### Phase 6 generated-production VM qualification
+
+Qualification began from integration source
+`522fb12486a81c0c2047ecdc26056076a3866062`; the storage-blocked checkpoint is
+`8c06801e6587bea948880da6a1de3d5ddb478c0a`. All hosted/UI execution used ready,
+exclusively leased `ww-ui-1` (`192.168.64.3`), started as an independently detached
+`tart run --no-graphics --no-clipboard --no-audio ww-ui-1` service. SSH, unlocked
+console, display-awake assertion, Xcode first-launch readiness and smoke evidence
+were checked. No application, hosted test or UI test was launched on a physical
+host. Only generated recordings and their existing admitted authorization records
+were used; no source gateway, currency check or witness was bypassed.
+
+The initial invocation exhausted guest storage (111 MiB free, OSLog error 28).
+Its failed minimum-width assertion and results remain under
+`.build/export-phase6-initial/`, with intermediate failures preserved under
+`.build/export-phase6-resumed/`. These are diagnostic results, not passing runs.
+After the user authorized cleanup, ownership/process/lease inspection preceded
+deletion of exactly these obsolete **Products directories**, not their run roots:
+
+| Guest directory below `~/ww-uitest-runs/` | Removed scope |
+| --- | --- |
+| `live-insert-save-1` through `live-insert-save-10` | Each `Products` |
+| `mixer-console-54ea77cf-v1` through `mixer-console-54ea77cf-v6` | Each `Products` |
+| `mixer-refinement-54ea77cf-v8` through `mixer-refinement-54ea77cf-v14` | Each `Products` |
+| `export-phase6-8c06801-runtime{1,2,4,5,6,7,9,12}` | Each `Products` |
+| `export-phase6-8c06801-runtime13` through `export-phase6-8c06801-runtime17` | Each `Products`, after archiving its result locally |
+
+The first 23 directories reclaimed approximately 4.1 GiB; the eight obsolete
+owned phase-6 copies reclaimed another 1.58 GiB, and the final five superseded
+copies reclaimed 0.97 GiB. VM1 finished with 1.8 GiB available and `HOLDER none`;
+final runtime18/19 Products remain intact. Run results, source evidence,
+logs and media were preserved, including meaningful failed results on the host.
+No disk expansion, user-media cleanup or shared guard removal occurred. The dead
+PID 1078 lease was recovered by `gui-lock`, not by unlinking its persistent guard.
+`ww-ui-2` was started only as an owned detached cleanup-inspection service; it
+never acquired a usable IP/SSH connection and only that owned guest was stopped.
+No cleanup inside VM2 is claimed. Exact inventories are
+`vm1-{cleanup-inventory,product-candidates,cleanup-scope}.log` and
+`owned-products-cleanup-{inventory,result}.log` in the resumed evidence directory.
+The final five-copy inventory and cleanup are
+`final-obsolete-products-{inventory,cleanup}.log`.
+
+**Passing runtime evidence:** 12 focused hosted tests (three publication
+transactions, four original native-interface tests, five actual production/
+lifecycle/artwork/fault cases) and three native UI tests. Final guest results are
+`~/ww-uitest-runs/export-phase6-8c06801-runtime19/hosted.xcresult` and
+`~/ww-uitest-runs/export-phase6-8c06801-runtime18/ui.xcresult`; local copies,
+summaries, screenshots/audio attachment manifests and independent verification
+JSON are in `.build/export-phase6-resumed/runtime{18,19}/`.
+
+The production fixture exports WAV Float32/48 kHz stereo, MP3 CBR 192/44.1 kHz
+stereo and AAC-LC 192/48 kHz stereo in one actual service operation, then repeats
+with Podcast normalization. It includes signed Start -24,000 / End 264,003
+(288,003 production frames), an accepted recording, manual cut, supplemental CAF
+clip, envelope/routing, master gain and Apple Lowpass Audio Unit. Unpolled native
+parameter state is captured through the authoritative full-state barrier, live
+processing is retired, and the original source bytes remain unchanged. Exact
+negative preroll, tail truncation and the production Float32 render agree within
+1e-5. A verified save/reopen preserves the captured model; export-only metadata
+does not mutate it.
+
+Hosted cases also execute real cancellation, typed stale-model refusal, revoked
+source refusal, two-window presentation ownership, document/window/close-all
+guards, generated artwork import/invalid-image rejection and inherit/omit.
+A deterministic publication race creates a foreign MP3 after WAV commits and a
+foreign file inside the owned staging directory: only the WAV receipt survives,
+the later deliveries fail, cleanup errors surface, foreign bytes remain intact,
+and no successful preferences are written. No successful output is substituted.
+
+Native UI cases exercise File/toolbar routing, supported choices, Escape,
+metadata omission consent invalidation, actual directory selection, normalized
+three-format publication, successful settings reuse and collision refusal with
+byte preservation. A DEBUG opt-in hold on the existing production-validation
+hook makes running-export Keep Exporting, Command-W, Command-Q and confirmed
+Cancel deterministic while retaining the real service/render/encoder path.
+Cancellation completes cleanup, leaves no outputs or successful remembered
+choices, and releases the sheet. Screenshots retain readable native settings,
+linked notices, truthful per-file receipts and canceled completion.
+
+Runtime findings fixed in this phase: native license minimum sizing; stale AX
+text when changing selected notices; SwiftUI ancestor identifiers overwriting
+sheet/disclosure descendants; clipped metadata disclosure geometry; stale
+dependencies incorrectly labeled rendering failure; and confirmation setting
+only a cancellation flag without canceling the owning task during an awaited
+validation. Completed cancellation also clears obsolete waiting/close messages
+and presents readable cancellation wording. UI tests account for offscreen
+`isHittable` false positives, native disclosure-arrow geometry and duplicate
+Touch Bar confirmation buttons.
+
+Independent FFprobe/FFmpeg (validation only, one worker) decodes all nine final
+files and records SHA-256, frame counts, tags, integrated EBU R128 loudness and
+true peak. Hosted lossy artwork matches the inherited original PNG byte-for-byte;
+Unicode artist and title overrides survive; confirmed unsupported WAV metadata
+and explicit genre omission remain omitted.
+
+| Production delivery | Independently decoded frames | Off LUFS / dBTP | Podcast LUFS / dBTP |
+| --- | --- | --- | --- |
+| WAV 48 kHz | 288,003 | -23.4 / -17.6 | -16.0 / -10.2 |
+| MP3 44.1 kHz | 264,603 | -23.7 / -17.9 | -16.3 / -10.5 |
+| M4A 48 kHz | 290,816 | -23.5 / -17.6 | -16.0 / -10.2 |
+
+The M4A independent decoder exposes 2,813 padding frames beyond the 288,003-frame
+input, while the platform decoder reports the trimmed count. This is bounded
+lossy padding, not exact AAC timing. Native UI five-second outputs decode to
+240,000 WAV/M4A frames and 220,500 MP3 frames, with title `Export-only title`,
+Podcast loudness -16.0/-16.0/-16.3 LUFS and peaks below -1 dBTP. MP3's roughly
+0.3 LU target miss is honestly reported as `targetMissed`, not achieved.
+
+Host-only builds use isolated DerivedData, `umask 022`, two jobs, test signing
+and sequential suites:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+umask 022
+xcodebuild build-for-testing -project WaveWrangler.xcodeproj \
+  -scheme WaveWranglerUITests -testPlan Regression -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/ExportQualification" -jobs 2 \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
+xcodebuild build-for-testing -project WaveWrangler.xcodeproj \
+  -scheme WaveWranglerHostedTests -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/ExportQualification" -jobs 2 \
+  EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift \
+  CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=
+python3 scripts/test-ui-plans.py --products .build/ExportQualification/Build/Products
+codesign --verify --deep --strict .build/ExportQualification/Build/Products/Debug/WaveWrangler.app
+codesign --verify --deep --strict .build/ExportQualification/Build/Products/Debug/WaveWranglerUITests-Runner.app
+```
+
+Every Products transfer uses a per-run `Products.incoming`, empty
+`rsync -naci --delete` comparison, app/runner signature verification and atomic
+rename before the leased `test-without-building` invocation:
+
+```sh
+source "$HOME/.shell/exports.sh"
+ssh ww-ui-1 'umask 022
+RUN="$HOME/ww-uitest-runs/export-phase6-8c06801-runtime19"
+TEST_RUNNER_WW_PROBE="$RUN/wwpersist-probe" \
+TEST_RUNNER_SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 \
+~/ww-uitest-runs/gui-lock run --lane export-qualification --class pr \
+  --sha 8c06801e6587bea948880da6a1de3d5ddb478c0a \
+  --dir "$RUN" --result "$RUN/hosted.xcresult" \
+  --lease-minutes 15 --queue-timeout 60 -- \
+  xcodebuild test-without-building \
+    -xctestrun "$RUN/Products/WaveWranglerHostedTests_macosx27.2-arm64.xctestrun" \
+    -destination "platform=macOS,arch=arm64" -parallel-testing-enabled NO \
+    -only-testing:WaveWranglerHostedTests/PublicationMetadataHostedTests \
+    -only-testing:WaveWranglerHostedTests/EpisodeExportInterfaceHostedTests \
+    -resultBundlePath "$RUN/hosted.xcresult"'
+```
+
+For UI, the same invocation uses runtime18, `ui.xcresult`,
+`WaveWranglerUITests_Regression_macosx27.2-arm64.xctestrun` and
+`-only-testing:WaveWranglerUITests/EpisodeExportUITests`. The retained reproducible
+driver is `.build/export-phase6-resumed/qualify.sh`; each run archives
+`runtimeN.patch` plus its SHA-256 and sourceSHA alongside the build/run logs.
+Source labels mean **checkpoint 8c06801 plus that archived dirty patch**, not an
+assertion that these runs used the clean checkpoint. The final patch changes
+after UI runtime18 are documentation only.
+Runtime18's source-patch SHA-256 is
+`bd7c69451e79bfcb8caa5640c220e59daa5c149c7fe40e02b585bad40b8834c0`;
+runtime19's is
+`eec273b893f1e6573b70f587bfdd664ba6d53a22a1eafb812a4297779c0acbfa`.
+
+The unrelated `ControlsSidebarHostedTests.swift` exclusion remains explicit:
+this is not a full hosted-suite pass. The plan checker confirms 168 represented
+UI tests (Regression 145) and staged xctestrun agreement; this phase executes
+only the three focused UI cases, not formal Accessibility/VoiceOver or hardware
+performance qualification. Final separate read-only review belongs to the next
+phase. Test signing and VM functional results do not clear App Store/legal or
+signed relinkable distribution release requirements.
+
 ## LAME provenance and rebuilding/relinking
 
 LAME 3.100, <https://lame.sourceforge.io/>, is distributed under the GNU Library
