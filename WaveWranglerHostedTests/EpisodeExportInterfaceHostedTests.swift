@@ -347,6 +347,104 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(dismissed)
         }
 
+        @Test(arguments: [false, true])
+        func documentCloseRechecksExportStartedDuringCapture(checkingPermission: Bool) async throws {
+            let f = try await ready()
+            defer { f.close() }
+            let first = MixerHostedTests().owner(f)
+            let second = MixerHostedTests().owner(f)
+            let controller = f.model.mixer
+            _ = try await controller.prepare(programFrames: -24_000..<264_003)
+            try await controller.beginEditorObservation(coalescing: "close-first-export")
+            await controller.suspendEditorObservation()
+            let capture = ExportCloseCaptureGate()
+            controller.beforeStateCapture = { await capture.pauseOnce() }
+            defer { capture.resume(); controller.beforeStateCapture = nil }
+            let needsCapture = f.document.mixerTransactions.needsBarrier
+            try #require(needsCapture)
+            let reply = ExportCloseReply()
+            if checkingPermission {
+                f.document.canClose(withDelegate: reply,
+                    shouldClose: #selector(ExportCloseReply.document(_:shouldClose:contextInfo:)), contextInfo: nil)
+            } else {
+                f.document.close()
+            }
+            try await MixerHostedTests().wait("Document close suspended inside native capture") { capture.entered }
+            #expect(reply.shouldClose == nil)
+            second.state.requestExport()
+            let presentation = f.document.exportInterface
+            let reopened = second.state.exportPresented && presentation.isPresented
+            try #require(reopened)
+            let folder = f.folder.appendingPathComponent("close-first-export")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            let deliveries = try selections(f, prefix: "CloseFirst", normalization: .off)
+            let render = ExportQualificationGate()
+            await f.runtime.setProductionValidationHookForTesting { try await render.wait() }
+            let service = f.document.exportJobs
+            let exporting = Task {
+                try await service.run(episode: f.model.episodeID, runtime: f.runtime,
+                    userSelectedDirectory: folder, deliveries: deliveries)
+            }
+            defer {
+                exporting.cancel()
+                Task { await render.release() }
+            }
+            try await MixerHostedTests().wait("Export admitted behind the suspended close barrier") {
+                service.isRunning && service.state == .preparing
+            }
+            capture.resume()
+            try await MixerHostedTests().wait("Close barrier and queued export resumed") {
+                service.state != .preparing
+            }
+            if checkingPermission { #expect(reply.shouldClose == false) }
+            let closed = f.document.mixerTransactions.isClosed
+            let owned = f.document.windowControllers.contains(first) && f.document.windowControllers.contains(second)
+            let retained = presentation.isPresented && second.state.exportPresented
+            let warning = presentation.message
+            #expect(!closed && owned && retained)
+            #expect(warning?.contains("Cancel Export") == true)
+            let running = service.isRunning && service.state == .running
+            #expect(running, "The resumed close must not invalidate the admitted export.")
+            await service.cancel()
+            exporting.cancel()
+            await render.release()
+            do {
+                let result = try await exporting.value
+                #expect(!result.succeeded && result.problem?.kind == .canceled && result.published.isEmpty)
+            } catch is CancellationError {
+                #expect(service.state == .canceled)
+            }
+            await f.runtime.setProductionValidationHookForTesting(nil)
+            let finished = !service.isRunning && !f.document.mixerTransactions.isClosed
+            #expect(finished)
+            #expect((try FileManager.default.contentsOfDirectory(atPath: folder.path)).isEmpty)
+            presentation.dismiss()
+        }
+
+        @Test func documentCloseDismissesIdleExportReopenedDuringCapture() async throws {
+            let f = try await ready()
+            defer { f.close() }
+            let owner = MixerHostedTests().owner(f)
+            let controller = f.model.mixer
+            _ = try await controller.prepare(programFrames: -24_000..<264_003)
+            try await controller.beginEditorObservation(coalescing: "close-first-idle-sheet")
+            await controller.suspendEditorObservation()
+            let capture = ExportCloseCaptureGate()
+            controller.beforeStateCapture = { await capture.pauseOnce() }
+            defer { capture.resume(); controller.beforeStateCapture = nil }
+            f.document.close()
+            try await MixerHostedTests().wait("Document close suspended inside native capture") { capture.entered }
+            owner.state.requestExport()
+            let opened = owner.state.exportPresented && f.document.exportInterface.isPresented
+            try #require(opened)
+            capture.resume()
+            try await MixerHostedTests().wait("Document close completed after capture") {
+                f.document.mixerTransactions.isClosed
+            }
+            let dangling = owner.state.exportPresented || f.document.exportInterface.isPresented
+            #expect(!dangling)
+        }
+
         @Test func exportArtworkImportRejectsInvalidBytesWithoutMutatingPublicationDefaults() async throws {
             let f = try await ready()
             defer { f.close() }
@@ -378,6 +476,17 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(unchanged)
             presentation.dismiss()
         }
+    }
+
+    @MainActor private final class ExportCloseCaptureGate {
+        private(set) var entered = false
+        private var continuation: CheckedContinuation<Void, Never>?
+        func pauseOnce() async {
+            guard !entered else { return }
+            entered = true
+            await withCheckedContinuation { continuation = $0 }
+        }
+        func resume() { continuation?.resume(); continuation = nil }
     }
 
     private actor ExportQualificationGate {

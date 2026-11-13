@@ -646,3 +646,50 @@ These do not replace later document/native-editor/transport VM qualification.
 Every CBR MP3 audio packet must carry the selected bitrate. AAC's measured audio
 bitrate is qualified within 5% of each selected target over two seconds of generated
 signal; nominal bitrate is not an exact short-file size promise.
+
+## Final-review follow-up: close-first capture/export ordering
+
+Document close approval and actual close recheck `exportInterface.isRunning`
+after the awaited mixer capture barrier, matching the existing window-close
+guards. An export admitted while close was capturing refuses the pending close
+callback and prevents `finishClosingAfterCapture()` from closing transactions
+underneath the job. A close that actually proceeds also dismisses any idle
+export presentation reopened during capture. No pending-close reservation or
+save/Undo policy changes are introduced.
+
+The focused VM regressions under
+`EpisodeExportInterfaceHostedTests/EpisodeExportProductionHostedTests` are
+`documentCloseRechecksExportStartedDuringCapture(checkingPermission:)`
+(both close-approval and actual-close paths) and
+`documentCloseDismissesIdleExportReopenedDuringCapture()`.
+They use the existing `beforeStateCapture` hook and a continuation gate to
+establish close-first ordering, then admit the real export service behind the
+capture barrier before releasing it. They assert refusal, live transactions,
+retained window/presentation ownership, cancellation cleanup, and idle-sheet
+dismissal. No long timing sleep substitutes for the capture gate.
+
+Host validation is limited to the native Debug build, focused unhosted tests,
+and hosted build-for-testing with the unchanged explicit
+`EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift` baseline exclusion.
+The new hosted regressions require a fresh leased-VM run after integration;
+the earlier phase 6 runtime evidence does not cover this follow-up.
+
+Follow-up host results: the native Debug build passed, and the phase 5 focused
+unhosted `xcodebuild test` command above passed all 11 tests using
+`.build/ExportInterfaceTests`
+(`Test-WaveWrangler-2026.11.12_21-04-49--0500.xcresult`).
+The following build commands passed; no hosted/UI tests executed on the host:
+
+```sh
+source "$HOME/.shell/exports-core.sh"
+umask 022
+export WW_JOBS=2 WW_TEST_WORKERS=2 SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2
+WW_DERIVED_DATA="$PWD/.build/ExportInterfaceBuild" scripts/build.sh Debug
+xcodebuild build-for-testing -project WaveWrangler.xcodeproj \
+  -scheme WaveWranglerHostedTests -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath "$PWD/.build/ExportInterfaceHostedCompile" -jobs 2 \
+  -only-testing:WaveWranglerHostedTests/EpisodeExportInterfaceHostedTests \
+  -parallel-testing-enabled NO CODE_SIGN_IDENTITY=- CODE_SIGN_STYLE=Manual \
+  DEVELOPMENT_TEAM= EXCLUDED_SOURCE_FILE_NAMES=ControlsSidebarHostedTests.swift
+```
