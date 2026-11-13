@@ -22,6 +22,13 @@ restores editing decisions such as timing, cuts, mutes, clips, and mixer setting
 it never rewrites original recording bytes. Capturing Audio Unit state can take
 time or require resolving an effect-editor error before a save can finish.
 
+Ordinary saves write a captured version in the background so you can keep
+editing. Changes made during a save remain unsaved until a later save verifies
+them; **Saved** never describes an older version while newer edits are pending.
+Saving a copy that becomes a separate show can briefly block interaction while
+its identity and Undo history change safely. Closing also waits for pending
+recovery work so **Don't Save** finishes discarding unsaved checkpoints.
+
 ## When a save fails
 
 Keep the document open and inspect the status action.

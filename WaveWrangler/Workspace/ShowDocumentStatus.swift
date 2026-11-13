@@ -11,7 +11,7 @@ extension ShowDocument: DocumentStatusProviding {
             status.saveStatus.state,
             readOnlyReason: status.readOnlyReason,
             autosaveEnabled: AutosavePolicyController.shared.isEnabled,
-            folderDisplayName: fileURL?.deletingLastPathComponent().lastPathComponent,
+            folderDisplayName: presentedFileURL?.deletingLastPathComponent().lastPathComponent,
             providerConflictVersions: status.saveStatus.providerConflicts.unresolvedVersionCount,
             retryingAutomatically: status.retryingAutomatically,
             formatUpdate: status.formatUpdate

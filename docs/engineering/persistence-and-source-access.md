@@ -71,6 +71,40 @@ instead of accumulating a backlog, and the save queue must not retain a mixer
 edit transaction while awaiting publication. Later edits remain dirty even when
 an older captured candidate verifies.
 
+### Responsive saving
+
+Balance user experience, actual and perceived performance, and write safety.
+Routine saving must not interrupt repeated cuts or other edits; even a
+one-second UI stall impedes editing. Prefer non-UI-bound work, not a longer
+autosave delay or a premature Saved indicator. Narrowly scoped blocking remains
+appropriate when needed to preserve native state, safely replace document
+identity or finish recovery cleanup before closing.
+
+After native capture, `ShowDocument` takes an immutable value snapshot and
+enters `super.save` synchronously. AppKit's writing callback explicitly calls
+`unblockUserInteraction()` **before** encoding or waiting for the app-wide
+persistence lane. Merely enabling asynchronous writing does not release the
+UI. Worker code uses captured inputs and synchronized candidate/receipt storage,
+never live main-actor model or status. Keep stock `super.writeSafely`,
+`AlreadyCoordinated`, exact-base conflict checks and independent read-back.
+AppKit's change-count token preserves edits made during publication; a verified
+older snapshot must not clear those edits or acknowledge their title as saved.
+
+Presentation uses the captured location and conservatively unsaved model state
+during writing, rather than AppKit file-relative getters that may wait for file
+access. Those display values are not source-binding or publication authority.
+Save a Copy Elsewhere remains synchronous while adopting a new logical show
+identity and replacing Undo history, so late edits cannot be overwritten.
+
+One shared lane serializes publication, background checkpoint encoding/writing
+and automatic recovery cleanup. Checkpoints allow at most one in-flight snapshot
+per document; late status updates check model generation, base and close state.
+Close drains queued recovery work before returning. Don't Save then finishes
+discarding checkpoints, preventing a late write or immediate termination from
+resurrecting discarded recovery; a cleanup failure visibly refuses close.
+Explicit recovery review and uncertain-save reconciliation retain their safety
+checks.
+
 Do not open an Undo group across an await. Async work needs exact generations
 and identity/slot currency, including equal-byte Undo/restore ABA. Auxiliary
 mixer/review windows reuse the same native owner and document history.

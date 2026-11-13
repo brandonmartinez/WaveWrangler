@@ -2,11 +2,44 @@ import AppKit
 import AVFAudio
 import Foundation
 import SwiftUI
+import Synchronization
 import Testing
 import WWCore
 import WWMix
 import WWPersistence
 @testable import WaveWrangler
+
+final class SaveWorkerGate: PublicationHooks {
+    private struct State {
+        var entered = false
+        var timedOut = false
+        var ranOnMainThread = false
+    }
+    private let state = Mutex(State())
+    private let release = DispatchSemaphore(value: 0)
+
+    var entered: Bool { state.withLock { $0.entered } }
+    var timedOut: Bool { state.withLock { $0.timedOut } }
+    var ranOnMainThread: Bool { state.withLock { $0.ranOnMainThread } }
+
+    func pauseOnce() {
+        let shouldPause = state.withLock {
+            guard !$0.entered else { return false }
+            $0.entered = true
+            $0.ranOnMainThread = Thread.isMainThread
+            return true
+        }
+        guard shouldPause else { return }
+        let result = release.wait(timeout: .now() + 10)
+        state.withLock { $0.timedOut = result == .timedOut }
+    }
+
+    func reached(_ boundary: PublicationBoundary) throws {
+        if boundary == .candidateValidated { pauseOnce() }
+    }
+
+    func resume() { release.signal() }
+}
 
 @MainActor
 @Suite("Document-bound mixer integration (synthetic and Apple units)", .serialized)
@@ -427,7 +460,7 @@ struct MixerHostedTests {
     }
 
     func save(_ document: ShowDocument) async throws {
-        let url = try #require(document.fileURL)
+        let url = try #require(document.presentedFileURL)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             document.save(to: url, ofType: DocumentTypes.show, for: .saveOperation) {
                 if let error = $0 { continuation.resume(throwing: error) } else { continuation.resume() }
@@ -1396,7 +1429,8 @@ struct MixerHostedTests {
         }?.value) - 2000) < 0.1)
     }
 
-    @Test func slowSaveKeepsEditorAndRenderingLiveAndLeavesLaterEditsDirty() async throws {
+    @Test(arguments: [false, true])
+    func slowSaveKeepsEditorAndRenderingLiveAndLeavesLaterEditsDirty(beforeEncoding: Bool) async throws {
         let f = try await ready(durationSeconds: 20)
         defer { f.close() }
         let preference = PersistenceEnvironment.autosaveGate.preference
@@ -1422,15 +1456,28 @@ struct MixerHostedTests {
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
         undo.groupsByEvent = false
         defer { undo.groupsByEvent = true }
-        let gate = CaptureGate()
-        ShowDocument.debugBeforeSaveCompletion = { await gate.pauseOnce() }
+        let gate = SaveWorkerGate()
+        let previousHooks = ShowDocument.debugPublicationHooks
+        if beforeEncoding {
+            ShowDocument.debugBeforeSaveEncoding = { gate.pauseOnce() }
+        } else {
+            ShowDocument.debugPublicationHooks = gate
+        }
         defer {
             gate.resume()
-            ShowDocument.debugBeforeSaveCompletion = nil
+            ShowDocument.debugBeforeSaveEncoding = nil
+            ShowDocument.debugPublicationHooks = previousHooks
         }
+        let priorURL = try #require(f.document.fileURL)
+        let priorBytes = try Data(contentsOf: priorURL)
         let saving = Task { try await save(f.document) }
         try await wait { gate.entered }
         let savedSnapshot = f.document.store.model
+        let url = try #require(f.document.presentedFileURL)
+        let statusWhileSaving = f.document.saveStatus.state
+        #expect(!gate.ranOnMainThread && !gate.timedOut)
+        #expect(!statusWhileSaving.isCoherentlySaved)
+        #expect(try Data(contentsOf: url) == priorBytes)
         let editorVisible = editor.isVisible
         let observing = controller.editorObservationKey != nil
         let busy = f.document.mixerTransactions.isBusy
@@ -1459,6 +1506,7 @@ struct MixerHostedTests {
             }
         }
         #expect((automaticError as? CocoaError)?.code == .userCancelled)
+        #expect(!gate.timedOut, "Editing and rendering must proceed before the persistence worker is released.")
         gate.resume()
         try await saving.value
         let verified = f.document.verifiedModel
@@ -1467,7 +1515,9 @@ struct MixerHostedTests {
         let isSaved = f.document.status.saveStatus.state.isVerifiedOnDisk
         #expect(verified == savedSnapshot && edited != savedSnapshot)
         #expect(isEdited && !isSaved)
-        ShowDocument.debugBeforeSaveCompletion = nil
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url)).payload == savedSnapshot)
+        ShowDocument.debugBeforeSaveEncoding = nil
+        ShowDocument.debugPublicationHooks = previousHooks
         try await save(f.document)
         let savedEdit = f.document.verifiedModel
         let editedAfterSave = f.document.isDocumentEdited

@@ -121,13 +121,32 @@ final class UITestOfflineHooks: PublicationHooks, @unchecked Sendable {
     /// Edited-state trace (T26 evidence): what the document's edited state was at each save-completion step.
     private var events: [String] = []
     /// When set, only publications into this folder fail while offline.
-    var unreachableFolder: URL?
-    /// The publication about to run (set by `ShowDocument` before it publishes; saves run on the main thread).
-    var target: URL?
+    private var storedUnreachableFolder: URL?
+    var unreachableFolder: URL? {
+        get { lock.withLock { storedUnreachableFolder } }
+        set { lock.withLock { storedUnreachableFolder = newValue } }
+    }
+
+    private struct Targeted: PublicationHooks {
+        let owner: UITestOfflineHooks
+        let target: URL
+        func reached(_ boundary: PublicationBoundary) throws {
+            try owner.reached(boundary, target: target)
+        }
+    }
+
+    func forPublication(to target: URL) -> any PublicationHooks {
+        Targeted(owner: self, target: target)
+    }
 
     func reached(_ boundary: PublicationBoundary) throws {
+        try reached(boundary, target: nil)
+    }
+
+    private func reached(_ boundary: PublicationBoundary, target: URL?) throws {
         guard boundary == .candidateValidated else { return }
-        let inUnreachableFolder = unreachableFolder.map { folder in
+        let folder = unreachableFolder
+        let inUnreachableFolder = folder.map { folder in
             target.map { Self.canonicalPath($0.deletingLastPathComponent()) } == Self.canonicalPath(folder)
         } ?? true
         let failing = lock.withLock {

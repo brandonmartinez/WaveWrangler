@@ -316,7 +316,7 @@ struct ShowInfoInspector: View {
             Divider()
             PublicationInspector(store: store)
             Divider()
-            LabeledContent("Location") { Text(Self.locationText(store.document?.fileURL)) }
+            LabeledContent("Location") { Text(Self.locationText(store.document?.presentedFileURL)) }
             VStack(alignment: .leading, spacing: 4) {
                 Text("Save status")
                 Text(state.presentation.popoverText)

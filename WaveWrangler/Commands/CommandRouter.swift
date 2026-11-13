@@ -144,7 +144,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     @objc func showInFinder(_ sender: Any?) {
-        if let url = activeDocumentState?.store.document?.fileURL {
+        if let url = activeDocumentState?.store.document?.presentedFileURL {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         } else {
             keyLibraryState?.revealSelectedInFinder()
@@ -331,7 +331,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
             guard let show, show.canEdit, let episode = show.selectedEpisodeID else { return false }
             return SourceCommands.handler.canRelinkSource(store: show.store, episode: episode)
         case #selector(showInFinder(_:)):
-            if let show { return show.store.document?.fileURL != nil }
+            if let show { return show.store.document?.presentedFileURL != nil }
             return keyLibrary?.selectedRows.isEmpty == false
         case #selector(libraryOpenShow(_:)):
             return !selection.isEmpty

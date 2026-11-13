@@ -76,6 +76,10 @@ UI, approval APIs or concurrency merely to simplify a caller.
 - Capture before entering AppKit autosave's file-access context; an idle,
   pre-captured save must start synchronously. Keep save publication independent
   of the mixer edit queue and preserve later edits as dirty.
+- Balance user experience, actual/perceived performance and write safety.
+  Even a one-second stall disrupts repeated edits: keep routine persistence off
+  the UI thread, allowing narrowly scoped blocking when save/native-state safety
+  requires it. Never trade verified publication for apparent responsiveness.
 - Detaching a mixer/review view must not create another runtime, processor,
   permission ledger, document copy or Undo store.
 

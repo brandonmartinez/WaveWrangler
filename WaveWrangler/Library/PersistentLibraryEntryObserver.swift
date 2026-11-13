@@ -94,12 +94,12 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
     func noteOpenShow(id: ShowID, model: ShowDocumentModel?, fileURL: URL?) {
         // Two open files with the same show identity (e.g. a Finder copy): surface it, never merge.
         let others = NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.filter {
-            $0.store.model.show.id == id && $0.fileURL != nil && $0.fileURL?.standardizedFileURL != fileURL?.standardizedFileURL
+            $0.store.model.show.id == id && $0.presentedFileURL != nil && $0.presentedFileURL?.standardizedFileURL != fileURL?.standardizedFileURL
         }
         generations[id, default: 0] += 1
         if let other = others.first, fileURL != nil {
             var entry = details[id] ?? LibraryEntryDetails()
-            entry.state = .identityCollision(otherLocationDisplayName: other.fileURL?.deletingLastPathComponent().lastPathComponent)
+            entry.state = .identityCollision(otherLocationDisplayName: other.presentedFileURL?.deletingLastPathComponent().lastPathComponent)
             details[id] = entry
             return
         }

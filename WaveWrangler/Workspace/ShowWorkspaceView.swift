@@ -408,7 +408,7 @@ private struct ShowInfoSummary: View {
                     .accessibilityIdentifier("ww.show.showInfoSummary.title")
                 LabeledContent("Episodes") { Text("\(model.episodes.count)") }
                 LabeledContent("Speakers") { Text("\(model.speakers.count)") }
-                LabeledContent("Location") { Text(ShowInfoInspector.locationText(state.store.document?.fileURL)) }
+                LabeledContent("Location") { Text(ShowInfoInspector.locationText(state.store.document?.presentedFileURL)) }
                 LabeledContent("Save status") { Text(state.presentation.itemText) }
                 Text("Edit the show's title and notes in the inspector (View › Show Inspector, ⌃⌘I).")
                     .fixedSize(horizontal: false, vertical: true)

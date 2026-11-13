@@ -10,6 +10,98 @@ import WWPersistence
 @MainActor
 @Suite("Manual cut production listening and waveform path", .serialized)
 struct ManualCutsHostedTests {
+    @Test func closingDuringCheckpointEncodingDoesNotResurrectRecovery() async throws {
+        let f = try await MixerHostedTests().ready(durationSeconds: 4)
+        defer { f.close() }
+        let preference = PersistenceEnvironment.autosaveGate.preference
+        PersistenceEnvironment.autosaveGate.preference = AutosavePreference(enabled: true, delaySeconds: 30)
+        defer { PersistenceEnvironment.autosaveGate.preference = preference }
+        let gate = SaveWorkerGate()
+        ShowDocument.debugBeforeCheckpointEncoding = { gate.pauseOnce() }
+        defer {
+            gate.resume()
+            ShowDocument.debugBeforeCheckpointEncoding = nil
+        }
+        let key = f.document.documentKey
+        try #require(f.document.store.apply("Change Before Close") { model throws(DomainError) in
+            try model.renamingShow(to: "Unsaved checkpoint")
+        })
+        try await wait { gate.entered }
+        DispatchQueue.global().asyncAfter(deadline: .now() + .milliseconds(100)) { gate.resume() }
+        f.document.close()
+        #expect(!gate.timedOut && !gate.ranOnMainThread)
+        let retained = PersistenceEnvironment.recovery.latestEditCheckpoint(for: key)
+        #expect(retained == nil, "Don't Save must finish cleanup after the owned checkpoint before close returns.")
+    }
+
+    @Test func repeatedCutsAndUndoRemainInteractiveDuringAutosaveEncoding() async throws {
+        let f = try await MixerHostedTests().ready(durationSeconds: 12)
+        defer { f.close() }
+        let preference = PersistenceEnvironment.autosaveGate.preference
+        PersistenceEnvironment.autosaveGate.preference = AutosavePreference(enabled: true, delaySeconds: 30)
+        defer { PersistenceEnvironment.autosaveGate.preference = preference }
+        let cleanup = EpisodeCleanupModel(state: ShowWindowState(store: f.document.store),
+            episodeID: f.model.episodeID, runtime: f.runtime)
+        cleanup.connectWorkspace(to: f.model)
+        defer { cleanup.cancel() }
+        await cleanup.refresh()
+        let undo = try #require(f.document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        f.model.listening.selection = 1...2
+        cleanup.applyManualCut()
+        try #require(cleanup.error == nil)
+        let snapshot = f.document.store.model
+        let gate = SaveWorkerGate()
+        ShowDocument.debugBeforeSaveEncoding = { gate.pauseOnce() }
+        defer {
+            gate.resume()
+            ShowDocument.debugBeforeSaveEncoding = nil
+        }
+        let saving = Task {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                f.document.autosave(withImplicitCancellability: false) {
+                    if let error = $0 { continuation.resume(throwing: error) }
+                    else { continuation.resume() }
+                }
+            }
+        }
+        try await wait { gate.entered }
+        f.model.waveformStartSeconds = 0
+        f.model.waveformDurationSeconds = 6
+        f.model.listening.selection = 3...4
+        let cutStarted = ContinuousClock.now
+        cleanup.applyManualCut()
+        let cutLatency = cutStarted.duration(to: .now)
+        let secondCut = f.document.store.model
+        let cutError = cleanup.error
+        #expect(cutError == nil && secondCut != snapshot)
+        #expect(cutLatency < .milliseconds(100), "A cut must not wait for the stalled autosave.")
+        let undoStarted = ContinuousClock.now
+        undo.undo()
+        let undone = f.document.store.model == snapshot
+        undo.redo()
+        let undoLatency = undoStarted.duration(to: .now)
+        let redone = f.document.store.model == secondCut
+        #expect(undone && redone)
+        #expect(undoLatency < .milliseconds(150), "Undo/Redo must not wait for the stalled autosave.")
+        try await wait { f.model.hasUsableWaveformPresentation || f.model.lastError != nil }
+        let visibleLatency = cutStarted.duration(to: .now)
+        let waveformError = f.model.lastError
+        #expect(waveformError == nil && !gate.ranOnMainThread && !gate.timedOut)
+        #expect(visibleLatency < .milliseconds(500), "The waveform must recover while autosave is still stalled.")
+        gate.resume()
+        try await saving.value
+        let verified = f.document.verifiedModel
+        let current = f.document.store.model
+        let dirty = f.document.isDocumentEdited
+        let saved = f.document.status.saveStatus.state.isVerifiedOnDisk
+        #expect(verified == snapshot && current == secondCut && dirty && !saved)
+        ShowDocument.debugBeforeSaveEncoding = nil
+        try await MixerHostedTests().save(f.document)
+    }
+
     @Test func longRecordingCutKeepsTheVisibleWaveformsResponsive() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(
             cleanupPrimaries: 1, durationSeconds: 600, extraSources: 2)

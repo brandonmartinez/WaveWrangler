@@ -502,7 +502,7 @@ final class ShowWindowState {
         case .saveACopy, .saveACopyElsewhere, .duplicate:
             document.duplicate(nil)
         case .showInFinder, .showKeptFiles:
-            if let url = document.fileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
+            if let url = document.presentedFileURL { NSWorkspace.shared.activateFileViewerSelecting([url]) }
         case .autosaveSettings:
             SettingsWindowController.show(pane: .general)
         case .closeShow:
@@ -603,9 +603,9 @@ final class ShowWindowState {
             let store = self.store
             OpenSignposts.afterFirstFrame { [weak self] in
                 let model = store.model
-                let hasUnsavedChanges = (self?.saveStatus.hasUnsavedChanges ?? false) || store.document?.isDocumentEdited == true
+                let hasUnsavedChanges = (self?.saveStatus.hasUnsavedChanges ?? false) || store.document?.hasUnsavedModelChanges == true
                 OpenSignposts.measure("library.showDidOpen") {
-                    LibraryUIStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: store.document?.fileURL, hasUnsavedChanges: hasUnsavedChanges)
+                    LibraryUIStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: store.document?.presentedFileURL, hasUnsavedChanges: hasUnsavedChanges)
                 }
             }
         }

@@ -176,11 +176,11 @@ final class InMemoryLibraryBackend: LibraryPersisting, LibraryEntryObserving, Li
     func noteOpenShow(id: ShowID, model: ShowDocumentModel?, fileURL: URL?) {
         // Two open files with the same show identity (e.g. a Finder copy): surface it, never merge.
         let others = NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.filter {
-            $0.store.model.show.id == id && $0.fileURL != nil && $0.fileURL?.standardizedFileURL != fileURL?.standardizedFileURL
+            $0.store.model.show.id == id && $0.presentedFileURL != nil && $0.presentedFileURL?.standardizedFileURL != fileURL?.standardizedFileURL
         }
         if let other = others.first, fileURL != nil {
             details[id] = LibraryEntryDetails(
-                state: .identityCollision(otherLocationDisplayName: other.fileURL?.deletingLastPathComponent().lastPathComponent),
+                state: .identityCollision(otherLocationDisplayName: other.presentedFileURL?.deletingLastPathComponent().lastPathComponent),
                 locationDisplayName: fileURL.map { $0.deletingLastPathComponent().lastPathComponent },
                 lastOpened: details[id]?.lastOpened ?? Date(),
                 episodes: details[id]?.episodes,

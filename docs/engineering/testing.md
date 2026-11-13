@@ -90,6 +90,13 @@ document/runtime models. Direct member assertions can recursively attach a
 huge runtime graph to xcresults. Keep diagnostic artifacts bounded and preserve
 the first meaningful failure.
 
+For save responsiveness, hold the actual worker before encoding or at a
+publication boundary, not just its main-actor completion. The mixer slow-save
+cases cover both phases while rendering and editing continue; manual-cut cases
+cover repeated cuts/Undo during autosave and close during checkpoint encoding.
+Run these hosted cases in a leased VM. A delayed completion alone does not
+establish that encoding, recovery I/O or verified writing leaves the UI live.
+
 UI changes require native interaction evidence where relevant: keyboard and
 non-drag alternatives, focus routing, readable accessibility state, document
 updates and Undo. Keep accessibility identifiers on actual controls; an outer

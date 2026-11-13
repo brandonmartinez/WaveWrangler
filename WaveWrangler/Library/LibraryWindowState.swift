@@ -302,7 +302,7 @@ final class LibraryWindowState {
     func browse(_ document: ShowDocument) {
         let model = document.store.model
         document.retainForLibrary(in: window)
-        store.showDidOpen(id: model.show.id, model: model, fileURL: document.fileURL, hasUnsavedChanges: document.isDocumentEdited)
+        store.showDidOpen(id: model.show.id, model: model, fileURL: document.presentedFileURL, hasUnsavedChanges: document.hasUnsavedModelChanges)
         entrySelection = [model.show.id]
         selectedShow = document
         if episodeManagementState?.store !== document.store {
