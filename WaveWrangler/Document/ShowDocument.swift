@@ -25,6 +25,8 @@ import WWPersistence
 final class ShowDocument: NSDocument {
     let store: ShowDocumentStore
     lazy var mixerTransactions = MixerDocumentTransactions(document: self)
+    lazy var exportJobs = EpisodeExportService(document: self)
+    lazy var exportInterface = EpisodeExportPresentation(document: self)
     private var libraryController: NSWindowController?
     weak var libraryWindow: NSWindow?
     let status = DocumentStatusModel()
@@ -613,6 +615,11 @@ final class ShowDocument: NSDocument {
     }
 
     override func canClose(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?, contextInfo: UnsafeMutableRawPointer?) {
+        if exportInterface.isRunning {
+            exportInterface.explainCloseBlock()
+            Self.reply(to: delegate, selector: shouldCloseSelector, document: self, shouldClose: false, contextInfo: contextInfo)
+            return
+        }
         if mixerTransactions.needsBarrier {
             Task { @MainActor in
                 do {
@@ -632,6 +639,11 @@ final class ShowDocument: NSDocument {
 
     private func canCloseCaptured(withDelegate delegate: Any, shouldClose shouldCloseSelector: Selector?,
                                   contextInfo: UnsafeMutableRawPointer?) {
+        if exportInterface.isRunning {
+            exportInterface.explainCloseBlock()
+            Self.reply(to: delegate, selector: shouldCloseSelector, document: self, shouldClose: false, contextInfo: contextInfo)
+            return
+        }
         // T23 D7–D9: closing while the last save failed asks how to keep the changes (never AppKit's plain review,
         // and never closes silently). Every other state keeps AppKit's behavior.
         guard isDocumentEdited, let window = windowForSheet, let sheet = failedSaveCloseSheet() else {
@@ -998,6 +1010,8 @@ final class ShowDocument: NSDocument {
     }
 
     override func close() {
+        guard !exportInterface.isRunning else { exportInterface.explainCloseBlock(); return }
+        exportInterface.dismiss()
         guard !mixerTransactions.isClosed else { return }
         if mixerTransactions.needsBarrier {
             Task { @MainActor in
@@ -1010,6 +1024,8 @@ final class ShowDocument: NSDocument {
     }
 
     private func closeCaptured() {
+        guard !exportInterface.isRunning else { exportInterface.explainCloseBlock(); return }
+        exportInterface.dismiss()
         mixerTransactions.finishClosingAfterCapture()
         for state in ShowWindowRegistry.states(for: store) {
             state.mixerPresentation.originDidClose()

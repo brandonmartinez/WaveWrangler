@@ -23,7 +23,8 @@ public enum SchemaVersion {
     /// 11: independent finished-episode boundaries and optional spoken-track playback restriction.
     /// 12: optional insert rack positions preserve empty rows without changing processing order.
     /// 13: reversible per-speaker mute regions on the original aligned frame grid.
-    public static let show = 13
+    /// 14: reusable public publication metadata and versioned, embedded JPEG/PNG artwork.
+    public static let show = 14
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence
     /// `LibraryCoder`); the original bytes are kept as a backup before the first schema 2 publication.
@@ -76,12 +77,15 @@ public struct Show: Sendable, Equatable, Codable, Identifiable {
     public var title: String
     public var notes: String
     public var profile: ShowProfile?
+    public var publication: PublicationMetadata?
 
-    public init(id: ShowID = ShowID(), title: String, notes: String = "", profile: ShowProfile? = nil) {
+    public init(id: ShowID = ShowID(), title: String, notes: String = "", profile: ShowProfile? = nil,
+                publication: PublicationMetadata? = nil) {
         self.id = id
         self.title = title
         self.notes = notes
         self.profile = profile
+        self.publication = publication
     }
 }
 

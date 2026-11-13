@@ -19,6 +19,7 @@ public struct ValidationIssue: Sendable, Equatable, CustomStringConvertible {
         case invalidMix
         case invalidAudio
         case invalidSourcePurpose
+        case invalidPublication
     }
 
     public var code: Code
@@ -37,6 +38,7 @@ extension ShowDocumentModel {
     public func validationIssues(expectedSchemaVersion: Int = SchemaVersion.show) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
         issues += workspaceValidationIssues(expectedSchemaVersion: expectedSchemaVersion)
+        issues += publicationValidationIssues(expectedSchemaVersion: expectedSchemaVersion)
         if schemaVersion != expectedSchemaVersion {
             issues.append(.init(.schemaVersionMismatch, "payload \(schemaVersion) != expected \(expectedSchemaVersion)"))
         }

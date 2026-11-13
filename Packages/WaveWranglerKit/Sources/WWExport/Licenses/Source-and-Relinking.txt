@@ -1,0 +1,39 @@
+WaveWrangler includes the unmodified LAME 3.100 MP3 encoder library.
+LAME is licensed under the GNU Library General Public License, version 2
+or (at your option) any later version (LGPL-2.0-or-later).
+COPYING is the exact upstream license; LICENSE is the exact upstream usage notice.
+The first-party MIT license does not replace these library terms.
+
+LAME project: https://lame.sourceforge.io/
+Upstream release: https://downloads.sourceforge.net/project/lame/lame/3.100/lame-3.100.tar.gz
+SHA-256: ddfe36cab873794038ae2c1210557ad34857a4b6bdc515785d1da9e175b1da1e
+
+WaveWrangler source: https://github.com/brandonmartinez/WaveWrangler
+Corresponding source archive in the checkout:
+Packages/WaveWranglerKit/ThirdParty/lame-3.100.tar.gz
+Encoder sources: Packages/WaveWranglerKit/Sources/WWLameNative/upstream
+Build manifest and generated configuration:
+Packages/WaveWranglerKit/Package.swift
+Packages/WaveWranglerKit/Sources/WWLameNative/config.h
+Detailed development replacement/relink instructions and release gates:
+docs/engineering/export-codecs.md
+
+The development replacement path is a complete source rebuild/relink, not
+replacing a dylib inside a signed application. Keep the public LAME ABI.
+From a source checkout, validate the original library with:
+python3 scripts/check-lame-source.py
+
+After replacing/modifying the library sources, rebuild every codec consumer:
+SWT_EXPERIMENTAL_MAXIMUM_PARALLELIZATION_WIDTH=2 swift test --package-path Packages/WaveWranglerKit --scratch-path .build/lame-relink --jobs 2 --filter WWExportTests
+WW_JOBS=2 WW_DERIVED_DATA="$PWD/.build/LameRelinkDerivedData" scripts/build.sh Debug
+
+Preserve the library user's rights, including reverse engineering for debugging
+library modifications. Do not impose restrictions on replacement builds.
+A binary release must accompany its exact corresponding source/build materials
+and usable relink instructions. An upstream homepage or attribution alone
+is not a corresponding-source/relink package.
+
+Release gate: validate the exact shipped source/relink package, application
+linkage, signing, sandbox, library validation, distribution terms, and any
+App Store terms before shipping. This development build and these notices
+do not establish legal, signed-binary distribution, or App Store clearance.

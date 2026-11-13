@@ -75,6 +75,8 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
         do {
             payload = try decoder.decode(PayloadBox<Payload>.self, from: data).payload
             rawPayload = try decoder.decode(PayloadBox<JSONValue>.self, from: data).payload
+        } catch DomainError.unsupportedPublicationArtworkSchema(let found, let supported) {
+            throw .unknownNewerSchema(found: found, supported: supported)
         } catch {
             throw .malformed("Unreadable payload: \(error.localizedDescription)")
         }

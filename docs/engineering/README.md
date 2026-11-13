@@ -60,6 +60,57 @@ The Audio Track/Audio Clip editor, Add Audio, timeline file-drop staging,
 Insert Intro / Insert & Ripple, and clip-local linear fade controls use that
 production contract. Export and protected-cut acceptance are separate work.
 
+### Reusable publication properties (schema 14)
+
+The existing Show and Episode property inspectors include a collapsed
+**Publication** section. `Show.publication: PublicationMetadata?` supplies creator /
+artist, publisher, public description, copyright, genre, language, website,
+explicit-content and artwork defaults. `Episode.publication: EpisodePublication?`
+reuses that same metadata schema for overrides, plus optional positive season
+number and `PublicationEpisodeType` (`full`, `trailer`, `bonus`). Internal Notes
+are never copied into publication descriptions.
+
+`ShowDocumentModel.resolvedPublication(for:)` returns codec-independent
+`ResolvedPublicationMetadata`: episode title is the track title, show title is the
+album, and existing episode number and `publishedOn` supply number/date. Resolution
+does not set dates or change published status. `PublicationMetadata.inheriting(from:)`
+resolves each nil episode field from the show; empty strings deliberately omit
+inherited text, false overrides an explicit-content default, and
+`PublicationArtworkSelection.none` deliberately omits artwork. Nil artwork inherits.
+Use the explicit type name when assigning `.none` to an optional, to distinguish it
+from `Optional.none`. Future export-only overrides can use the same inheritance
+operation above the resolved episode values.
+
+`settingShowPublication`, `settingEpisodePublication`, and
+`settingEpisodePublishedOn` are typed domain edits. Inspectors apply them through
+the shared document store for live saves, multiwindow updates and named,
+coalesced Undo/Redo. Episode text exposes **Inherit** and **Omit**, artwork exposes
+choose/remove/omit/inherit, and less common inherited fields stay inside
+**Override Show Defaults**. Editing publication properties does not publish an
+episode.
+
+`PublicationArtwork` schema 1 stores exact original JPEG/PNG bytes and verified
+type/dimensions inside the portable show document, never a device path. The native
+picker grants separate user-selected artwork access; it does not reuse audio
+authorization, fetch images online, or modify originals. Local ImageIO validation
+requires one complete decodable image, at most 10 MiB and 1...4,096 pixels on each
+side. Reads are bounded before validation, dimensions are checked before full
+decode, and decoding stored artwork revalidates the bytes and declared properties.
+Any artwork schema change also requires a show schema bump.
+An unsupported newer embedded artwork version is refused as unknown-newer before
+image decoding/checksum validation, without offering damaged-file recovery.
+
+Short publication fields allow 4,096 UTF-8 bytes; public descriptions allow 65,536.
+Text rejects control characters other than tab/newline/carriage return. Nonempty
+websites require HTTP/HTTPS without credentials; language accepts conservative
+hyphenated language-tag syntax such as `en-US` (not a full registry validator).
+Show schema 14 requires the standard consented, exact-byte-backup migration from
+schemas 1...13, without inventing publication fields, artwork or dates. Older
+readers refuse the new schema, and old-schema payloads cannot smuggle publication
+properties into migration. Package tests cover resolution, validation, portable
+roundtrips and migration; hosted transaction execution and inspector interaction
+still require the dedicated, leased macOS VM qualification.
+
 ### Audio Tracks and Add Audio
 
 **Add Audio...** is available in an empty episode as well as an aligned dialogue
