@@ -135,6 +135,7 @@ public struct MixerRenderPolicy: Sendable, Equatable {
 public struct MixerRecipe: Sendable, Equatable {
     public static let sampleRate = 48_000
     public static let blockFrames = 512
+    public static let offlineBlockFrames = 4096
     public static let maximumWindowFrames = 240_000
     public static let maximumSpeakers = 64
 

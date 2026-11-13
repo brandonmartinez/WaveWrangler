@@ -400,7 +400,7 @@ struct ExportLoudnessTests {
             delivery("out.mp3", codec: .mp3(.constantBitrate(kbps: 96)), rate: 44_100, channels: 1,
                      mode: .custom(targetLUFS: -9, ceilingDBTP: -1)),
         ])
-        let result = try await ExportJob().run(request, isCurrent: { true },
+        let result = try await ExportJob(temporaryDirectory: root).run(request, isCurrent: { true },
             render: transientRenderer(request, frequency: 16_997), progress: { progress in
                 guard progress.phase == .verifying(delivery: 1) else { return }
                 do {

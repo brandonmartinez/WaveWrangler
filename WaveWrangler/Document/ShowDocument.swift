@@ -94,6 +94,7 @@ final class ShowDocument: NSDocument {
     private var onDiskBase: RevisionFingerprint?
     /// Only immutable inputs and synchronized results cross AppKit's writing-thread boundary.
     nonisolated private let writingSnapshot = Mutex<ShowSaveSnapshot?>(nil)
+    private var saveChangeCount: (token: Any, operation: NSDocument.SaveOperationType)?
     private var checkpointInFlight = false
     private var persistenceClosed = false
     private var scheduler: QuiescenceScheduler?
@@ -141,9 +142,16 @@ final class ShowDocument: NSDocument {
         return (url.standardizedFileURL, model, base)
     }
 
+    /// App-owned editing policy; AppKit also calls its native getter from background versioning workers.
+    var isViewingForEditing: Bool {
+        #if DEBUG
+        if debugViewingMode { return true }
+        #endif
+        return isInViewingMode
+    }
+
     #if DEBUG
     var debugViewingMode = false
-    override var isInViewingMode: Bool { debugViewingMode || super.isInViewingMode }
 
     /// Debug-only fault injection at the C3 boundaries (native holdout runner); `nil` in normal use.
     static var debugPublicationHooks: (any PublicationHooks)?
@@ -393,7 +401,7 @@ final class ShowDocument: NSDocument {
         try super.revert(toContentsOf: url, ofType: typeName)
     }
 
-    override func data(ofType typeName: String) throws -> Data {
+    nonisolated override func data(ofType typeName: String) throws -> Data {
         if let snapshot = writingSnapshot.withLock({ $0 }) {
             guard let candidate = snapshot.result.withLock({ $0.candidate }) else {
                 throw CocoaError(.fileWriteUnknown, userInfo: [
@@ -402,6 +410,11 @@ final class ShowDocument: NSDocument {
             }
 
             return candidate.data
+        }
+        guard Thread.isMainThread else {
+            throw CocoaError(.fileWriteUnknown, userInfo: [
+                NSLocalizedFailureReasonErrorKey: "A captured document snapshot is required before writing."
+            ])
         }
         return try MainActor.assumeIsolated {
             return try coder.encodeDocument(store.model, revision: revision + 1, publicationID: UUID()).data
@@ -473,6 +486,7 @@ final class ShowDocument: NSDocument {
         let candidateModel = store.model
         let snapshot = prepareSaveSnapshot(model: candidateModel, revision: revision + 1,
                                            to: url, operation: saveOperation, allowsInteraction: true)
+        saveChangeCount = (changeCountToken(for: saveOperation), saveOperation)
         let adopts = Self.adoptsPublication(saveOperation)
         if adopts { status.set(.saving) }
         let restoredAtSaveStart = restoredOfferURLs
@@ -565,6 +579,7 @@ final class ShowDocument: NSDocument {
         let result = snapshot.result.withLock { $0 }
         let receipt = result.receipt
         let candidateBytes = result.candidate?.data
+        saveChangeCount = nil
         writingSnapshot.withLock { $0 = nil }
         if error == nil, adopts, let receipt {
             cancelSaveRetry()
@@ -950,7 +965,16 @@ final class ShowDocument: NSDocument {
     }
 
     override func updateChangeCount(_ change: NSDocument.ChangeType) {
-        super.updateChangeCount(change)
+        if change == .changeCleared, let saved = saveChangeCount, Self.adoptsPublication(saved.operation),
+           let snapshot = writingSnapshot.withLock({ $0 }),
+           snapshot.result.withLock({ $0.receipt != nil }), snapshot.model != store.model {
+            // With autosave off, AppKit clears all changes instead of using its asynchronous-save token.
+            // Account for only the captured edits, preserving later Undo/Redo steps and their dirty state.
+            saveChangeCount = nil
+            super.updateChangeCount(withToken: saved.token, for: saved.operation)
+        } else {
+            super.updateChangeCount(change)
+        }
         #if DEBUG
         if change == .changeDone || change == .changeUndone || change == .changeRedone { traceEditedState("updateChangeCount \(change.rawValue)") }
         #endif

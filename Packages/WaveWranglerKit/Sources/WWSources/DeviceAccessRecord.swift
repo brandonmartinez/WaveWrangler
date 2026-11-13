@@ -1,3 +1,4 @@
+import Darwin
 import Foundation
 import WWCore
 
@@ -124,6 +125,29 @@ public protocol DeviceAccessSnapshotStore: DeviceAccessStore {
     func snapshot(for key: DeviceAccessKey) async throws -> DeviceAccessSnapshot?
 }
 
+/// A cheap mutation witness, never a source grant or a substitute for snapshot/admission checks.
+public struct DeviceAccessRevision: Sendable, Equatable {
+    private enum Value: Sendable, Equatable {
+        case memory(UUID)
+        case missing
+        case file(device: dev_t, inode: ino_t, bytes: off_t,
+                  modifiedSeconds: Int, modifiedNanoseconds: Int, changedSeconds: Int, changedNanoseconds: Int)
+    }
+    private let value: Value
+    fileprivate init(memory: UUID) { value = .memory(memory) }
+    fileprivate init(file: stat?) {
+        if let file {
+            value = .file(device: file.st_dev, inode: file.st_ino, bytes: file.st_size,
+                modifiedSeconds: file.st_mtimespec.tv_sec, modifiedNanoseconds: file.st_mtimespec.tv_nsec,
+                changedSeconds: file.st_ctimespec.tv_sec, changedNanoseconds: file.st_ctimespec.tv_nsec)
+        } else { value = .missing }
+    }
+}
+
+public protocol DeviceAccessRevisionStore: DeviceAccessStore {
+    func mutationRevision() async throws -> DeviceAccessRevision
+}
+
 /// Import-only conditional publication, serialized by the existing store actor. This does not claim
 /// cross-process compare-and-swap. Unsupported stores must refuse rather than fall back to `save`.
 public protocol DeviceAccessImportStore: DeviceAccessSnapshotStore {
@@ -149,9 +173,10 @@ public enum DeviceAccessStoreError: Error, Equatable, Sendable {
     case unreadable(SourceErrorDescriptor)
 }
 
-public actor InMemoryDeviceAccessStore: DeviceAccessImportStore {
+public actor InMemoryDeviceAccessStore: DeviceAccessImportStore, DeviceAccessRevisionStore {
     private var records: [DeviceAccessKey: DeviceAccessSnapshot] = [:]
     private let identity = UUID()
+    private var mutation = UUID()
 
     public init(_ records: [DeviceAccessRecord] = []) {
         for record in records {
@@ -165,13 +190,20 @@ public actor InMemoryDeviceAccessStore: DeviceAccessImportStore {
         records.values.map(\.record).filter { $0.showID == showID }.sortedByKey()
     }
     public func allRecords() -> [DeviceAccessRecord] { records.values.map(\.record).sortedByKey() }
+    public func mutationRevision() -> DeviceAccessRevision { .init(memory: mutation) }
     public func save(_ record: DeviceAccessRecord) {
+        mutation = UUID()
         records[record.key] = DeviceAccessSnapshot(record: record, mutationGeneration: DeviceAccessGeneration(UUID()),
                                                   storeIdentity: identity)
     }
     public func save(_ records: [DeviceAccessRecord]) { for record in records { save(record) } }
-    public func removeRecord(for key: DeviceAccessKey) { records[key] = nil }
-    public func removeRecords(in showID: ShowID) { records = records.filter { $0.key.showID != showID } }
+    public func removeRecord(for key: DeviceAccessKey) {
+        if records.removeValue(forKey: key) != nil { mutation = UUID() }
+    }
+    public func removeRecords(in showID: ShowID) {
+        let kept = records.filter { $0.key.showID != showID }
+        if kept.count != records.count { mutation = UUID(); records = kept }
+    }
 
     public func insertNew(_ proposed: [DeviceAccessRecord]) throws -> [DeviceAccessSnapshot] {
         var seen: Set<DeviceAccessKey> = []
@@ -183,6 +215,7 @@ public actor InMemoryDeviceAccessStore: DeviceAccessImportStore {
             DeviceAccessSnapshot(record: $0, mutationGeneration: DeviceAccessGeneration(UUID()), storeIdentity: identity)
         }
         for snapshot in inserted { records[snapshot.record.key] = snapshot }
+        if !inserted.isEmpty { mutation = UUID() }
         return inserted
     }
 
@@ -190,7 +223,10 @@ public actor InMemoryDeviceAccessStore: DeviceAccessImportStore {
         var refused: [DeviceAccessKey] = []
         for snapshot in inserted {
             let key = snapshot.record.key
-            if snapshot.storeIdentity == identity, records[key] == snapshot { records[key] = nil }
+            if snapshot.storeIdentity == identity, records[key] == snapshot {
+                records[key] = nil
+                mutation = UUID()
+            }
             else { refused.append(key) }
         }
         return refused
@@ -199,7 +235,7 @@ public actor InMemoryDeviceAccessStore: DeviceAccessImportStore {
 
 /// JSON-file store in the app container (Application Support). The store file is the only thing it
 /// ever writes; it never touches sources.
-public actor FileDeviceAccessStore: DeviceAccessImportStore {
+public actor FileDeviceAccessStore: DeviceAccessImportStore, DeviceAccessRevisionStore {
     private static let storeSchemaVersion = 2
     private let identity = UUID()
 
@@ -263,6 +299,21 @@ public actor FileDeviceAccessStore: DeviceAccessImportStore {
 
     public func snapshot(for key: DeviceAccessKey) throws -> DeviceAccessSnapshot? { try load()[key] }
     public func record(for key: DeviceAccessKey) throws -> DeviceAccessRecord? { try load()[key]?.record }
+
+    public func mutationRevision() throws -> DeviceAccessRevision {
+        var metadata = stat()
+        guard lstat(fileURL.path, &metadata) == 0 else {
+            if errno == ENOENT, !hasObservedFile { return .init(file: nil) }
+            throw DeviceAccessStoreError.unreadable(SourceErrorDescriptor(
+                NSError(domain: NSPOSIXErrorDomain, code: Int(errno))))
+        }
+        guard metadata.st_mode & S_IFMT == S_IFREG, metadata.st_nlink == 1 else {
+            throw DeviceAccessStoreError.unreadable(SourceErrorDescriptor(
+                NSError(domain: NSPOSIXErrorDomain, code: Int(EINVAL))))
+        }
+        hasObservedFile = true
+        return .init(file: metadata)
+    }
 
     public func records(in showID: ShowID) throws -> [DeviceAccessRecord] {
         try load().values.map(\.record).filter { $0.showID == showID }.sortedByKey()

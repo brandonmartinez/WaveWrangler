@@ -97,6 +97,8 @@ public struct ExportJobResult: Sendable {
     public let published: [PublishedExport]
     public let problem: ExportJobProblem?
     public let cleanupErrors: [String]
+    /// Local encoded outputs retained after a destination failure, not published delivery receipts.
+    public let retainedDirectory: URL?
     public var succeeded: Bool { problem == nil && cleanupErrors.isEmpty }
 }
 
@@ -114,9 +116,16 @@ public actor ExportJob {
     private var deliveryFrames: Int64 = 0
     private var activeEncoder: ExportEncoder?
     private let remuxFactory: ExportRemuxOperation.Factory
+    private let temporaryDirectory: URL
 
-    public init() { remuxFactory = ExportRemuxOperation.system }
-    init(remuxFactory: @escaping ExportRemuxOperation.Factory) { self.remuxFactory = remuxFactory }
+    public init() {
+        remuxFactory = ExportRemuxOperation.system
+        temporaryDirectory = FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+    }
+    init(temporaryDirectory: URL, remuxFactory: @escaping ExportRemuxOperation.Factory = ExportRemuxOperation.system) {
+        self.remuxFactory = remuxFactory
+        self.temporaryDirectory = temporaryDirectory
+    }
     public func cancel() async {
         if running {
             canceled = true
@@ -125,6 +134,7 @@ public actor ExportJob {
     }
 
     public func run(_ request: ExportJobRequest, isCurrent: @escaping Currency,
+                    validateSources: Currency? = nil,
                     render: @escaping Renderer, progress notify: @escaping Progress = { _ in }) async throws -> ExportJobResult {
         guard !running else { throw ExportFailure.invalidState }
         running = true
@@ -135,13 +145,16 @@ public actor ExportJob {
         var storage: ExportJobStorage?
         var intermediate: ExportIntermediate?
         var encoders: [ExportEncoder] = []
+        var finishedEncoders: [ExportEncoder] = []
         var published: [PublishedExport] = []
         var problem: ExportJobProblem?
         var cleanupErrors: [String] = []
+        var retainedDirectory: URL?
+        var verified: [VerifiedExport] = []
         do {
             await update(.preflight, total: request.productionFrames.count64, notify: notify)
-            try await check(isCurrent)
-            let owned = try ExportJobStorage(request: request)
+            try await check(isCurrent, sources: validateSources)
+            let owned = try ExportJobStorage(request: request, temporaryDirectory: temporaryDirectory)
             storage = owned
             let pcm = try ExportIntermediate(directory: owned.directory, frames: request.productionFrames)
             intermediate = pcm
@@ -153,8 +166,7 @@ public actor ExportJob {
                 await renderingProgress(count, total: request.productionFrames.count64, notify: notify)
             }
             try await pcm.finish()
-            try await check(isCurrent)
-            var verified: [VerifiedExport] = []
+            try await check(isCurrent, sources: validateSources)
             var reports: [ExportLoudnessReport] = []
             for (index, delivery) in request.deliveries.enumerated() {
                 let expected = Int64((Double(request.productionFrames.count64)
@@ -164,6 +176,7 @@ public actor ExportJob {
                 var initialStatus = ExportLoudnessReport.TargetStatus.off
                 if let targets {
                     await update(.measuring(delivery: index), total: expected, notify: notify)
+                    try await check(isCurrent, sources: validateSources)
                     let meter = ExportLoudnessAccumulator(settings: delivery.settings)
                     deliveryFrames = 0
                     try await pcm.convert(delivery: delivery, measuring: true) { [self] samples in
@@ -194,7 +207,7 @@ public actor ExportJob {
                     } else {
                         await update(.correcting(delivery: index, attempt: correctionPasses), total: expected, notify: notify)
                     }
-                    try await check(isCurrent)
+                    try await check(isCurrent, sources: validateSources)
                     try owned.validateOwnership()
                     let encoder = try ExportEncoder(stagingDirectory: owned.directory,
                         settings: delivery.settings, metadata: delivery.metadata, remuxFactory: remuxFactory)
@@ -207,10 +220,10 @@ public actor ExportJob {
                                                  index: index, total: expected, notify: notify)
                     }
                     await update(.verifying(delivery: index), total: expected, notify: notify)
-                    try await check(isCurrent)
+                    try await check(isCurrent, sources: validateSources)
                     let file = try await encoder.finish { [self] in try await check(isCurrent) }
                     activeEncoder = nil
-                    try await check(isCurrent)
+                    try await check(isCurrent, sources: validateSources)
                     if let targets, let peak = file.loudness.truePeakDBTP,
                        peak > targets.ceiling - ExportLoudnessMeter.ceilingReserveDB {
                         guard correctionPasses < 3 else {
@@ -233,16 +246,19 @@ public actor ExportJob {
                         appliedGainDB: gainDB, correctiveAttenuationDB: originalGainDB - gainDB,
                         correctionPasses: correctionPasses, targetStatus: status))
                     verified.append(file)
+                    finishedEncoders.append(encoder)
                     break
                 }
-                try await check(isCurrent)
+                try await check(isCurrent, sources: validateSources)
             }
             await update(.publishing, total: request.productionFrames.count64, notify: notify)
-            try await check(isCurrent)
+            try await check(isCurrent, sources: validateSources)
             try await pcm.validate()
             for (index, file) in verified.enumerated() {
-                try await check(isCurrent)
-                let url = try owned.publish(file, filename: request.deliveries[index].filename)
+                try await check(isCurrent, sources: validateSources)
+                let url = try await owned.publish(file, filename: request.deliveries[index].filename,
+                    check: { [self] in try await check(isCurrent) },
+                    beforeCommit: { [self] in try await check(isCurrent, sources: validateSources) })
                 published.append(.init(url: url, settings: file.settings, inputFrames: file.inputFrames,
                                        decodedFrames: file.decodedFrames, byteCount: file.byteCount,
                                        loudness: reports[index]))
@@ -259,6 +275,17 @@ public actor ExportJob {
                 }
             }
             problem = .init(kind: kind, message: String(describing: error))
+            if kind == .destination, progress.phase == .publishing, verified.count == request.deliveries.count {
+                do {
+                    try storage?.validateOwnership()
+                    for encoder in finishedEncoders { try await encoder.validateFinishedOutput() }
+                    try storage?.validateOwnership()
+                    retainedDirectory = storage?.directory
+                    if let retainedDirectory {
+                        problem = .init(kind: kind, message: "\(String(describing: error))\nLocal export files were retained at \(retainedDirectory.path). They are not published deliveries; reverify them before use.")
+                    }
+                } catch { cleanupErrors.append(String(describing: error)) }
+            }
         }
         await update(.cleaning, total: request.productionFrames.count64, notify: notify)
         var mayClean = true
@@ -268,21 +295,23 @@ public actor ExportJob {
         catch { cleanupErrors.append(String(describing: error)) }
         do { try await intermediate?.close() }
         catch { cleanupErrors.append(String(describing: error)) }
-        for encoder in encoders where mayClean {
+        do { try storage?.cleanupPublication() }
+        catch { cleanupErrors.append(String(describing: error)) }
+        for encoder in encoders where mayClean && retainedDirectory == nil {
             do { try await encoder.cancel() }
             catch { cleanupErrors.append(String(describing: error)) }
         }
-        do { if mayClean { try storage?.cleanup() } }
+        do { if mayClean && retainedDirectory == nil { try storage?.cleanup() } }
         catch { cleanupErrors.append(String(describing: error)) }
         if problem == nil, !cleanupErrors.isEmpty {
             problem = .init(kind: .cleanup, message: "Export files were published, but private staging cleanup failed")
         }
         await update(problem == nil ? .completed : problem?.kind == .canceled ? .canceled : .failed,
                      total: request.productionFrames.count64, notify: notify)
-        return .init(published: published, problem: problem, cleanupErrors: cleanupErrors)
+        return .init(published: published, problem: problem, cleanupErrors: cleanupErrors, retainedDirectory: retainedDirectory)
     }
 
-    private func check(_ currency: Currency) async throws {
+    private func check(_ currency: Currency, sources: Currency? = nil) async throws {
         try Task.checkCancellation()
         guard !canceled else { throw CancellationError() }
         let current = try await currency()
@@ -290,6 +319,12 @@ public actor ExportJob {
         guard !canceled else { throw CancellationError() }
         guard current else {
             throw ExportJobProblem(kind: .stale, message: "The document or source admission changed. Restart export.")
+        }
+        if let sources {
+            guard try await sources() else {
+                throw ExportJobProblem(kind: .stale, message: "The document or source admission changed. Restart export.")
+            }
+            try await check(currency)
         }
     }
 

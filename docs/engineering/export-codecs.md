@@ -60,18 +60,37 @@ windows; `exportInterface` owns one presentation. Before freezing:
    independent offline effect instances through
    `AlignmentRuntime.renderProductionOffline`.
 
+   The independent processor requests offline Audio Unit mode and up to 4,096-frame
+   effect blocks, honoring the smallest allocated effect capacity. It overlaps one
+   bounded next source window with processing/writing, never parallelizes a stateful
+   effect chain, and cancels/joins preparation on every failed exit. Playback remains
+   on its existing 512-frame blocks. See [audio processing](audio-processing.md)
+   for timing checks and retained-buffer bounds.
+
 Render only resolved Episode Start through Episode End on the signed 48 kHz
 grid, including persistent routing/gain/effects/clips/envelopes/cuts/mutes.
 Do not inherit transient listening Solo/Mute. No effect tail is appended;
 extend Episode End explicitly to retain decay.
 Missing effects, stale/unauthorized/unavailable sources or changed inputs fail.
-Check document equality and live source/admission throughout and before each
-publication, not only when the sheet opens.
+Check the frozen document generation, cancellation and device-access mutation
+revision on every render/conversion/decode/transfer block. Store revisions are
+invalidation witnesses, not grants: memory stores change an opaque token on
+mutation; file stores inspect permission-file identity, size and change times
+without loading JSON. An equal-byte revoke/restore still invalidates the job.
+When the shared store changes, compare only the frozen recipe's access snapshots
+and recheck the revision across that read; unchanged relevant snapshots permit
+an unrelated show's mutation without reloading records on subsequent blocks.
+Full source/admission validation runs at phase boundaries and immediately before
+each publication commit. Actual source reads retain their witnessed gateway
+checks; completed production windows still revalidate their sources. Never cache
+permission data or grant reads from a revision or a rendered intermediate.
 
 `ExportJob` accepts an explicitly selected destination, protected locations,
 range and 1-16 distinct deliveries. Its renderer runs once into a finite,
 contiguous stereo Float32 disk intermediate (mode 0600) in a private mode-0700
-destination-volume directory. PCM remains provisional until rendering and final
+application temporary directory, alongside each private encoder directory.
+The destination receives no provisional audio during rendering or encoding.
+PCM remains provisional until rendering and final
 currency succeed. Every write/read/pass/cleanup revalidates the retained
 descriptor's identity, size/change timestamps, regular-file type and single
 link; do not adopt external edits after partial failure.
@@ -84,10 +103,29 @@ for float/lossy formats.
 
 Preflight checks extensions, normalized case-insensitive collisions, protected
 paths, aliases/symlinks/hardlinks, existing entries, RIFF limit and conservative
-disk space for PCM, all outputs and remux overhead. No overwrite is allowed.
+disk space for local PCM, all outputs, remux overhead and destination copies.
+Check both volumes separately, or their combined budget on a shared volume.
+No overwrite is allowed.
 Full decode verification of **all** deliveries precedes publication of any.
-Each per-file `renameatx_np(RENAME_EXCL)` is a commit point, not an unsafe
-replace/rollback. Keep actual published receipts if a later commit fails.
+Copy each verified local delivery into a private destination-volume directory
+in bounded 256 KiB blocks, synchronize it, then compare every byte with the
+unchanged verified local output. This works across volumes without assuming an
+atomic move. Recheck retained descriptors, change witnesses and currency
+throughout the transfer. Only destination copies may accept a ctime-only update:
+the retained and named files must still have the same identity, size, modification
+time, regular-file type and single link, and every copied byte must match the
+unchanged verified local output across a stable verification window. Metadata
+updates during verification restart that comparison, with at most three attempts;
+continuously changing metadata or differing bytes fail and preserve the copy.
+PCM, local encoders and cleanup retain strict change witnesses. Revalidate sources
+after any comparison and immediately before the synchronous publication commit;
+metadata changes across that admission boundary also have a three-attempt limit.
+Each destination-local `renameatx_np(RENAME_EXCL)` is a commit point, not an
+unsafe replace/rollback. Keep actual published receipts if a later commit fails.
+On destination/publication failure, retain still-owned, fully verified local
+encoder outputs and report their directory. Remove the PCM intermediate; do not
+present retained files as published receipts or automatically retry them.
+Changed local artifacts instead retain the existing explicit cleanup refusal.
 
 Folder scope covers cleanup. Staging/destination identities are checked around
 publication; replaced artifacts remain for inspection with errors.
@@ -229,8 +267,9 @@ passes do not resolve this gate.
 ## Validation scope
 
 Generated-PCM `WWExportTests` cover bounded encoding, structural/duration
-verification, metadata, loudness/headroom, cancellation, ownership, collisions
-and partial receipts. Optional independent comparison uses only already
+verification, metadata, loudness/headroom, local staging, verified transfer,
+transfer cancellation/tampering, boundary-only full validation, ownership,
+collisions, retained recovery files and partial receipts. Optional independent comparison uses only already
 installed FFmpeg through `WW_EXPORT_REFERENCE_FFMPEG`; it is not a production
 dependency or permission to install one. App adapter, hosted native-state and
 real UI coverage are separate layers in [testing](testing.md). A focused run

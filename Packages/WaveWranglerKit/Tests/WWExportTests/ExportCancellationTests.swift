@@ -13,7 +13,7 @@ struct ExportCancellationTests {
         defer { try? FileManager.default.removeItem(at: root) }
         let framework = PendingRemux()
         defer { framework.release() }
-        let job = ExportJob(remuxFactory: { _, output, _ in
+        let job = ExportJob(temporaryDirectory: root, remuxFactory: { _, output, _ in
             ExportRemuxOperation(run: { try await framework.run(output: output) },
                                  cancel: { framework.cancel() })
         })

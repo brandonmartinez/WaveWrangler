@@ -44,6 +44,90 @@ final class SaveWorkerGate: PublicationHooks {
 @MainActor
 @Suite("Document-bound mixer integration (synthetic and Apple units)", .serialized)
 struct MixerHostedTests {
+    @Test func backgroundDocumentDataWithoutSnapshotRefusesLiveModelAccess() async throws {
+        let document = ShowDocument()
+        defer { document.close() }
+        let model = document.store.model
+        let mainThreadData = try document.data(ofType: DocumentTypes.show)
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(mainThreadData).payload == model)
+        do {
+            _ = try await Task.detached {
+                try document.data(ofType: DocumentTypes.show)
+            }.value
+            Issue.record("Background document data must require a captured save snapshot.")
+        } catch let error as CocoaError {
+            #expect(error.code == .fileWriteUnknown)
+        }
+    }
+
+    @Test(arguments: [false, true])
+    func backgroundDocumentDataUsesCapturedSaveInsteadOfLaterEdits(autosaveEnabled: Bool) async throws {
+        let preference = PersistenceEnvironment.autosaveGate.preference
+        PersistenceEnvironment.autosaveGate.preference = AutosavePreference(enabled: autosaveEnabled, delaySeconds: 30)
+        defer { PersistenceEnvironment.autosaveGate.preference = preference }
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("WW-SaveSnapshot-\(UUID())")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("Synthetic.wwshow")
+        let original = ShowDocumentModel.untitled()
+        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+            original, revision: 1, publicationID: UUID()).data.write(to: url)
+        let document = try #require(NSDocumentController.shared.makeDocument(
+            withContentsOf: url, ofType: DocumentTypes.show) as? ShowDocument)
+        NSDocumentController.shared.addDocument(document)
+        defer { document.close() }
+        let undo = try #require(document.undoManager)
+        while undo.groupingLevel > 0 { undo.endUndoGrouping() }
+        undo.groupsByEvent = false
+        defer { undo.groupsByEvent = true }
+        try #require(document.store.apply("Rename before save") { model throws(DomainError) in
+            try model.renamingShow(to: "Snapshot before save")
+        })
+        let captured = document.store.model
+        try await wait { document.isDocumentEdited }
+        let gate = SaveWorkerGate()
+        let previousHooks = ShowDocument.debugPublicationHooks
+        ShowDocument.debugPublicationHooks = gate
+        defer {
+            gate.resume()
+            ShowDocument.debugPublicationHooks = previousHooks
+        }
+        let saving = Task { try await save(document) }
+        try await wait { gate.entered }
+        let workerIsMain = gate.ranOnMainThread
+        #expect(!workerIsMain)
+        try #require(document.store.apply("Rename during save") { model throws(DomainError) in
+            try model.renamingShow(to: "Later edit")
+        })
+        try #require(document.store.apply("Rename again during save") { model throws(DomainError) in
+            try model.renamingShow(to: "Second later edit")
+        })
+        let data = try await Task.detached {
+            try document.data(ofType: DocumentTypes.show)
+        }.value
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(data).payload == captured)
+        gate.resume()
+        try await saving.value
+        let verified = document.verifiedModel
+        let edited = document.hasUnsavedModelChanges
+        #expect(verified == captured && edited)
+        #expect(try Data(contentsOf: url) == data)
+        let currentTitle = document.store.model.show.title
+        #expect(currentTitle == "Second later edit")
+        undo.undo()
+        let firstUndoTitle = document.store.model.show.title
+        let firstUndoEdited = document.isDocumentEdited
+        #expect(firstUndoTitle == "Later edit" && firstUndoEdited)
+        undo.undo()
+        let secondUndoMatchesSaved = document.store.model == captured
+        let secondUndoEdited = document.isDocumentEdited
+        #expect(secondUndoMatchesSaved && !secondUndoEdited)
+        undo.redo()
+        let redoTitle = document.store.model.show.title
+        let redoEdited = document.isDocumentEdited
+        #expect(redoTitle == "Later edit" && redoEdited)
+    }
+
     @Test func stoppingAFailedTransportDoesNotMakeItsGraphReusable() async throws {
         let f = try await ready(durationSeconds: 4)
         defer { f.close() }
@@ -1456,6 +1540,10 @@ struct MixerHostedTests {
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
         undo.groupsByEvent = false
         defer { undo.groupsByEvent = true }
+        try #require(f.document.store.apply("Rename before save") { model throws(DomainError) in
+            try model.renamingShow(to: "Snapshot before save")
+        })
+        try await wait { f.document.isDocumentEdited }
         let gate = SaveWorkerGate()
         let previousHooks = ShowDocument.debugPublicationHooks
         if beforeEncoding {

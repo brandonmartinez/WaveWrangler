@@ -7,31 +7,23 @@ import WWCore
 @MainActor
 @Suite("Logic-style tools, listening presets, and sidebar activities", .serialized)
 struct ControlsSidebarHostedTests {
-    @Test func nativeViewsMenuRetainsCommandsIdentifiersAndSectionBoundary() async throws {
-        let store = ShowDocumentStore(model: .init(
-            show: Show(title: "Synthetic"), episodes: [Episode(title: "Synthetic")]))
-        let state = ShowWindowState(store: store)
-        state.select(.alignment)
-        let host = HostedTimelineWindow(
-            width: 320, height: 44, content: DestinationControl(state: state))
-        defer { host.close() }
-        try await host.settle()
-        let button = try #require(host.descendants.compactMap { $0 as? NativeActionMenu.Button }
-            .first { $0.accessibilityIdentifier() == "ww.show.views" })
-        #expect(button.accessibilityLabel() == "Views")
-        let menu = try #require(button.menu)
-        let setup = menu.indexOfItem(withTitle: "Legacy Setup")
-        try #require(setup > 1)
-        #expect(menu.item(at: setup)?.accessibilityIdentifier() == "ww.show.destination.setup")
+    @Test func nativeViewMenuRetainsDestinationCommandsAndSectionBoundaries() throws {
+        let windows = NSApp.windowsMenu, help = NSApp.helpMenu, services = NSApp.servicesMenu
+        defer { NSApp.windowsMenu = windows; NSApp.helpMenu = help; NSApp.servicesMenu = services }
+        let main = MainMenu.make()
+        let menu = try #require(main.items.first { $0.title == "View" }?.submenu)
+        let destinations = menu.items.filter { $0.action == #selector(CommandRouter.selectDestination(_:)) }
+        #expect(destinations.map(\.title) == ["Setup", "Alignment", "Edit & Cleanup"])
+        #expect(destinations.map(\.tag) == [0, 1, 2])
+        #expect(destinations.map(\.keyEquivalent) == ["1", "2", "3"])
+        #expect(destinations.allSatisfy {
+            $0.target === CommandRouter.shared && $0.keyEquivalentModifierMask == .command
+        })
+        let setup = menu.indexOfItem(withTitle: "Setup")
+        let review = menu.indexOfItem(withTitle: "Edit & Cleanup")
+        try #require(setup > 0 && review + 1 < menu.numberOfItems)
         #expect(menu.item(at: setup - 1)?.isSeparatorItem == true)
-        menu.performActionForItem(at: setup)
-        #expect(state.destination == .setup)
-        let refreshed = try #require(button.menu)
-        let recordings = refreshed.indexOfItem(withTitle: "Recordings & Speakers…")
-        try #require(recordings > 0)
-        #expect(refreshed.item(at: recordings)?.accessibilityIdentifier() == "ww.show.views.recordings")
-        refreshed.performActionForItem(at: recordings)
-        #expect(state.recordingsPresented)
+        #expect(menu.item(at: review + 1)?.isSeparatorItem == true)
     }
 
     @Test func nativeToolMenusPublishSelectionAndRefreshTheirCheckedActions() async throws {

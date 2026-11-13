@@ -159,10 +159,20 @@ enters `super.save` synchronously. AppKit's writing callback explicitly calls
 `unblockUserInteraction()` **before** encoding or waiting for the app-wide
 persistence lane. Merely enabling asynchronous writing does not release the
 UI. Worker code uses captured inputs and synchronized candidate/receipt storage,
-never live main-actor model or status. Keep stock `super.writeSafely`,
+never live main-actor model or status. The `data(ofType:)` override is explicitly
+nonisolated because AppKit invokes it on its writing worker. It returns only the
+encoded captured candidate there; without a snapshot, background calls throw
+instead of reading the live model. Direct main-actor serialization remains
+available outside a save. Keep stock `super.writeSafely`,
 `AlreadyCoordinated`, exact-base conflict checks and independent read-back.
-AppKit's change-count token preserves edits made during publication; a verified
-older snapshot must not clear those edits or acknowledge their title as saved.
+Capture AppKit's change-count token with the model snapshot. With autosave off,
+AppKit may clear all changes at completion rather than apply its asynchronous
+token; apply the captured token instead when later edits remain. Preserve the
+individual Undo/Redo steps, not just an extra dirty flag. A verified older
+snapshot must not clear those edits or acknowledge their title as saved.
+Keep test viewing-mode overrides in the app-owned editing policy, not an
+actor-isolated override of AppKit's getter: its versioning workers call that
+getter off the main thread.
 
 Presentation uses the captured location and conservatively unsaved model state
 during writing, rather than AppKit file-relative getters that may wait for file
@@ -212,6 +222,13 @@ this narrow continuity rule never weakens the live gateway's exact witness.
 Never write, rename, move, replace or delete an original. Never substitute a
 same-name file or infer an unknown channel. Device access records are keyed by
 `(ShowID, SourceID)` and are not portable document content.
+
+Built-in access stores expose `DeviceAccessRevisionStore` for cheap mutation
+detection without decoding permission JSON. A revision is not a grant or an
+admission cache. Export compares frozen relevant `DeviceAccessSnapshot` values
+when the shared revision changes, preserving unrelated-show edits while refusing
+revoke/restore ABA. Actual source reads and export publication still require
+full current admission checks; see [export](export-codecs.md#frozen-production-jobs).
 
 `ForbiddenAPITests` recursively scans package modules and app code for alternate
 content readers. Memory-only PCM conversion in `WWDecode/PCMResampling.swift`

@@ -2,6 +2,7 @@
 import AudioToolbox
 import Darwin
 import Foundation
+import Synchronization
 import Testing
 import WWCore
 import WWDecode
@@ -204,9 +205,13 @@ struct MixerProcessorTests {
         #expect(output.masterMeters[0].peak == 1 && output.masterMeters[1].peak == 0.5)
     }
 
-    @Test(arguments: [false, true], [(false, false), (true, false), (false, true), (true, true)])
+    @Test(arguments: [false, true], [
+        (false, false, false), (true, false, false),
+        (false, true, false), (true, true, false),
+        (false, false, true), (true, false, true)
+    ])
     func speechGateIsSampleClockedThroughLatencySeekPrerollAndFlush(
-        seeking: Bool, configuration: (restricted: Bool, live: Bool)
+        seeking: Bool, configuration: (restricted: Bool, live: Bool, offline: Bool)
     ) async throws {
         let restricted = configuration.restricted
         let f = MixFixture(), track = AudioTrack(name: "Unaffected music")
@@ -235,16 +240,21 @@ struct MixerProcessorTests {
             programFrames: first..<4096, policy: .init(prerollFrames: 37, tail: .includeReported),
             composition: composition)
         let processor = try MixerProcessor(recipe: recipe,
-            speakerUnits: [[generated(.decay, channels: 1, latency: 23, tail: 31)]],
-            masterUnits: [generated(.decay, channels: 2, latency: 13, tail: 19)],
-            audioTrackUnits: [[generated(.identity, channels: 2, latency: 7)]], livePlayback: configuration.live)
+            speakerUnits: [[generated(.decay, channels: 1, latency: 23, tail: 31,
+                                     offlineRendering: configuration.offline)]],
+            masterUnits: [generated(.decay, channels: 2, latency: 13, tail: 19,
+                                    offlineRendering: configuration.offline)],
+            audioTrackUnits: [[generated(.identity, channels: 2, latency: 7,
+                                        offlineRendering: configuration.offline)]],
+            livePlayback: configuration.live, offlineRendering: configuration.offline)
         var output = [[Float](), [Float]()]
         let passes = configuration.live ? [(first - 37)..<4096, first..<4096] : [(first - 37)..<4096]
         for pass in passes {
             if configuration.live { try await processor.beginPlaybackPass(at: pass.lowerBound) }
             var cursor = pass.lowerBound
             while cursor < pass.upperBound {
-                let end = min(cursor + 173, pass.upperBound), count = Int(end - cursor)
+                let end = min(cursor + (configuration.offline ? 4096 : 173), pass.upperBound)
+                let count = Int(end - cursor)
                 let value = try await processor.process(.init(frames: cursor..<end,
                     channels: [recipe.routes[0].reference: .init(repeating: 0.5, count: count)],
                     audioTracks: [track.id: [.init(repeating: 0.25, count: count), .init(repeating: -0.25, count: count)]]))
@@ -553,7 +563,7 @@ struct MixerProcessorTests {
             subtype: kAudioUnitSubType_LowPassFilter, manufacturer: kAudioUnitManufacturer_Apple))
         episode.mix = .init(speakers: [.init(speaker: f.speaker, inserts: [slot])])
         let recipe = try f.recipe(episode)
-        let whole = try await MixerProcessor.load(recipe: recipe)
+        let whole = try await MixerProcessor.load(recipe: recipe, offlineRendering: true)
         let pieces = try await MixerProcessor.load(recipe: recipe)
         let samples = (0..<4096).map { Float(sin(Double($0) * 0.8)) * 0.2 }
         let ref = recipe.routes[0].reference
@@ -707,6 +717,151 @@ struct MixerProcessorTests {
         await #expect(throws: CancellationError.self) { try await task.value }
     }
 
+    @Test func offlineBatchingPreservesStateLatencyPrerollTailAndReducesNativeCalls() async throws {
+        let f = MixFixture()
+        var episode = f.episode
+        episode.mix = .init(speakers: [.init(speaker: f.speaker, pan: -1)])
+        let recipe = try f.recipe(episode, frames: -17..<8199,
+                                 policy: .init(prerollFrames: 37, tail: .includeReported))
+        var results: [[[Float]]] = []
+        var calls: [Int] = []
+        for offline in [false, true] {
+            let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+                manufacturer: kAudioUnitManufacturer_Apple))
+            let effect = try GeneratedUnit(channels: 1, operation: .decay, latency: 23, tail: 31)
+            let native = try NativeAudioUnit(slot: slot, unit: effect, channels: 1,
+                                            policy: recipe.policy, offlineRendering: offline)
+            let master = try generated(.square, channels: 2, latency: 13, tail: 19, offlineRendering: offline)
+            let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[native]], masterUnits: [master],
+                                               offlineRendering: offline)
+            let initialReads = effect.latencyReadCount
+            let samples = (-54..<8199).map { Float(sin(Double($0) * 0.02)) * 0.2 }
+            var result = try await processor.process(.init(frames: -54..<8199,
+                channels: [recipe.routes[0].reference: samples])).channels
+            while let flush = try await processor.finishNext() {
+                result[0] += flush.channels[0]; result[1] += flush.channels[1]
+            }
+            #expect(result.allSatisfy { $0.count == 8216 + 50 })
+            #expect(effect.latencyReadCount - initialReads == effect.renderCount * 2,
+                    "Every native block must retain both timing checks.")
+            #expect(effect.allocatedOffline == offline)
+            #expect(effect.renderSizes.max() == (offline ? 4096 : 512))
+            calls.append(effect.renderCount)
+            results.append(result)
+        }
+        #expect(results[0] == results[1])
+        #expect(calls == [18, 4], "Larger blocks must reduce actual native calls, not just outer window count.")
+    }
+
+    @Test func offlineBlocksRespectEffectCapacityAndDetectMidRenderTimingChanges() async throws {
+        let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
+            manufacturer: kAudioUnitManufacturer_Apple))
+        let recipe = try MixFixture().recipe(frames: 0..<4097)
+        let effect = try GeneratedUnit(channels: 2, operation: .identity, latency: 0, tail: 0)
+        effect.frameLimit = 1024
+        let native = try NativeAudioUnit(slot: slot, unit: effect, channels: 2, policy: recipe.policy,
+                                        offlineRendering: true)
+        let processor = try MixerProcessor(recipe: recipe, speakerUnits: [[]], masterUnits: [native],
+                                           offlineRendering: true)
+        let result = try await processor.process(.init(frames: 0..<4097,
+            channels: [recipe.routes[0].reference: .init(repeating: 0.2, count: 4097)]))
+        #expect(result.frameCount == 4097)
+        #expect(effect.renderSizes == [1024, 1024, 1024, 1024, 1])
+        for tail in [false, true] {
+            let changed = try GeneratedUnit(channels: 1, operation: .identity, latency: 0, tail: 0)
+            let host = try NativeAudioUnit(slot: slot, unit: changed, channels: 1,
+                policy: .init(tail: .includeReported), offlineRendering: true)
+            changed.onRender = {
+                if tail { changed.reportedTail = 1.0 / 48_000 }
+                else { changed.reportedLatency = 1.0 / 48_000 }
+            }
+            let failure = tail ? MixerFailure.changedTail(slot.id) : .changedLatency(slot.id)
+            #expect(throws: failure) { try host.render([.init(repeating: 0.1, count: 4096)]) }
+        }
+    }
+
+    @Test(.timeLimit(.minutes(1)))
+    func offlinePrefetchOverlapsSinkWithoutRunningAheadAndPreservesOrderedSamples() async throws {
+        let recipe = try MixFixture().recipe(frames: -11..<720_003)
+        let (prepared, signal) = AsyncStream<Void>.makeStream()
+        let reads = Mutex<[Range<Int64>]>([])
+        let outputs = PCMCollector()
+        try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { true }, input: { frames in
+            reads.withLock { $0.append(frames) }
+            if frames.lowerBound == 239_989 { signal.yield(()) }
+            return .init(frames: frames, channels: [
+                recipe.routes[0].reference: frames.map { Float($0 % 11) / 32 }
+            ])
+        }, sink: { output in
+            if output.firstFrame == -11 {
+                for await _ in prepared { break }
+                #expect(reads.withLock { $0.count } == 2,
+                        "Only the next source window may run ahead of the blocked sink.")
+            }
+            await outputs.append(output)
+        })
+        signal.finish()
+        let values = await outputs.outputs
+        #expect(values.map(\.firstFrame) == [-11, 239_989, 479_989, 719_989])
+        let actual = values.flatMap { $0.channels[0] }
+        let gain = Float(1 / sqrt(2))
+        #expect(actual.count == 720_014)
+        #expect(zip(actual, Int64(-11)..<720_003).allSatisfy {
+            $0.0 == Float($0.1 % 11) / 32 * gain
+        })
+    }
+
+    @Test(.timeLimit(.minutes(1)), arguments: [false, true])
+    func offlinePrefetchIsCanceledAndJoinedWhenSinkFailsOrTaskCancels(cancel: Bool) async throws {
+        let recipe = try MixFixture().recipe(frames: 0..<720_003)
+        let (started, signal) = AsyncStream<Void>.makeStream()
+        let joined = Mutex(false)
+        let task = Task {
+            try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { true }, input: { frames in
+                if frames.lowerBound > 0 {
+                    defer { joined.withLock { $0 = true } }
+                    signal.yield(())
+                    try await Task.sleep(for: .seconds(60))
+                }
+                return .init(frames: frames, channels: [
+                    recipe.routes[0].reference: .init(repeating: 0, count: frames.count)
+                ])
+            }, sink: { _ in
+                for await _ in started { break }
+                if cancel {
+                    withUnsafeCurrentTask { $0?.cancel() }
+                    try Task.checkCancellation()
+                }
+                throw MixerFailure.nonfinitePCM
+            })
+        }
+        if cancel { await #expect(throws: CancellationError.self) { try await task.value } }
+        else { await #expect(throws: MixerFailure.nonfinitePCM) { try await task.value } }
+        signal.finish()
+        #expect(joined.withLock { $0 }, "No source preparation may outlive the failed renderer.")
+    }
+
+    @Test(arguments: [false, true])
+    func offlinePrefetchedFailureOrRevocationCannotReachTheSink(stale: Bool) async throws {
+        let recipe = try MixFixture().recipe(frames: 0..<720_003)
+        let valid = Mutex(true)
+        let sinkFrames = Mutex<[Int64]>([])
+        let expected = stale ? MixerFailure.staleDependencies : .incompletePCM
+        await #expect(throws: expected) {
+            try await MixerOfflineRenderer.render(recipe: recipe, isCurrent: { valid.withLock { $0 } },
+                input: { frames in
+                    if frames.lowerBound > 0 {
+                        if stale { valid.withLock { $0 = false } }
+                        else { throw MixerFailure.incompletePCM }
+                    }
+                    return .init(frames: frames, channels: [
+                        recipe.routes[0].reference: .init(repeating: 0, count: frames.count)
+                    ])
+                }, sink: { output in sinkFrames.withLock { $0.append(output.firstFrame) } })
+        }
+        #expect(sinkFrames.withLock { $0.allSatisfy { $0 == 0 } })
+    }
+
     @Test func audioTrackStereoInsertsFollowClipSumAndPrecedeBalanceAndCommonMaster() async throws {
         let f = MixFixture(), track = AudioTrack(name: "Stereo music")
         var episode = f.episode
@@ -788,12 +943,12 @@ struct MixerProcessorTests {
     }
 
     private func generated(_ operation: GeneratedUnit.Operation, channels: Int,
-                           latency: Int = 0, tail: Int = 0) throws -> NativeAudioUnit {
+                           latency: Int = 0, tail: Int = 0, offlineRendering: Bool = false) throws -> NativeAudioUnit {
         let slot = AudioUnitSlot(component: .init(type: kAudioUnitType_Effect, subtype: 0x57575453,
             manufacturer: kAudioUnitManufacturer_Apple))
         let unit = try GeneratedUnit(channels: channels, operation: operation, latency: latency, tail: tail)
         return try NativeAudioUnit(slot: slot, unit: unit, channels: channels,
-            policy: .init(tail: .includeReported))
+            policy: .init(tail: .includeReported), offlineRendering: offlineRendering)
     }
 }
 
@@ -817,6 +972,11 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     private var documentState: [String: Any]? = ["generated": true]
     private(set) var documentCaptureCount = 0
     private(set) var renderCount = 0
+    private(set) var renderSizes: [Int] = []
+    private(set) var latencyReadCount = 0
+    private(set) var allocatedOffline = false
+    var frameLimit: AUAudioFrameCount?
+    var onRender: (@Sendable () -> Void)?
     var onDocumentCapture: (@Sendable () -> Void)?
     var reportedLatency: TimeInterval?
     var reportedTail: TimeInterval?
@@ -841,8 +1001,16 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     }
     override var inputBusses: AUAudioUnitBusArray { inputs }
     override var outputBusses: AUAudioUnitBusArray { outputs }
-    override var latency: TimeInterval { reportedLatency ?? Double(delay) / 48_000 }
+    override var latency: TimeInterval {
+        latencyReadCount += 1
+        return reportedLatency ?? Double(delay) / 48_000
+    }
     override var tailTime: TimeInterval { reportedTail ?? Double(tail) / 48_000 }
+    override func allocateRenderResources() throws {
+        if let frameLimit { maximumFramesToRender = min(maximumFramesToRender, frameLimit) }
+        allocatedOffline = isRenderingOffline
+        try super.allocateRenderResources()
+    }
     override func reset() {
         rings = Array(repeating: [Float](repeating: 0, count: delay), count: decay.count)
         decay = .init(repeating: 0, count: decay.count)
@@ -864,6 +1032,8 @@ private final class GeneratedUnit: AUAudioUnit, @unchecked Sendable {
     override var internalRenderBlock: AUInternalRenderBlock {
         { [self] flags, time, count, _, output, _, pull in
             renderCount += 1
+            renderSizes.append(Int(count))
+            defer { onRender?() }
             if failures > 0 {
                 failures -= 1
                 return kAudioUnitErr_CannotDoInCurrentContext

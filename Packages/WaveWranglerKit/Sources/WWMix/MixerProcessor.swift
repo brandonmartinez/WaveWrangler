@@ -72,6 +72,7 @@ public actor MixerProcessor {
     private var terminal = false
     private var failure: (any Error)?
     private let livePlayback: Bool
+    private let blockFrames: Int
     private var playbackInputFrames: Int64 = 0
     private var playbackStartOffset: Int64 = 0
     private var playbackSegments: [(streamFrame: Int64, programFrame: Int64)] = []
@@ -79,9 +80,13 @@ public actor MixerProcessor {
     public static func load(
         recipe: MixerRecipe,
         livePlayback: Bool = false,
+        offlineRendering: Bool = false,
         progress: @Sendable (MixerLoadingEvent) -> Void = { _ in }
     ) async throws -> MixerProcessor {
         try Task.checkCancellation()
+        guard !offlineRendering || !livePlayback else {
+            throw MixerFailure.invalidRecipe("offline rendering cannot use a live processor")
+        }
         #if !arch(arm64)
         throw MixerFailure.invalidRecipe("native arm64 is required for this qualification")
         #else
@@ -91,7 +96,7 @@ public actor MixerProcessor {
                 try Task.checkCancellation()
                 progress(.loading(slot.id))
                 let unit = try await NativeAudioUnit.load(slot, channels: channels, policy: recipe.policy,
-                                                         supportsLiveBypass: livePlayback)
+                    supportsLiveBypass: livePlayback, offlineRendering: offlineRendering)
                 units.append(unit)
                 progress(.ready(unit.status))
             }
@@ -104,17 +109,24 @@ public actor MixerProcessor {
         let master = try await chain(recipe.master.inserts, channels: 2)
         try Task.checkCancellation()
         return try MixerProcessor(recipe: recipe, speakerUnits: speakers, masterUnits: master,
-                                  audioTrackUnits: tracks, livePlayback: livePlayback)
+            audioTrackUnits: tracks, livePlayback: livePlayback, offlineRendering: offlineRendering)
         #endif
     }
 
     init(recipe: MixerRecipe, speakerUnits: [[NativeAudioUnit]], masterUnits: [NativeAudioUnit],
-         audioTrackUnits: [[NativeAudioUnit]] = [], livePlayback: Bool = false) throws {
+         audioTrackUnits: [[NativeAudioUnit]] = [], livePlayback: Bool = false,
+         offlineRendering: Bool = false) throws {
         guard speakerUnits.count == recipe.routes.count, audioTrackUnits.count == recipe.audioTracks.count else {
             throw MixerFailure.invalidRecipe("unit chains do not match bus routes")
         }
         self.recipe = recipe
         self.livePlayback = livePlayback
+        guard !offlineRendering || !livePlayback else {
+            throw MixerFailure.invalidRecipe("offline rendering cannot use a live processor")
+        }
+        let units = (speakerUnits + audioTrackUnits).flatMap { $0 } + masterUnits
+        blockFrames = min(offlineRendering ? MixerRecipe.offlineBlockFrames : MixerRecipe.blockFrames,
+                          units.map(\.maximumFrames).min() ?? MixerRecipe.offlineBlockFrames)
         self.speakerUnits = speakerUnits
         self.audioTrackUnits = audioTrackUnits
         self.masterUnits = masterUnits
@@ -412,9 +424,9 @@ public actor MixerProcessor {
         output[1].reserveCapacity(count)
         var metered = Array(repeating: [Float](), count: recipe.routes.count)
         var trackMeters = Array(repeating: [[Float](), [Float]()], count: recipe.audioTracks.count)
-        for offset in stride(from: 0, to: count, by: MixerRecipe.blockFrames) {
+        for offset in stride(from: 0, to: count, by: blockFrames) {
             try Task.checkCancellation()
-            let blockCount = min(MixerRecipe.blockFrames, count - offset)
+            let blockCount = min(blockFrames, count - offset)
             let skip = min(discarded, blockCount)
             discarded -= skip
             var sum = Array(repeating: [Float](repeating: 0, count: blockCount), count: 2)
@@ -522,23 +534,39 @@ struct FrameDelay {
 public enum MixerOfflineRenderer {
     public static func render(
         recipe: MixerRecipe,
-        isCurrent: @Sendable () async throws -> Bool,
-        input: @Sendable (Range<Int64>) async throws -> MixerPCMWindow,
+        isCurrent: @escaping @Sendable () async throws -> Bool,
+        input: @escaping @Sendable (Range<Int64>) async throws -> MixerPCMWindow,
         sink: @Sendable (MixerPCMOutput) async throws -> Void
     ) async throws {
-        let processor = try await MixerProcessor.load(recipe: recipe)
-        var next = recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames)
-        while next < recipe.programFrames.upperBound {
-            try Task.checkCancellation()
-            guard try await isCurrent() else { throw MixerFailure.staleDependencies }
-            let frames = next..<min(next + Int64(MixerRecipe.maximumWindowFrames), recipe.programFrames.upperBound)
-            let window = try await input(frames)
-            guard window.frames == frames else { throw MixerFailure.discontinuousPCM }
-            let output = try await processor.process(window)
-            try Task.checkCancellation()
-            guard try await isCurrent() else { throw MixerFailure.staleDependencies }
-            if output.frameCount > 0 { try await sink(output) }
-            next = frames.upperBound
+        let processor = try await MixerProcessor.load(recipe: recipe, offlineRendering: true)
+        try await withThrowingTaskGroup(of: MixerPCMWindow.self) { group in
+            let start = recipe.programFrames.lowerBound - Int64(recipe.policy.prerollFrames)
+            var next = start
+            @Sendable func prepare(_ frames: Range<Int64>) async throws -> MixerPCMWindow {
+                try Task.checkCancellation()
+                guard try await isCurrent() else { throw MixerFailure.staleDependencies }
+                let window = try await input(frames)
+                try Task.checkCancellation()
+                guard window.frames == frames else { throw MixerFailure.discontinuousPCM }
+                return window
+            }
+            let first = next..<min(next + Int64(MixerRecipe.maximumWindowFrames), recipe.programFrames.upperBound)
+            group.addTask { try await prepare(first) }
+            while let window = try await group.next() {
+                try Task.checkCancellation()
+                guard window.frames.lowerBound == next else { throw MixerFailure.discontinuousPCM }
+                guard try await isCurrent() else { throw MixerFailure.staleDependencies }
+                next = window.frames.upperBound
+                if next < recipe.programFrames.upperBound {
+                    let frames = next..<min(next + Int64(MixerRecipe.maximumWindowFrames), recipe.programFrames.upperBound)
+                    // Only one next window is prepared while the current one is mixed and written.
+                    group.addTask { try await prepare(frames) }
+                }
+                let output = try await processor.process(window)
+                try Task.checkCancellation()
+                guard try await isCurrent() else { throw MixerFailure.staleDependencies }
+                if output.frameCount > 0 { try await sink(output) }
+            }
         }
         while let output = try await processor.finishNext() {
             try Task.checkCancellation()

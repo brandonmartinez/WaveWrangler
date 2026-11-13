@@ -42,6 +42,53 @@ final class ExportOwnedArtifact {
         return true
     }
 
+    /// Destination-only: a ctime change requires a stable, exact comparison of every copied byte.
+    func validateDestinationCopy(in directory: Int32, verifyBytes: Bool = false,
+                                 compare: (Int64) async throws -> Bool,
+                                 isolation: isolated (any Actor)? = #isolation) async throws {
+        for _ in 0..<3 {
+            let candidate = try destinationCopyWitness(in: directory)
+            if !verifyBytes, candidate == witness { return }
+            guard try await compare(Int64(candidate.bytes)) else {
+                changed = true
+                throw ExportFailure.verification("Destination copy differs from the verified local output: \(name). Its bytes were preserved.")
+            }
+            let verified = try destinationCopyWitness(in: directory)
+            if verified == candidate {
+                witness = verified
+                return
+            }
+        }
+        changed = true
+        throw ExportFailure.destination("Destination metadata kept changing during byte verification: \(name). Its bytes were preserved.")
+    }
+
+    func destinationCopyIsCurrent(in directory: Int32) throws -> Bool {
+        try destinationCopyWitness(in: directory) == witness
+    }
+
+    private func destinationCopyWitness(in directory: Int32) throws -> ExportOutputWitness {
+        guard !changed else { throw failure() }
+        var current = stat(), retained = stat()
+        guard fstatat(directory, name, &current, AT_SYMLINK_NOFOLLOW) == 0,
+              fstat(descriptor, &retained) == 0 else {
+            changed = true
+            throw failure()
+        }
+        for metadata in [current, retained] {
+            let value = ExportOutputWitness(metadata)
+            guard metadata.st_mode & S_IFMT == S_IFREG, metadata.st_nlink == 1,
+                  value.device == witness.device, value.inode == witness.inode,
+                  value.bytes == witness.bytes,
+                  value.modifiedSeconds == witness.modifiedSeconds,
+                  value.modifiedNanoseconds == witness.modifiedNanoseconds else {
+                changed = true
+                throw failure()
+            }
+        }
+        return ExportOutputWitness(retained)
+    }
+
     /// Only after a validated, synchronous owned write; expected size bounds partial PCM writes.
     func checkpoint(in directory: Int32, missingAllowed: Bool = false, expectedBytes: Int64? = nil) throws {
         guard !changed else { throw failure() }

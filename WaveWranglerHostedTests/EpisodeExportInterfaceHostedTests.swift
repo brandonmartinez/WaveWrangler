@@ -239,6 +239,41 @@ struct EpisodeExportInterfaceHostedTests {
             #expect((try FileManager.default.contentsOfDirectory(atPath: folder.path)).isEmpty)
         }
 
+        @Test(arguments: [false, true])
+        func permissionChangesDistinguishUnrelatedShowsFromRelevantRevokeRestore(revokeSource: Bool) async throws {
+            let f = try await ready()
+            defer { f.close() }
+            let service = f.document.exportJobs
+            let model = f.document.store.model
+            let source = try #require(model.episode(f.model.episodeID)?.speakerAssignments.first?.primary?.sourceID)
+            let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
+            let record = try #require(try await access.record(for: .init(showID: model.show.id, sourceID: source)))
+            let unrelated = DeviceAccessRecord(showID: ShowID(), sourceID: SourceID(), createdAt: Date())
+            let folder = f.folder.appendingPathComponent("access-currency")
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: false)
+            await f.runtime.setProductionValidationHookForTesting {
+                guard await MainActor.run(body: { service.progress.phase == .verifying(delivery: 0) }),
+                      try await access.record(for: unrelated.key) == nil else { return }
+                try await access.save(unrelated)
+                if revokeSource {
+                    try await access.removeRecord(for: record.key)
+                    try await access.save(record)
+                }
+            }
+            let delivery = try #require(selections(f, prefix: "Currency", normalization: .off).first)
+            let result = try await service.run(episode: f.model.episodeID, runtime: f.runtime,
+                userSelectedDirectory: folder, deliveries: [delivery])
+            await f.runtime.setProductionValidationHookForTesting(nil)
+            #expect(try await access.record(for: unrelated.key) == unrelated)
+            if revokeSource {
+                #expect(result.problem?.kind == .stale && result.published.isEmpty)
+                #expect(try FileManager.default.contentsOfDirectory(atPath: folder.path).isEmpty)
+            } else {
+                #expect(result.succeeded, "\(String(describing: result.problem)) \(result.cleanupErrors)")
+                #expect(result.published.count == 1)
+            }
+        }
+
         @Test func realPartialPublicationPreservesForeignFilesAndReportsCleanupFailure() async throws {
             let f = try await ready()
             defer { f.close() }
@@ -255,7 +290,7 @@ struct EpisodeExportInterfaceHostedTests {
                     try foreignBytes.write(to: collision, options: .withoutOverwriting)
                     let stage = try #require(FileManager.default.contentsOfDirectory(
                         at: folder, includingPropertiesForKeys: nil).first {
-                            $0.lastPathComponent.hasPrefix(".ww-export-job-")
+                            $0.lastPathComponent.hasPrefix(".ww-export-publish-")
                         })
                     try foreignBytes.write(to: stage.appendingPathComponent("foreign.txt"), options: .withoutOverwriting)
                 }
@@ -265,6 +300,11 @@ struct EpisodeExportInterfaceHostedTests {
             await f.runtime.setProductionValidationHookForTesting(nil)
             #expect(!result.succeeded && result.problem?.kind == .destination)
             #expect(!result.cleanupErrors.isEmpty && !service.isRunning)
+            let retained = try #require(result.retainedDirectory)
+            defer {
+                do { try FileManager.default.removeItem(at: retained) }
+                catch { Issue.record(error) }
+            }
             #expect(result.published.map(\.url.lastPathComponent) == ["Partial.wav"])
             let decoded = try decode(folder.appendingPathComponent("Partial.wav"))
             #expect(decoded[0].count == 288_003)
@@ -272,7 +312,7 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(!FileManager.default.fileExists(atPath: folder.appendingPathComponent("Partial.m4a").path))
             let stage = try #require(FileManager.default.contentsOfDirectory(
                 at: folder, includingPropertiesForKeys: nil).first {
-                    $0.lastPathComponent.hasPrefix(".ww-export-job-")
+                    $0.lastPathComponent.hasPrefix(".ww-export-publish-")
                 })
             #expect(try Data(contentsOf: stage.appendingPathComponent("foreign.txt")) == foreignBytes)
             let saved = try EpisodeExportPreferenceStore(defaults: PersistenceEnvironment.preferences,

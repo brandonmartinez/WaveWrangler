@@ -77,10 +77,28 @@ Set a **Base filename**, select **Choose Folder**, and check the displayed
 filenames. Existing files are never replaced: choose a different name or
 folder for a subsequent export.
 
+WaveWrangler renders the production mix once into its private local temporary
+storage, then creates and verifies every selected format there. Allow local disk
+space for the uncompressed mix and encoded files, in addition to destination
+space. Only completed, verified files are copied to the selected folder; each
+copy is checked before its final filename appears.
+Rendering uses independent effects in offline mode, larger processing blocks
+where supported, and bounded preparation of the next audio window. It is not
+paced to playback, but source preparation and effect complexity still affect
+completion time; some effects use different processing quality when offline.
+Cloud-provider metadata-only updates trigger another byte comparison rather
+than rejecting an otherwise identical copy. Changed contents or file identity
+still stop export; repeated metadata changes can also prevent publication.
+
 Wait for completion and review the result and reported omissions. Lossy formats
 may include encoder priming/padding, so their decoded duration is not exact
 production timing. If canceling, wait for cleanup before closing; any files
 already published remain in the destination. Listen to the delivered files
 before distribution.
+
+If destination transfer fails, the error shows a local temporary recovery folder
+when verified files could be retained. These are not published deliveries and
+temporary storage is not permanent: inspect and reverify them before use.
+Already published files remain at the selected destination.
 
 [User guide](README.md)

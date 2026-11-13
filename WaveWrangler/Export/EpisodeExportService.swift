@@ -4,6 +4,7 @@ import WWCommonEdit
 import WWCore
 import WWExport
 import WWMix
+import WWSources
 
 /// Document-owned export backend. No live effect instance enters the offline job.
 @MainActor @Observable
@@ -19,6 +20,7 @@ final class EpisodeExportService {
     private(set) var lastResult: ExportJobResult?
     private(set) var state = State.idle
     private var cancellationRequested = false
+    @ObservationIgnored private var accessRevision: DeviceAccessRevision?
 
     init(document: ShowDocument) { self.document = document }
 
@@ -44,6 +46,7 @@ final class EpisodeExportService {
             try await runtime.productionRetirements.wait()
             try checkCancellation()
             let snapshot = document.store.model
+            let generation = document.store.modelGeneration
             guard let episode = snapshot.episode(id),
                   document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: id) == true else {
                 throw MixerFailure.staleDependencies
@@ -60,24 +63,49 @@ final class EpisodeExportService {
             let request = try ExportJobRequest(userSelectedDirectory: userSelectedDirectory,
                 protectedLocations: document.fileURL.map { [$0] } ?? [],
                 productionFrames: frames, deliveries: outputs)
+            let accessRevision = try await runtime.productionAccessRevision()
+            let accessSnapshots = try await runtime.productionAccessSnapshots(recipe: recipe, showID: snapshot.show.id)
+            guard try await runtime.productionAccessRevision() == accessRevision else {
+                throw MixerFailure.staleDependencies
+            }
+            self.accessRevision = accessRevision
             let current: ExportJob.Currency = { [weak self, weak document] in
                 guard let self, let document else { return false }
-                let valid = await MainActor.run {
-                    !self.cancellationRequested && !document.mixerTransactions.isClosed
-                        && document.store.model == snapshot
-                        && document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: id) == true
+                let (valid, previousRevision) = await MainActor.run {
+                    (!self.cancellationRequested && !document.mixerTransactions.isClosed
+                        && document.store.modelGeneration == generation, self.accessRevision)
                 }
                 guard valid else { return false }
+                let liveRevision = try await runtime.productionAccessRevision()
+                if liveRevision != previousRevision {
+                    // Unrelated shows may update the shared store without invalidating these grants.
+                    guard try await runtime.productionAccessSnapshots(recipe: recipe, showID: snapshot.show.id) == accessSnapshots,
+                          try await runtime.productionAccessRevision() == liveRevision else { return false }
+                    await MainActor.run {
+                        if self.accessRevision == previousRevision { self.accessRevision = liveRevision }
+                    }
+                }
+                return await MainActor.run {
+                    !self.cancellationRequested && !document.mixerTransactions.isClosed
+                        && document.store.modelGeneration == generation
+                        && self.accessRevision == liveRevision
+                }
+            }
+            let validateSources: ExportJob.Currency = { [weak document] in
+                guard try await current(), let document else { return false }
+                guard await MainActor.run(body: {
+                    document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: id) == true
+                }) else { return false }
                 do {
                     try await runtime.validateProduction(recipe: recipe, model: snapshot)
                 } catch MixerFailure.staleDependencies {
                     return false
                 }
-                return await MainActor.run { !self.cancellationRequested && document.store.model == snapshot }
+                return try await current()
             }
             try checkCancellation()
             state = .running
-            let result = try await job.run(request, isCurrent: current, render: { sink in
+            let result = try await job.run(request, isCurrent: current, validateSources: validateSources, render: { sink in
                 do {
                     try await runtime.renderProductionOffline(recipe: recipe, model: snapshot, isCurrent: current) { output in
                         try await sink(output.firstFrame, output.channels)
