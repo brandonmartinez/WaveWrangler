@@ -1532,7 +1532,10 @@ The states are registered for menu routing (`CommandRouter`); all windows for a 
 Library selects shows and opens their documents with `display: false` to manage live episodes in
 `LibraryShowDetail`, not cached last-open summaries. A windowless document controller retains each
 browsed show in AppKit's save/quit lifecycle after its last episode editor closes; no hidden window is
-created. Library's episode panel routes Undo to that show's undo manager, while collection edits retain
+created. Show Info precedes Episodes in the Library's show panel. Show and episode metadata appear
+in a full-height inspector to its right; native draggable dividers resize the sidebar, show list,
+episode list, and inspector. The Library defaults to 1200 by 600 points with a 1000-point minimum width.
+Library's episode panel routes Undo to that show's undo manager, while collection edits retain
 Library's separate history. `Close Show` calls `canClose` before closing the whole document.
 Edits go through `ShowDocumentStore.apply(_:coalescing:_:)` with the user-facing names in
 `WWOrganizer.UndoActionName` for organization edits.

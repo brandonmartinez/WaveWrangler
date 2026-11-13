@@ -21,32 +21,40 @@ struct LibraryShowDetail: View {
                 SaveStatusItem(state: show)
             }
             .padding()
-            LibraryEpisodeList(state: show) { state.openEpisode($0) }
-                .frame(minHeight: 120)
-            HStack {
-                Button("Open Episode", systemImage: "arrow.up.forward.square") { state.openSelectedEpisode() }
-                    .disabled(show.selectedEpisode == nil)
-                    .keyboardShortcut(state.focusedRegion == .episodes ? .defaultAction : nil)
-                    .accessibilityIdentifier("ww.library.episode.open")
-                Spacer()
-                Button("Show in Finder") { state.revealSelectedInFinder() }
-                    .disabled(!state.store.services.entries.canRevealShow(show.store.model.show.id))
-            }
-            .padding()
-            Divider()
-            ScrollView {
-                Group {
-                    if show.sidebarSelection == .showInfo {
-                        ShowInfoInspector(state: show)
-                    } else if let episode = show.selectedEpisode {
-                        EpisodeInspector(state: show, episodeID: episode.id)
-                            .id(episode.id)
+            HSplitView {
+                VStack(spacing: 0) {
+                    LibraryEpisodeList(state: show) { state.openEpisode($0) }
+                    ViewThatFits(in: .horizontal) {
+                        HStack {
+                            openEpisodeButton
+                            Spacer(minLength: 8)
+                            revealShowButton
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            openEpisodeButton
+                            revealShowButton
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .padding()
                 }
-                .padding()
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(minWidth: 200, idealWidth: 280, maxWidth: .infinity, maxHeight: .infinity)
+                ScrollView {
+                    Group {
+                        if show.sidebarSelection == .showInfo {
+                            ShowInfoInspector(state: show)
+                        } else if let episode = show.selectedEpisode {
+                            EpisodeInspector(state: show, episodeID: episode.id)
+                                .id(episode.id)
+                        }
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minWidth: 260, idealWidth: 320, maxWidth: .infinity, maxHeight: .infinity)
+                .accessibilityLabel("Show and episode details")
+                .accessibilityIdentifier("ww.library.inspector")
             }
-            .frame(maxHeight: 240)
         }
         .wwFont(.body)
         .simultaneousGesture(TapGesture().onEnded { state.focusedRegion = .episodes })
@@ -59,5 +67,17 @@ struct LibraryShowDetail: View {
         .onChange(of: show.saveStatus.state) { old, new in
             show.saveStateDidChange(from: old, to: new)
         }
+    }
+
+    private var openEpisodeButton: some View {
+        Button("Open Episode", systemImage: "arrow.up.forward.square") { state.openSelectedEpisode() }
+            .disabled(show.selectedEpisode == nil)
+            .keyboardShortcut(state.focusedRegion == .episodes ? .defaultAction : nil)
+            .accessibilityIdentifier("ww.library.episode.open")
+    }
+
+    private var revealShowButton: some View {
+        Button("Show in Finder") { state.revealSelectedInFinder() }
+            .disabled(!state.store.services.entries.canRevealShow(show.store.model.show.id))
     }
 }

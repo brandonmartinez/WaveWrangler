@@ -53,7 +53,7 @@ struct LibraryView: View {
         } detail: {
             LibraryEntryDetail(state: state)
                 .focused($focus, equals: .episodes)
-                .navigationSplitViewColumnWidth(min: 240, ideal: 480)
+                .navigationSplitViewColumnWidth(min: 480, ideal: 600)
         }
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {

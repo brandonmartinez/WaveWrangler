@@ -168,6 +168,16 @@ struct LibraryEpisodeList: View {
         let episodes = state.store.model.episodes
         List(selection: $state.sidebarSelection) {
             Section {
+                Text("Show")
+                    .listRowSeparator(.hidden)
+                Label("Show Info", systemImage: "info.circle")
+                    .wwFont(.body)
+                    .emphasizedSelectionForeground(selectedInFocusedList: state.episodeListFocused
+                        && state.sidebarSelection == .showInfo)
+                    .tag(ShowWindowState.SidebarSelection.showInfo)
+                    .accessibilityIdentifier("ww.show.sidebar.showInfo")
+            }
+            Section {
                 HStack {
                     Text("Episodes")
                     Spacer()
@@ -191,16 +201,6 @@ struct LibraryEpisodeList: View {
                         .contextMenu { episodeMenu(episode) }
                 }
                 .onMove { source, destination in state.moveEpisodes(fromOffsets: source, toOffset: destination) }
-            }
-            Section {
-                Text("Show")
-                    .listRowSeparator(.hidden)
-                Label("Show Info", systemImage: "info.circle")
-                    .wwFont(.body)
-                    .emphasizedSelectionForeground(selectedInFocusedList: state.episodeListFocused
-                        && state.sidebarSelection == .showInfo)
-                    .tag(ShowWindowState.SidebarSelection.showInfo)
-                    .accessibilityIdentifier("ww.show.sidebar.showInfo")
             }
         }
         .listStyle(.sidebar)

@@ -56,9 +56,9 @@ final class LibraryWindowController: NSWindowController, NSWindowRestoration {
         window.title = "Library"
         window.subtitle = AppBuildIdentity.current.subtitle()
         window.toolbarStyle = .unified
-        window.setContentSize(NSSize(width: 1_000, height: 600))
-        // Wide enough for the three columns' minimum widths (180 + 320 + 240) and dividers (#109).
-        window.contentMinSize = NSSize(width: 760, height: 400)
+        window.setContentSize(NSSize(width: 1_200, height: 600))
+        // Include the episode list and its right-hand inspector in the detail column's minimum.
+        window.contentMinSize = NSSize(width: 1_000, height: 400)
         window.identifier = Self.restorationIdentifier
         window.setAccessibilityIdentifier("ww.library.window")
         window.isRestorable = true

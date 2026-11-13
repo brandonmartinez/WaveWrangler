@@ -20,6 +20,73 @@ final class EpisodeLibraryUITests: XCTestCase {
         app?.terminate()
     }
 
+    func testLibraryInspectorIsOnTheRightAndAllPanelsResize() {
+        XCTAssertTrue(app.windows["ww.show.window"].waitForExistence(timeout: 15))
+        EpisodeLibraryNavigation.browseCurrentShow(in: app)
+        let library = app.windows["ww.library.window"]
+        let episodes = library.descendants(matching: .any)["ww.library.episodes"]
+        let inspector = library.scrollViews["ww.library.inspector"]
+        let showInfo = library.staticTexts["ww.show.sidebar.showInfo"]
+        let episode = library.staticTexts.matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "ww.show.sidebar.episode."
+        )).firstMatch
+        XCTAssertTrue(episode.waitForExistence(timeout: 5))
+        XCTAssertLessThan(showInfo.frame.maxY, episode.frame.minY, "Show Info precedes Episodes")
+        episode.click()
+        let title = library.textFields["ww.inspector.episode.title"]
+        XCTAssertTrue(title.waitForExistence(timeout: 5))
+
+        func assertInspectorPosition(file: StaticString = #filePath, line: UInt = #line) {
+            XCTAssertGreaterThanOrEqual(inspector.frame.minX, episodes.frame.maxX, file: file, line: line)
+            XCTAssertLessThan(abs(inspector.frame.minY - episodes.frame.minY), 2, file: file, line: line)
+            XCTAssertGreaterThan(inspector.frame.height, episodes.frame.height, file: file, line: line)
+            XCTAssertTrue(title.isHittable, file: file, line: line)
+            XCTAssertTrue(library.buttons["ww.library.episode.open"].isHittable, file: file, line: line)
+            XCTAssertTrue(library.buttons["Show in Finder"].isHittable, file: file, line: line)
+        }
+        assertInspectorPosition()
+        let defaultScreenshot = XCTAttachment(screenshot: library.screenshot())
+        defaultScreenshot.name = "Library with right-hand inspector at default size"
+        defaultScreenshot.lifetime = .keepAlways
+        add(defaultScreenshot)
+
+        app.menuBars.menuBarItems["Window"].click()
+        app.menuBars.menuItems["Zoom"].click()
+        let expanded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            library.frame.width > 1400
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter().wait(for: [expanded], timeout: 5), .completed)
+
+        let sidebar = library.descendants(matching: .any)["ww.library.sidebar"]
+        let entries = library.outlines["ww.library.entries"]
+        for panel in [sidebar, entries, episodes] {
+            let before = panel.frame
+            let divider = library.descendants(matching: .splitter).allElementsBoundByIndex
+                .filter { $0.frame.height > 100 && abs($0.frame.midX - before.maxX) < 12 }
+                .first
+            guard let divider else {
+                XCTFail("Missing native divider after panel \(panel.identifier)")
+                return
+            }
+            let start = divider.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+            start.click(forDuration: 0.1, thenDragTo: start.withOffset(CGVector(dx: 40, dy: 0)))
+            let resized = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                panel.frame.width > before.width + 20
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter().wait(for: [resized], timeout: 5), .completed,
+                           "Dragging the divider resizes \(panel.identifier)")
+        }
+        assertInspectorPosition()
+        showInfo.click()
+        let showTitle = library.textFields.matching(NSPredicate(format: "label == %@", "Show title")).firstMatch
+        XCTAssertTrue(showTitle.waitForExistence(timeout: 5))
+        XCTAssertFalse(title.exists)
+        let screenshot = XCTAttachment(screenshot: library.screenshot())
+        screenshot.name = "Library with resizable right-hand inspector"
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+    }
+
     func testLibraryManagesEpisodesWhileEditorsKeepIndependentIdentities() {
         let editors = app.windows.matching(identifier: "ww.show.window")
         XCTAssertTrue(editors.firstMatch.waitForExistence(timeout: 15))
