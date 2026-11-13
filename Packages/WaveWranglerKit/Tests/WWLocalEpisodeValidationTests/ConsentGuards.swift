@@ -8,7 +8,7 @@ struct HarnessError: Error, CustomStringConvertible, Equatable {
     init(_ description: String) { self.description = description }
 }
 
-/// Consent guards for the local-episode harness (docs/planning/kickoffs/m2.md, "Content consent").
+/// Consent guards for the local-episode harness (docs/engineering/testing.md).
 enum ConsentGuards {
     /// The repository root, derived from this file's location (Packages/WaveWranglerKit/Tests/<target>/<file>).
     static var repositoryRoot: URL {

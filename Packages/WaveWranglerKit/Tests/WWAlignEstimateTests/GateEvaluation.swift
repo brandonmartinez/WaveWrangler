@@ -3,7 +3,7 @@ import WWAlignEstimate
 import WWTimeMap
 
 /// The m2-freeze-estimator gate, evaluated in exactly one place so calibration and the frozen holdout apply
-/// the same definition (docs/m2/fixtures/m2-freeze-estimator.json, "gate"). All residuals are against
+/// the same definition (test-support/qualification/m2/fixtures/m2-freeze-estimator.json, "gate"). All residuals are against
 /// independent clock truth on a 1 s grid over the declared overlap; never against the fitted map.
 ///
 /// Provisional gates (verbatim): held-out residual p95 ≤5 ms / max ≤10 ms; ≥5 windows spanning ≥80% of

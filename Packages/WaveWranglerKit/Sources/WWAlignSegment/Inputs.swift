@@ -6,7 +6,7 @@ import WWTimeMap
 // WWAlignSegment (WW-017): discontinuity detection and segmentation between the WW-016 estimator and the
 // WWTimeMap group map.
 //
-// Hard rules (docs/m2/ww-019-m2-contracts.md M2-C3/M2-C4, issue #11):
+// Hard rules (docs/engineering/automatic-alignment.md):
 // * Never fit one smooth map across a jump. A recorder group's occurrence is measured densely with the frozen
 //   WW-016 estimator (`AcousticEstimator`, public API only), split where one affine line no longer explains
 //   the window offsets, and every frame that cannot be localized to the gate's tolerance is UNSUPPORTED
@@ -68,7 +68,7 @@ public struct SegmentationRequest: Sendable {
 }
 
 /// Segmenter parameters. The defaults are the values frozen by `m2-freeze-discontinuity-2`
-/// (docs/m2/fixtures/m2-freeze-discontinuity-2.json); a change is a new segmenter version and needs a new
+/// (test-support/qualification/m2/fixtures/m2-freeze-discontinuity-2.json); a change needs a new version and
 /// freeze. Setters are internal, so public callers can only run the frozen defaults; in-module (test)
 /// variants are stamped `DiscontinuitySegmenter.customIdentifier`, never the frozen identifier.
 public struct SegmenterParameters: Sendable, Equatable {

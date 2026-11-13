@@ -5,8 +5,8 @@ import WWDecode
 import WWDerived
 import WWTimeMap
 
-// The engineering states WW-022's Alignment panel renders (docs/m2/design/alignment-inspection-spec.md §1.1
-// U1–U9 and §1.2 blocked rows). Wording is the UI's; this layer only says which row applies, why, and which
+// The engineering states the Alignment panel renders (docs/engineering/automatic-alignment.md).
+// Wording is the UI's; this layer only says which row applies, why, and which
 // remedies are offered. No state is ever "Supported" (U2): nothing here can create a clock approval.
 
 /// A user action the inspection spec offers for a state.

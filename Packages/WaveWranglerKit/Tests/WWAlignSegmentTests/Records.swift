@@ -1,7 +1,7 @@
 import Foundation
 import WWAlignSegment
 
-/// One scored case as committed under docs/m2/evidence/ww-017/ (JSON lines, plan order, sorted keys). The freeze
+/// A case under test-support/qualification/m2/evidence/ww-017/ (JSON lines, plan order, sorted keys). The freeze
 /// record's reported calibration, floor and edge-silence totals are recomputed from these files alone
 /// (SegmentFreezeTests), so the report never rests on a log excerpt.
 struct SegmentCaseRecord: Codable, Equatable, Sendable {

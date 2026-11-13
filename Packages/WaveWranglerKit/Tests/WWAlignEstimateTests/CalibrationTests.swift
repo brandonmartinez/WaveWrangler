@@ -4,7 +4,7 @@ import WWAlignEstimate
 import WWTimeMap
 
 /// WW-016 CALIBRATION (not a holdout): every stratum is scored against independent clock truth. The printed
-/// table is the source of docs/m2/evidence/ww-016-estimator-calibration.md.
+/// table underlies test-support/qualification/m2/evidence/ww-016-estimator-calibration.md.
 @Suite("Estimator calibration", .enabled(if: EstimatorHeavyGate.enabled, EstimatorHeavyGate.reason))
 struct CalibrationTests {
     struct StratumSummary {

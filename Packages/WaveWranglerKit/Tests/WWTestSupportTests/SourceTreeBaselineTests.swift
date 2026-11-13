@@ -34,6 +34,22 @@ struct SourceTreeBaselineTests {
         }
     }
 
+    @Test(arguments: ["m1", "m2", "m3"])
+    func historicalPathsResolveOutsideDocumentation(milestone: String) throws {
+        let root = URL(filePath: "/qualification-test")
+        let url = try SourceTreeBaseline.artifactURL(
+            recordedPath: "docs/\(milestone)/evidence/records.jsonl", repository: root)
+        #expect(url == root.appending(path: "test-support/qualification/\(milestone)/evidence/records.jsonl"))
+    }
+
+    @Test(arguments: ["docs/m2/../outside", "docs/m2//record.json", "/docs/m2/record.json",
+                      "docs/research/record.json", "docs/m2/./record.json"])
+    func historicalPathsRefuseUnmappedOrTraversingPaths(path: String) {
+        #expect(throws: SourceTreeBaseline.Failure.invalidHistoricalPath(path)) {
+            try SourceTreeBaseline.artifactURL(recordedPath: path, repository: URL(filePath: "/qualification-test"))
+        }
+    }
+
     private struct Fixture {
         let root: URL
         let freeze: URL
@@ -41,9 +57,9 @@ struct SourceTreeBaselineTests {
 
         init(dropTree: Bool = false) throws {
             root = FileManager.default.temporaryDirectory.appending(path: "ww-baseline-\(UUID())")
-            freeze = root.appending(path: "docs/m2/fixtures/historical.json")
+            freeze = root.appending(path: "test-support/qualification/m2/fixtures/historical.json")
             let source = root.appending(path: "Packages/WaveWranglerKit/Sources/Example")
-            let baseline = root.appending(path: "docs/engineering/source-tree-baselines.json")
+            let baseline = root.appending(path: "test-support/qualification/source-tree-baselines.json")
             for directory in [freeze.deletingLastPathComponent(), source, baseline.deletingLastPathComponent()] {
                 try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
             }

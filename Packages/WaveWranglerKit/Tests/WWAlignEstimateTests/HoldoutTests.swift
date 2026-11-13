@@ -5,7 +5,7 @@ import WWAlignEstimate
 import WWTestSupport
 import WWTimeMap
 
-/// m2-freeze-estimator-2: revised test harness (docs/m2/fixtures/m2-freeze-estimator-2.json), same frozen estimator.
+/// m2-freeze-estimator-2: revised test harness (test-support/qualification/m2/fixtures/m2-freeze-estimator-2.json), same frozen estimator.
 ///
 /// The consistency tests (definition, pinned trees, registry, seed disjointness) always run: they render and
 /// estimate nothing, and fail if the code drifts from the committed freeze. `frozenHoldout` renders and estimates
@@ -16,7 +16,7 @@ struct HoldoutTests {
     static let freezeURL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-        .appendingPathComponent("docs/m2/fixtures/m2-freeze-estimator-2.json")
+        .appendingPathComponent("test-support/qualification/m2/fixtures/m2-freeze-estimator-2.json")
 
     static var holdoutEnabled: Bool { ProcessInfo.processInfo.environment["WW_ESTIMATOR_HOLDOUT"] == "1" }
 
@@ -70,8 +70,7 @@ struct HoldoutTests {
     /// Maintenance pins do not extend the historical holdout's qualification.
     @Test func estimatorAndHarnessTreesMatchTheMaintenanceBaseline() throws {
         let trees = try SourceTreeBaseline.currentTrees(for: Self.freezeURL)
-        let package = Self.freezeURL.deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().appendingPathComponent("Packages/WaveWranglerKit")
+        let package = SourceTreeBaseline.repository(for: Self.freezeURL).appendingPathComponent("Packages/WaveWranglerKit")
         #expect(trees.count == 2)
         for (path, frozen) in trees {
             let actual = try Self.gitTreeID(package.appendingPathComponent(path))

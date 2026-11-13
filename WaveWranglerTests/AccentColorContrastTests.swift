@@ -3,7 +3,7 @@ import Testing
 
 /// #138 / WW-007 C04, C07: every `AccentColor` appearance variant keeps white selection text at ≥ 4.5:1 and an
 /// accent fill that alone shows state (switch on, checkbox checked) at ≥ 3:1 against the window backgrounds
-/// measured on macOS 27.0.1 (`docs/m1/evidence/ww-007-accessibility-responsiveness.md` §7.2, §10). Reads the
+/// measured on macOS 27.0.1 (historical #138 audit). Reads the
 /// asset catalog from source, so it runs unhosted.
 @Suite("AccentColor contrast")
 struct AccentColorContrastTests {

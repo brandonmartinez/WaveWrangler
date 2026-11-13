@@ -4,7 +4,7 @@ import WWTimeMap
 
 // WWAlignEstimate (WW-016 / WW-021 part 1): a pure offset/drift PROPOSAL estimator with abstention.
 //
-// Hard rules (docs/m2/ww-019-m2-contracts.md M2-C4):
+// Hard rules (docs/engineering/automatic-alignment.md):
 // * Input is decoded sample buffers (plain `Float` arrays + rate) supplied by the caller. This module never
 //   opens, reads, hashes or decodes a file and has no file/URL/network API (WWAlignEstimateTests scans it).
 // * Output is a per-epoch PROPOSAL (`acousticConsistentProposal`) or an ABSTENTION. There is no case that
@@ -100,7 +100,7 @@ public struct EstimationRequest: Sendable {
 }
 
 /// Estimator parameters. The defaults are the values frozen by `m2-freeze-estimator`
-/// (docs/m2/fixtures/m2-freeze-estimator.json); a change is a new estimator version and needs a new freeze.
+/// (test-support/qualification/m2/fixtures/m2-freeze-estimator.json); a change needs a new version and freeze.
 /// Setters are internal, so the public API can only run the frozen defaults; in-module (test) variants are
 /// stamped `AcousticEstimator.customIdentifier`, never the frozen identifier.
 public struct EstimatorParameters: Sendable, Equatable {

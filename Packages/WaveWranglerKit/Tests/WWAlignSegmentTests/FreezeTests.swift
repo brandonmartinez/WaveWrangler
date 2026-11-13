@@ -6,7 +6,7 @@ import WWAlignSegment
 import WWTestSupport
 import WWTimeMap
 
-/// m2-freeze-discontinuity-2 consistency (docs/m2/fixtures/m2-freeze-discontinuity-2.json). These checks segment
+/// m2-freeze-discontinuity-2 consistency (test-support/qualification/m2/fixtures/m2-freeze-discontinuity-2.json). These checks segment
 /// nothing and always run: they fail if the segmenter parameters, identifiers, seeds, counts, gates, registry
 /// entry or pinned trees drift from the committed freeze. A deliberate change is a new dated freeze revision,
 /// never a silent edit.
@@ -15,7 +15,7 @@ struct SegmentFreezeTests {
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-discontinuity-2.json")
+    static let freezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m2-freeze-discontinuity-2.json")
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
@@ -181,7 +181,7 @@ struct SegmentFreezeTests {
     /// Reads `recordsFile`, checks `recordsSHA256`, and returns the records with the reported `totals`.
     static func committedRecords(_ entry: [String: Any]) throws -> ([SegmentCaseRecord], [String: Double]) {
         let file = try #require(entry["recordsFile"] as? String)
-        let data = try Data(contentsOf: repository.appendingPathComponent(file))
+        let data = try Data(contentsOf: SourceTreeBaseline.artifactURL(recordedPath: file, repository: repository))
         let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         #expect(sha == entry["recordsSHA256"] as? String, "\(file)")
         let records = try SegmentCaseRecord.decode(data)
@@ -239,7 +239,7 @@ struct SegmentFreezeTests {
 }
 
 /// The rev-2 holdout. Disabled unless WW_SEGMENT_HOLDOUT=1; run once in its own PR
-/// (docs/m2/fixtures/m2-freeze-discontinuity-2.json holdoutProcedure). Never run by CI or scripts/test.sh.
+/// (test-support/qualification/m2/fixtures/m2-freeze-discontinuity-2.json holdoutProcedure). Never run by CI or scripts/test.sh.
 @Suite("Segment holdout (m2-freeze-discontinuity-2)")
 struct SegmentHoldoutTests {
     static let enabled = ProcessInfo.processInfo.environment["WW_SEGMENT_HOLDOUT"] == "1"

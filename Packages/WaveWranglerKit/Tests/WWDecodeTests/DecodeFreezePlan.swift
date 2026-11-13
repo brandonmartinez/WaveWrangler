@@ -6,7 +6,7 @@ import WWCore
 import WWSources
 @testable import WWDecode
 
-// M3-DECODE-006: WW-050 decode truth cases (m3-freeze-decode-6, docs/m2/fixtures/m3-freeze-decode-6.json).
+// M3-DECODE-006: WW-050 decode truth cases (m3-freeze-decode-6, test-support/qualification/m2/fixtures/m3-freeze-decode-6.json).
 //
 // Recipe: 13 strata, stratum = case index mod 13. Nine supported strata write a seeded LandmarkSignal in an
 // envelope format (priming per lossy codec and container, lossless and PCM bit depth / channel metadata,

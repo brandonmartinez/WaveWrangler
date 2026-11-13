@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "date": "2026-11-13",
+  "basedOn": "70c735537bf667cb512cba0f0b04481e74208d9d",
+  "reason": "Current checkout maintenance baseline after relocating immutable qualification artifacts out of documentation and updating live test lookups and source comments. Historical freeze bytes, hashes, seeds, gates and pinnedTrees remain unchanged. This is not new DSP qualification; historical holdouts still refuse changed historical trees.",
+  "records": {
+    "m2-freeze-estimator-2": {
+      "historicalRecord": "test-support/qualification/m2/fixtures/m2-freeze-estimator-2.json",
+      "historicalRecordSHA256": "94aea7e220c0d319ec9d50c1ab3e05d0c2dc7a2a5090504ed826e66f1cd32667",
+      "currentTrees": {
+        "Sources/WWAlignEstimate": "d8db7ea66b32b00f2940f60370d5008eb072da71",
+        "Tests/WWAlignEstimateTests": "ea3b637783b662209d82a24f75843fed71230e38"
+      }
+    },
+    "m2-freeze-discontinuity-2": {
+      "historicalRecord": "test-support/qualification/m2/fixtures/m2-freeze-discontinuity-2.json",
+      "historicalRecordSHA256": "444da9e6fceee2efa1db81e37178691801c16065d03365af245bbe2f777101cc",
+      "currentTrees": {
+        "Sources/WWAlignSegment": "ccc8b5cf3e275cbbaa3253780d0ba1425f9889d2",
+        "Tests/WWAlignSegmentTests": "7cf463488f4e4a86af7f87984a33ece12e7fe4da"
+      }
+    },
+    "m2-freeze-render": {
+      "historicalRecord": "test-support/qualification/m2/fixtures/m2-freeze-render.json",
+      "historicalRecordSHA256": "7b9cb3fb28177b2d5cf085395b48fc331f21b7297916d17c7d964cf9e684762c",
+      "currentTrees": {
+        "Sources/WWRender": "fb35e6d48cc86710099cec8394b4cc23fc3b381c",
+        "Tests/WWRenderTests": "55ee01a4eb6e182f59c4b3829929ed718c8a9d65"
+      }
+    },
+    "m2-freeze-timemap": {
+      "historicalRecord": "test-support/qualification/m2/fixtures/m2-freeze-timemap.json",
+      "historicalRecordSHA256": "99798844656f21368906a2589280d35b0867cfe1a4fe5dec80a304763bfb3e3d",
+      "currentTrees": {
+        "Sources/WWTimeMap": "314d07fdbab829e2eee9455f0750a25e70f0758d",
+        "Tests/WWTimeMapTests": "b7487b01849feeac1c169fdd25202c6e64df0534"
+      }
+    },
+    "m3-freeze-decode-6": {
+      "historicalRecord": "test-support/qualification/m2/fixtures/m3-freeze-decode-6.json",
+      "historicalRecordSHA256": "dcf87786e907e949d64e105acca352e6ef6c28bf24cce773eaa3be7ff181b9c3",
+      "currentTrees": {
+        "Sources/WWDecode": "4468a5033349f0cf10d4604d0b69b3272d4298e9",
+        "Tests/WWDecodeTests": "d23fc659b7ad7c287fb1215cc32d955d520dac10"
+      }
+    }
+  }
+}

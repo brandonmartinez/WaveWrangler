@@ -151,7 +151,7 @@ struct DecodeCalibrationTests {
     ]).union(StaleChange.allCases.map { "stale-\($0.rawValue)" })
 }
 
-/// Revision-6 candidate consistency (docs/m2/fixtures/m3-freeze-decode-6.json). These checks decode nothing
+/// Revision-6 candidate consistency (test-support/qualification/m2/fixtures/m3-freeze-decode-6.json). These checks decode nothing
 /// and always run: gates, versions, split counts and candidate tree pins must match. Matching bytes do
 /// not approve or activate a candidate; independent review and merge remain required before holdout.
 @Suite("Decode freeze (m3-freeze-decode-6 candidate)")
@@ -159,13 +159,13 @@ struct DecodeFreezeTests {
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m3-freeze-decode-6.json")
-    static let revisionFiveFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m3-freeze-decode-5.json")
-    static let revisionFourFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m3-freeze-decode-4.json")
-    static let revisionThreeFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m3-freeze-decode-3.json")
-    static let revisionTwoFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-decode-2.json")
-    static let revisionOneFreezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-decode.json")
-    static let calibrationURL = repository.appendingPathComponent("docs/m3/evidence/ww-050/calibration-6.jsonl")
+    static let freezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m3-freeze-decode-6.json")
+    static let revisionFiveFreezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m3-freeze-decode-5.json")
+    static let revisionFourFreezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m3-freeze-decode-4.json")
+    static let revisionThreeFreezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m3-freeze-decode-3.json")
+    static let revisionTwoFreezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m2-freeze-decode-2.json")
+    static let revisionOneFreezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m2-freeze-decode.json")
+    static let calibrationURL = repository.appendingPathComponent("test-support/qualification/m3/evidence/ww-050/calibration-6.jsonl")
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])

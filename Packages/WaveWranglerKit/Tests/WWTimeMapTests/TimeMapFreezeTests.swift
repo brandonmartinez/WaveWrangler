@@ -5,7 +5,7 @@ import WWTestSupport
 import WWCore
 @testable import WWTimeMap
 
-// M2-TIMEMAP-001: WW-015 time-map truth cases (m2-freeze-timemap, docs/m2/fixtures/m2-freeze-timemap.json).
+// M2-TIMEMAP-001: WW-015 time-map truth cases (m2-freeze-timemap, test-support/qualification/m2/fixtures/m2-freeze-timemap.json).
 //
 // Recipe: 7 strata, stratum = case index mod 7. Each case seeds `SplitMix64` from the frozen fixture seed
 // and draws `SyntheticTimeMapGenerator.timeline` until the timeline satisfies its stratum (rejection
@@ -358,7 +358,7 @@ struct TimeMapCalibrationTests {
     }
 }
 
-/// m2-freeze-timemap consistency (docs/m2/fixtures/m2-freeze-timemap.json). These checks map nothing and
+/// m2-freeze-timemap consistency (test-support/qualification/m2/fixtures/m2-freeze-timemap.json). These checks map nothing and
 /// always run: they fail if the gates, split counts or pinned trees drift from the committed freeze. A
 /// deliberate change is a new dated freeze revision, never a silent edit.
 @Suite("Time-map freeze (m2-freeze-timemap)")
@@ -366,7 +366,7 @@ struct TimeMapFreezeTests {
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-timemap.json")
+    static let freezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m2-freeze-timemap.json")
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])
@@ -452,7 +452,7 @@ struct TimeMapFreezeTests {
     @Test func committedCalibrationRecordsReproduceTheReportedQuantization() throws {
         let summary = try #require(try Self.freeze()["calibrationSummary"] as? [String: Any])
         let file = try #require(summary["recordsFile"] as? String)
-        let data = try Data(contentsOf: Self.repository.appendingPathComponent(file))
+        let data = try Data(contentsOf: SourceTreeBaseline.artifactURL(recordedPath: file, repository: Self.repository))
         let sha = SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
         #expect(sha == summary["recordsSHA256"] as? String)
         let decoder = JSONDecoder()

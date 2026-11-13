@@ -4,7 +4,7 @@ import Testing
 import WWTestSupport
 @testable import WWRender
 
-/// m2-freeze-render consistency (docs/m2/fixtures/m2-freeze-render.json). These checks render nothing and
+/// m2-freeze-render consistency (test-support/qualification/m2/fixtures/m2-freeze-render.json). These checks render nothing and
 /// always run: they fail if the gates, recipe, versions, split counts or pinned trees drift from the committed
 /// freeze. A deliberate change is a new dated freeze revision, never a silent edit.
 @Suite("Render freeze (m2-freeze-render)")
@@ -12,7 +12,7 @@ struct RenderFreezeTests {
     static let repository = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
         .deletingLastPathComponent().deletingLastPathComponent()
-    static let freezeURL = repository.appendingPathComponent("docs/m2/fixtures/m2-freeze-render.json")
+    static let freezeURL = repository.appendingPathComponent("test-support/qualification/m2/fixtures/m2-freeze-render.json")
 
     static func freeze() throws -> [String: Any] {
         try #require(try JSONSerialization.jsonObject(with: Data(contentsOf: freezeURL)) as? [String: Any])

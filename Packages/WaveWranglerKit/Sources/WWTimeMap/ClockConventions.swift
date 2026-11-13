@@ -3,7 +3,7 @@ import WWCore
 
 // MARK: - Conventions
 //
-// Coordinate chain (the WW-014..017 timing contract, docs/research/foundation-spikes.md):
+// Coordinate chain (docs/engineering/program-timeline.md):
 //
 //   source frame n of an occurrence at nominal rate F  (integer n, integer F > 0)
 //     -> group clock   u = n/F + e        e = the span's group-clock offset (seconds, exact rational)

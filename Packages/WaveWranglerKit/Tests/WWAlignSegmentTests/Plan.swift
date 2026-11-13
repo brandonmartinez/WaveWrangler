@@ -48,7 +48,7 @@ enum SegmentPlan {
         (.clean, 6), (.transient, 15), (.silenceGap, 15),
         (.dropped, 6), (.inserted, 6), (.clockStep, 6), (.restart, 6), (.rateChange, 6), (.compound, 4),
     ]
-    /// FROZEN by m2-freeze-discontinuity-2 (docs/m2/fixtures/m2-freeze-discontinuity-2.json): the holdout master
+    /// FROZEN by m2-freeze-discontinuity-2 (test-support/qualification/m2/fixtures/m2-freeze-discontinuity-2.json): the holdout master
     /// seed ("WW17401D" = WW-017 holdout) and counts. Only `HoldoutTests` uses them, and only when explicitly
     /// enabled; no holdout case is rendered or segmented by calibration, unit or CI runs.
     static let holdoutMasterSeed: UInt64 = 0x5757_1700_401D_2000

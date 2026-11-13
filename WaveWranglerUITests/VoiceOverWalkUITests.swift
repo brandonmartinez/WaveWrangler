@@ -5,7 +5,7 @@ import XCTest
 /// it on with ⌘F5 and off afterwards); skips otherwise. Each step drives the app with the keyboard commands
 /// a VoiceOver user uses (VoiceOver follows keyboard focus) or a VO command (⌃⌥ + key), waits, and records
 /// what VoiceOver actually spoke, read from VoiceOver's caption panel — never inferred from the AX tree.
-/// Results are judged per task in docs/m1/evidence/ww-007-accessibility-responsiveness.md.
+/// Current run requirements are documented in docs/engineering/gui-testing.md.
 @MainActor
 final class VoiceOverWalkUITests: XCTestCase {
     private var app: XCUIApplication!

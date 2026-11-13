@@ -18,7 +18,7 @@ import WWTimeMap
 // WW_M2_RENDER_HOLDOUT=1 and has NOT been run: the renderer remains a calibrated candidate, not
 // qualified. Listening evaluation is BLOCKED (no consented listeners) and is not measured here.
 
-/// The objective render gates. Frozen at m2-freeze-render (docs/m2/fixtures/m2-freeze-render.json;
+/// The objective render gates. Frozen at m2-freeze-render (test-support/qualification/m2/fixtures/m2-freeze-render.json;
 /// RenderFreezeTests fails on drift).
 enum RenderGates {
     /// Landmark (impulse) position error, output frames.

@@ -10,6 +10,7 @@ public enum SourceTreeBaseline {
         case changedHistoricalRecord(String)
         case changedTreePaths(String)
         case changedHistoricalTree(String)
+        case invalidHistoricalPath(String)
     }
 
     private struct Freeze: Decodable {
@@ -30,7 +31,7 @@ public enum SourceTreeBaseline {
         let data = try Data(contentsOf: freezeURL)
         let freeze = try JSONDecoder().decode(Freeze.self, from: data)
         let baselineURL = repository(for: freezeURL)
-            .appending(path: "docs/engineering/source-tree-baselines.json")
+            .appending(path: "test-support/qualification/source-tree-baselines.json")
         let manifest = try JSONDecoder().decode(Manifest.self, from: Data(contentsOf: baselineURL))
         guard manifest.version == 1 else { throw Failure.unsupportedVersion(manifest.version) }
         guard let record = manifest.records[freeze.freezeID] else {
@@ -72,9 +73,21 @@ public enum SourceTreeBaseline {
         return hex(Insecure.SHA1.hash(data: tree))
     }
 
-    private static func repository(for freezeURL: URL) -> URL {
+    /// Resolve the original paths embedded in immutable qualification records, not live documentation.
+    public static func artifactURL(recordedPath: String, repository: URL) throws -> URL {
+        let components = recordedPath.split(separator: "/", omittingEmptySubsequences: false)
+        guard components.count >= 3, components[0] == "docs",
+              ["m1", "m2", "m3"].contains(components[1]),
+              components.allSatisfy({ !$0.isEmpty && $0 != "." && $0 != ".." }) else {
+            throw Failure.invalidHistoricalPath(recordedPath)
+        }
+        return repository.appending(path: "test-support/qualification")
+            .appending(path: components.dropFirst().joined(separator: "/"))
+    }
+
+    public static func repository(for freezeURL: URL) -> URL {
         freezeURL.deletingLastPathComponent().deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
     }
 
     private static func hex(_ digest: some Sequence<UInt8>) -> String {

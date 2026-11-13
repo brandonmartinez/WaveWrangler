@@ -16,7 +16,7 @@ import WWTimeMap
 
 // Headless local validation of the M2 pipeline on a user-approved, disposable local episode copy.
 //
-// Consent rules (docs/planning/kickoffs/m2.md, "Content consent"):
+// Consent rules (docs/engineering/testing.md):
 // * Runs ONLY when WW_LOCAL_EPISODE_DIR names an approved folder; it is skipped otherwise, so CI never
 //   runs it. The path is supplied at run time and never written anywhere by this harness.
 // * The folder is read-only. Audio content is opened only through the WWDecode gateway (SourceDecoder);
@@ -337,7 +337,7 @@ private struct Harness {
         }
     }
 
-    /// Containers outside DecodeEnvelope v1 (e.g. MP3, docs/m2/evidence/ww-050-decode-envelope.md) are an
+    /// Containers outside DecodeEnvelope v1 (docs/engineering/audio-processing.md) are an
     /// expected, typed refusal; any other refusal of a real audio file is a finding.
     static func isUnexpectedRefusal(_ failure: DecodeFailure) -> Bool {
         if case .unsupported(.container) = failure { return false }

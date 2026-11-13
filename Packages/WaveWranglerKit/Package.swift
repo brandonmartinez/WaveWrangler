@@ -139,7 +139,7 @@ let package = Package(
         .testTarget(name: "WWTinyPCMProbeTests", dependencies: ["WWTinyPCMProbe"]),
         .testTarget(name: "WWCutPolicyTests", dependencies: ["WWCutPolicy", "WWCore"]),
         // Headless, explicitly opted-in local episode/pair validation; never automatic CI media access.
-        // See docs/m2/evidence/m2-local-episode-validation.md and docs/engineering/automatic-alignment.md.
+        // See docs/engineering/testing.md and docs/engineering/automatic-alignment.md.
         .testTarget(name: "WWLocalEpisodeValidationTests", dependencies: ["WWDecode", "WWSources", "WWAlignEstimate", "WWAutoAlign", "WWRender", "WWTimeMap", "WWCore", "WWDerived", "WWPersistence", "WWAlignPipeline"]),
     ],
     swiftLanguageModes: [.v6],

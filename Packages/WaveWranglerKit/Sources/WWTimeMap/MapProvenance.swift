@@ -65,7 +65,7 @@ public enum UnsupportedReason: String, Hashable, Sendable, Codable, CaseIterable
 
 // MARK: - Clock approval
 
-/// Provisional WW-016 clock gates (docs/m2/ww-019-m2-contracts.md). Not yet frozen-holdout qualified;
+/// Provisional clock gates (test-support/qualification/m2/ww-019-m2-contracts.md). Not frozen-holdout qualified;
 /// a later freeze may only tighten them.
 public enum ProvisionalClockGates {
     public static let minimumWindows = 5
@@ -126,7 +126,7 @@ public struct IndependentClockReference: Hashable, Sendable {
 
 /// A clock approval. Internally it can only be constructed from an independent clock reference whose
 /// measurements meet every provisional gate. Meeting these gates is necessary, not sufficient: per M2-C4
-/// (docs/m2/ww-019-m2-contracts.md) an evaluator may only issue `clockApproved` after the frozen WW-016
+/// (test-support/qualification/m2/ww-019-m2-contracts.md) an evaluator may only issue `clockApproved` after the frozen WW-016
 /// holdout gate passes, and nothing in WWTimeMap promotes any map to `clockApproved` automatically.
 ///
 /// Not publicly constructible (internal initializer, encode-only conformance): until a holdout-qualified

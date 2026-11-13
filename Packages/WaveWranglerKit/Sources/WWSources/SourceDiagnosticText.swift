@@ -1,8 +1,8 @@
 import Foundation
 
 // Diagnostic descriptions for logs, test output and debugging. NEVER shown to users and not localized:
-// Design's catalog (docs/m1/design/states-and-recovery.md §3) is the single source of user-facing wording,
-// and the Sources UI maps engine states to it. Each dimension is described on its own so diagnostics
+// The Sources UI owns user-facing wording and maps each engine state explicitly. Each dimension is
+// described on its own so diagnostics
 // never collapse distinct states (denied vs missing, unknown vs failed). Note that `offlineOrUnknown`
 // means "no progress / provider reported unavailable" — loss of connection was not observed, so UI must
 // not present it as "No connection".

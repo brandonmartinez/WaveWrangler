@@ -5,7 +5,7 @@ import WWDecode
 // decoded sources into acoustic-consistent PROPOSALS (or abstentions), turns a person's decision into a
 // versioned, accepted EpisodeAlignment map, and streams aligned per-channel derived assets for that map.
 //
-// Hard rules (docs/m2/ww-019-m2-contracts.md M2-C1..C7):
+// Hard rules (docs/engineering/automatic-alignment.md):
 // * Content is read only through the WWDecode gateway (`SourceDecoder.withDecodingCursor`), only for a
 //   source with an explicit `ContentWorkAuthorization` and availability ON. Every other path is
 //   metadata-only and opens nothing.
@@ -13,7 +13,7 @@ import WWDecode
 //   numeric/anchor manual provenance). Nothing in this module constructs, accepts or carries forward a
 //   `clockApproved` provenance.
 // * Results publish only through `DerivedJobCoordinator`, whose commit-time currency check discards late
-//   results; aligned assets live in the app-cache derived store only. Export stays blocked (M4).
+//   results; aligned assets live in the app-cache derived store only.
 // * Bounded: concurrency is a small configured cap (never `activeProcessorCount`), analysis memory is a
 //   byte budget enforced by `ResourceGate`, and analysis buffers are streamed and decimated.
 // * No work on the main thread: jobs run in the coordinator's detached utility tasks or in detached

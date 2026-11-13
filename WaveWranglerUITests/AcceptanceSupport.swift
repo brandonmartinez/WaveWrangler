@@ -62,7 +62,7 @@ enum Acceptance {
     static let timingArguments = ["-WWUITestTimingLog", "YES"]
 
     /// Marks a measurement phase in the test log. The UI-test runner is sandboxed and can't read the unified
-    /// log, so `docs/m1/evidence/ww-007/collect_timings.py` assigns the app's `WWTIMING` lines to phases by time.
+    /// log, so external timing analysis assigns the app's `WWTIMING` lines to phases by timestamp.
     static func phase(_ name: String, _ body: () throws -> Void) rethrows {
         print("[phase] begin \(name) \(Date().timeIntervalSince1970)")
         defer { print("[phase] end \(name) \(Date().timeIntervalSince1970)") }
@@ -352,7 +352,7 @@ enum AcceptanceAudit {
     static let inspectorLabels: Set<String> = ["Title", "Number", "Recording date", "Notes"]
 
     /// Surfaces whose `.contrast` audit findings were measured from pixels as legible system text (#59, and the
-    /// Mac mini run of 479eb9e: `docs/m1/evidence/ww-007/audit-records-mini-479eb9e.jsonl`). A waiver on these
+    /// Mac mini audit records in commit 479eb9e). A waiver on these
     /// surfaces still requires the glyph test to pass on the screenshot taken now, so a blurred, clipped or
     /// low-contrast instance (e.g. a selected row measured 4.02:1) stays unwaived.
     @MainActor
@@ -425,7 +425,7 @@ enum AcceptanceAudit {
     }
 
     /// `kinds` defaults to every type. The M2 essential set (`essentialTypes`) leaves out `.contrast`, which the M2
-    /// baseline enforces only on blocked or recovery surfaces (docs/m2/evidence/m2-gui-baseline.md).
+    /// baseline enforces only on blocked or recovery surfaces (docs/engineering/gui-testing.md).
     @MainActor
     static func run(_ app: XCUIApplication, surface: String, test: XCTestCase,
                     types kinds: XCUIAccessibilityAuditType = types,
@@ -634,7 +634,7 @@ enum AcceptanceAudit {
         // carries the hidden columns; the audit's heuristic calls a file name "not human-readable". Scoped to Name
         // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`) and of the frozen M1 golden shows
         // (F-OLDER, #159), where the label is verifiably the file's name. This is the M2 baseline's "Setup source-name
-        // cells" artifact class (docs/m2/evidence/m2-gui-baseline.md).
+        // cells" artifact class (docs/engineering/gui-testing.md).
         if issue.auditType == .sufficientElementDescription, element.elementType == .staticText,
            element.identifier.range(of: #"^ww\.setup\.source\.[0-9A-F-]{36}$"#, options: .regularExpression) != nil,
            element.label.range(of: #"^(synthetic-[0-9]+|tr[0-9]+)\.wav$"#, options: .regularExpression) != nil

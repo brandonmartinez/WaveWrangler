@@ -71,7 +71,7 @@ enum CalibrationPlan {
         (.constantDelay, 3), (.variableDelay, 3), (.discontinuity, 3), (.unrelated, 3), (.silent, 2), (.periodic, 3),
         (.disconnected, 2), (.cycleConflict, 2),
     ]
-    /// FROZEN by m2-freeze-estimator (docs/m2/fixtures/m2-freeze-estimator.json): the holdout master seed
+    /// FROZEN by m2-freeze-estimator (test-support/qualification/m2/fixtures/m2-freeze-estimator.json): the holdout master seed
     /// ("WW16401D" = WW-016 holdout) and counts. Only `HoldoutTests` uses them, and only when explicitly
     /// enabled; no holdout case is rendered or estimated by calibration, unit or CI runs.
     static let holdoutMasterSeed: UInt64 = 0x5757_1600_401D_0000
