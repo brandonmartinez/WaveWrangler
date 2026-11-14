@@ -264,6 +264,10 @@ struct MixerHostedTests {
         f.model.stopAudition()
         f.document.undoManager?.undo()
         f.document.undoManager?.redo()
+        try await wait {
+            f.document.store.residentModel.episode(f.model.episodeID) != nil
+                && !f.model.isWorking && !f.document.mixerTransactions.isBusy
+        }
         let restoredBypass = presentation.mix.master.inserts.first?.bypassed
         #expect(restoredBypass == true)
     }
@@ -1182,6 +1186,10 @@ struct MixerHostedTests {
                 && f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts == slots
         }
         undo.redo()
+        try await wait {
+            f.document.store.residentModel.episode(f.model.episodeID) != nil
+                && !f.model.isWorking && !f.document.mixerTransactions.isBusy
+        }
         #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix == edited)
         _ = try await controller.prepare(programFrames: 0..<1)
         let recalled = try #require(try await controller.processor?.parameters(slot: slots[0].id).first {
@@ -1608,6 +1616,7 @@ struct MixerHostedTests {
         #expect(!gate.timedOut, "Editing and rendering must proceed before the persistence worker is released.")
         gate.resume()
         try await saving.value
+        try await f.document.ensureVerifiedEpisodeLoaded(f.model.episodeID)
         let verified = f.document.verifiedModel
         let edited = f.document.store.residentModel
         let isEdited = f.document.isDocumentEdited
@@ -1619,6 +1628,7 @@ struct MixerHostedTests {
         ShowDocument.debugBeforeSaveEncoding = nil
         ShowDocument.debugPublicationHooks = previousHooks
         try await save(f.document)
+        try await f.document.ensureVerifiedEpisodeLoaded(f.model.episodeID)
         let savedEdit = f.document.verifiedModel
         let editedAfterSave = f.document.isDocumentEdited
         #expect(savedEdit == edited && !editedAfterSave)
@@ -1695,12 +1705,17 @@ struct MixerHostedTests {
         gate.resume()
         try await wait("overlap Undo: \(owner.state.mixerPresentation.error ?? "")") {
             controller.processor == nil && !f.document.mixerTransactions.isBusy
+                && f.document.store.residentModel.episode(f.model.episodeID) != nil && !f.model.isWorking
         }
         #expect(owner.state.mixerPresentation.mix.master.inserts.first?.documentState == nil)
         let restored = f.document.store.residentModel
         for _ in 0..<10 { await Task.yield() }
         #expect(f.document.store.residentModel == restored && !controller.hasObservedState)
         undo.redo()
+        try await wait {
+            f.document.store.residentModel.episode(f.model.episodeID) != nil
+                && !f.model.isWorking && !f.document.mixerTransactions.isBusy
+        }
         #expect(owner.state.mixerPresentation.mix.master.inserts.first?.documentState != nil)
         controller.beforeStateCapture = nil
         _ = try await controller.prepare(programFrames: 0..<1)
