@@ -435,7 +435,7 @@ private struct ShowInfoSummary: View {
                     .accessibilityAddTraits(.isHeader)
                     .fixedSize(horizontal: false, vertical: true)
                     .accessibilityIdentifier("ww.show.showInfoSummary.title")
-                LabeledContent("Episodes") { Text("\(model.episodes.count)") }
+                LabeledContent("Episodes") { Text("\(state.store.episodeSummaries.count)") }
                 LabeledContent("Speakers") { Text("\(model.speakers.count)") }
                 LabeledContent("Location") { Text(ShowInfoInspector.locationText(state.store.document?.presentedFileURL)) }
                 LabeledContent("Save status") { Text(state.presentation.itemText) }

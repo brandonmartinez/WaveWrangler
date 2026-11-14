@@ -73,6 +73,10 @@ and active jobs may retain their admitted snapshots. Reads/publications still
 materialize complete encoded snapshots; native `FileWrapper` caches and exact
 recovery checkpoints also scale with stored package size. Explicit migrations
 and exceptional damaged-document recovery can materialize the complete model.
+Restoring an unsaved checkpoint is a complete-catalog replacement: its episode
+membership and order are authoritative, including deletion of unloaded episodes.
+It remains one named Undo/Redo step with the ordinary native replacement barriers;
+resident-scoped edits still preserve every untouched stored slot.
 
 Publication/recovery uses a deterministic internal snapshot containing the exact
 manifest and stored component bytes. Its fingerprint distinguishes even

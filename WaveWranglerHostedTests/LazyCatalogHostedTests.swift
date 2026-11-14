@@ -140,6 +140,59 @@ struct LazyCatalogHostedTests {
         #expect(matches)
     }
 
+    @Test(arguments: [false, true])
+    func completeCheckpointRestorePreservesMembershipOrderUndoAndReopen(removingAll: Bool) async throws {
+        let (document, root, original) = try fixture()
+        defer { do { try finish(document, root: root) } catch { Issue.record(error) } }
+        try #require(PersistenceEnvironment.isUITestRun)
+        let store = document.store
+        #expect(store.residentModel.episodes.isEmpty)
+        var candidate = original
+        candidate.episodes = removingAll ? [] : [original.episodes[2], original.episodes[0]]
+        let url = try #require(document.fileURL)
+        let snapshot = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+            candidate, revision: document.revision + 1, publicationID: UUID()).data
+        try PersistenceEnvironment.recovery.writeEditCheckpoint(
+            snapshot: snapshot, base: RevisionFingerprint(of: LocalFileOperations().read(url)),
+            schemaVersion: candidate.schemaVersion, for: document.documentKey)
+        try PersistenceEnvironment.recovery.setAsideEditCheckpoints(for: document.documentKey)
+        document.refreshEditCheckpointOffer()
+        let offered = try #require(document.status.editCheckpointOffer?.candidate?.url)
+        defer {
+            do {
+                if FileManager.default.fileExists(atPath: offered.path) {
+                    try PersistenceEnvironment.recovery.discardOfferedEditCheckpoints(
+                        [offered], for: document.documentKey)
+                }
+            } catch { Issue.record(error) }
+        }
+        document.restoreOfferedEditCheckpoint()
+        #expect(document.isEditCheckpointRestoreInEffect)
+        #expect(document.isDocumentEdited)
+        #expect(store.episodeSummaries.map(\.id) == candidate.episodes.map(\.id))
+        try await wait { store.residentRevisionCount == 0 }
+        let restoredMatches = try store.captureCatalog().resolved().materializedModel() == candidate
+        #expect(restoredMatches)
+        document.undoManager?.undo()
+        #expect(!document.isEditCheckpointRestoreInEffect)
+        #expect(store.episodeSummaries.map(\.id) == original.episodes.map(\.id))
+        let undoneMatches = try store.captureCatalog().resolved().materializedModel() == original
+        #expect(undoneMatches)
+        document.undoManager?.redo()
+        #expect(document.isEditCheckpointRestoreInEffect)
+        #expect(store.episodeSummaries.map(\.id) == candidate.episodes.map(\.id))
+        try await save(document)
+        let savedMatches = try #require(document.verifiedCatalog).materializedModel() == candidate
+        #expect(savedMatches)
+        document.close()
+        let reopened = try open(url)
+        defer { reopened.updateChangeCount(.changeCleared); reopened.close() }
+        #expect(reopened.store.residentModel.episodes.isEmpty)
+        #expect(reopened.store.episodeSummaries.map(\.id) == candidate.episodes.map(\.id))
+        let reopenedMatches = try #require(reopened.verifiedCatalog).materializedModel() == candidate
+        #expect(reopenedMatches)
+    }
+
     @Test func episodeScopedSpeakerRemovalPreservesReferencesInUnloadedEpisodes() async throws {
         let (document, root, original) = try fixture()
         defer { do { try finish(document, root: root) } catch { Issue.record(error) } }

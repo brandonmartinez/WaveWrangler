@@ -131,8 +131,8 @@ final class ShowDocument: NSDocument {
         if writingSnapshot.withLock({ $0 != nil }) { return true }
         return isDocumentEdited
     }
-    /// The exact model last independently verified on disk. Alignment reconciles verified publications;
-    /// live inspection never treats the mutable in-memory model as persisted truth.
+    /// Resident episodes from the last independently verified publication; `verifiedCatalog` owns complete
+    /// membership. Live inspection never treats the mutable in-memory model as persisted truth.
     private var verifiedLegacyModel: ShowDocumentModel?
     private(set) var verifiedCatalog: ShowCatalog?
     private var verifiedCatalogIdentity: UUID?
@@ -1208,7 +1208,7 @@ final class ShowDocument: NSDocument {
         let undo = undoManager
         undo?.beginUndoGrouping()
         defer { undo?.endUndoGrouping() }
-        guard store.apply("Restore Unsaved Changes", { _ in candidate.payload }) else { return }
+        guard store.applyCompleteReplacement("Restore Unsaved Changes", model: candidate.payload) else { return }
         markRestored(candidate.url)
         undo?.setActionName("Restore Unsaved Changes")
     }

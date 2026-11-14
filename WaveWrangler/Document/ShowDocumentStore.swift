@@ -256,13 +256,30 @@ final class ShowDocumentStore {
         return apply(action, operation)
     }
 
-    /// Applies a complete, already-validated model and runs `afterChange` for the initial edit and every
+    /// Applies an already-validated resident operation scope and runs `afterChange` for the initial edit and every
     /// undo/redo replacement. Alignment uses this to persist first, then activate the accepted map revision.
     @discardableResult
     func applyReplacement(
         _ actionName: String,
         model newModel: ShowDocumentModel,
         afterChange: @escaping @MainActor (ShowDocumentModel) -> Void
+    ) -> Bool {
+        applyReplacement(actionName, model: newModel, scope: .residentEpisodes, afterChange: afterChange)
+    }
+
+    /// Recovery snapshots own the complete membership and order, including deletion of unloaded episodes.
+    @discardableResult
+    func applyCompleteReplacement(_ actionName: String, model newModel: ShowDocumentModel) -> Bool {
+        applyReplacement(actionName, model: newModel, scope: .completeCatalog, afterChange: nil)
+    }
+
+    private enum ReplacementScope { case residentEpisodes, completeCatalog }
+
+    private func applyReplacement(
+        _ actionName: String,
+        model newModel: ShowDocumentModel,
+        scope: ReplacementScope,
+        afterChange: (@MainActor (ShowDocumentModel) -> Void)?
     ) -> Bool {
         guard canEdit else {
             lastError = .invalidMix("This show is read-only. Open an editable copy before changing it.")
@@ -277,9 +294,9 @@ final class ShowDocumentStore {
             lastError = .invalidMix("Close the Audio Unit editor before replacing its source, timing, or insert chain.")
             return false
         }
-        guard newModel != residentModel else { return true }
+        if case .residentEpisodes = scope, newModel == residentModel { return true }
         do {
-            let replacement = try mergedRevision(newModel)
+            let replacement = try mergedRevision(newModel, scope: scope)
             lastError = nil
             replace(with: replacement, actionName: actionName, afterChange: afterChange)
             Responsiveness.interaction("show.edit")
@@ -334,27 +351,38 @@ final class ShowDocumentStore {
 
     /// Generic domain transforms are scoped to resident episodes. Preserve every opaque slot and
     /// validate global IDs/references against the complete index before publishing the replacement.
-    private func mergedRevision(_ updated: ShowDocumentModel) throws(DomainError) -> ShowCatalogRevision {
+    private func mergedRevision(
+        _ updated: ShowDocumentModel,
+        scope: ReplacementScope = .residentEpisodes
+    ) throws(DomainError) -> ShowCatalogRevision {
         var header = ShowCatalogHeader(updated)
         guard Set(updated.episodes.map(\.id)).count == updated.episodes.count else {
             throw .invalidMix("The edit contains duplicate episode identities.")
         }
         let byID = Dictionary(uniqueKeysWithValues: updated.episodes.map { ($0.id, $0) })
-        let oldIDs = Set(catalogRevision.episodes.map(\.summary.id))
+        let oldByID = Dictionary(uniqueKeysWithValues: catalogRevision.episodes.map { ($0.summary.id, $0) })
         var merged: [ShowEpisodeRevision] = []
-        for revision in catalogRevision.episodes {
-            if let episode = byID[revision.summary.id] {
-                merged.append(episode == revision.resident ? revision : ShowEpisodeRevision(episode, header: header))
-            } else if revision.resident == nil {
-                merged.append(revision)
+        switch scope {
+        case .completeCatalog:
+            merged = updated.episodes.map { episode in
+                if let revision = oldByID[episode.id], revision.resident == episode { return revision }
+                return ShowEpisodeRevision(episode, header: header)
             }
-        }
-        merged += updated.episodes.filter { !oldIDs.contains($0.id) }.map { ShowEpisodeRevision($0, header: header) }
-        let referenced = Set(merged.flatMap { $0.summary.speakerIDs })
-        let provided = Set(header.speakers.map(\.id))
-        // Episode-scoped removal may prune a speaker from its operation scope, not from opaque episodes.
-        header.speakers += catalogRevision.header.speakers.filter {
-            referenced.contains($0.id) && !provided.contains($0.id)
+        case .residentEpisodes:
+            for revision in catalogRevision.episodes {
+                if let episode = byID[revision.summary.id] {
+                    merged.append(episode == revision.resident ? revision : ShowEpisodeRevision(episode, header: header))
+                } else if revision.resident == nil {
+                    merged.append(revision)
+                }
+            }
+            merged += updated.episodes.filter { oldByID[$0.id] == nil }.map { ShowEpisodeRevision($0, header: header) }
+            let referenced = Set(merged.flatMap { $0.summary.speakerIDs })
+            let provided = Set(header.speakers.map(\.id))
+            // Episode-scoped removal may prune a speaker from its operation scope, not from opaque episodes.
+            header.speakers += catalogRevision.header.speakers.filter {
+                referenced.contains($0.id) && !provided.contains($0.id)
+            }
         }
         do {
             try ShowCatalog.validate(header: header, summaries: merged.map(\.summary))
