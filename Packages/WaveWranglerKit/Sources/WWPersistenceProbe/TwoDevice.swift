@@ -35,7 +35,7 @@ func savingComputerLabel(_ name: String?) -> String {
 }
 
 extension Probe {
-    var plainOpener: DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>> { DocumentOpener(coder: coder, recovery: nil) }
+    var plainOpener: DocumentOpener<ShowPackageCoder> { DocumentOpener(coder: coder, recovery: nil) }
 
     /// Waits until the file (after asking iCloud to download it) decodes with the expected publication/title,
     /// or exists/doesn't. Reports when it was observed, in this Mac's wall clock.
@@ -81,7 +81,7 @@ extension Probe {
         object["unresolvedConflictVersions"] = conflicts.map { version -> [String: Any] in
             var entry: [String: Any] = ["savingComputer": savingComputerLabel(version.localizedNameOfSavingComputer),
                                         "modified": version.modificationDate.map { Int64($0.timeIntervalSince1970 * 1000) } ?? -1]
-            if let data = try? Data(contentsOf: version.url) {
+            if let data = try? LocalFileOperations().read(version.url) {
                 switch Result(catching: { () throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> in try coder.decode(data) }) {
                 case let .success(document):
                     entry["title"] = document.payload.show.title
@@ -97,7 +97,7 @@ extension Probe {
         object["otherVersions"] = (NSFileVersion.otherVersionsOfItem(at: file) ?? []).count
         // What the show's status shows (C4): the product's own report, including zero.
         object["statusProviderConflicts"] = ProviderConflictReport.inspect(file).unresolvedVersionCount
-        object["sha256"] = (try? Data(contentsOf: file)).map(sha256Hex) ?? ""
+        object["sha256"] = (try? LocalFileOperations().read(file)).map(sha256Hex) ?? ""
         let stem = file.deletingPathExtension().lastPathComponent
         let siblings = ((try? FileManager.default.contentsOfDirectory(at: file.deletingLastPathComponent(), includingPropertiesForKeys: nil)) ?? [])
             .filter { $0.pathExtension == file.pathExtension && $0.lastPathComponent != file.lastPathComponent
@@ -116,9 +116,12 @@ extension Probe {
     /// External damaged writer (simulates a provider or another app leaving a truncated file). Never used on
     /// anything but the synthetic trial file named on the command line.
     func corrupt() -> Int32 {
-        guard let data = try? Data(contentsOf: file), data.count > 8 else { emit(["result": "unreadable"]); return 1 }
         do {
-            try data.prefix(data.count / 2).write(to: file)
+            let content = try file.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true
+                ? file.appending(path: ShowPackage.manifestName) : file
+            let data = try Data(contentsOf: content)
+            guard data.count > 8 else { emit(["result": "unreadable"]); return 1 }
+            try data.prefix(data.count / 2).write(to: content)
             emit(["result": "corrupted", "bytes": data.count / 2, "epochMs": epochMs()])
             return 0
         } catch {
@@ -364,7 +367,10 @@ extension Probe {
             object["downloadingError"] = values.ubiquitousItemDownloadingError.map { "\($0.domain) \($0.code)" } ?? NSNull()
             object["uploadingError"] = values.ubiquitousItemUploadingError.map { "\($0.domain) \($0.code)" } ?? NSNull()
         }
-        if present, !dataless, let data = try? Data(contentsOf: file) {
+        // A resident package root does not prove that its components are resident.
+        if present, info.st_mode & S_IFMT == S_IFDIR {
+            object["contentDigestState"] = "packageResidencyNotEstablished"
+        } else if present, !dataless, let data = try? Data(contentsOf: file) {
             object["sha256"] = sha256Hex(data)
             if let show = try? coder.decode(data) { object["publicationID"] = show.publication.publicationID.uuidString }
             else if let library = try? LibraryCoder.library.decode(data) { object["publicationID"] = library.publication.publicationID.uuidString }

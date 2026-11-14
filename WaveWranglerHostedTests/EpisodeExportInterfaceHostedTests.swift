@@ -30,7 +30,7 @@ struct EpisodeExportInterfaceHostedTests {
     struct EpisodeExportProductionHostedTests {
         private func ready() async throws -> AlignmentWaveformRetentionHostedTests.Fixture {
             let fixture = try await MixerHostedTests().ready(durationSeconds: 8)
-            let episode = try #require(fixture.document.store.model.episode(fixture.model.episodeID))
+            let episode = try #require(fixture.document.store.residentModel.episode(fixture.model.episodeID))
             let revision = try #require(episode.alignment?.acceptedRevision)
             let slot = try MixerHostedTests().appleSlot()
             let clipURL = fixture.folder.appendingPathComponent("generated-clip.caf")
@@ -41,7 +41,7 @@ struct EpisodeExportInterfaceHostedTests {
             let witness = try await SourceDecoder(access: .init(io: io)).captureRawIdentity(
                 clipURL, matching: metadata.fingerprint)
             let access = FileDeviceAccessStore(fileURL: fixture.folder.appendingPathComponent("access.json"))
-            try await access.save(.init(showID: fixture.document.store.model.show.id, sourceID: source.id,
+            try await access.save(.init(showID: fixture.document.store.residentModel.show.id, sourceID: source.id,
                 bookmark: try io.makeReadOnlyBookmark(for: clipURL), lastKnownPath: clipURL.path,
                 recordedIdentity: .init(fingerprint: metadata.fingerprint, confirmation: .userConfirmed,
                     recordedAt: Date(), rawWitness: witness), createdAt: Date()))
@@ -75,12 +75,13 @@ struct EpisodeExportInterfaceHostedTests {
             })
             try await MixerHostedTests().save(fixture.document)
             return .init(folder: fixture.folder, document: fixture.document, model: fixture.model,
-                runtime: fixture.runtime, target: fixture.target, files: fixture.files + [clipURL])
+                runtime: fixture.runtime, target: fixture.target, files: fixture.files + [clipURL],
+                residencyOwner: fixture.residencyOwner)
         }
 
         private func selections(_ fixture: AlignmentWaveformRetentionHostedTests.Fixture,
                                 prefix: String, normalization: ExportNormalization) throws -> [EpisodeExportDelivery] {
-            let resolved = try fixture.document.store.model.resolvedPublication(for: fixture.model.episodeID)
+            let resolved = try fixture.document.store.residentModel.resolvedPublication(for: fixture.model.episodeID)
             return try [
                 ExportSettings(codec: .wave(.float32), sampleRate: 48_000, channels: 2),
                 ExportSettings(codec: .mp3(.constantBitrate(kbps: 192)), sampleRate: 44_100, channels: 2),
@@ -118,11 +119,11 @@ struct EpisodeExportInterfaceHostedTests {
             let controller = f.model.mixer
             _ = try await controller.prepare(programFrames: -24_000..<264_003)
             let processor = try #require(controller.processor)
-            let slot = try #require(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.first)
+            let slot = try #require(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts.first)
             let parameter = try #require(try await processor.parameters(slot: slot.id).first {
                 $0.writable && $0.minimum < 1000 && $0.maximum > 1000
             })
-            let beforeCapture = f.document.store.model
+            let beforeCapture = f.document.store.residentModel
             try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
             var captured: [[AudioUnitSlotID]] = []
             controller.didCaptureNativeStates = { captured.append($0) }
@@ -132,7 +133,7 @@ struct EpisodeExportInterfaceHostedTests {
                 userSelectedDirectory: folder, deliveries: selections(f, prefix: "Off", normalization: .off))
             try #require(off.succeeded, "\(String(describing: off.problem)) \(off.cleanupErrors)")
             #expect(off.published.count == 3 && captured.contains { $0.contains(slot.id) })
-            let capturedModel = f.document.store.model
+            let capturedModel = f.document.store.residentModel
             #expect(capturedModel != beforeCapture, "Export must capture unpolled native fullState before freezing its recipe.")
             let stillPlaying = f.model.canStopAudition
             let retired = controller.processor == nil
@@ -179,11 +180,11 @@ struct EpisodeExportInterfaceHostedTests {
                 print("EXPORT_PRODUCTION \(receipt.url.lastPathComponent) input=\(receipt.inputFrames) decoded=\(receipt.decodedFrames) LUFS=\(loudness) dBTP=\(peak) status=\(receipt.loudness.targetStatus)")
                 Attachment.record(try Data(contentsOf: receipt.url), named: receipt.url.lastPathComponent)
             }
-            #expect(f.document.store.model == capturedModel)
+            #expect(f.document.store.residentModel == capturedModel)
             #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
             #expect(owner.state.store === f.document.store)
             try await MixerHostedTests().save(f.document)
-            let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: #require(f.document.fileURL))).payload
+            let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload
             #expect(reopened == capturedModel)
             try await controller.discardUncapturedEditorState()
         }
@@ -225,7 +226,7 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(!service.isRunning && invalidatedContents.isEmpty)
 
             try await MixerHostedTests().save(f.document)
-            let snapshot = f.document.store.model
+            let snapshot = f.document.store.residentModel
             let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
             let source = try #require(snapshot.episode(f.model.episodeID)?.speakerAssignments.first?.primary?.sourceID)
             try await access.removeRecord(for: .init(showID: snapshot.show.id, sourceID: source))
@@ -244,7 +245,7 @@ struct EpisodeExportInterfaceHostedTests {
             let f = try await ready()
             defer { f.close() }
             let service = f.document.exportJobs
-            let model = f.document.store.model
+            let model = f.document.store.residentModel
             let source = try #require(model.episode(f.model.episodeID)?.speakerAssignments.first?.primary?.sourceID)
             let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
             let record = try #require(try await access.record(for: .init(showID: model.show.id, sourceID: source)))
@@ -316,7 +317,7 @@ struct EpisodeExportInterfaceHostedTests {
                 })
             #expect(try Data(contentsOf: stage.appendingPathComponent("foreign.txt")) == foreignBytes)
             let saved = try EpisodeExportPreferenceStore(defaults: PersistenceEnvironment.preferences,
-                show: f.document.store.model.show.id).load()
+                show: f.document.store.residentModel.show.id).load()
             #expect(saved == nil)
         }
 
@@ -324,7 +325,7 @@ struct EpisodeExportInterfaceHostedTests {
             let f = try await ready()
             defer { f.close() }
             let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
-            let showID = f.document.store.model.show.id
+            let showID = f.document.store.residentModel.show.id
             try await SetupEngineProvider.store.save(access.records(in: showID))
             defer { Task { try await SetupEngineProvider.store.removeRecords(in: showID) } }
             let runtime = try await AlignmentRuntimeProvider.runtime(for: f.document, episode: f.model.episodeID)
@@ -379,7 +380,7 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(messageAfterCancel == nil)
             #expect((try FileManager.default.contentsOfDirectory(atPath: folder.path)).isEmpty)
             let saved = try EpisodeExportPreferenceStore(defaults: PersistenceEnvironment.preferences,
-                show: f.document.store.model.show.id).load()
+                show: f.document.store.residentModel.show.id).load()
             #expect(saved == nil, "Canceled jobs must not persist successful choices.")
             await runtime.setProductionValidationHookForTesting(nil)
             presentation.dismiss()
@@ -491,7 +492,7 @@ struct EpisodeExportInterfaceHostedTests {
             let owner = MixerHostedTests().owner(f)
             owner.state.requestExport()
             let presentation = f.document.exportInterface
-            let original = f.document.store.model
+            let original = f.document.store.residentModel
             let artwork = try #require(original.resolvedPublication(for: f.model.episodeID).metadata.artwork?.image)
             let image = f.folder.appendingPathComponent("generated-export.png")
             try artwork.data.write(to: image)
@@ -511,7 +512,7 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(omitted)
             presentation.overrides.artwork = nil
             let inherited = presentation.artwork?.data
-            let unchanged = f.document.store.model == original
+            let unchanged = f.document.store.residentModel == original
             #expect(inherited == artwork.data)
             #expect(unchanged)
             presentation.dismiss()
@@ -560,7 +561,7 @@ struct EpisodeExportInterfaceHostedTests {
         defer { document.close() }
         let first = ShowWindowState(store: document.store, episodeID: episode)
         let second = ShowWindowState(store: document.store, episodeID: episode)
-        let original = document.store.model
+        let original = document.store.residentModel
         #expect(first.exportUnavailableReason == nil)
         let destination = first.destination
         first.select(.export)
@@ -579,7 +580,7 @@ struct EpisodeExportInterfaceHostedTests {
         #expect(otherState.exportPresented)
         presentation.dismiss()
         #expect(!first.exportPresented && second.exportUnavailableReason == nil)
-        #expect(document.store.model == original)
+        #expect(document.store.residentModel == original)
         second.recordingsPresented = true
         #expect(second.exportUnavailableReason?.contains("Recordings") == true)
     }
@@ -590,7 +591,7 @@ struct EpisodeExportInterfaceHostedTests {
         let state = ShowWindowState(store: document.store, episodeID: episode)
         state.requestExport()
         let presentation = document.exportInterface
-        let original = document.store.model
+        let original = document.store.residentModel
         let omissions = try presentation.allOmissions
         #expect(!omissions.isEmpty)
         presentation.acceptedOmissions = omissions
@@ -607,7 +608,7 @@ struct EpisodeExportInterfaceHostedTests {
         let preview = try #require(try presentation.previews.first { $0.format == .mp3 })
         #expect(preview.preview.metadata.title == "Export title")
         #expect(preview.preview.metadata.artist == nil && preview.preview.metadata.episodeNumber == nil)
-        #expect(selections.count == 2 && document.store.model == original)
+        #expect(selections.count == 2 && document.store.residentModel == original)
     }
 
     @Test func nativeMenuRoutesExportOnlyFromFileAndKeepsStandardAboutAndLicenses() throws {

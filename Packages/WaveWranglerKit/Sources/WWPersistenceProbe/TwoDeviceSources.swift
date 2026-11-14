@@ -122,7 +122,7 @@ extension Probe {
     }
 
     func digest() -> Int32 {
-        guard let data = try? Data(contentsOf: file) else { emit(["result": "unreadable"]); return 1 }
+        guard let data = try? LocalFileOperations().read(file) else { emit(["result": "unreadable"]); return 1 }
         emit(["result": "ok", "sha256": sha256Hex(data), "bytes": data.count])
         return 0
     }
@@ -172,7 +172,7 @@ extension Probe {
         try? recovery.setAsideEditCheckpoints(for: key)
         let showID = document.payload.show.id
         let offer = EditCheckpointOffer.assess(recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue, onDisk: fingerprint,
-                                               coder: coder, belongsToDocument: { $0.show.id == showID })
+                                               coder: JSONEnvelopeCoder<ShowDocumentModel>.show, belongsToDocument: { $0.show.id == showID })
         emit(["result": "assessed", "currentTitle": document.payload.show.title, "currentRevision": document.revision,
               "candidateTitle": offer.candidate?.payload.show.title ?? "", "relation": offer.candidate.map { "\($0.relation)" } ?? "none",
               "mode": offer.candidateMode(restoreInEffect: false).map { "\($0)" } ?? "none",

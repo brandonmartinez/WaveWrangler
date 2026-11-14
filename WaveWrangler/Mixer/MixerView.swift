@@ -124,14 +124,14 @@ struct RecordingInputGainControl: View {
     var body: some View {
         if let channel = reference.channel.value {
             MixerNumberControl(title: "Input gain (dB)", value: Binding(
-                get: { store.model.episode(episodeID)?.mix?.inputGainDB(for: reference.sourceID, channel: channel) ?? 0 },
+                get: { store.residentModel.episode(episodeID)?.mix?.inputGainDB(for: reference.sourceID, channel: channel) ?? 0 },
                 set: { gain in
                     guard enabled, store.canEdit else { return }
                     store.setRecordingInputGain(gain, reference: reference, in: episodeID)
                 }), range: EpisodeMixState.gainRangeDB, identifier: identifier, endEditing: { store.endCoalescing() })
                 .disabled(!enabled || !store.canEdit)
                 .help("Saved gain for this recording and channel, before inserts. Original audio, waveforms, alignment, and transcripts are unchanged.")
-            if let assignment = store.model.episode(episodeID)?.speakerAssignments.first(where: { $0.primary == reference }) {
+            if let assignment = store.residentModel.episode(episodeID)?.speakerAssignments.first(where: { $0.primary == reference }) {
                 SpeakerAutoInputGainControl(store: store, episodeID: episodeID, speakerID: assignment.speakerID,
                     enabled: enabled, identifier: "\(identifier).auto")
             }

@@ -6,7 +6,7 @@ import WWCore
 import WWPersistence
 
 /// One app-wide lane bounds document publication and orders it with background recovery work.
-private enum ShowPersistenceLane {
+enum ShowPersistenceLane {
     private static let queue = DispatchQueue(label: "com.brandonmartinez.wavewrangler.document-persistence", qos: .userInitiated)
     private static let lock = NSLock()
 
@@ -26,11 +26,13 @@ private enum ShowPersistenceLane {
 private final class ShowSaveSnapshot: Sendable {
     struct Result {
         var candidate: EncodedDocument?
+        var catalog: ShowCatalog?
         var receipt: PublicationReceipt?
         var candidateIsOnDisk = false
     }
 
-    let model: ShowDocumentModel
+    let draft: ShowCatalogDraft
+    let identity: UUID
     let revision: Int
     let publicationID = UUID()
     let key: DocumentKey
@@ -43,10 +45,11 @@ private final class ShowSaveSnapshot: Sendable {
     let beforeEncoding: (@Sendable () -> Void)?
     let result = Mutex(Result())
 
-    init(model: ShowDocumentModel, revision: Int, key: DocumentKey, target: PublicationTarget,
+    init(draft: ShowCatalogDraft, identity: UUID, revision: Int, key: DocumentKey, target: PublicationTarget,
          retainPrior: Bool, allowsInteraction: Bool, originalURL: URL?, recovery: RecoveryStore,
          hooks: any PublicationHooks, beforeEncoding: (@Sendable () -> Void)?) {
-        self.model = model
+        self.draft = draft
+        self.identity = identity
         self.revision = revision
         self.key = key
         self.target = target
@@ -85,7 +88,8 @@ final class ShowDocument: NSDocument {
     private var libraryController: NSWindowController?
     weak var libraryWindow: NSWindow?
     let status = DocumentStatusModel()
-    private let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+    private let coder = ShowCatalogCoder()
+    nonisolated private let packageWrapper = Mutex<FileWrapper?>(nil)
     /// Publication of the last coherent value read or verified on disk (`nil` for a new document).
     /// `revision` is only an ordering hint; the publication ID and checksum identify what is on disk.
     private(set) var publication: PublicationStamp?
@@ -127,18 +131,67 @@ final class ShowDocument: NSDocument {
         if writingSnapshot.withLock({ $0 != nil }) { return true }
         return isDocumentEdited
     }
-    /// The exact model last independently verified on disk. Alignment reconciles verified publications;
-    /// live inspection never treats the mutable in-memory model as persisted truth.
-    private(set) var verifiedModel: ShowDocumentModel?
+    /// Resident episodes from the last independently verified publication; `verifiedCatalog` owns complete
+    /// membership. Live inspection never treats the mutable in-memory model as persisted truth.
+    private var verifiedLegacyModel: ShowDocumentModel?
+    private(set) var verifiedCatalog: ShowCatalog?
+    private var verifiedCatalogIdentity: UUID?
+    private var verifiedEpisodes: [EpisodeID: Episode] = [:]
+    private(set) var verifiedModel: ShowDocumentModel? {
+        get {
+            if let verifiedCatalog {
+                return verifiedCatalog.header.operationModel(episodes: verifiedCatalog.episodes.compactMap { verifiedEpisodes[$0.id] })
+            }
+            return verifiedLegacyModel
+        }
+        set {
+            verifiedCatalog = nil
+            verifiedCatalogIdentity = nil
+            verifiedEpisodes = [:]
+            verifiedLegacyModel = newValue
+        }
+    }
+
+    func releaseVerifiedEpisode(_ id: EpisodeID) { verifiedEpisodes[id] = nil }
+
+    func ensureVerifiedEpisodeLoaded(_ id: EpisodeID, resident: Episode? = nil,
+                                     record: StoredCatalogEpisode? = nil) async throws {
+        try Task.checkCancellation()
+        guard !persistenceClosed else { throw CancellationError() }
+        guard store.pinnedEpisodeIDs.contains(id) else { return }
+        guard let catalog = verifiedCatalog, let stored = catalog.episode(id),
+              verifiedEpisodes[id] == nil else { return }
+        if record == stored, let resident, store.pinnedEpisodeIDs.contains(id) {
+            verifiedEpisodes[id] = resident
+            return
+        }
+        let header = catalog.header
+        let decoded = try await ShowCatalogWork.perform { try stored.load(in: header) }
+        try Task.checkCancellation()
+        guard verifiedCatalog?.episode(id) == stored, verifiedCatalog?.header == header,
+              store.pinnedEpisodeIDs.contains(id) else { throw CancellationError() }
+        verifiedEpisodes[id] = decoded
+    }
+
+    private func adoptVerifiedCatalog(_ catalog: ShowCatalog, captured: ShowCatalogRevision? = nil) {
+        verifiedLegacyModel = nil
+        verifiedCatalog = catalog
+        verifiedCatalogIdentity = captured?.identity ?? store.catalogIdentity
+        verifiedEpisodes = [:]
+        for revision in captured?.episodes ?? [] where store.pinnedEpisodeIDs.contains(revision.summary.id) {
+            if let episode = revision.resident { verifiedEpisodes[episode.id] = episode }
+        }
+    }
 
     /// Only a clean, last independently decoded on-disk publication can be proposed to the
     /// app-owned open-show binding. The binding additionally checks registration and rereads disk.
-    var currentSourcePublication: (url: URL, model: ShowDocumentModel, base: RevisionFingerprint)? {
+    var currentSourcePublication: (url: URL, model: ShowDocumentModel, catalog: ShowCatalog?, base: RevisionFingerprint)? {
         guard writingSnapshot.withLock({ $0 == nil }), !isAwaitingFormatUpdate, !isDocumentEdited,
               let url = fileURL, let model = verifiedModel, let base = onDiskBase,
-              publication == base.publication, store.model == model
+              publication == base.publication,
+              verifiedCatalog == nil ? store.residentModel == model : store.catalogIdentity == verifiedCatalogIdentity
         else { return nil }
-        return (url.standardizedFileURL, model, base)
+        return (url.standardizedFileURL, model, verifiedCatalog, base)
     }
 
     /// App-owned editing policy; AppKit also calls its native getter from background versioning workers.
@@ -175,11 +228,12 @@ final class ShowDocument: NSDocument {
     /// D5: the exact bytes of a publication whose acknowledgment is uncertain. Its retry first checks whether these
     /// bytes are on disk and, if so, adopts them (verified by decoding) instead of republishing against a stale base.
     private var uncertainCandidate: Data?
+    private var uncertainRevision: ShowCatalogRevision?
     /// ST-16 "Save a Copy Elsewhere…" in progress: set while its save panel and save run.
     private var copyElsewhere: CopyElsewhereRequest?
     /// Suspends automatic saves of the original while Save a Copy Elsewhere… runs (#197 review).
     private var copyRetryGate = CopyElsewhereRetryGate()
-    var documentKey: DocumentKey { .show(store.model.show.id) }
+    var documentKey: DocumentKey { .show(store.residentModel.show.id) }
     /// #159: the exact older-format bytes this document read; the update's "unchanged" check compares against them.
     private var formatUpdateOriginal: Data?
     /// #159: the D14 sheet is still to be shown (once, after the window's first frame).
@@ -195,6 +249,7 @@ final class ShowDocument: NSDocument {
         store = ShowDocumentStore(model: .untitled())
         super.init()
         store.document = self
+        store.enableDemandDrivenEditing()
         let mixerUndo = MixerUndoManager()
         mixerUndo.document = self
         undoManager = mixerUndo
@@ -215,11 +270,12 @@ final class ShowDocument: NSDocument {
     /// Dynamic by design: while autosave is OFF, AppKit treats documents as non-autosaving, so Close and
     /// Quit present the native Save / Don't Save / Cancel decision instead of autosaving.
     override class var autosavesInPlace: Bool { PersistenceEnvironment.autosaveGate.isEnabled }
+    override class var writableTypes: [String] { [DocumentTypes.show] }
 
     override func makeWindowControllers() {
         let interval = OpenSignposts.begin("document.makeWindowControllers")
         defer { OpenSignposts.end(interval) }
-        guard let episode = store.model.episodes.first else {
+        guard let episode = store.episodeSummaries.first else {
             LibraryWindowController.show(document: self)
             return
         }
@@ -234,7 +290,7 @@ final class ShowDocument: NSDocument {
             super.restoreWindow(withIdentifier: identifier, state: state, completionHandler: completionHandler)
             return
         }
-        guard let episode = EpisodeWindowController.restoredEpisode(from: state, in: store.model) else {
+        guard let episode = EpisodeWindowController.restoredEpisode(from: state, in: store) else {
             completionHandler(nil, nil)
             return
         }
@@ -267,7 +323,7 @@ final class ShowDocument: NSDocument {
 
     @discardableResult
     func openEpisode(_ id: EpisodeID, inNewWindow: Bool = false) -> EpisodeWindowController? {
-        guard store.model.episode(id) != nil else { return nil }
+        guard store.containsEpisode(id) else { return nil }
         if !inNewWindow, let existing = windowControllers.compactMap({ $0 as? EpisodeWindowController })
             .first(where: { $0.state.boundEpisodeID == id && !$0.state.mixerPresentation.isClosed }) {
             existing.showWindow(nil)
@@ -294,23 +350,51 @@ final class ShowDocument: NSDocument {
     override func read(from url: URL, ofType typeName: String) throws {
         let interval = OpenSignposts.begin("document.read")
         defer { OpenSignposts.end(interval) }
-        let data = try Data(contentsOf: url)
+        let data = try LocalFileOperations().read(url)
         try MainActor.assumeIsolated {
             #if DEBUG
             Self.debugBeforeRead?(url)
             #endif
             try load(data, url: url)
         }
+        if ShowPackage.isSnapshot(data) {
+            try packageWrapper.withLock { $0 = try ShowPackage.fileWrapper(for: data) }
+        } else {
+            packageWrapper.withLock { $0 = nil }
+        }
     }
-
     override func read(from data: Data, ofType typeName: String) throws {
         try MainActor.assumeIsolated { try load(data, url: nil) }
     }
 
     private func load(_ data: Data, url: URL?) throws {
+        if try ShowPackage.storageVersion(of: data) == 2 {
+            let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
+                                        identityOf: { .show($0.header.show.id) })
+            switch opener.outcome(for: data, url: url) {
+            case let .editable(document, fingerprint):
+                formatUpdateOriginal = nil
+                formatUpdatePromptPending = false
+                status.setFormatUpdate(nil)
+                store.replaceLoadedCatalog(document.payload)
+                adoptVerifiedCatalog(document.payload)
+                publication = document.publication
+                onDiskBase = fingerprint
+                status.set(.clean(revision: document.revision))
+                try recovery.setAsideEditCheckpoints(for: .show(document.payload.header.show.id))
+                scheduleAfterFirstFrame()
+                return
+            case let .refusedNewerFormat(found, supported, _):
+                throw PersistenceError.unknownNewerSchema(found: found, supported: supported)
+            case let .damaged(error, candidates):
+                throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
+            default:
+                throw PersistenceError.malformed("The indexed show could not be opened")
+            }
+        }
         // A schema 1 show reports `.needsMigration`: it opens upgraded in memory, read-only, and nothing is written
         // until the user chooses Update (#159). Schema 1 recovery checkpoints stay offerable, upgraded in memory.
-        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery,
+        let opener = DocumentOpener(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, coordination: AlreadyCoordinated(), recovery: recovery,
                                     migratableSchemas: ShowSchemaMigration.migratableSchemas,
                                     recoveryDecode: { try ShowSchemaMigration.decodeUpgradingOlder($0) })
         let outcome = OpenSignposts.measure("document.decode") { opener.outcome(for: data, url: url) }
@@ -324,6 +408,13 @@ final class ShowDocument: NSDocument {
             publication = document.publication
             onDiskBase = fingerprint
             status.set(.clean(revision: document.revision))
+            if url != nil {
+                formatUpdateOriginal = data
+                formatUpdatePromptPending = true
+                status.setFormatUpdate(.needed)
+                scheduleAfterFirstFrame()
+                return
+            }
             // C2b: set this show's edit checkpoints aside as an offer now (synchronously, before any save or new
             // checkpoint could remove them) so nothing can be lost before the user decides.
             try? recovery.setAsideEditCheckpoints(for: .show(document.payload.show.id))
@@ -395,6 +486,7 @@ final class ShowDocument: NSDocument {
                     NSLocalizedFailureReasonErrorKey: "The save snapshot has not been encoded."
                 ])
             }
+
             return candidate.data
         }
         guard Thread.isMainThread else {
@@ -403,7 +495,16 @@ final class ShowDocument: NSDocument {
             ])
         }
         return try MainActor.assumeIsolated {
-            return try coder.encodeDocument(store.model, revision: revision + 1, publicationID: UUID()).data
+            return try coder.encodeDocument(store.captureCatalog().resolved(), revision: revision + 1, publicationID: UUID()).data
+        }
+    }
+
+    nonisolated override func fileWrapper(ofType typeName: String) throws -> FileWrapper {
+        let data = try data(ofType: typeName)
+        return try packageWrapper.withLock { prior in
+            let wrapper = try ShowPackage.fileWrapper(for: data, reusing: prior)
+            prior = wrapper
+            return wrapper
         }
     }
 
@@ -460,8 +561,8 @@ final class ShowDocument: NSDocument {
             saveCopy(request, to: url, ofType: typeName, completionHandler: completionHandler)
             return
         }
-        let candidateModel = store.model
-        let snapshot = prepareSaveSnapshot(model: candidateModel, revision: revision + 1,
+        let candidateRevision = store.captureRevision()
+        let snapshot = prepareSaveSnapshot(state: candidateRevision, revision: revision + 1,
                                            to: url, operation: saveOperation, allowsInteraction: true)
         saveChangeCount = (changeCountToken(for: saveOperation), saveOperation)
         let adopts = Self.adoptsPublication(saveOperation)
@@ -471,7 +572,7 @@ final class ShowDocument: NSDocument {
             guard let self else { return completionHandler(error) }
             let finish = {
                 self.finishSave(saveOperation: saveOperation, adopts: adopts, error: error, snapshot: snapshot,
-                                candidateModel: candidateModel, restoredAtSaveStart: restoredAtSaveStart)
+                                candidateRevision: candidateRevision, restoredAtSaveStart: restoredAtSaveStart)
                 completionHandler(error)
             }
             #if DEBUG
@@ -488,7 +589,7 @@ final class ShowDocument: NSDocument {
     }
 
     private func prepareSaveSnapshot(
-        model: ShowDocumentModel, revision: Int, to url: URL, operation: NSDocument.SaveOperationType,
+        state: ShowCatalogRevision, revision: Int, to url: URL, operation: NSDocument.SaveOperationType,
         allowsInteraction: Bool
     ) -> ShowSaveSnapshot {
         let inPlace = (operation == .saveOperation || operation == .autosaveInPlaceOperation)
@@ -504,7 +605,8 @@ final class ShowDocument: NSDocument {
         beforeEncoding = Self.debugBeforeSaveEncoding
         #endif
         let snapshot = ShowSaveSnapshot(
-            model: model, revision: revision, key: .show(model.show.id), target: target,
+            draft: state.captured(archiveOwner: verifiedCatalog), identity: state.identity,
+            revision: revision, key: .show(state.header.show.id), target: target,
             retainPrior: inPlace, allowsInteraction: allowsInteraction, originalURL: fileURL, recovery: recovery,
             hooks: hooks, beforeEncoding: beforeEncoding)
         writingSnapshot.withLock { $0 = snapshot }
@@ -517,7 +619,7 @@ final class ShowDocument: NSDocument {
         _ expected: ShowDocumentModel,
         completion: @escaping @MainActor (Result<Void, Error>) -> Void
     ) {
-        guard store.model == expected else {
+        guard store.residentModel == expected else {
             completion(.failure(CocoaError(.userCancelled)))
             return
         }
@@ -530,7 +632,7 @@ final class ShowDocument: NSDocument {
                 guard let self else { return }
                 if let error {
                     completion(.failure(error))
-                } else if self.store.model != expected || !self.status.saveStatus.state.isVerifiedOnDisk {
+                } else if self.store.residentModel != expected || !self.status.saveStatus.state.isVerifiedOnDisk {
                     completion(.failure(CocoaError(.userCancelled)))
                 } else {
                     completion(.success(()))
@@ -550,7 +652,7 @@ final class ShowDocument: NSDocument {
     }
 
     private func finishSave(
-        saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, snapshot: ShowSaveSnapshot, candidateModel: ShowDocumentModel,
+        saveOperation: NSDocument.SaveOperationType, adopts: Bool, error: Error?, snapshot: ShowSaveSnapshot, candidateRevision: ShowCatalogRevision,
         restoredAtSaveStart: Set<URL>
     ) {
         let result = snapshot.result.withLock { $0 }
@@ -561,9 +663,13 @@ final class ShowDocument: NSDocument {
         if error == nil, adopts, let receipt {
             cancelSaveRetry()
             uncertainCandidate = nil
+            uncertainRevision = nil
             publication = receipt.publication
             onDiskBase = receipt.fingerprint
-            verifiedModel = candidateModel
+            if let catalog = result.catalog {
+                adoptVerifiedCatalog(catalog, captured: candidateRevision)
+                store.adoptArchives(catalog, captured: candidateRevision)
+            }
             // #87: AppKit only marks an autosave in place as "autosaved"; clear "— Edited" exactly when the verified
             // publication holds the current model. Edits made during the save keep the document (and status) edited.
             let isAutosaveInPlace = saveOperation == .autosaveInPlaceOperation
@@ -572,7 +678,7 @@ final class ShowDocument: NSDocument {
             // `isDocumentEdited` is already false here). So clear exactly when the verified publication holds the
             // current model, whatever `isDocumentEdited` says.
             if isAutosaveInPlace,
-               EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: store.model == candidateModel) {
+               EditedStatePolicy.clearsEditedState(after: .autosaveInPlace, verified: true, publishedEqualsCurrent: store.catalogIdentity == snapshot.identity) {
                 updateChangeCount(.changeCleared)
             }
             #if DEBUG
@@ -583,9 +689,9 @@ final class ShowDocument: NSDocument {
                 discardEditCheckpointsInBackground(for: documentKey)
             }
             resolveOfferRecordsAfterVerifiedSave(
-                restoredAtSaveStart: restoredAtSaveStart, publishedEqualsCurrent: store.model == candidateModel
+                restoredAtSaveStart: restoredAtSaveStart, publishedEqualsCurrent: store.catalogIdentity == snapshot.identity
             )
-            if store.model != candidateModel || (isAutosaveInPlace && isDocumentEdited) {
+            if store.catalogIdentity != snapshot.identity || (isAutosaveInPlace && isDocumentEdited) {
                 status.set(.edited(autosaveEnabled: gate.isEnabled))
                 scheduler?.reschedulePending()
             } else {
@@ -605,7 +711,10 @@ final class ShowDocument: NSDocument {
             }
             // C2b: a failed or uncertain automatic publication still leaves an edit checkpoint (ON only).
             if saveOperation == .autosaveInPlaceOperation || saveOperation == .autosaveElsewhereOperation { writeEditCheckpoint() }
-            if case .acknowledgmentUncertain = status.saveStatus.state { uncertainCandidate = candidateBytes }
+            if case .acknowledgmentUncertain = status.saveStatus.state {
+                uncertainCandidate = candidateBytes
+                uncertainRevision = candidateRevision
+            }
             // ST-11: with autosave ON, a failed save is retried automatically (at most every `saveRetryInterval`).
             if gate.isEnabled, isDocumentEdited, status.saveStatus.state.isAutomaticallyRetryable { scheduleSaveRetry() }
         }
@@ -690,11 +799,15 @@ final class ShowDocument: NSDocument {
 
     private func saveCopy(_ request: CopyElsewhereRequest, to url: URL, ofType typeName: String, completionHandler: @escaping (Error?) -> Void) {
         let name = url.deletingPathExtension().lastPathComponent
-        let copy = (try? store.model.duplicatedAsNewShow().renamingShow(to: name)) ?? store.model.duplicatedAsNewShow()
+        let copyHeader: ShowCatalogHeader
+        do {
+            copyHeader = ShowCatalogHeader(try store.header.operationModel(episodes: []).duplicatedAsNewShow().renamingShow(to: name))
+        } catch { completionHandler(error); return }
+        let copy = ShowCatalogRevision(header: copyHeader, episodes: store.captureRevision().episodes)
         let originalKey = documentKey
         // Adopting a new logical identity replaces the model and Undo history. Keep that exceptional
         // operation blocking; ordinary saves never replace live edits with their captured model.
-        let snapshot = prepareSaveSnapshot(model: copy, revision: 1, to: url, operation: .saveAsOperation,
+        let snapshot = prepareSaveSnapshot(state: copy, revision: 1, to: url, operation: .saveAsOperation,
                                            allowsInteraction: false)
         status.set(.saving)
         super.save(to: url, ofType: typeName, for: .saveAsOperation) { [weak self] error in
@@ -702,14 +815,14 @@ final class ShowDocument: NSDocument {
             if error == nil, snapshot.result.withLock({ $0.receipt != nil }) {
                 // The window now edits the copy: a new show, so the original's undo history and edit checkpoints
                 // (whose changes the copy now holds) don't carry over.
-                self.store.replaceLoadedModel(copy)
+                self.store.replacePublishedRevision(copy)
                 self.undoManager?.removeAllActions()
                 self.discardEditCheckpointsInBackground(for: originalKey)
                 self.status.setCopyNotice(Self.copyMessage(copyName: name, folder: url.deletingLastPathComponent().lastPathComponent,
                                                            originalFolder: request.originalFolder))
             }
             self.finishSave(saveOperation: .saveAsOperation, adopts: true, error: error, snapshot: snapshot,
-                            candidateModel: copy, restoredAtSaveStart: [])
+                            candidateRevision: copy, restoredAtSaveStart: [])
             completionHandler(error)
         }
     }
@@ -816,16 +929,19 @@ final class ShowDocument: NSDocument {
     /// on-disk base, publication and modification date become that revision. Returns `false` (nothing changed)
     /// otherwise; the caller then saves normally, and the base check stays honest.
     private func adoptUncertainPublication() -> Bool {
-        guard let candidate = uncertainCandidate, let url = fileURL, let data = try? Data(contentsOf: url), data == candidate else { return false }
+        guard let candidate = uncertainCandidate, let url = fileURL, let data = try? LocalFileOperations().read(url), data == candidate else { return false }
         let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
         guard case let .editable(document, fingerprint) = opener.outcome(for: data, url: url) else { return false }
+        let captured = uncertainRevision
         uncertainCandidate = nil
+        uncertainRevision = nil
         publication = document.publication
         onDiskBase = fingerprint
-        verifiedModel = document.payload
+        adoptVerifiedCatalog(document.payload, captured: captured)
+        if let captured { store.adoptArchives(document.payload, captured: captured) }
         AlignmentRuntimeProvider.reconcileActive(for: self)
         fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
-        if store.model == document.payload {
+        if store.catalogIdentity == captured?.identity {
             updateChangeCount(.changeCleared)
             scheduler?.cancelPending()
             discardEditCheckpointsInBackground(for: documentKey)
@@ -848,12 +964,13 @@ final class ShowDocument: NSDocument {
         // AppKit otherwise waits for its default file-wrapper creation, after our expensive work.
         if snapshot.allowsInteraction { unblockUserInteraction() }
         try ShowPersistenceLane.perform {
-            let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+            let coder = ShowCatalogCoder()
             do {
                 snapshot.beforeEncoding?()
-                let candidate = try coder.encodeDocument(snapshot.model, revision: snapshot.revision,
+                let catalog = try snapshot.draft.resolved()
+                let candidate = try coder.encodeDocument(catalog, revision: snapshot.revision,
                                                          publicationID: snapshot.publicationID)
-                snapshot.result.withLock { $0.candidate = candidate }
+                snapshot.result.withLock { $0.candidate = candidate; $0.catalog = catalog }
                 let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(),
                                                   recovery: snapshot.recovery, hooks: snapshot.hooks)
                 let receipt = try publisher.publish(
@@ -866,7 +983,7 @@ final class ShowDocument: NSDocument {
                 snapshot.result.withLock { $0.receipt = receipt }
             } catch {
                 if let candidate = snapshot.result.withLock({ $0.candidate }),
-                   (try? Data(contentsOf: url)) == candidate.data {
+                   (try? LocalFileOperations().read(url)) == candidate.data {
                     snapshot.result.withLock { $0.candidateIsOnDisk = true }
                 }
                 throw error
@@ -944,7 +1061,7 @@ final class ShowDocument: NSDocument {
     override func updateChangeCount(_ change: NSDocument.ChangeType) {
         if change == .changeCleared, let saved = saveChangeCount, Self.adoptsPublication(saved.operation),
            let snapshot = writingSnapshot.withLock({ $0 }),
-           snapshot.result.withLock({ $0.receipt != nil }), snapshot.model != store.model {
+           snapshot.result.withLock({ $0.receipt != nil }), snapshot.identity != store.catalogIdentity {
             // With autosave off, AppKit clears all changes instead of using its asynchronous-save token.
             // Account for only the captured edits, preserving later Undo/Redo steps and their dirty state.
             saveChangeCount = nil
@@ -998,7 +1115,7 @@ final class ShowDocument: NSDocument {
         guard gate.isEnabled, hasUnsavedModelChanges, !persistenceClosed else { return }
         guard !checkpointInFlight else { scheduler?.reschedulePending(); return }
         checkpointInFlight = true
-        let model = store.model, generation = store.modelGeneration
+        let draft = store.captureCatalog(), generation = store.modelGeneration
         let revision = revision + 1, base = onDiskBase, key = documentKey, recovery = recovery, gate = gate
         var beforeEncoding: (@Sendable () -> Void)?
         #if DEBUG
@@ -1009,8 +1126,8 @@ final class ShowDocument: NSDocument {
             let result = Result {
                 guard gate.isEnabled else { return nil as Date? }
                 checkpointHook?()
-                let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
-                let snapshot = try coder.encode(model, revision: revision)
+                let coder = ShowCatalogCoder()
+                let snapshot = try coder.encode(draft.resolved(), revision: revision)
                 return try recovery.writeEditCheckpoint(
                     snapshot: snapshot, base: base, schemaVersion: coder.format.currentSchemaVersion, for: key
                 ).createdAt
@@ -1070,10 +1187,10 @@ final class ShowDocument: NSDocument {
 
     /// Re-reads the offered records and re-checks each against the publication on disk now.
     func refreshEditCheckpointOffer() {
-        let showID = store.model.show.id
+        let showID = store.residentModel.show.id
         let offer = EditCheckpointOffer.assess(
             recovery.offeredEditCheckpoints(for: documentKey),
-            documentID: documentKey.rawValue, onDisk: onDiskBase, coder: coder,
+            documentID: documentKey.rawValue, onDisk: onDiskBase, coder: JSONEnvelopeCoder<ShowDocumentModel>.show,
             decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
             belongsToDocument: { $0.show.id == showID }
         ).excluding(restoredOfferURLs.union(setAsideOfferURLs))
@@ -1091,7 +1208,7 @@ final class ShowDocument: NSDocument {
         let undo = undoManager
         undo?.beginUndoGrouping()
         defer { undo?.endUndoGrouping() }
-        guard store.apply("Restore Unsaved Changes", { _ in candidate.payload }) else { return }
+        guard store.applyCompleteReplacement("Restore Unsaved Changes", model: candidate.payload) else { return }
         markRestored(candidate.url)
         undo?.setActionName("Restore Unsaved Changes")
     }
@@ -1215,6 +1332,8 @@ final class ShowDocument: NSDocument {
             return
         }
         mixerTransactions.finishClosingAfterCapture()
+        store.closeResidency()
+        verifiedEpisodes = [:]
         for state in ShowWindowRegistry.states(for: store) {
             state.mixerPresentation.originDidClose()
             state.reviewPresentation.originDidClose()
@@ -1320,12 +1439,12 @@ final class ShowDocument: NSDocument {
                 let attempt = await Task.detached(priority: .userInitiated) {
                     let errorDetail: String?
                     do {
-                        _ = try migrator.migrate(url, key: key)
+                        _ = try migrator.migrate(url, key: key, expectedOriginal: original)
                         errorDetail = nil
                     } catch {
                         errorDetail = Self.formatUpdateDetail(error)
                     }
-                    let onDisk = try? coordination.coordinateReading(at: url) { try Data(contentsOf: $0) }
+                    let onDisk = try? coordination.coordinateReading(at: url) { try LocalFileOperations().read($0) }
                     return (errorDetail: errorDetail, onDisk: onDisk)
                 }.value
                 self?.finishFormatUpdate(errorDetail: attempt.errorDetail, original: original, onDisk: attempt.onDisk, url: url)
@@ -1356,19 +1475,21 @@ final class ShowDocument: NSDocument {
             status.setFormatUpdate(.interrupted(reason: "its file was moved while WaveWrangler was updating it. Close and reopen it to see what's there now"))
             return
         }
-        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, identityOf: { .show($0.show.id) })
-        var adopted: (document: DecodedDocument<ShowDocumentModel>, fingerprint: RevisionFingerprint)?
-        if let onDisk, case let .editable(document, fingerprint) = opener.outcome(for: onDisk, url: url, key: documentKey) {
+        let opener = DocumentOpener(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery, identityOf: { .show($0.header.show.id) })
+        var adopted: (document: DecodedDocument<ShowCatalog>, fingerprint: RevisionFingerprint)?
+        if let onDisk, ShowPackage.isSnapshot(onDisk),
+           case let .editable(document, fingerprint) = opener.outcome(for: onDisk, url: url, key: documentKey) {
             adopted = (document, fingerprint)
         }
         switch FormatUpdateOutcome.classify(errorDetail: errorDetail, original: original, onDiskNow: onDisk,
                                             onDiskIsCurrentFormatOfThisShow: adopted != nil) {
         case .updated:
             guard let adopted else { return }
-            store.replaceLoadedModel(adopted.document.payload)
-            verifiedModel = adopted.document.payload
+            store.replaceLoadedCatalog(adopted.document.payload)
+            adoptVerifiedCatalog(adopted.document.payload)
             publication = adopted.document.publication
             onDiskBase = adopted.fingerprint
+            fileType = DocumentTypes.show
             fileModificationDate = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
             formatUpdateOriginal = nil
             status.setFormatUpdate(nil)
@@ -1415,7 +1536,7 @@ final class ShowDocument: NSDocument {
     override func duplicate() throws -> NSDocument {
         let copy = try super.duplicate()
         guard let show = copy as? ShowDocument else { return copy }
-        show.store.replaceLoadedModel(store.model.duplicatedAsNewShow())
+        show.store.replaceLoadedModel(store.residentModel.duplicatedAsNewShow())
         show.publication = nil
         show.onDiskBase = nil
         show.updateChangeCount(.changeDone)
@@ -1426,6 +1547,25 @@ final class ShowDocument: NSDocument {
 /// Error for a damaged show file that offers whole validated checkpoints from this Mac as a new copy.
 /// The damaged file is never modified.
 enum DocumentRecoveryOffer {
+    static func error(for error: PersistenceError, candidates: [RecoveryCandidate<ShowCatalog>]) -> NSError {
+        let base = self.error(for: error, candidates: [RecoveryCandidate<ShowDocumentModel>]())
+        guard let newest = candidates.first else { return base }
+        do {
+            let model = try newest.document.payload.materializedModel()
+            var userInfo = base.userInfo
+            userInfo[NSLocalizedRecoverySuggestionErrorKey] =
+                "A complete earlier revision (\(newest.document.revision)) is kept on this Mac. You can open it as a new, unsaved copy. The damaged file is left unchanged."
+            userInfo[NSLocalizedRecoveryOptionsErrorKey] = ["Open Recovered Copy", "Cancel"]
+            userInfo[NSRecoveryAttempterErrorKey] = RecoveryAttempter(model: model)
+            return NSError(domain: base.domain, code: base.code, userInfo: userInfo)
+        } catch {
+            var userInfo = base.userInfo
+            userInfo[NSLocalizedRecoverySuggestionErrorKey] =
+                "The earlier revision could not be fully validated: \(error.localizedDescription). The damaged file and recovery evidence remain unchanged."
+            return NSError(domain: base.domain, code: base.code, userInfo: userInfo)
+        }
+    }
+
     static func error(for error: PersistenceError, candidates: [RecoveryCandidate<ShowDocumentModel>]) -> NSError {
         var userInfo: [String: Any] = [
             NSLocalizedDescriptionKey: error.errorDescription ?? "The document is damaged.",

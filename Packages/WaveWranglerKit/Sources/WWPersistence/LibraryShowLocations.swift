@@ -211,9 +211,9 @@ public final class LibraryShowLocations: Sendable {
     /// begins access, verifies the ShowID at the resolved file (a different show there is refused), then
     /// hands the grant to `adopt` (e.g. open the NSDocument). If any step fails, access is ended once and the
     /// error rethrown; if `adopt` succeeds, the caller owns the grant and must `endAccess` it later.
-    public func openVerified(
+    public func openVerified<Coder: CanonicalDocumentCoding>(
         _ showID: ShowID,
-        opener: DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>,
+        opener: DocumentOpener<Coder>,
         adopt: @MainActor (ShowAccessGrant) async throws -> Void
     ) async throws -> ShowAccessGrant {
         let grant: ShowAccessGrant

@@ -530,9 +530,9 @@ enum SyntheticShowFiles {
         // A previous schema's persisted fixtures must not become format-update prompts in current-format UI tests.
         let schema = JSONEnvelopeCoder<ShowDocumentModel>.show.format.currentSchemaVersion
         let folder = URL(filePath: NSTemporaryDirectory())
-            .appending(path: "WWUITestLibrary100-schema\(schema)", directoryHint: .isDirectory)
+            .appending(path: "WWUITestLibrary100-package\(ShowPackage.version)-schema\(schema)", directoryHint: .isDirectory)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil)
+        let publisher = DocumentPublisher(coder: ShowPackageCoder(), recovery: nil)
         var locations: [ShowID: URL] = [:]
         for entry in fixture.library.entries {
             guard let details = fixture.details[entry.showID], details.state == .available else { continue }

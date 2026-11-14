@@ -47,7 +47,7 @@ struct MixerHostedTests {
     @Test func backgroundDocumentDataWithoutSnapshotRefusesLiveModelAccess() async throws {
         let document = ShowDocument()
         defer { document.close() }
-        let model = document.store.model
+        let model = document.store.residentModel
         let mainThreadData = try document.data(ofType: DocumentTypes.show)
         #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(mainThreadData).payload == model)
         do {
@@ -55,6 +55,14 @@ struct MixerHostedTests {
                 try document.data(ofType: DocumentTypes.show)
             }.value
             Issue.record("Background document data must require a captured save snapshot.")
+        } catch let error as CocoaError {
+            #expect(error.code == .fileWriteUnknown)
+        }
+        do {
+            _ = try await Task.detached {
+                _ = try document.fileWrapper(ofType: DocumentTypes.show)
+            }.value
+            Issue.record("Background document wrappers must require a captured save snapshot.")
         } catch let error as CocoaError {
             #expect(error.code == .fileWriteUnknown)
         }
@@ -70,8 +78,8 @@ struct MixerHostedTests {
         defer { try? FileManager.default.removeItem(at: folder) }
         let url = folder.appendingPathComponent("Synthetic.wwshow")
         let original = ShowDocumentModel.untitled()
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
-            original, revision: 1, publicationID: UUID()).data.write(to: url)
+        try LocalFileOperations().writeNew(
+            ShowCatalogCoder().encode(ShowCatalog(original), revision: 1), to: url)
         let document = try #require(NSDocumentController.shared.makeDocument(
             withContentsOf: url, ofType: DocumentTypes.show) as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
@@ -83,7 +91,7 @@ struct MixerHostedTests {
         try #require(document.store.apply("Rename before save") { model throws(DomainError) in
             try model.renamingShow(to: "Snapshot before save")
         })
-        let captured = document.store.model
+        let captured = document.store.residentModel
         try await wait { document.isDocumentEdited }
         let gate = SaveWorkerGate()
         let previousHooks = ShowDocument.debugPublicationHooks
@@ -103,7 +111,10 @@ struct MixerHostedTests {
             try model.renamingShow(to: "Second later edit")
         })
         let data = try await Task.detached {
-            try document.data(ofType: DocumentTypes.show)
+            let data = try document.data(ofType: DocumentTypes.show)
+            let wrapper = try document.fileWrapper(ofType: DocumentTypes.show)
+            try #require(wrapper.isDirectory && wrapper.fileWrappers?[ShowPackage.manifestName] != nil)
+            return data
         }.value
         #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(data).payload == captured)
         gate.resume()
@@ -111,19 +122,19 @@ struct MixerHostedTests {
         let verified = document.verifiedModel
         let edited = document.hasUnsavedModelChanges
         #expect(verified == captured && edited)
-        #expect(try Data(contentsOf: url) == data)
-        let currentTitle = document.store.model.show.title
+        #expect(try LocalFileOperations().read(url) == data)
+        let currentTitle = document.store.residentModel.show.title
         #expect(currentTitle == "Second later edit")
         undo.undo()
-        let firstUndoTitle = document.store.model.show.title
+        let firstUndoTitle = document.store.residentModel.show.title
         let firstUndoEdited = document.isDocumentEdited
         #expect(firstUndoTitle == "Later edit" && firstUndoEdited)
         undo.undo()
-        let secondUndoMatchesSaved = document.store.model == captured
+        let secondUndoMatchesSaved = document.store.residentModel == captured
         let secondUndoEdited = document.isDocumentEdited
         #expect(secondUndoMatchesSaved && !secondUndoEdited)
         undo.redo()
-        let redoTitle = document.store.model.show.title
+        let redoTitle = document.store.residentModel.show.title
         let redoEdited = document.isDocumentEdited
         #expect(redoTitle == "Later edit" && redoEdited)
     }
@@ -188,7 +199,7 @@ struct MixerHostedTests {
         let f = try await ready(durationSeconds: 12)
         defer { f.close() }
         let presentation = owner(f).state.mixerPresentation
-        let reference = try #require(f.document.store.model.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
+        let reference = try #require(f.document.store.residentModel.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
         f.model.playEnabledTracks(interval: 0...10, repeatInterval: false)
         try await wait { f.model.isAuditioning && f.model.playbackClockForTesting != nil }
         let clock = try #require(f.model.playbackClockForTesting)
@@ -222,7 +233,7 @@ struct MixerHostedTests {
         let editor = try #require(presentation.editorWindow)
         let revision = f.model.mixer.instanceRevision
         let clock = try #require(f.model.playbackClockForTesting)
-        let reference = try #require(f.document.store.model.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
+        let reference = try #require(f.document.store.residentModel.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
         try #require(f.document.store.setRecordingInputGain(6, reference: reference, in: f.model.episodeID))
         presentation.setFader(-6, bus: .master)
         for bypassed in [true, false, true] {
@@ -253,6 +264,10 @@ struct MixerHostedTests {
         f.model.stopAudition()
         f.document.undoManager?.undo()
         f.document.undoManager?.redo()
+        try await wait {
+            f.document.store.residentModel.episode(f.model.episodeID) != nil
+                && !f.model.isWorking && !f.document.mixerTransactions.isBusy
+        }
         let restoredBypass = presentation.mix.master.inserts.first?.bypassed
         #expect(restoredBypass == true)
     }
@@ -298,7 +313,7 @@ struct MixerHostedTests {
         let f = try await ready()
         defer { f.close() }
         let owner = owner(f), presentation = owner.state.mixerPresentation
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         f.model.playEnabledTracks(interval: 0...2, repeatInterval: false)
         defer { f.model.stopAudition() }
         try await wait(f.model.lastError ?? f.model.auditionLabel) {
@@ -314,7 +329,7 @@ struct MixerHostedTests {
         let speakerLevels = levels.filter { if case .speaker = $0.key { return true }; return false }
         #expect(speakerLevels.values.contains { $0.contains { $0.peakDB > -60 } })
         presentation.setFader(-12, bus: .master)
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         #expect(after == before)
         f.model.stopAudition()
         let stopped = presentation.consoleMeters.levels
@@ -485,7 +500,7 @@ struct MixerHostedTests {
     func ready(durationSeconds: Int = 4) async throws -> AlignmentWaveformRetentionHostedTests.Fixture {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: durationSeconds)
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
         return f
     }
@@ -565,7 +580,7 @@ struct MixerHostedTests {
                 end: .absolute(frame: firstFrame + 48_000)), in: f.model.episodeID)
         })
         try await save(f.document)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let hasInitialProcessor = f.model.mixer.processor != nil
         let initiallyPlaying = f.model.canStopAudition
         #expect(!hasInitialProcessor && !initiallyPlaying)
@@ -578,7 +593,7 @@ struct MixerHostedTests {
             $0.writable && $0.minimum < 1000 && $0.maximum > 1000
         })
         let preparedFrames = f.model.mixer.processor?.recipe.programFrames
-        let changedModelOnOpen = f.document.store.model != before
+        let changedModelOnOpen = f.document.store.residentModel != before
         let startedPlaybackOnOpen = f.model.canStopAudition
         #expect(preparedFrames == firstFrame..<(firstFrame + 1))
         #expect(!changedModelOnOpen && !startedPlaybackOnOpen)
@@ -605,7 +620,7 @@ struct MixerHostedTests {
     func recordingInputGainIsAppliedExactlyOnceInMixAndSpeakerListening(gainDB: Double) async throws {
         let f = try await ready()
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let originalBytes = try f.files.map { try Data(contentsOf: $0) }
         let episode = try #require(before.episode(f.model.episodeID))
         let primary = try #require(episode.speakerAssignments.first?.primary)
@@ -618,7 +633,7 @@ struct MixerHostedTests {
             try model.settingInputGain(gainDB, for: primary, in: episode.id)
         })
         try await save(f.document)
-        let gained = f.document.store.model
+        let gained = f.document.store.residentModel
         let multiplier = Float(pow(10, gainDB / 20))
         for timebase in [AlignmentRuntime.AuditionTimebase.acceptedTimeline, .sourceTime] {
             let clips = try await f.runtime.sourceAuditions(model: gained, episode: episode.id,
@@ -643,7 +658,7 @@ struct MixerHostedTests {
         defer { f.close() }
         let owner = owner(f)
         let state = owner.state, presentation = owner.state.mixerPresentation
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let controller = f.model.mixer
         state.reviewPanelPresented = true
         state.listeningState(for: f.model.episodeID).workspace.reviewPanelHeight = 310
@@ -660,14 +675,14 @@ struct MixerHostedTests {
         #expect(!state.bottomPanePresented)
         #expect(presentation.detachedWindow?.window === first)
         #expect(state.alignmentModel === f.model && presentation.controller === controller)
-        #expect(!f.model.canStopAudition && f.document.store.model == before)
+        #expect(!f.model.canStopAudition && f.document.store.residentModel == before)
         state.reviewPanelPresented = true
         #expect(state.bottomPaneContent == .review && presentation.isDetached)
         presentation.reattach()
         #expect(!presentation.isDetached && !first.isVisible)
         #expect(state.bottomPaneContent == .mixer && state.bottomPanePresented)
         #expect(state.listeningState(for: f.model.episodeID).workspace.reviewPanelHeight == 310)
-        #expect(f.model.mixer === controller && f.document.store.model == before)
+        #expect(f.model.mixer === controller && f.document.store.residentModel == before)
         presentation.detach()
         let last = try #require(presentation.detachedWindow?.window)
         owner.close()
@@ -793,7 +808,7 @@ struct MixerHostedTests {
         try await wait { presentation.inserts(.master).map(\.rackPosition) == [1, 5] }
         try await save(f.document)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(saved.episode(f.model.episodeID)?.mix?.master.inserts == presentation.inserts(.master))
         presentation.changeInserts(.master, action: "Remove Earlier Effect") {
             try MixerInsertRack.removing(earlier.id, from: $0)
@@ -807,7 +822,7 @@ struct MixerHostedTests {
         let f = try await ready()
         defer { f.close() }
         let presentation = owner(f).state.mixerPresentation
-        let before = f.document.store.model, diagnostic = f.model.listening.playback
+        let before = f.document.store.residentModel, diagnostic = f.model.listening.playback
         presentation.detach()
         #expect(!f.model.canStopAudition)
         f.model.playProductionMix(interval: 0...2)
@@ -821,8 +836,8 @@ struct MixerHostedTests {
         #expect(f.model.listening.playback == diagnostic)
         #expect(f.model.isAuditioning)
         f.model.stopAudition()
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.gainDB == -12)
-        #expect(f.document.store.model.episode(f.model.episodeID)?.alignment == before.episode(f.model.episodeID)?.alignment)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.gainDB == -12)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.alignment == before.episode(f.model.episodeID)?.alignment)
     }
 
     @Test(arguments: [false, true])
@@ -836,7 +851,7 @@ struct MixerHostedTests {
         let waveformMap = model.waveformMap
         let needsWaveformRefresh = model.waveformNeedsRefreshAfterSave
         #expect(waveformMap == nil && needsWaveformRefresh)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         model.playProductionMix(interval: 0...1)
         let preparing = model.canStopAudition
@@ -849,7 +864,7 @@ struct MixerHostedTests {
         let error = model.lastError
         let label = model.auditionLabel
         let end = model.waveformPlayheadSeconds
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         let unchangedOriginals = try f.files.map { try Data(contentsOf: $0) } == originals
         #expect(error == nil && label == "Production mix reached the end of the selected program.")
         #expect(end == 1)
@@ -860,7 +875,7 @@ struct MixerHostedTests {
     func productionRejectsPendingTimingEditsAndCanRetryAfterDiscardingThem(groupDraft: Bool) async throws {
         let f = try await ready()
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         if groupDraft { f.model.groupDraftMilliseconds = 10 }
         else { f.model.waveformOffsetMilliseconds += 10 }
         f.model.playProductionMix(interval: 0...1)
@@ -868,7 +883,7 @@ struct MixerHostedTests {
         let error = f.model.lastError
         let state = f.model.mixer.state
         let expected = AlignmentTransportFailure.unverifiedProductionTiming.localizedDescription
-        let rejected = f.document.store.model
+        let rejected = f.document.store.residentModel
         #expect(!playing && error == expected && state == .failed(expected))
         #expect(rejected == before)
         f.model.resetWaveformTiming()
@@ -883,7 +898,7 @@ struct MixerHostedTests {
         try await wait(f.model.auditionLabel) { !f.model.canStopAudition }
         let finalError = f.model.lastError
         let label = f.model.auditionLabel
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         #expect(finalError == nil && label == "Production mix reached the end of the selected program.")
         #expect(after == before)
     }
@@ -904,18 +919,18 @@ struct MixerHostedTests {
         defer { f.close() }
         let originals = try f.files.map { try Data(contentsOf: $0) }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
         if drift {
             let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
             f.model.setPositionLocked(false, group: target.group)
             f.model.selectWaveform(target)
             f.model.applyNumeric(ratePPM: 125, offsetMilliseconds: 350)
-            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
                 && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
             try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let slots = try (0..<3).map { _ in try appleSlot() }
         try #require(f.document.store.apply("Add Apple Monitoring Inserts") { model throws(DomainError) in
             var result = model
@@ -926,7 +941,7 @@ struct MixerHostedTests {
             return try result.settingMasterMix(MasterMixState(inserts: [slots[2]]), in: episode.id)
         })
         try await save(f.document)
-        let expected = f.document.store.model
+        let expected = f.document.store.residentModel
         let end = drift ? 6.0 : 1.5
         f.model.playProductionMix(interval: 0...end)
         try await wait(f.model.lastError ?? f.model.auditionLabel) {
@@ -936,7 +951,7 @@ struct MixerHostedTests {
         #expect(f.model.auditionLabel == "Production mix reached the end of the selected program.")
         #expect(f.model.waveformPlayheadSeconds == end)
         #expect(f.model.mixer.unitStatuses.count == 3)
-        #expect(f.document.store.model == expected)
+        #expect(f.document.store.residentModel == expected)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -946,13 +961,13 @@ struct MixerHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2, durationSeconds: 8)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
         f.model.setPositionLocked(false, group: target.group)
         f.model.selectWaveform(target)
         f.model.applyNumeric(ratePPM: 125, offsetMilliseconds: 350)
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave }
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         _ = try await f.model.mixer.prepare(programFrames: 0..<288_000)
@@ -1002,7 +1017,7 @@ struct MixerHostedTests {
         _ = try await f.model.mixer.prepare(programFrames: 0..<1)
         presentation.instanceDidChange()
         #expect(!old.isVisible && presentation.editorWindow == nil)
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.first?.documentState != nil)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts.first?.documentState != nil)
         #expect(abs(try #require(try await f.model.mixer.processor?.parameters(slot: slot.id).first {
             $0.address == parameter.address
         }?.value) - 1500) < 0.1)
@@ -1012,7 +1027,7 @@ struct MixerHostedTests {
         let f = try await ready()
         defer { f.close() }
         let owner = owner(f), episodeID = f.model.episodeID
-        let episode = try #require(f.document.store.model.episode(episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(episodeID))
         let assignment = try #require(episode.speakerAssignments.first), primary = try #require(assignment.primary)
         let backup = ChannelReference(sourceID: f.target, statedChannel: 0)
         try #require(f.document.store.apply("Quiet recording gain") { model throws(DomainError) in
@@ -1028,7 +1043,7 @@ struct MixerHostedTests {
         #expect(mix.inputGainDB(for: f.target, channel: 0) == 0)
         #expect(mix.state(for: assignment.speakerID).gainDB == -6 && mix.state(for: assignment.speakerID).pan == 0.25)
         try await save(f.document)
-        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: #require(f.document.fileURL))).payload
+        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(reopened.episode(episodeID)?.mix == mix)
         #expect(reopened.episode(episodeID)?.alignment == episode.alignment)
     }
@@ -1067,7 +1082,7 @@ struct MixerHostedTests {
             presentation.mix == edited && !f.document.mixerTransactions.isBusy
         }
         try await save(f.document)
-        #expect(f.document.verifiedModel == f.document.store.model)
+        #expect(f.document.verifiedModel == f.document.store.residentModel)
         _ = try await f.model.mixer.prepare(programFrames: 0..<1)
         let recalled = try await f.model.mixer.processor?.parameters(slot: slot.id)
         #expect(abs(try #require(recalled?.first { $0.address == parameter.address }?.value) - 1000) < 0.1)
@@ -1162,16 +1177,20 @@ struct MixerHostedTests {
             value: 1500, coalescing: "single-slot-editor")
         undo.endUndoGrouping()
         #expect(captures == [[slots[0].id], [slots[0].id]])
-        let edited = try #require(f.document.store.model.episode(f.model.episodeID)?.mix)
+        let edited = try #require(f.document.store.residentModel.episode(f.model.episodeID)?.mix)
         #expect(edited.master.inserts[0].documentState != nil)
         #expect(edited.master.inserts[1] == slots[1])
         undo.undo()
         try await wait {
             controller.processor == nil && !f.document.mixerTransactions.isBusy
-                && f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts == slots
+                && f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts == slots
         }
         undo.redo()
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix == edited)
+        try await wait {
+            f.document.store.residentModel.episode(f.model.episodeID) != nil
+                && !f.model.isWorking && !f.document.mixerTransactions.isBusy
+        }
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix == edited)
         _ = try await controller.prepare(programFrames: 0..<1)
         let recalled = try #require(try await controller.processor?.parameters(slot: slots[0].id).first {
             $0.address == parameter.address
@@ -1200,17 +1219,17 @@ struct MixerHostedTests {
         try await wait { ticks.requests == 1 }
         #expect(captures == [slots.map(\.id), [slots[0].id], [slots[1].id]])
         captures = []
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         // Freeze the revision hint to model a vendor that changes state without notification.
         try await processor.setParameter(slot: slots[0].id, address: parameter.address, value: 1000)
         for _ in 0..<4 { try await advance(ticks) }
-        #expect(captures.isEmpty && f.document.store.model == before)
+        #expect(captures.isEmpty && f.document.store.residentModel == before)
         controller.stop()
         #expect(controller.processor === processor && controller.hasObservedState)
         try await advance(ticks)
         #expect(captures == [[slots[0].id], [slots[1].id]])
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts[0].documentState != nil)
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts[1] == slots[1])
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts[0].documentState != nil)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts[1] == slots[1])
         captures = []
         try await processor.setParameter(slot: slots[1].id, address: parameter.address, value: 2000)
         controller.observationParameterRevisions?[slots[1].id] = 1
@@ -1241,13 +1260,13 @@ struct MixerHostedTests {
         for slot in slots {
             try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
         }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         var captures: [[AudioUnitSlotID]] = []
         controller.didCaptureNativeStates = { captures.append($0) }
         controller.afterObservationSlotCapture = { _ in await gate.pauseOnce() }
         try ticks.advance(.seconds(1))
         try await wait { gate.entered }
-        #expect(captures == [[slots[0].id]] && f.document.store.model == before)
+        #expect(captures == [[slots[0].id]] && f.document.store.residentModel == before)
         let rendered = try await processor.process(.init(frames: 0..<512,
             channels: Dictionary(uniqueKeysWithValues: recipe.routes.map {
                 ($0.reference, [Float](repeating: 0.25, count: 512))
@@ -1261,11 +1280,11 @@ struct MixerHostedTests {
         try await wait { controller.pendingStateOperations == 2 }
         let saving = Task { try await save(f.document) }
         try await wait { f.document.mixerTransactions.isBusy }
-        #expect(f.document.store.model == before, "No partial background state may escape to the document.")
+        #expect(f.document.store.residentModel == before, "No partial background state may escape to the document.")
         gate.resume()
         try await editing.value
         try await saving.value
-        #expect(f.document.verifiedModel == f.document.store.model)
+        #expect(f.document.verifiedModel == f.document.store.residentModel)
         #expect(captures.prefix(2) == [[slots[0].id], [slots[1].id]])
         #expect(captures.contains(slots.map(\.id)), "Save must perform a fresh whole-chain capture.")
         try await controller.endEditorObservation()
@@ -1299,7 +1318,7 @@ struct MixerHostedTests {
         for slot in slots {
             try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
         }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         controller.afterObservationSlotCapture = { _ in await gate.pauseOnce() }
         try ticks.advance(.seconds(1))
         try await wait { gate.entered }
@@ -1307,9 +1326,9 @@ struct MixerHostedTests {
         controller.observationParameterRevisions?[slots[0].id] = 1
         gate.resume()
         try await wait { ticks.requests == 2 }
-        #expect(f.document.store.model == before, "An old A/new B sweep must not publish after A's revision changes.")
+        #expect(f.document.store.residentModel == before, "An old A/new B sweep must not publish after A's revision changes.")
         try await controller.captureAndPersist(coalescing: "revision-race")
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.allSatisfy {
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts.allSatisfy {
             $0.documentState != nil
         } == true)
         try await controller.endEditorObservation()
@@ -1334,17 +1353,17 @@ struct MixerHostedTests {
         for slot in slots {
             try await processor.setParameter(slot: slot.id, address: parameter.address, value: 1000)
         }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let failure = MixerFailure.state(slots[1].id, "synthetic second-slot observation failure")
         controller.afterObservationSlotCapture = { id in
             if id == slots[1].id { throw failure }
         }
         try ticks.advance(.seconds(1))
         try await wait { controller.state == .failed(failure.localizedDescription) }
-        #expect(f.document.store.model == before && controller.hasObservedState)
+        #expect(f.document.store.residentModel == before && controller.hasObservedState)
         controller.afterObservationSlotCapture = nil
         try await controller.captureAndPersist(coalescing: "failed-sweep")
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.allSatisfy {
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts.allSatisfy {
             $0.documentState != nil
         } == true)
         try await controller.endEditorObservation()
@@ -1366,7 +1385,7 @@ struct MixerHostedTests {
         controller.observationParameterRevisions = Dictionary(uniqueKeysWithValues: slots.map { ($0.id, 0) })
         try await controller.beginEditorObservation(coalescing: "retiring-editor")
         try await wait { ticks.requests == 1 }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         var captures: [[AudioUnitSlotID]] = []
         controller.didCaptureNativeStates = { captures.append($0) }
         controller.afterObservationSlotCapture = { _ in await gate.pauseOnce() }
@@ -1377,15 +1396,15 @@ struct MixerHostedTests {
         for slot in slots {
             try await processor.setParameter(slot: slot.id, address: parameter.address, value: 2000)
         }
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         gate.resume()
         try await closing.value
         #expect(captures == [[slots[0].id], slots.map(\.id)],
             "The canceled sweep must neither read its second slot nor publish; close captures both anew.")
         controller.invalidatePreparedInstance()
-        let retired = f.document.store.model
+        let retired = f.document.store.residentModel
         for _ in 0..<5 { await Task.yield() }
-        #expect(controller.processor == nil && f.document.store.model == retired)
+        #expect(controller.processor == nil && f.document.store.residentModel == retired)
         #expect(captures == [[slots[0].id], slots.map(\.id)])
         _ = try await controller.prepare(programFrames: 0..<1)
         let reloaded = try #require(controller.processor)
@@ -1451,7 +1470,7 @@ struct MixerHostedTests {
         #expect(controller.editorObservationKey == nil)
         #expect(!controller.hasObservedState)
         #expect(controller.state == .ready)
-        let captured = try #require(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.first?.documentState)
+        let captured = try #require(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts.first?.documentState)
         #expect(!captured.isEmpty)
         _ = try await controller.prepare(programFrames: 0..<1)
         #expect(abs(try #require(try await controller.processor?.parameters(slot: slot.id).first {
@@ -1502,7 +1521,7 @@ struct MixerHostedTests {
         try await processor.setParameter(slot: slot.id, address: parameter.address, value: 2000)
         gate.resume()
         try await saving.value
-        let verifiedMatchesCurrent = f.document.verifiedModel == f.document.store.model
+        let verifiedMatchesCurrent = f.document.verifiedModel == f.document.store.residentModel
         let editedAfterSave = f.document.isDocumentEdited
         #expect(verifiedMatchesCurrent && !editedAfterSave)
         #expect(controller.editorObservationKey == "native-save")
@@ -1557,15 +1576,15 @@ struct MixerHostedTests {
             ShowDocument.debugPublicationHooks = previousHooks
         }
         let priorURL = try #require(f.document.fileURL)
-        let priorBytes = try Data(contentsOf: priorURL)
+        let priorBytes = try LocalFileOperations().read(priorURL)
         let saving = Task { try await save(f.document) }
         try await wait { gate.entered }
-        let savedSnapshot = f.document.store.model
+        let savedSnapshot = f.document.store.residentModel
         let url = try #require(f.document.presentedFileURL)
         let statusWhileSaving = f.document.saveStatus.state
         #expect(!gate.ranOnMainThread && !gate.timedOut)
         #expect(!statusWhileSaving.isCoherentlySaved)
-        #expect(try Data(contentsOf: url) == priorBytes)
+        #expect(try LocalFileOperations().read(url) == priorBytes)
         let editorVisible = editor.isVisible
         let observing = controller.editorObservationKey != nil
         let busy = f.document.mixerTransactions.isBusy
@@ -1574,7 +1593,7 @@ struct MixerHostedTests {
         let playhead = f.model.waveformPlayheadSeconds
         presentation.setParameter(parameter, value: 1000)
         try await wait("live parameter: \(presentation.error ?? "")") {
-            f.document.store.model != savedSnapshot && !f.document.mixerTransactions.isBusy
+            f.document.store.residentModel != savedSnapshot && !f.document.mixerTransactions.isBusy
         }
         let editingError = presentation.error
         let stillVisible = editor.isVisible
@@ -1597,16 +1616,19 @@ struct MixerHostedTests {
         #expect(!gate.timedOut, "Editing and rendering must proceed before the persistence worker is released.")
         gate.resume()
         try await saving.value
+        try await f.document.ensureVerifiedEpisodeLoaded(f.model.episodeID)
         let verified = f.document.verifiedModel
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         let isEdited = f.document.isDocumentEdited
         let isSaved = f.document.status.saveStatus.state.isVerifiedOnDisk
         #expect(verified == savedSnapshot && edited != savedSnapshot)
         #expect(isEdited && !isSaved)
-        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url)).payload == savedSnapshot)
+        let savedMatches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(url)).payload == savedSnapshot
+        #expect(savedMatches)
         ShowDocument.debugBeforeSaveEncoding = nil
         ShowDocument.debugPublicationHooks = previousHooks
         try await save(f.document)
+        try await f.document.ensureVerifiedEpisodeLoaded(f.model.episodeID)
         let savedEdit = f.document.verifiedModel
         let editedAfterSave = f.document.isDocumentEdited
         #expect(savedEdit == edited && !editedAfterSave)
@@ -1639,7 +1661,7 @@ struct MixerHostedTests {
             master.gainDB = -6
             return try model.settingMasterMix(master, in: f.model.episodeID)
         })
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         let second = Task { try await save(f.document) }
         for _ in 0..<10 { await Task.yield() }
         let busy = f.document.mixerTransactions.isBusy
@@ -1683,12 +1705,17 @@ struct MixerHostedTests {
         gate.resume()
         try await wait("overlap Undo: \(owner.state.mixerPresentation.error ?? "")") {
             controller.processor == nil && !f.document.mixerTransactions.isBusy
+                && f.document.store.residentModel.episode(f.model.episodeID) != nil && !f.model.isWorking
         }
         #expect(owner.state.mixerPresentation.mix.master.inserts.first?.documentState == nil)
-        let restored = f.document.store.model
+        let restored = f.document.store.residentModel
         for _ in 0..<10 { await Task.yield() }
-        #expect(f.document.store.model == restored && !controller.hasObservedState)
+        #expect(f.document.store.residentModel == restored && !controller.hasObservedState)
         undo.redo()
+        try await wait {
+            f.document.store.residentModel.episode(f.model.episodeID) != nil
+                && !f.model.isWorking && !f.document.mixerTransactions.isBusy
+        }
         #expect(owner.state.mixerPresentation.mix.master.inserts.first?.documentState != nil)
         controller.beforeStateCapture = nil
         _ = try await controller.prepare(programFrames: 0..<1)
@@ -1717,7 +1744,7 @@ struct MixerHostedTests {
         owner.close()
         try await wait("origin close: \(presentation.error ?? "")") { presentation.isClosed }
         #expect(presentation.editorWindow == nil && !presentation.isDetached && f.model.mixer.processor == nil)
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.master.inserts.first?.documentState != nil)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.master.inserts.first?.documentState != nil)
 
         let reopened = try #require(f.document.openEpisode(f.model.episodeID))
         try await wait { reopened.state.alignmentModel != nil }
@@ -1755,9 +1782,9 @@ struct MixerHostedTests {
         } catch MixerFailure.missingUnit(let id) { #expect(id == slot.id) }
         #expect(owner.state.mixerPresentation.mix.master.inserts == [slot])
         f.document.status.setFormatUpdate(.needed)
-        let prior = f.document.store.model
+        let prior = f.document.store.residentModel
         owner.state.mixerPresentation.setFader(-20, bus: .master)
-        #expect(f.document.store.model == prior && !owner.state.mixerPresentation.canEdit)
+        #expect(f.document.store.residentModel == prior && !owner.state.mixerPresentation.canEdit)
         f.document.status.setFormatUpdate(nil)
     }
 }

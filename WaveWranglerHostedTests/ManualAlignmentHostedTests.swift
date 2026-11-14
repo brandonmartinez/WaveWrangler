@@ -21,7 +21,7 @@ struct ManualAlignmentHostedTests {
     private func ready(_ f: AlignmentWaveformRetentionHostedTests.Fixture) async throws {
         try await wait(f.model.lastError ?? f.model.waveformMessage) {
             !f.model.isWorking && f.model.trackProcessingOperation == nil
-                && !f.model.waveformNeedsRefreshAfterSave && f.document.verifiedModel == f.document.store.model
+                && !f.model.waveformNeedsRefreshAfterSave && f.document.verifiedModel == f.document.store.residentModel
         }
     }
 
@@ -38,7 +38,7 @@ struct ManualAlignmentHostedTests {
     @Test func soloAnUntimedRecordingPlaysOriginalTimeWithoutSavingAnAlignment() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(durationSeconds: 4)
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         f.model.setSoloed(true, scope: .source(f.target))
         f.model.waveformPlayheadSeconds = 0.25
@@ -53,14 +53,14 @@ struct ManualAlignmentHostedTests {
         try await wait(f.model.auditionLabel) { !f.model.canStopAudition }
         #expect(abs(f.model.waveformPlayheadSeconds - 1.25) < 1 / 48_000)
         #expect(f.model.auditionLabel.contains("No timing was applied"))
-        #expect(f.document.store.model == before && before.episodes[0].alignment?.acceptedRevision == nil)
+        #expect(f.document.store.residentModel == before && before.episodes[0].alignment?.acceptedRevision == nil)
         #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
     }
 
     @Test func sourceTimeRenderingStillRequiresTheCurrentOriginalAuthorization() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(durationSeconds: 4)
         defer { f.close() }
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let clips = try await f.runtime.sourceAuditions(model: snapshot, episode: f.model.episodeID,
             sources: [f.target], outputFrames: 12_000..<36_000, applyingCuts: false, timebase: .sourceTime)
         let clip = try #require(clips[f.target])
@@ -72,13 +72,13 @@ struct ManualAlignmentHostedTests {
             try await f.runtime.sourceAuditions(model: snapshot, episode: f.model.episodeID,
                 sources: [f.target], outputFrames: 12_000..<36_000, applyingCuts: false, timebase: .sourceTime)
         }
-        #expect(f.document.store.model == snapshot)
+        #expect(f.document.store.residentModel == snapshot)
     }
 
     @Test func sourceTimeAuditionStartsAtTheRecordingInsteadOfPlayingNegativePreroll() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(durationSeconds: 4)
         defer { f.close() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         f.model.setSoloed(true, scope: .source(f.target))
         f.model.waveformPlayheadSeconds = -300
         f.model.playEnabledTracks()
@@ -86,13 +86,13 @@ struct ManualAlignmentHostedTests {
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         #expect(f.model.playbackClockForTesting?.startSeconds == 0)
         f.model.stopAudition()
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
     }
 
     @Test func onePairAppliesOffsetSecondPairFitsDriftAndLaterMovesRemainUndoable() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(extraSources: 1)
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         let reference = try #require(f.model.waveformTracks.first { $0.group == f.model.referenceGroup })
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
@@ -108,7 +108,7 @@ struct ManualAlignmentHostedTests {
         #expect(f.model.selectedAnchors.count == 1)
         #expect(abs((f.model.selectedRow?.offsetMilliseconds ?? .infinity) + 1_000) < 0.001)
         #expect(f.model.canMoveGroup && !f.model.positionIsLocked(target.group))
-        let first = f.document.store.model
+        let first = f.document.store.residentModel
         let referenceMap = try #require(f.model.waveformMap?.groups.first { $0.group == reference.group })
         try point(11, on: reference, in: f.model)
         f.model.markWaveformReference(reference)
@@ -120,7 +120,7 @@ struct ManualAlignmentHostedTests {
         try await ready(f)
         #expect(abs((f.model.selectedRow?.ratePPM ?? .infinity) + 99.990001) < 0.01)
         #expect(f.model.selectedAnchors.count == 2 && f.model.canMoveGroup)
-        let anchored = f.document.store.model
+        let anchored = f.document.store.residentModel
         let oldOffset = try #require(f.model.selectedRow?.offsetMilliseconds)
         let undo = try #require(f.document.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
@@ -132,16 +132,16 @@ struct ManualAlignmentHostedTests {
         f.model.commitGroupMove()
         try await ready(f)
         undo.endUndoGrouping()
-        let moved = f.document.store.model
+        let moved = f.document.store.residentModel
         #expect(abs((f.model.selectedRow?.offsetMilliseconds ?? .infinity) - oldOffset - 250) < 0.001)
         #expect(f.model.waveformMap?.groups.first { $0.group == reference.group } == referenceMap)
         #expect(f.model.waveformMap?.groups.first { $0.group == target.group }?.placements.count == 2)
         undo.undo()
         try await ready(f)
-        #expect(f.document.store.model == anchored)
+        #expect(f.document.store.residentModel == anchored)
         undo.redo()
         try await ready(f)
-        #expect(f.document.store.model == moved && f.model.canMoveGroup)
+        #expect(f.document.store.residentModel == moved && f.model.canMoveGroup)
         #expect(moved.episodes[0].sources == before.episodes[0].sources)
         #expect(first.episodes[0].alignment?.acceptedRevision != nil)
         #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
@@ -150,7 +150,7 @@ struct ManualAlignmentHostedTests {
     @Test func onePairOutsideTheRecordingCannotPublishAPosition() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(durationSeconds: 4)
         defer { f.close() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let track = try #require(f.model.waveformTracks.first { $0.id == f.target })
         f.model.selectWaveform(track)
         f.model.waveformTargetPoint = 100
@@ -158,13 +158,13 @@ struct ManualAlignmentHostedTests {
         f.model.addWaveformAnchor()
         f.model.applyWaveformAnchors()
         #expect(f.model.lastError?.contains("inside the original recording") == true)
-        #expect(f.document.store.model == original && !f.model.isWorking)
+        #expect(f.document.store.residentModel == original && !f.model.isWorking)
     }
 
     @Test func anUnplacedGroupBesideDynamicTimingCanMoveWhileTheCorrectedGroupNeedsReset() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(extraGroups: 1)
         defer { f.close() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
         let unplaced = try #require(f.model.waveformTracks.first { $0.name == "unplaced-0.wav" })
         _ = try await f.runtime.prepareManual(model: original, episode: f.model.episodeID)
@@ -172,7 +172,7 @@ struct ManualAlignmentHostedTests {
             decisions: [target.epoch: .numeric(ppm: 0, offsetMilliseconds: 0)])
         try #require(f.model.publishAlignment(base, expecting: original, actionName: "Synthetic partial acceptance"))
         try await ready(f)
-        let prior = f.document.store.model
+        let prior = f.document.store.residentModel
         let episode = try #require(prior.episode(f.model.episodeID))
         let version = try #require(episode.alignment?.acceptedMap)
         let map = try prior.timeMap(revision: version.revision, in: episode.id)
@@ -200,7 +200,7 @@ struct ManualAlignmentHostedTests {
         #expect(!f.model.canMoveGroup && !f.model.canCorrect)
         #expect(f.model.manualTimingBlockReason(for: target.group) != nil)
         f.model.applyNumeric(ratePPM: 0, offsetMilliseconds: 100)
-        #expect(f.document.store.model == corrected)
+        #expect(f.document.store.residentModel == corrected)
         f.model.saveAdaptiveCorrection(restoringAudio: target.id)
         try await ready(f)
         #expect(f.model.adaptiveCorrection(for: target.id) == correction,
@@ -210,7 +210,7 @@ struct ManualAlignmentHostedTests {
         f.model.groupDraftMilliseconds = 200
         f.model.commitGroupMove()
         try await ready(f)
-        #expect(f.document.store.model.episodes[0].alignment?.acceptedMap?.sourceCorrections == [correction])
+        #expect(f.document.store.residentModel.episodes[0].alignment?.acceptedMap?.sourceCorrections == [correction])
         #expect(f.model.sourceHasAcceptedTiming(unplaced.id) && f.model.canMoveGroup)
         f.model.selectWaveform(target)
         f.model.saveAdaptiveCorrection(removing: target.id)

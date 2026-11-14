@@ -47,7 +47,7 @@ struct TracksWorkflowHostedTests {
         }
         try #require(f.model.canAcceptTracksReview)
         f.model.acceptTracksReview()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && f.model.waveformMap != nil }
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
@@ -55,7 +55,7 @@ struct TracksWorkflowHostedTests {
             f.model.setPositionLocked(false, group: target.group)
             f.model.selectWaveform(target)
             f.model.applyNumeric(ratePPM: 125, offsetMilliseconds: 350)
-            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
             try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
         }
         f.model.setPositionLocked(true, group: target.group)
@@ -64,20 +64,20 @@ struct TracksWorkflowHostedTests {
         )
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 0, outValue: 20)
-        let input = f.document.store.model
+        let input = f.document.store.residentModel
         let transcripts = try await f.runtime.transcribeCleanup(
             model: input, episode: f.model.episodeID, modelRevision: "synthetic-reset",
             transcribeWindow: { _ in PCMTranscript(segments: [.init(text: "um", startSeconds: 1, endSeconds: 1.25)]) },
             progress: { _ in }
         )
         try #require(try cleanup.publishTranscripts(transcripts, expecting: input))
-        var before = f.document.store.model
+        var before = f.document.store.residentModel
         let revision = try #require(before.episodes[0].alignment?.acceptedRevision)
         before.episodes[0].cleanup?.manualCuts = [
             .init(alignmentRevision: revision, startFrame: 240_000, endFrame: 288_000),
         ]
         let applied = f.document.store.applyReplacement(
-            "Synthetic cut", expecting: f.document.store.model, model: before, afterChange: { _ in }
+            "Synthetic cut", expecting: f.document.store.residentModel, model: before, afterChange: { _ in }
         )
         try #require(applied)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
@@ -98,7 +98,7 @@ struct TracksWorkflowHostedTests {
         #expect(f.model.tracksReviewRows.isEmpty && f.model.tracksReviewProposals.isEmpty)
         #expect(f.model.waveformOffsetMilliseconds == 0 && f.model.waveformRatePPM == 0)
         #expect(undo.undoActionName == "Reset Alignment")
-        let reset = f.document.store.model
+        let reset = f.document.store.residentModel
         try await wait { f.document.verifiedModel == reset && !f.model.isLoadingWaveforms
             && f.model.waveformMap == nil && !f.model.waveformTracks.isEmpty }
         #expect(f.model.lastError == nil, "\(f.model.lastError ?? "")")
@@ -115,15 +115,15 @@ struct TracksWorkflowHostedTests {
         }
         #expect(reset == (try before.resettingAlignment(in: f.model.episodeID)))
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == reset && saved.episodes[0].cleanup?.transcripts.isEmpty == true)
         undo.undo()
-        try await wait { f.document.verifiedModel == before && f.document.store.model == before
+        try await wait { f.document.verifiedModel == before && f.document.store.residentModel == before
             && f.model.waveformMap != nil && !f.model.isLoadingWaveforms }
         #expect(f.model.canResetAlignment && f.model.listening.playback == listening)
         undo.redo()
-        try await wait { f.document.verifiedModel == reset && f.document.store.model == reset
+        try await wait { f.document.verifiedModel == reset && f.document.store.residentModel == reset
             && f.model.waveformMap == nil && !f.model.isLoadingWaveforms }
         #expect(!f.model.canResetAlignment && f.model.listening.playback == listening)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
@@ -138,8 +138,8 @@ struct TracksWorkflowHostedTests {
         defer { f.close() }
         window.orderFront(nil)
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let before = f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let before = f.document.store.residentModel
         func button(_ title: String, in view: NSView) -> NSButton? {
             if let button = view as? NSButton, button.title == title { return button }
             return view.subviews.lazy.compactMap { button(title, in: $0) }.first
@@ -150,7 +150,7 @@ struct TracksWorkflowHostedTests {
         let cancel = try #require(button("Cancel", in: cancelContent))
         cancel.performClick(nil)
         try await wait { window.attachedSheet == nil }
-        #expect(f.document.store.model == before && f.model.canResetAlignment)
+        #expect(f.document.store.residentModel == before && f.model.canResetAlignment)
         f.model.requestResetAlignment()
         try await wait { window.attachedSheet != nil }
         #expect(f.document.store.apply("Concurrent note", { model in
@@ -158,16 +158,16 @@ struct TracksWorkflowHostedTests {
             changed.episodes[0].notes = "Keep this newer edit"
             return changed
         }))
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         let confirmContent = try #require(window.attachedSheet?.contentView)
         let confirm = try #require(button("Reset Alignment", in: confirmContent))
         confirm.performClick(nil)
         try await wait { f.model.lastError?.contains("show changed while confirming reset") == true }
-        #expect(f.document.store.model == edited && f.model.canResetAlignment)
+        #expect(f.document.store.residentModel == edited && f.model.canResetAlignment)
         f.model.analyzeTracks()
         #expect(!f.model.canResetAlignment)
         f.model.resetAlignment(expecting: edited)
-        #expect(f.document.store.model == edited)
+        #expect(f.document.store.residentModel == edited)
         f.model.cancelTracksAnalysis()
         try await wait { !f.model.isWorking }
     }
@@ -179,9 +179,9 @@ struct TracksWorkflowHostedTests {
         )
         defer { other.suspend(); f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
             && !f.model.isLoadingWaveforms && f.model.waveformMap != nil }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let undo = try #require(f.document.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
         undo.removeAllActions()
@@ -190,7 +190,7 @@ struct TracksWorkflowHostedTests {
         undo.beginUndoGrouping()
         f.model.resetAlignment(expecting: before)
         undo.endUndoGrouping()
-        let reset = f.document.store.model
+        let reset = f.document.store.residentModel
         #expect(f.document.verifiedModel == before && reset != before)
         other.playProductionMix()
         let resetPlaying = other.canStopAudition
@@ -204,7 +204,7 @@ struct TracksWorkflowHostedTests {
         try await wait { f.document.verifiedModel == before && !f.model.isLoadingWaveforms
             && f.model.waveformMap != nil }
         undo.redo()
-        #expect(f.document.verifiedModel == before && f.document.store.model == reset)
+        #expect(f.document.verifiedModel == before && f.document.store.residentModel == reset)
         other.playProductionMix()
         let redoPlaying = other.canStopAudition
         let redoPlaybackError = other.lastError
@@ -220,7 +220,7 @@ struct TracksWorkflowHostedTests {
     @Test func verifiedSavedWaveformsCanRestoreTimingBeforeTheAcceptanceCallback() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture()
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         let episode = f.model.episodeID
         let report = try await f.runtime.analyzeTracks(model: before, episode: episode)
@@ -233,7 +233,7 @@ struct TracksWorkflowHostedTests {
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try #require(f.document.verifiedModel == accepted.model)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == accepted.model)
         let waveforms = try await f.runtime.waveformTracks(
@@ -242,7 +242,7 @@ struct TracksWorkflowHostedTests {
         #expect(waveforms.map == accepted.map && waveforms.mapWarning == nil)
         try await f.runtime.activate(accepted)
         #expect(try await f.runtime.pipeline.verifiedAcceptedMap(model: saved, episode: episode) == accepted.map)
-        #expect(f.document.store.model == saved && f.document.verifiedModel == saved)
+        #expect(f.document.store.residentModel == saved && f.document.verifiedModel == saved)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -260,7 +260,7 @@ struct TracksWorkflowHostedTests {
         let option = try #require(f.model.matchOptions(for: target).first)
         #expect(option.referenceChannel == 0 && option.targetChannel == 0)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         #expect(before.episodes[0].speakerAssignments.allSatisfy {
             $0.primary?.channel == .unknown && $0.backups.allSatisfy { $0.channel == .unknown }
         })
@@ -268,17 +268,17 @@ struct TracksWorkflowHostedTests {
         f.model.analyze()
         try await wait { !f.model.isWorking }
         try #require(f.model.canAcceptProposal, "\(f.model.lastError ?? f.model.message)")
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         f.model.analyzeTracks()
         try await wait { !f.model.isWorking }
         try #require(f.model.tracksReviewPresented && !f.model.tracksReviewProposals.isEmpty)
         f.model.selectedTracksProposals = f.model.tracksReviewProposals
         try #require(f.model.canAcceptTracksReview)
         f.model.acceptTracksReview()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         #expect(f.model.lastError == nil, "\(f.model.lastError ?? "")")
-        #expect(f.document.store.model.episodes[0].alignment?.acceptedRevision != nil)
-        #expect(f.document.store.model.episodes[0].speakerAssignments == before.episodes[0].speakerAssignments)
+        #expect(f.document.store.residentModel.episodes[0].alignment?.acceptedRevision != nil)
+        #expect(f.document.store.residentModel.episodes[0].speakerAssignments == before.episodes[0].speakerAssignments)
     }
 
     @Test func tracksReviewHasFlexibleNativeResizeLimitsAndGrowingContent() async throws {
@@ -322,7 +322,7 @@ struct TracksWorkflowHostedTests {
             cleanupPrimaries: 1, durationSeconds: 96, targetStepSeconds: 0.02
         )
         defer { f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         let target = try #require(f.model.waveformTracks.first { $0.id == f.target })
         f.model.selectWaveform(target)
@@ -333,7 +333,7 @@ struct TracksWorkflowHostedTests {
         #expect(!individual.timing.regions.isEmpty && individual.target.source == f.target)
         #expect(individual.audioPreservationError == nil)
         #expect(!f.model.proposedWaveformStrokes(for: target).isEmpty)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         f.model.analyzeTracks()
         try await wait(seconds: 90) { !f.model.isWorking }
         try #require(f.model.tracksReviewPresented, "\(f.model.lastError ?? f.model.message)")
@@ -344,7 +344,7 @@ struct TracksWorkflowHostedTests {
         })
         #expect(f.model.selectedTracksAdaptive.isEmpty)
         #expect(!f.model.canAcceptTracksReview)
-        #expect(f.document.store.model == before && !f.model.isAuditioning)
+        #expect(f.document.store.residentModel == before && !f.model.isAuditioning)
         f.model.selectedTracksAdaptive = [target.epoch]
         try #require(f.model.canAcceptTracksReview)
         let undo = try #require(f.document.undoManager)
@@ -354,23 +354,23 @@ struct TracksWorkflowHostedTests {
         defer { undo.groupsByEvent = true }
         undo.beginUndoGrouping()
         f.model.acceptTracksReview()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         undo.endUndoGrouping()
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
-        let accepted = f.document.store.model
+        let accepted = f.document.store.residentModel
         let correction = try #require(accepted.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first)
         #expect(correction.source == f.target && correction.retainsAllAudio)
         #expect(f.model.selectedTracksAdaptive.isEmpty)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == accepted)
         try #require(undo.canUndo)
         undo.undo()
-        try await wait { f.document.verifiedModel == before && f.document.store.model == before }
+        try await wait { f.document.verifiedModel == before && f.document.store.residentModel == before }
         try #require(undo.canRedo)
         undo.redo()
-        try await wait { f.document.verifiedModel == accepted && f.document.store.model == accepted }
+        try await wait { f.document.verifiedModel == accepted && f.document.store.residentModel == accepted }
         f.model.load()
         f.model.loadWaveforms()
         try await wait {
@@ -389,21 +389,21 @@ struct TracksWorkflowHostedTests {
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 2, outValue: 20)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        let priorRangeRevision = try #require(f.document.store.model.episodes[0].cleanup?.workingRange?.alignmentRevision)
+        let priorRangeRevision = try #require(f.document.store.residentModel.episodes[0].cleanup?.workingRange?.alignmentRevision)
         f.model.saveAdaptiveCorrection(restoringAudio: f.target)
         try await wait {
-            !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
                 && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
         }
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
-        let currentRevision = try #require(f.document.store.model.episodes[0].alignment?.acceptedRevision)
+        let currentRevision = try #require(f.document.store.residentModel.episodes[0].alignment?.acceptedRevision)
         #expect(currentRevision != priorRangeRevision)
-        #expect(f.document.store.model.episodes[0].cleanup?.workingRange == EpisodeWorkingRange(
+        #expect(f.document.store.residentModel.episodes[0].cleanup?.workingRange == EpisodeWorkingRange(
             alignmentRevision: currentRevision, tracksIn: 2, tracksOut: 20))
         await cleanup.refresh()
         #expect(cleanup.plan?.isReady == true, "\(cleanup.transcriptionReadinessMessage)")
 
-        var stale = try #require(f.document.store.model.episodes[0].cleanup)
+        var stale = try #require(f.document.store.residentModel.episodes[0].cleanup)
         stale.workingRange?.alignmentRevision = priorRangeRevision
         try #require(f.document.store.apply("Synthetic older boundaries", { model throws(DomainError) in
             try model.settingCleanup(stale, in: f.model.episodeID)
@@ -418,7 +418,7 @@ struct TracksWorkflowHostedTests {
         await cleanup.refresh()
         #expect(!cleanup.hasStaleWorkingRange && cleanup.plan?.isReady == true,
                 "\(cleanup.transcriptionReadinessMessage)")
-        let current = f.document.store.model
+        let current = f.document.store.residentModel
         let transcripts = try await f.runtime.transcribeCleanup(
             model: current, episode: f.model.episodeID, modelRevision: "synthetic-buffer-regression",
             transcribeWindow: { _ in
@@ -445,7 +445,7 @@ struct TracksWorkflowHostedTests {
         #expect(f.model.isAuditioning && f.model.waveformPlayheadSeconds >= 30,
                 "Adaptive audio must keep playing across six cold canonical tile boundaries.")
         f.model.stopAudition()
-        #expect(f.document.store.model == current)
+        #expect(f.document.store.residentModel == current)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -453,14 +453,14 @@ struct TracksWorkflowHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let cleanup = EpisodeCleanupModel(
             state: ShowWindowState(store: f.document.store), episodeID: f.model.episodeID, runtime: f.runtime
         )
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 1, outValue: 20)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let episode = try #require(original.episode(f.model.episodeID))
         try #require(episode.cleanup?.workingRange != nil)
         let originalMap = try original.timeMap(revision: #require(episode.alignment?.acceptedRevision), in: episode.id)
@@ -473,7 +473,7 @@ struct TracksWorkflowHostedTests {
         defer { setup.stopObserving() }
         @MainActor func saveSelection() async throws {
             try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-            try #require(f.document.verifiedModel == f.document.store.model)
+            try #require(f.document.verifiedModel == f.document.store.residentModel)
         }
         let undo = try #require(f.document.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
@@ -484,7 +484,7 @@ struct TracksWorkflowHostedTests {
         f.model.useAsTimingReference(targetGroup)
         undo.endUndoGrouping()
         try await saveSelection()
-        let selected = f.document.store.model
+        let selected = f.document.store.residentModel
         #expect(f.model.lastError == nil)
         #expect(f.model.timingReferenceSelection.currentGroup == originalMap.reference.group)
         #expect(f.model.timingReferenceSelection.nextGroup == targetGroup)
@@ -495,21 +495,21 @@ struct TracksWorkflowHostedTests {
         #expect(undo.undoActionName == "Set Timing Reference")
         undo.undo()
         try await saveSelection()
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
         undo.redo()
         try await saveSelection()
-        #expect(f.document.store.model == selected)
+        #expect(f.document.store.residentModel == selected)
         undo.beginUndoGrouping()
         setup.useAsTimingReference(originalMap.reference.group)
         undo.endUndoGrouping()
         try await saveSelection()
         #expect(f.model.timingReferenceSelection.nextGroup == originalMap.reference.group)
-        #expect(f.document.store.model.episodes[0].alignment == episode.alignment)
+        #expect(f.document.store.residentModel.episodes[0].alignment == episode.alignment)
         undo.undo()
         try await saveSelection()
-        #expect(f.document.store.model == selected, "The dialog action restores the editor's selection with one Undo")
+        #expect(f.document.store.residentModel == selected, "The dialog action restores the editor's selection with one Undo")
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))
+            LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved.episodes[0].preferredAlignmentReferenceGroupID == targetGroup)
         #expect(saved.episodes[0].alignment == episode.alignment)
@@ -521,16 +521,16 @@ struct TracksWorkflowHostedTests {
             $0.groupID == originalMap.reference.group
                 && $0.state.details?.contains("newly selected reference's original recording clock") == true
         })
-        #expect(f.document.store.model == selected)
+        #expect(f.document.store.residentModel == selected)
         #expect(f.model.referenceGroup == originalMap.reference.group)
         f.model.selectedTracksProposals = f.model.tracksReviewProposals
         try #require(!f.model.selectedTracksProposals.isEmpty)
         undo.beginUndoGrouping()
         f.model.acceptTracksReview()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         undo.endUndoGrouping()
         try #require(f.model.lastError == nil, "\(f.model.lastError ?? "")")
-        let accepted = f.document.store.model
+        let accepted = f.document.store.residentModel
         let newEpisode = try #require(accepted.episode(episode.id))
         let map = try accepted.timeMap(revision: #require(newEpisode.alignment?.acceptedRevision), in: episode.id)
         #expect(map.reference.group == targetGroup)
@@ -538,8 +538,8 @@ struct TracksWorkflowHostedTests {
         #expect(newEpisode.cleanup?.workingRange == nil)
         #expect(setup.timingReferenceSelection.currentGroup == targetGroup)
         undo.undo()
-        try await wait { f.document.verifiedModel == f.document.store.model }
-        #expect(f.document.store.model == selected, "One Undo restores the old reference, timing, and IN/OUT")
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
+        #expect(f.document.store.residentModel == selected, "One Undo restores the old reference, timing, and IN/OUT")
         #expect(setup.timingReferenceSelection.currentGroup == originalMap.reference.group)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
@@ -569,26 +569,26 @@ struct TracksWorkflowHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let target = try #require(f.document.store.model.episodes[0].sources.first { $0.id == f.target })
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let target = try #require(f.document.store.residentModel.episodes[0].sources.first { $0.id == f.target })
         let group = try #require(target.placement.recorderGroupID)
         f.model.setPositionLocked(true, group: group)
         let state = ShowWindowState(store: f.document.store)
         let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 0, outValue: 20)
-        let input = f.document.store.model
+        let input = f.document.store.residentModel
         let transcripts = try await f.runtime.transcribeCleanup(
             model: input, episode: f.model.episodeID, modelRevision: "synthetic-workflow",
             transcribeWindow: { _ in PCMTranscript(segments: [.init(text: "um", startSeconds: 1, endSeconds: 1.25)]) },
             progress: { _ in })
         try #require(try cleanup.publishTranscripts(transcripts, expecting: input))
-        var prior = f.document.store.model
+        var prior = f.document.store.residentModel
         let priorRevision = try #require(prior.episodes[0].alignment?.acceptedRevision)
         prior.episodes[0].cleanup?.manualCuts = [
             .init(alignmentRevision: priorRevision, startFrame: 240_000, endFrame: 288_000),
         ]
-        let applied = f.document.store.applyReplacement("Synthetic edit", expecting: f.document.store.model,
+        let applied = f.document.store.applyReplacement("Synthetic edit", expecting: f.document.store.residentModel,
             model: prior, afterChange: { _ in })
         try #require(applied)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
@@ -597,10 +597,10 @@ struct TracksWorkflowHostedTests {
         f.model.analyzeTracks()
         try await wait { !f.model.isWorking }
         try #require(f.model.tracksReviewPresented, "\(f.model.lastError ?? "")")
-        #expect(f.document.store.model == prior, "Analysis must not clear work or unlock live groups")
+        #expect(f.document.store.residentModel == prior, "Analysis must not clear work or unlock live groups")
         #expect(f.model.tracksReviewProposals.count == 1)
         f.model.discardTracksReview()
-        #expect(f.document.store.model == prior)
+        #expect(f.document.store.residentModel == prior)
         f.model.analyzeTracks()
         try await wait { !f.model.isWorking }
         f.model.selection = f.model.rows.first?.epochID
@@ -612,9 +612,9 @@ struct TracksWorkflowHostedTests {
         defer { undo.groupsByEvent = true }
         undo.beginUndoGrouping()
         f.model.acceptTracksReview()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         undo.endUndoGrouping()
-        let accepted = f.document.store.model
+        let accepted = f.document.store.residentModel
         try #require(accepted != prior && f.model.lastError == nil, "\(f.model.lastError ?? "")")
         let episode = accepted.episodes[0]
         #expect(episode.cleanup?.transcripts.isEmpty == true && episode.cleanup?.workingRange == nil)
@@ -626,13 +626,13 @@ struct TracksWorkflowHostedTests {
         let newMap = try accepted.timeMap(revision: #require(episode.alignment?.acceptedRevision), in: episode.id)
         #expect(newMap.reference == oldMap.reference)
         undo.undo()
-        try await wait { f.document.verifiedModel == f.document.store.model }
-        #expect(f.document.store.model == prior, "One Undo restores timing, transcripts, reviews, cuts and IN/OUT")
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
+        #expect(f.document.store.residentModel == prior, "One Undo restores timing, transcripts, reviews, cuts and IN/OUT")
         f.model.setTrack(f.target, enabled: true)
         let manualListening = f.model.listening.playback
         undo.redo()
-        try await wait { f.document.verifiedModel == f.document.store.model }
-        #expect(f.document.store.model == accepted)
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
+        #expect(f.document.store.residentModel == accepted)
         #expect(f.model.listening.playback == manualListening, "Redo cannot reapply the listening policy")
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
@@ -643,37 +643,37 @@ struct TracksWorkflowHostedTests {
         f.model.analyzeTracks()
         f.model.cancelTracksAnalysis()
         try await wait { !f.model.isWorking }
-        #expect(f.document.store.model.episodes[0].alignment == nil && !f.model.tracksReviewPresented)
+        #expect(f.document.store.residentModel.episodes[0].alignment == nil && !f.model.tracksReviewPresented)
         f.model.analyzeTracks()
         try await wait { !f.model.isWorking }
         try #require(f.model.tracksReviewPresented)
-        let prior = f.document.store.model
+        let prior = f.document.store.residentModel
         #expect(f.document.store.apply("Concurrent edit", { model in
             var changed = model
             changed.episodes[0].cleanup = EpisodeCleanup()
             return changed
         }))
-        let edited = f.document.store.model
+        let edited = f.document.store.residentModel
         f.model.selectedTracksProposals = f.model.tracksReviewProposals
         f.model.acceptTracksReview()
         try await wait { !f.model.isWorking }
         #expect(f.model.lastError?.contains("downstream work changed") == true)
-        #expect(f.document.store.model == edited && edited.episodes[0].alignment == prior.episodes[0].alignment)
+        #expect(f.document.store.residentModel == edited && edited.episodes[0].alignment == prior.episodes[0].alignment)
     }
 
     @Test func initialAlignmentDoesNotOverrideAnExplicitPositionLock() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
-        let target = try #require(f.document.store.model.episodes[0].source(f.target))
+        let target = try #require(f.document.store.residentModel.episodes[0].source(f.target))
         f.model.setPositionLocked(true, group: try #require(target.placement.recorderGroupID))
-        let prior = f.document.store.model
+        let prior = f.document.store.residentModel
         f.model.analyzeTracks()
         try await wait { !f.model.isWorking }
         try #require(f.model.tracksReviewPresented && !f.model.tracksReviewProposals.isEmpty)
         f.model.selectedTracksProposals = f.model.tracksReviewProposals
         f.model.acceptTracksReview()
         #expect(f.model.lastError?.contains("position is locked") == true)
-        #expect(f.document.store.model == prior, "Only confirmed replacement alignment may override non-reference locks")
+        #expect(f.document.store.residentModel == prior, "Only confirmed replacement alignment may override non-reference locks")
     }
 
     @Test func recordingsSheetHasFlexibleNativeResizeLimitsInBothDimensions() async throws {

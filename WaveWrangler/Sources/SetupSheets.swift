@@ -81,7 +81,7 @@ struct ImportReviewSheet: View {
                         label: "Speaker for \(row.candidate.displayName)",
                         choice: row.speaker,
                         noneTitle: "Unassigned",
-                        options: model.store.model.speakers.map(\.name),
+                        options: model.store.residentModel.speakers.map(\.name),
                         identifier: "ww.import.row.\(index(of: row.id)).speaker",
                         set: { review.setSpeaker(row.id, $0) }
                     )

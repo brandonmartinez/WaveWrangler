@@ -13,12 +13,14 @@ final class OpenShowSourceBinding {
     private weak var document: ShowDocument?
     private let url: URL
     private let model: ShowDocumentModel
+    private let catalog: ShowCatalog?
     private let base: RevisionFingerprint
 
-    private init(document: ShowDocument, url: URL, model: ShowDocumentModel, base: RevisionFingerprint) {
+    private init(document: ShowDocument, url: URL, model: ShowDocumentModel, catalog: ShowCatalog?, base: RevisionFingerprint) {
         self.document = document
         self.url = url
         self.model = model
+        self.catalog = catalog
         self.base = base
     }
 
@@ -27,7 +29,7 @@ final class OpenShowSourceBinding {
             throw EpisodeSourceAccessRefusal.changedDuringVerification
         }
         let binding = OpenShowSourceBinding(
-            document: document, url: snapshot.url, model: snapshot.model, base: snapshot.base
+            document: document, url: snapshot.url, model: snapshot.model, catalog: snapshot.catalog, base: snapshot.base
         )
         try binding.requireOpenAndUnchanged()
         return binding
@@ -38,11 +40,11 @@ final class OpenShowSourceBinding {
     func requireOpenAndUnchanged() throws {
         guard let document,
               let present = document.currentSourcePublication,
-              present.url == url, present.model == model, present.base == base
+              present.url == url, present.model == model, present.catalog == catalog, present.base == base
         else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
         let matches = NSDocumentController.shared.documents
             .compactMap { $0 as? ShowDocument }
-            .filter { $0.store.model.show.id == model.show.id }
+            .filter { $0.store.residentModel.show.id == model.show.id }
         guard matches.count == 1, matches[0] === document else {
             throw EpisodeSourceAccessRefusal.changedDuringVerification
         }
@@ -55,8 +57,27 @@ final class OpenShowSourceBinding {
         let url = self.url
         let model = self.model
         let base = self.base
+        let catalog = self.catalog
         let document = try await Task.detached(priority: .userInitiated) {
             try Task.checkCancellation()
+            if let catalog {
+                let opener = DocumentOpener(
+                    coder: ShowCatalogCoder(), recovery: nil, identityOf: { .show($0.header.show.id) })
+                guard case let .editable(decoded, fingerprint) = opener.open(url, key: .show(model.show.id)),
+                      fingerprint == base, decoded.publication == base.publication, decoded.payload == catalog else {
+                    throw EpisodeSourceAccessRefusal.changedDuringVerification
+                }
+                let episodes = try model.episodes.map { resident in
+                    guard let stored = decoded.payload.episode(resident.id) else {
+                        throw EpisodeSourceAccessRefusal.changedDuringVerification
+                    }
+                    return try stored.load(in: decoded.payload.header)
+                }
+                let scoped = decoded.payload.header.operationModel(episodes: episodes)
+                guard scoped == model else { throw EpisodeSourceAccessRefusal.changedDuringVerification }
+                try Task.checkCancellation()
+                return EpisodeSourceSurveyInput(model: scoped, publication: decoded.publication)
+            }
             let opener = DocumentOpener(
                 coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
                 identityOf: { .show($0.show.id) }
@@ -95,13 +116,14 @@ final class OpenEpisodeSourceSnapshot {
     static func issue(
         for document: ShowDocument, episode: EpisodeID
     ) async throws -> OpenEpisodeSourceSnapshot {
+        try await document.ensureVerifiedEpisodeLoaded(episode)
         let binding = try OpenShowSourceBinding.capture(for: document)
         _ = try await binding.current()
         let runtime = try await AlignmentRuntimeProvider.runtime(for: document, episode: episode)
         try Task.checkCancellation()
         try binding.requireOpenAndUnchanged()
         let surveyor = EpisodeSourceInventorySurveyor(
-            showID: document.store.model.show.id, coordinator: runtime.coordinator,
+            showID: document.store.residentModel.show.id, coordinator: runtime.coordinator,
             accessStore: SetupEngineProvider.store, access: SetupEngineProvider.context
         )
         let inventory = try await surveyor.survey(episode: episode) { try await binding.current() }

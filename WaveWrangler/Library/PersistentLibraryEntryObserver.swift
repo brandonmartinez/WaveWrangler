@@ -91,10 +91,10 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
 
     // MARK: - Recording (from open show windows)
 
-    func noteOpenShow(id: ShowID, model: ShowDocumentModel?, fileURL: URL?) {
+    func noteOpenShow(id: ShowID, summary: ShowLastOpenSummary?, fileURL: URL?) {
         // Two open files with the same show identity (e.g. a Finder copy): surface it, never merge.
         let others = NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.filter {
-            $0.store.model.show.id == id && $0.presentedFileURL != nil && $0.presentedFileURL?.standardizedFileURL != fileURL?.standardizedFileURL
+            $0.store.residentModel.show.id == id && $0.presentedFileURL != nil && $0.presentedFileURL?.standardizedFileURL != fileURL?.standardizedFileURL
         }
         generations[id, default: 0] += 1
         if let other = others.first, fileURL != nil {
@@ -106,7 +106,6 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
         var entry = details[id] ?? LibraryEntryDetails()
         entry.state = .available
         if let fileURL { entry.locationDisplayName = fileURL.deletingLastPathComponent().lastPathComponent }
-        let summary = model.map(Self.summary)
         if let summary {
             entry.episodes = summary.episodes?.map { EpisodeSummary(id: $0.id, number: $0.number, title: $0.title) }
             entry.sourceReferenceCount = summary.sourceReferenceCount
@@ -129,12 +128,12 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
     // MARK: - Opening
 
     func openShow(_ id: ShowID, readOnly: Bool, display: Bool) async throws -> ShowDocument {
-        if let open = NSDocumentController.shared.documents.compactMap({ $0 as? ShowDocument }).first(where: { $0.store.model.show.id == id }) {
+        if let open = NSDocumentController.shared.documents.compactMap({ $0 as? ShowDocument }).first(where: { $0.store.residentModel.show.id == id }) {
             if display { open.showWindows() }
             return open
         }
         let store = self.store
-        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil)
+        let opener = DocumentOpener(coder: ShowCatalogCoder(), recovery: nil, identityOf: { .show($0.header.show.id) })
         let interval = OpenSignposts.begin("library.openShow")
         defer { OpenSignposts.end(interval) }
         do {
@@ -143,7 +142,7 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
             // failure, including a failed NSDocument open below.
             let grant = try await store.openVerified(id, opener: opener) { grant in
                 let (document, alreadyOpen) = try await NSDocumentController.shared.openDocument(withContentsOf: grant.url, display: display)
-                guard let show = document as? ShowDocument, show.store.model.show.id == id else {
+                guard let show = document as? ShowDocument, show.store.residentModel.show.id == id else {
                     if !alreadyOpen { document.close() }
                     throw LibraryBackendError.differentShow
                 }
@@ -166,7 +165,7 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
 
     /// Stops the security scope of shows whose last window closed.
     private func releaseClosedGrants() {
-        let openIDs = Set(NSDocumentController.shared.documents.compactMap { ($0 as? ShowDocument)?.store.model.show.id })
+        let openIDs = Set(NSDocumentController.shared.documents.compactMap { ($0 as? ShowDocument)?.store.residentModel.show.id })
         for (id, grant) in grants where !openIDs.contains(id) {
             store.endAccess(grant)
             grants[id] = nil
@@ -175,14 +174,14 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
 
     func locateShow(_ id: ShowID) async throws {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.wwShow]
+        panel.allowedContentTypes = [.wwShow, .wwLegacyShow]
         panel.allowsMultipleSelection = false
         panel.message = "Choose the show file. WaveWrangler checks the show inside the file, not its name."
         if let hint = pathHints[id] { panel.directoryURL = URL(filePath: hint).deletingLastPathComponent() }
         guard await panel.begin() == .OK, let url = panel.url else { return }
         let document = try await NSDocumentController.shared.openDocument(withContentsOf: url, display: true)
         guard let show = document.0 as? ShowDocument else { throw LibraryBackendError.notAShowFile }
-        guard show.store.model.show.id == id else { throw LibraryBackendError.differentShow }
+        guard show.store.residentModel.show.id == id else { throw LibraryBackendError.differentShow }
         // The window's open records the new location (read-write bookmark) via `noteOpenShow`.
     }
 

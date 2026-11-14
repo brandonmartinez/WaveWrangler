@@ -95,7 +95,7 @@ struct ControlsSidebarHostedTests {
         ], workspace: .init(editingPlaybackPolicy: .keepChoices))
         let store = ShowDocumentStore(model: .init(show: Show(title: "Synthetic"),
                                                   speakers: [speaker], episodes: [episode]))
-        let original = store.model
+        let original = store.residentModel
         let listening = EpisodeListeningState()
         listening.playback.setMuted(true, scope: .source(primary.id))
         let initial = listening.playback
@@ -107,7 +107,7 @@ struct ControlsSidebarHostedTests {
         #expect(listening.playback.muted.contains(.source(primary.id)), "Explicit mute always wins.")
         #expect(listening.previousPlayback == initial, "Repeated presets keep the original restore point.")
         #expect(listening.editingPolicyRevision == nil, "Immediate listening is not Begin editing.")
-        #expect(store.model == original && store.model.episodes[0].workspace?.editingPlaybackPolicy == .keepChoices)
+        #expect(store.residentModel == original && store.residentModel.episodes[0].workspace?.editingPlaybackPolicy == .keepChoices)
         let current = listening.playback
         #expect(try !listening.applyListeningPreset(.keepChoices, in: episode))
         #expect(listening.playback == current)
@@ -168,11 +168,11 @@ struct ControlsSidebarHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1, durationSeconds: 6)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let state = ShowWindowState(store: f.document.store, episodeID: f.model.episodeID)
         let model = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
         defer { model.cancel() }
-        let prepared = try await f.runtime.prepareCleanup(model: f.document.store.model, episode: f.model.episodeID)
+        let prepared = try await f.runtime.prepareCleanup(model: f.document.store.residentModel, episode: f.model.episodeID)
         model.plan = prepared.plan
         model.identities = prepared.identities
         let lane = try #require(prepared.plan.lanes.first)
@@ -251,7 +251,7 @@ struct ControlsSidebarHostedTests {
         try await clickControl("ww.cleanup.filler.clearReview", index: 3, audition: false)
         #expect(model.selectedFiller?.decision == .pending)
         try host.capture("Native compact marker action hit testing")
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         let undo = try #require(f.document.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
@@ -268,7 +268,7 @@ struct ControlsSidebarHostedTests {
             #expect(model.selectedFiller?.decision == tool.reviewDecision)
             #expect(model.listening.selection == 2...2.25)
             undo.undo()
-            #expect(f.document.store.model == original)
+            #expect(f.document.store.residentModel == original)
             undo.redo()
             #expect(model.selectedFiller?.decision == tool.reviewDecision)
             undo.undo()

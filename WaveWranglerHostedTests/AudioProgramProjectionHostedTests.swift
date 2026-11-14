@@ -14,7 +14,7 @@ struct AudioProgramProjectionHostedTests {
     @Test func exclusiveDialogueEndpointsDistinguishContiguousInsertionsCutSeamsAndExpandedReview() async throws {
         let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 20)
         defer { f.close() }
-        var episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        var episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let map = try #require(episode.alignment?.acceptedMap)
         let first = try AudioInsertionRegion(anchor: .dialogue(.init(map: map, frame: 240_000)),
                                             durationFrames: 192_000)
@@ -83,7 +83,7 @@ struct AudioProgramProjectionHostedTests {
     private func verifyInsertionEdgeCut(beforeInsertion: Bool) async throws {
         let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 20)
         defer { f.close() }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let map = try #require(episode.alignment?.acceptedMap)
         let region = try AudioInsertionRegion(anchor: .dialogue(.init(map: map, frame: 240_000)),
                                              durationFrames: 480_000)
@@ -107,7 +107,7 @@ struct AudioProgramProjectionHostedTests {
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
         undo.groupsByEvent = false
         defer { undo.groupsByEvent = true }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         undo.beginUndoGrouping()
         cleanup.applyManualCut()
         undo.endUndoGrouping()
@@ -117,18 +117,18 @@ struct AudioProgramProjectionHostedTests {
         let cut = try #require(cuts.last)
         #expect(cut.startFrame == (beforeInsertion ? 192_000 : 240_000))
         #expect(cut.endFrame == (beforeInsertion ? 240_000 : 288_000))
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         let unchangedAlignment = after.episode(episode.id)?.alignment == episode.alignment
         #expect(unchangedAlignment)
         undo.undo()
-        let restored = f.document.store.model == before
+        let restored = f.document.store.residentModel == before
         #expect(restored)
         undo.redo()
-        let redone = f.document.store.model == after
+        let redone = f.document.store.residentModel == after
         #expect(redone)
         try await helper.save(f.document)
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
         let saved = reopened == after
         #expect(saved)
     }
@@ -141,14 +141,14 @@ struct AudioProgramProjectionHostedTests {
         undo.groupsByEvent = false
         defer { undo.groupsByEvent = true }
         let owner = helper.owner(f), editor = f.model.audioEditor
-        let initial = try #require(f.document.store.model.episode(f.model.episodeID))
+        let initial = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let accepted = try #require(initial.alignment?.acceptedMap)
         let source = try #require(initial.speakerAssignments.first?.primary?.sourceID)
         let url = f.folder.appendingPathComponent("outro.wav")
         try AudioClipEditorHostedTests.wave(rate: 44_100, frames: 44_100).write(to: url)
         let original = try Data(contentsOf: url)
         let context = SourceAccessContext(io: SystemSourceIO())
-        let engine = WWSourcesSetupEngine(showID: f.document.store.model.show.id,
+        let engine = WWSourcesSetupEngine(showID: f.document.store.residentModel.show.id,
             store: FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json")), context: context,
             captureRawIdentity: { url, fingerprint in
                 try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
@@ -202,7 +202,7 @@ struct AudioProgramProjectionHostedTests {
         editor.refresh()
         #expect(editor.composition?.clips.first { $0.clip.id == reconciled.id }?.programFrames.lowerBound == 576_000)
         let earlier = ManualEpisodeCut(alignmentRevision: accepted.revision, startFrame: 0, endFrame: 48_000)
-        let beforeAdditionalCut = f.document.store.model
+        let beforeAdditionalCut = f.document.store.residentModel
         try #require(f.document.store.apply("Synthetic additional earlier cut") { model throws(DomainError) in
             var next = model
             let index = next.episodes.firstIndex { $0.id == initial.id }!
@@ -216,28 +216,28 @@ struct AudioProgramProjectionHostedTests {
         #expect(editor.composition?.clips.first { $0.clip.id == pinned.clip.id }?.programFrames.lowerBound == 576_000)
         #expect(editor.composition?.clips.first { $0.clip.id == origin.id }?.programFrames.lowerBound == 576_000)
         #expect(editor.composition?.clips.first { $0.clip.id == reconciled.id }?.programFrames.lowerBound == 528_000)
-        let afterAdditionalCut = f.document.store.model
+        let afterAdditionalCut = f.document.store.residentModel
         #expect(undo.undoActionName == "Synthetic additional earlier cut")
         undo.undo()
         editor.refresh()
-        #expect(f.document.store.model == beforeAdditionalCut)
+        #expect(f.document.store.residentModel == beforeAdditionalCut)
         #expect(editor.selected?.programFrames.lowerBound == 528_000)
         undo.redo()
         editor.refresh()
-        #expect(f.document.store.model == afterAdditionalCut)
+        #expect(f.document.store.residentModel == afterAdditionalCut)
         let composition = try #require(editor.composition)
         #expect(editor.selected?.programFrames.lowerBound == 480_000)
         #expect(try composition.timeline.inverse(atProgramFrame: 480_000) == .outsideCoverage)
         let projection = AudioTimelineProjection(program: composition.timeline)
         #expect(projection.originalTime(forDisplayTime: 10) == nil)
-        let audition = try await f.runtime.sourceAuditions(model: f.document.store.model, episode: initial.id,
+        let audition = try await f.runtime.sourceAuditions(model: f.document.store.residentModel, episode: initial.id,
             sources: [source], outputFrames: 480_000..<484_800, presentation: projection)
         let samples = try #require(audition[source]?.samples)
         #expect(samples.count == 4_800 && samples.allSatisfy { $0 == 0 })
         try await helper.save(f.document)
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
-        #expect(reopened == f.document.store.model)
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
+        #expect(reopened == f.document.store.residentModel)
         let reopenedComposition = try await f.runtime.programComposition(model: reopened, episode: initial.id)
         #expect(reopenedComposition == composition)
         #expect(try Data(contentsOf: url) == original)
@@ -247,7 +247,7 @@ struct AudioProgramProjectionHostedTests {
         let helper = MixerHostedTests(), f = try await helper.ready(durationSeconds: 10)
         defer { f.close() }
         let owner = helper.owner(f), editor = f.model.audioEditor
-        let initial = try #require(f.document.store.model.episode(f.model.episodeID))
+        let initial = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let accepted = try #require(initial.alignment?.acceptedMap)
         let region = try AudioInsertionRegion(anchor: .dialogue(.init(map: accepted, frame: 48_000)),
                                              durationFrames: 24_000)
@@ -265,7 +265,7 @@ struct AudioProgramProjectionHostedTests {
         try AudioClipEditorHostedTests.wave(rate: 44_100, frames: 44_100).write(to: first)
         try AudioClipEditorHostedTests.wave(rate: 48_000, frames: 48_000).write(to: second)
         let context = SourceAccessContext(io: SystemSourceIO())
-        let engine = WWSourcesSetupEngine(showID: f.document.store.model.show.id,
+        let engine = WWSourcesSetupEngine(showID: f.document.store.residentModel.show.id,
             store: FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json")), context: context,
             captureRawIdentity: { url, fingerprint in
                 try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
@@ -273,7 +273,7 @@ struct AudioProgramProjectionHostedTests {
         defer { Task { await engine.shutdown() } }
         editor.importer.sourceEngineForTesting = engine
         for start in [Int64(60_000), 132_000, 576_000] {
-            let before = try #require(f.document.store.model.episode(initial.id))
+            let before = try #require(f.document.store.residentModel.episode(initial.id))
             editor.importer.scan([first, second], in: owner.state,
                 destination: .init(frame: start, track: .newTrack))
             try await helper.wait { editor.importer.review != nil || editor.importer.error != nil }
@@ -289,7 +289,7 @@ struct AudioProgramProjectionHostedTests {
                 #expect(placed[0].clip.anchor == .insertion(region: region.id, offsetFrames: 12_000))
                 #expect(placed[1].clip.anchor == .dialogue(expectedSecond))
             }
-            let after = try #require(f.document.store.model.episode(initial.id))
+            let after = try #require(f.document.store.residentModel.episode(initial.id))
             #expect(after.alignment == initial.alignment && after.cleanup == before.cleanup)
             #expect(after.speakerAssignments == initial.speakerAssignments && after.recorderGroups == initial.recorderGroups)
             #expect(after.sources.filter(\.isRecording) == initial.sources)
@@ -300,12 +300,12 @@ struct AudioProgramProjectionHostedTests {
         let helper = MixerHostedTests(), f = try await helper.ready()
         defer { f.close() }
         let owner = helper.owner(f), editor = f.model.audioEditor
-        let initialTiming = f.document.store.model.episode(f.model.episodeID)?.alignment
+        let initialTiming = f.document.store.residentModel.episode(f.model.episodeID)?.alignment
         let url = f.folder.appendingPathComponent("intro.wav")
         try AudioClipEditorHostedTests.wave(rate: 44_100, frames: 44_100).write(to: url)
         let context = SourceAccessContext(io: SystemSourceIO())
         let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
-        let engine = WWSourcesSetupEngine(showID: f.document.store.model.show.id, store: access, context: context,
+        let engine = WWSourcesSetupEngine(showID: f.document.store.residentModel.show.id, store: access, context: context,
             captureRawIdentity: { url, fingerprint in
                 try await SourceDecoder(access: context).captureRawIdentity(url, matching: fingerprint)
             })
@@ -336,7 +336,7 @@ struct AudioProgramProjectionHostedTests {
         })
         editor.refresh()
         f.model.load()
-        let canonical = f.document.store.model
+        let canonical = f.document.store.residentModel
         let production = try #require(editor.composition)
         let projection = f.model.presentationTimeline
         #expect(projection.editedTime(forAlignedTime: 3.5) == 2.5)
@@ -354,10 +354,10 @@ struct AudioProgramProjectionHostedTests {
         #expect(review.originalTime(forDisplayTime: 2.75) == 2.25)
         #expect(review.programTime(forDisplayTime: 2.75) == nil)
         #expect(review.editedTime(forAlignedTime: 3.5) == 3)
-        #expect(f.document.store.model == canonical)
+        #expect(f.document.store.residentModel == canonical)
         #expect(editor.composition == production, "Show cut must not reproject saved clip anchors or production inputs.")
         #expect(editor.composition?.clips[0].clip.anchor == .absolute(frame: 24_000))
-        #expect(f.document.store.model.episode(f.model.episodeID)?.alignment == initialTiming)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.alignment == initialTiming)
         let choices = f.model.listening.playback
         for layout in AlignmentWaveformLayout.allCases { f.model.listening.workspace.layout = layout }
         #expect(f.model.listening.playback == choices)
@@ -378,7 +378,7 @@ struct AudioProgramProjectionHostedTests {
     @Test func sourceAuditionUsesProgramPartitionsAndNeverInventsRecordingAudioInInsertions() async throws {
         let helper = MixerHostedTests(), f = try await helper.ready()
         defer { f.close() }
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let accepted = try #require(episode.alignment?.acceptedMap)
         let region = try AudioInsertionRegion(anchor: .dialogue(.init(map: accepted, frame: 48_000)),
                                              durationFrames: 24_000)
@@ -388,12 +388,12 @@ struct AudioProgramProjectionHostedTests {
         f.model.audioEditor.refresh()
         f.model.load()
         try await helper.save(f.document)
-        let composition = try await f.runtime.programComposition(model: f.document.store.model, episode: episode.id)
+        let composition = try await f.runtime.programComposition(model: f.document.store.residentModel, episode: episode.id)
         let projection = AudioTimelineProjection(program: composition.timeline)
         let source = try #require(episode.speakerAssignments.first?.primary?.sourceID)
-        let expected = try await f.runtime.sourceAuditions(model: f.document.store.model, episode: episode.id,
+        let expected = try await f.runtime.sourceAuditions(model: f.document.store.residentModel, episode: episode.id,
             sources: [source], outputFrames: 24_000..<72_000, applyingCuts: false)
-        let displayed = try await f.runtime.sourceAuditions(model: f.document.store.model, episode: episode.id,
+        let displayed = try await f.runtime.sourceAuditions(model: f.document.store.residentModel, episode: episode.id,
             sources: [source], outputFrames: 24_000..<96_000, presentation: projection)
         let samples = try #require(displayed[source]?.samples), original = try #require(expected[source]?.samples)
         #expect(Array(samples.prefix(24_000)) == Array(original.prefix(24_000)))

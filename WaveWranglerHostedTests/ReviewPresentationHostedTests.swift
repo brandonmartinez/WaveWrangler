@@ -16,7 +16,7 @@ struct ReviewPresentationHostedTests {
         f.document.addWindowController(owner)
         owner.showWindow(nil)
         try await settle()
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let review = try #require(cleanup.fillerReviews.first)
         cleanup.reviewSearch = "um"
         cleanup.reviewStatusFilter = .pending
@@ -33,7 +33,7 @@ struct ReviewPresentationHostedTests {
         #expect(state.cleanupModel === cleanup && state.alignmentModel === f.model)
         #expect(cleanup.reviewSearch == "um" && cleanup.reviewStatusFilter == .pending)
         #expect(cleanup.selectedReviewRowID == review.id)
-        #expect(!f.model.canStopAudition && f.document.store.model == before)
+        #expect(!f.model.canStopAudition && f.document.store.residentModel == before)
         presentation.detach()
         #expect(presentation.detachedWindow?.window === first)
         func indicator(in view: NSView?) -> ReviewPlaybackIndicator.IndicatorView? {
@@ -55,7 +55,7 @@ struct ReviewPresentationHostedTests {
         #expect(!presentation.isDetached && !first.isVisible)
         #expect(state.reviewPanelPresented && state.bottomPaneContent == .review)
         #expect(cleanup.reviewSearch == "um" && cleanup.selectedReviewRowID == review.id)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         #expect(ShowWindowRegistry.state(for: first) == nil)
         #expect(cleanup.isPlaying, "Reattaching the review does not restart or stop the shared transport.")
         let dockedIndicator = try #require(indicator(in: owner.window?.contentView))
@@ -72,7 +72,7 @@ struct ReviewPresentationHostedTests {
         f.document.addWindowController(owner)
         owner.showWindow(nil)
         try await settle()
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let review = try #require(cleanup.fillerReviews.first)
         state.reviewPresentation.detach()
         let window = try #require(state.reviewPresentation.detachedWindow?.window)
@@ -84,13 +84,13 @@ struct ReviewPresentationHostedTests {
         undo.beginUndoGrouping()
         cleanup.resizeReviewInterval(review.id, expanding: true)
         undo.endUndoGrouping()
-        let changed = f.document.store.model
+        let changed = f.document.store.residentModel
         #expect(changed != before)
         #expect(window.undoManager === f.document.undoManager)
         undo.undo()
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         undo.redo()
-        #expect(f.document.store.model == changed)
+        #expect(f.document.store.residentModel == changed)
         window.close()
         #expect(!state.reviewPresentation.isDetached && !state.reviewPresentation.isClosed)
         #expect(state.cleanupModel === cleanup && owner.window?.isVisible == true)

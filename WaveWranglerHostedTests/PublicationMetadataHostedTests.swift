@@ -28,23 +28,23 @@ struct PublicationMetadataHostedTests {
             })
         }
         store.endCoalescing()
-        let liveDescription = second.store.model.episode(episode.id)?.publication?.metadata.publicDescription
+        let liveDescription = second.store.residentModel.episode(episode.id)?.publication?.metadata.publicDescription
         #expect(liveDescription == "Episode description")
-        let liveCreator = try first.store.model.resolvedPublication(for: episode.id).metadata.creator
+        let liveCreator = try first.store.residentModel.resolvedPublication(for: episode.id).metadata.creator
         #expect(liveCreator == "Show artist")
         let bytes = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
-            store.model, revision: 1, publicationID: UUID()).data
+            store.residentModel, revision: 1, publicationID: UUID()).data
         let savedDescription = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
             .payload.episode(episode.id)?.publication?.metadata.publicDescription
         #expect(savedDescription == "Episode description")
         undo.undo()
-        let undone = first.store.model.episode(episode.id)?.publication
+        let undone = first.store.residentModel.episode(episode.id)?.publication
         #expect(undone == nil)
         undo.redo()
-        let redone = second.store.model.episode(episode.id)?.publication?.metadata.publicDescription
+        let redone = second.store.residentModel.episode(episode.id)?.publication?.metadata.publicDescription
         #expect(redone == "Episode description")
-        let unchangedStatus = store.model.episode(episode.id)?.status
-        let unchangedDate = store.model.episode(episode.id)?.publishedOn
+        let unchangedStatus = store.residentModel.episode(episode.id)?.status
+        let unchangedDate = store.residentModel.episode(episode.id)?.publishedOn
         #expect(unchangedStatus == .planned && unchangedDate == nil)
     }
 
@@ -71,23 +71,23 @@ struct PublicationMetadataHostedTests {
             try model.settingEpisodePublication(.init(metadata: .init(
                 artwork: PublicationArtworkSelection.none)), for: episode.id)
         })
-        let removed = try store.model.resolvedPublication(for: episode.id).metadata.artwork
+        let removed = try store.residentModel.resolvedPublication(for: episode.id).metadata.artwork
         #expect(removed == PublicationArtworkSelection.none)
         undo.undo()
-        let restored = try store.model.resolvedPublication(for: episode.id).metadata.artwork?.image?.data
+        let restored = try store.residentModel.resolvedPublication(for: episode.id).metadata.artwork?.image?.data
         #expect(restored == artwork.data)
         undo.redo()
-        let redone = try store.model.resolvedPublication(for: episode.id).metadata.artwork
+        let redone = try store.residentModel.resolvedPublication(for: episode.id).metadata.artwork
         #expect(redone == PublicationArtworkSelection.none)
     }
 
     @Test func invalidEditLeavesLiveAndSavedValuesUntouched() throws {
         let store = ShowDocumentStore(model: .untitled())
-        let original = store.model
+        let original = store.residentModel
         #expect(!store.apply("Edit Publication Metadata") { model throws(DomainError) in
             try model.settingShowPublication(.init(website: "file:///private"))
         })
-        let live = store.model
+        let live = store.residentModel
         #expect(live == original)
         let error = store.lastError
         #expect(error != nil)

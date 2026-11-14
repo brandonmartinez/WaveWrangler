@@ -62,7 +62,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     /// attempt follows (seam count stays at the one ⌘S); dirty throughout; after reconnect, Try Again → "Saved".
     func testT27UnreachableAutosaveOff() throws {
         let document = try makeDocument("Offline Off")
-        let original = try Data(contentsOf: document)
+        let original = try ShowStorage.read(document)
         try task("T27") {
             let window = try launchAndOpen(document, autosave: false, retryInterval: 2)
             check(seam()?.attempts == 0, "no publication attempt before ⌘S: \(String(describing: seam()))")
@@ -91,7 +91,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             Thread.sleep(forTimeInterval: 7)
             check(seam()?.attempts == afterSave, "no automatic save attempt with Autosave Off: \(String(describing: seam()?.attempts)) after \(afterSave)")
             check(value(status).hasPrefix(Self.cantReach), "still Can't reach: \(value(status))")
-            check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
+            check(try ShowStorage.read(document) == original, "the last saved version is byte-unchanged while unreachable")
             // Reconnect, then Try Again (focused first in the popover; Space activates it with keyboard navigation).
             post(Self.reconnect)
             try openSaveStatus()
@@ -108,7 +108,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     /// another edit; the last saved version is unchanged until reconnect; then "Saved" with no user action.
     func testT26UnreachableAutosaveOnRetriesAutomatically() throws {
         let document = try makeDocument("Offline On")
-        let original = try Data(contentsOf: document)
+        let original = try ShowStorage.read(document)
         try task("T26") {
             let window = try launchAndOpen(document, autosave: true, retryInterval: nil)
             addEpisodeByKeyboard(window)
@@ -136,7 +136,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
                 Thread.sleep(forTimeInterval: 0.5)
             }
             check(flicker.isEmpty, "no flicker between attempts: \(Set(flicker))")
-            check(try Data(contentsOf: document) == original, "the last saved version is byte-unchanged while unreachable")
+            check(try ShowStorage.read(document) == original, "the last saved version is byte-unchanged while unreachable")
             try openSaveStatus()
             let popover = app.popovers.firstMatch
             check(popover.waitForExistence(timeout: 5), "save-status popover opened")
@@ -151,7 +151,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(value(status).hasPrefix(Self.cantReach), "still Can't reach after the failed retry: \(value(status))")
             check(unsavedIndicator(window) != nil, "the title still shows unsaved changes after the failed retry (AX_EDITING_STATE): \(editingState(window) ?? "none")")
             recordDirtyIndicators(window, "T26 after the failed automatic retry")
-            check(try Data(contentsOf: document) == original, "the last saved version is still byte-unchanged")
+            check(try ShowStorage.read(document) == original, "the last saved version is still byte-unchanged")
             // Reconnect: the next automatic retry (due 30 s after the last failed attempt) saves with no user action.
             post(Self.reconnect)
             check(Acceptance.waitFor(timeout: 40) { self.value(status).hasPrefix("Saved") }, "after reconnect → Saved with no user action: \(value(status))")
@@ -173,7 +173,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     func testT28SaveACopyElsewhere() throws {
         let unreachable = try folder("Unreachable"), elsewhere = try folder("Elsewhere")
         let document = try makeDocument("Offline Copy", in: unreachable)
-        let original = try Data(contentsOf: document)
+        let original = try ShowStorage.read(document)
         try task("T28") {
             let window = try launchAndOpen(document, autosave: false, retryInterval: 2, offlineFolder: unreachable)
             addEpisodeByKeyboard(window)
@@ -207,7 +207,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             } else {
                 needsKeyboardNavigation.append("T28: focus returns to the save-status item")
             }
-            check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
+            check(try ShowStorage.read(document) == original, "the original is byte-unchanged")
             check(diskShowID(copy) != nil && diskShowID(copy) != diskShowID(document), "the copy is a separate show (new show ID)")
             check(diskTitle(copy) == "Offline Copy copy", "the copy is titled after its name: \(String(describing: diskTitle(copy)))")
             Acceptance.record(self, "T28 library: not asserted — the F-OFFLINE seam fails publications only; the library itself still reaches the original's folder, so its \"Location unavailable\" status can't be exercised here")
@@ -220,7 +220,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     func testT23D7CloseWhileUnreachableSavesACopy() throws {
         let unreachable = try folder("Unreachable"), elsewhere = try folder("Elsewhere")
         let document = try makeDocument("Offline Close", in: unreachable)
-        let original = try Data(contentsOf: document)
+        let original = try ShowStorage.read(document)
         try task("T23-D7") {
             let window = try launchAndOpen(document, autosave: true, retryInterval: nil, offlineFolder: unreachable)
             addEpisodeByKeyboard(window)
@@ -244,7 +244,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             let copy = try saveCopyThroughPanel(named: "Offline Close copy", into: elsewhere, surface: "T23 D7 save panel (Return = default)")
             check(Acceptance.waitFor(timeout: 10) { !window.exists }, "the window closes once the copy is saved")
             check(diskEpisodeCount(copy) == 1, "the copy holds the edit: \(String(describing: diskEpisodeCount(copy)))")
-            check(try Data(contentsOf: document) == original, "the original is byte-unchanged")
+            check(try ShowStorage.read(document) == original, "the original is byte-unchanged")
         }
     }
 
@@ -252,7 +252,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     func testT23D7CloseWhileUnreachableDontSave() throws {
         let unreachable = try folder("Unreachable")
         let document = try makeDocument("Offline Discard", in: unreachable)
-        let original = try Data(contentsOf: document)
+        let original = try ShowStorage.read(document)
         try task("T23-D7-dont-save") {
             let window = try launchAndOpen(document, autosave: false, retryInterval: 2, offlineFolder: unreachable)
             addEpisodeByKeyboard(window)
@@ -264,7 +264,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
             check(app.sheets.firstMatch.waitForExistence(timeout: 5), "close sheet")
             app.typeKey(.delete, modifierFlags: .command)
             check(Acceptance.waitFor(timeout: 5) { !window.exists }, "⌘⌫ = Don't Save closes the window")
-            check(try Data(contentsOf: document) == original, "nothing was written")
+            check(try ShowStorage.read(document) == original, "nothing was written")
         }
     }
 
@@ -478,8 +478,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
     }
 
     private func diskPayload(_ url: URL) -> [String: Any]? {
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return nil }
+        guard let object = try? ShowStorage.envelope(url) else { return nil }
         return object["payload"] as? [String: Any]
     }
 
@@ -503,8 +502,7 @@ final class OfflineSaveKeyboardUITests: XCTestCase {
 
     /// Episodes in the synthetic fixture beyond the probe's seed episodes, as written on disk.
     private func diskEpisodeCount(_ url: URL) -> Int? {
-        guard let data = try? Data(contentsOf: url),
-              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let object = try? ShowStorage.envelope(url),
               let payload = object["payload"] as? [String: Any], let episodes = payload["episodes"] as? [Any] else { return nil }
         return episodes.count - Self.seedEpisodes
     }

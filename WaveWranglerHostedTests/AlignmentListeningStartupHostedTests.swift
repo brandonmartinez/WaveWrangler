@@ -145,7 +145,7 @@ struct AlignmentListeningStartupHostedTests {
         do {
             try await wait(fixture.model.lastError ?? fixture.model.waveformMessage) {
                 !fixture.model.isWorking && !fixture.model.isLoadingWaveforms
-                    && fixture.document.verifiedModel == fixture.document.store.model
+                    && fixture.document.verifiedModel == fixture.document.store.residentModel
                     && fixture.model.waveformMap != nil
             }
             return fixture

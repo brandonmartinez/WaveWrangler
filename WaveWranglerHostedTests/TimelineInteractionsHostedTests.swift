@@ -144,7 +144,7 @@ struct TimelineInteractionsHostedTests {
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
         try await wait(f.model.waveformMessage) {
-            !f.model.isWorking && f.document.verifiedModel == f.document.store.model
+            !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel
                 && f.model.waveformMap != nil && !f.model.isLoadingWaveforms
         }
         f.model.waveformStartSeconds = 0

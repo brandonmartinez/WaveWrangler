@@ -30,9 +30,16 @@ struct AppConfigurationTests {
     @Test func showDocumentTypeIsEditedByShowDocument() throws {
         let info = try Self.plist("Info.plist")
         let types = try #require(info["CFBundleDocumentTypes"] as? [[String: Any]])
-        let show = try #require(types.first { ($0["LSItemContentTypes"] as? [String])?.contains(DocumentFormat.show.identifier) == true })
+        let show = try #require(types.first { ($0["LSItemContentTypes"] as? [String])?.contains(ShowPackage.typeIdentifier) == true })
         #expect(show["NSDocumentClass"] as? String == "ShowDocument")
         #expect(show["CFBundleTypeRole"] as? String == "Editor")
+        #expect(show["LSTypeIsPackage"] as? Bool == true)
+        let exported = try #require(info["UTExportedTypeDeclarations"] as? [[String: Any]])
+        let package = try #require(exported.first { $0["UTTypeIdentifier"] as? String == ShowPackage.typeIdentifier })
+        let conforms = try #require(package["UTTypeConformsTo"] as? [String])
+        #expect(conforms.contains("com.apple.package") && !conforms.contains("public.json"))
+        let tags = try #require(package["UTTypeTagSpecification"] as? [String: Any])
+        #expect(tags["public.filename-extension"] as? [String] == ["wwshow"])
     }
 
     @Test func recordingDragsAreDataNotAnOpenableDocumentType() throws {
@@ -95,7 +102,7 @@ struct AppConfigurationTests {
         )
         #expect(source.contains("NSDocumentController.shared.documents.contains(where: { $0 === document })"))
         #expect(source.contains("currentModel: { [weak store, weak document] in"))
-        #expect(source.contains("return store.model"))
+        #expect(source.contains("return store.residentModel"))
     }
 
     @Test func showDocumentRoundTripsThroughAFileInATemporaryDirectory() throws {
@@ -104,11 +111,12 @@ struct AppConfigurationTests {
         defer { try? FileManager.default.removeItem(at: directory) }
 
         let model = try ShowDocumentModel.untitled().addingEpisode(Episode(title: "Synthetic", number: 1))
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let url = directory.appending(path: "Synthetic.\(try #require(DocumentFormat.show.filenameExtension))")
-        try coder.encode(model, revision: 1).write(to: url, options: .atomic)
-        let decoded = try coder.decode(Data(contentsOf: url))
-        #expect(decoded.payload == model)
+        try LocalFileOperations().writeNew(coder.encode(model, revision: 1), to: url)
+        let decoded = try coder.decode(LocalFileOperations().read(url))
+        let matches = decoded.payload == model
+        #expect(matches)
         #expect(decoded.revision == 1)
     }
 
@@ -166,7 +174,7 @@ struct UITestHooksDebugOnlyTests {
             #expect(source.contains("workspace?.positionLocks == prior.episode(episodeID)?.workspace?.positionLocks"))
             #expect(source.contains("merged.episodes[index].alignment = result.alignment"))
             let store = try UITestHooksDebugOnlyTests.source("Document/ShowDocumentStore.swift")
-            #expect(store.contains("SharedModelPublication.decide(live: model, expected: expected) == .publish"))
+            #expect(store.contains("SharedModelPublication.decide(live: residentModel, expected: expected) == .publish"))
         }
 
         @Test func inspectionNeverActivatesTheMutableLiveModel() throws {
@@ -196,7 +204,7 @@ struct UITestHooksDebugOnlyTests {
             let start = try #require(source.range(of: "private func adoptUncertainPublication()"))
             let end = try #require(source[start.upperBound...].range(of: "\n    override func writeSafely("))
             let body = source[start.lowerBound..<end.lowerBound]
-            #expect(body.contains("verifiedModel = document.payload"))
+            #expect(body.contains("adoptVerifiedCatalog(document.payload, captured: captured)"))
             #expect(body.contains("AlignmentRuntimeProvider.reconcileActive(for: self)"))
 
             let runtime = try Self.runtimeSource()

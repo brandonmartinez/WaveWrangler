@@ -42,7 +42,7 @@ extension EpisodeCleanupModel {
         if let reviewRowsSnapshot, reviewRowsSnapshot.generation == generation { return reviewRowsSnapshot.rows }
         let inputs = FillerReviewInputs(media: episode.map { EpisodeMediaInputs($0, includingWorkingRange: true) },
             cleanup: episode?.cleanup,
-            speakerNames: Dictionary(uniqueKeysWithValues: state.store.model.speakers.map { ($0.id, $0.name) }))
+            speakerNames: Dictionary(uniqueKeysWithValues: state.store.residentModel.speakers.map { ($0.id, $0.name) }))
         // Readiness and live identities also invalidate this snapshot through their setters.
         if let cached = reviewRowsSnapshot, cached.inputs == inputs {
             reviewRowsSnapshot = (generation, inputs, cached.rows)
@@ -57,7 +57,7 @@ extension EpisodeCleanupModel {
             let category: FillerReviewFilter = issue != nil ? .inactive : cut != nil ? .cut
                 : review.decision == .rejected ? .rejected : review.decision == .pending ? .pending : .reviewed
             return FillerReviewRow(id: review.id, speakerID: review.speaker,
-                speaker: state.store.model.speaker(review.speaker)?.name ?? "Removed speaker",
+                speaker: state.store.residentModel.speaker(review.speaker)?.name ?? "Removed speaker",
                 phrase: review.word?.text ?? "Manual interval",
                 status: category == .reviewed && review.isAdjusted ? "Adjusted" : category.rawValue,
                 category: category, start: review.bounds.alignedStart, end: review.bounds.alignedEnd,
@@ -428,7 +428,7 @@ struct FillerReviewPanel: View {
                 .accessibilityIdentifier("ww.review.search")
             Picker("Speaker", selection: $model.reviewSpeakerFilter) {
                 Text("All speakers").tag(Optional<SpeakerID>.none)
-                ForEach(model.state.store.model.speakers) { speaker in
+                ForEach(model.state.store.residentModel.speakers) { speaker in
                     Text(speaker.name).tag(Optional(speaker.id))
                 }
             }

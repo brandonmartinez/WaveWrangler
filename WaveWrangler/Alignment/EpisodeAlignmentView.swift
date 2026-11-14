@@ -69,7 +69,7 @@ struct EpisodeAlignmentContent: View {
                 startupError = String(describing: error)
             }
         }
-        .onChange(of: state.store.model) { prior, current in
+        .onChange(of: state.store.residentModel) { prior, current in
             guard let model else { return }
             if !current.hasSameMediaInputs(as: prior, in: episodeID) { model.stopAudition() }
             model.load()
@@ -97,7 +97,7 @@ struct EpisodeAlignmentContent: View {
         .onChange(of: state.saveStatus.state, initial: false) { _, _ in
             guard let document = state.store.document,
                   document.status.saveStatus.state.isVerifiedOnDisk,
-                  document.verifiedModel == state.store.model,
+                  document.verifiedModel == state.store.residentModel,
                   let model else { return }
             if model.waveformNeedsRefreshAfterSave {
                 model.synchronizeWaveforms()

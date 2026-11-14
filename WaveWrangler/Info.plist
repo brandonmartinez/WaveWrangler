@@ -43,6 +43,22 @@
 			<string>Owner</string>
 			<key>LSItemContentTypes</key>
 			<array>
+				<string>com.brandonmartinez.wavewrangler.show-package</string>
+			</array>
+			<key>NSDocumentClass</key>
+			<string>ShowDocument</string>
+			<key>LSTypeIsPackage</key>
+			<true/>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key>
+			<string>WaveWrangler Legacy Show</string>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>LSHandlerRank</key>
+			<string>Owner</string>
+			<key>LSItemContentTypes</key>
+			<array>
 				<string>com.brandonmartinez.wavewrangler.show</string>
 			</array>
 			<key>NSDocumentClass</key>
@@ -73,9 +89,27 @@
 		</dict>
 		<dict>
 			<key>UTTypeIdentifier</key>
-			<string>com.brandonmartinez.wavewrangler.show</string>
+			<string>com.brandonmartinez.wavewrangler.show-package</string>
 			<key>UTTypeDescription</key>
 			<string>WaveWrangler Show</string>
+			<key>UTTypeConformsTo</key>
+			<array>
+				<string>com.apple.package</string>
+				<string>public.content</string>
+			</array>
+			<key>UTTypeTagSpecification</key>
+			<dict>
+				<key>public.filename-extension</key>
+				<array>
+					<string>wwshow</string>
+				</array>
+			</dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key>
+			<string>com.brandonmartinez.wavewrangler.show</string>
+			<key>UTTypeDescription</key>
+			<string>WaveWrangler Legacy Show</string>
 			<key>UTTypeConformsTo</key>
 			<array>
 				<string>public.json</string>

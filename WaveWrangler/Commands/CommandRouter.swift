@@ -160,7 +160,7 @@ final class CommandRouter: NSObject, NSMenuItemValidation {
     }
 
     static func openDocument(for id: ShowID) -> ShowDocument? {
-        NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.first { $0.store.model.show.id == id }
+        NSDocumentController.shared.documents.compactMap { $0 as? ShowDocument }.first { $0.store.residentModel.show.id == id }
     }
 
     @objc func newCollection(_ sender: Any?) {

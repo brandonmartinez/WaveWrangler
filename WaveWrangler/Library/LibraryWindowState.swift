@@ -27,8 +27,9 @@ final class LibraryWindowState {
     var entrySelection: Set<ShowID> = [] {
         didSet {
             guard oldValue != entrySelection else { return }
-            if selectedShow.map({ entrySelection != [$0.store.model.show.id] }) == true {
+            if selectedShow.map({ entrySelection != [$0.store.residentModel.show.id] }) == true {
                 selectedShow = nil
+                episodeManagementState?.reviewWindowDidClose()
                 episodeManagementState = nil
             }
             actionMessage = nil
@@ -269,7 +270,7 @@ final class LibraryWindowState {
 
     func loadSelectedShow(readOnly: Bool = false) async {
         guard entrySelection.count == 1, let id = entrySelection.first,
-              selectedShow?.store.model.show.id != id else { return }
+              selectedShow?.store.residentModel.show.id != id else { return }
         let task: Task<ShowDocument, Error>
         if loadingShowID == id, let pending = loadingShowTask {
             task = pending
@@ -300,12 +301,14 @@ final class LibraryWindowState {
     }
 
     func browse(_ document: ShowDocument) {
-        let model = document.store.model
+        let model = document.store.residentModel
         document.retainForLibrary(in: window)
-        store.showDidOpen(id: model.show.id, model: model, fileURL: document.presentedFileURL, hasUnsavedChanges: document.hasUnsavedModelChanges)
+        store.showDidOpen(id: model.show.id, model: model, fileURL: document.presentedFileURL,
+                         hasUnsavedChanges: document.hasUnsavedModelChanges, catalogSummary: document.store.librarySummary)
         entrySelection = [model.show.id]
         selectedShow = document
         if episodeManagementState?.store !== document.store {
+            episodeManagementState?.reviewWindowDidClose()
             let state = ShowWindowState(store: document.store)
             state.attachForLibrary(to: window)
             episodeManagementState = state
@@ -318,12 +321,14 @@ final class LibraryWindowState {
     func documentDidClose(_ document: ShowDocument) {
         guard selectedShow === document else { return }
         selectedShow = nil
+        episodeManagementState?.reviewWindowDidClose()
         episodeManagementState = nil
         actionMessage = "The show was closed. Open it again to manage its episodes."
     }
 
     func openSelectedEpisode(inNewWindow: Bool = false) {
-        guard let state = episodeManagementState, let id = state.selectedEpisode?.id else { return }
+        guard let state = episodeManagementState, let id = state.selectedEpisodeID,
+              state.store.containsEpisode(id) else { return }
         openEpisode(id, inNewWindow: inNewWindow)
     }
 

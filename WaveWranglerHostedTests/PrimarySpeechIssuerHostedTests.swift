@@ -97,10 +97,10 @@ struct PrimarySpeechIssuerHostedTests {
         var accepted = try recorded.model.acceptingMap(revision: recorded.revision.revision, in: episode.id)
         mutate?(&accepted)
         let url = folder.appendingPathComponent("show.wwshow")
-        let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
-            accepted, revision: 1, publicationID: UUID()
+        let encoded = try ShowCatalogCoder().encodeDocument(
+            ShowCatalog(accepted), revision: 1, publicationID: UUID()
         )
-        try encoded.data.write(to: url)
+        try LocalFileOperations().writeNew(encoded.data, to: url)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: url, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
@@ -109,6 +109,7 @@ struct PrimarySpeechIssuerHostedTests {
             styleMask: .titled, backing: .buffered, defer: false
         )
         let state = ShowWindowState(store: document.store)
+        try await document.store.ensureEpisodeLoaded(episode.id)
         state.attach(to: window)
         let setup = EpisodeSetupModel(
             store: document.store, episodeID: episode.id,
@@ -182,7 +183,7 @@ struct PrimarySpeechIssuerHostedTests {
     @Test func backupPromotionAndEpisodeSwitchRefuseWithoutBackupAccess() async throws {
         let f = try await fixture()
         defer { f.close() }
-        var changed = f.document.store.model
+        var changed = f.document.store.residentModel
         changed.episodes[0].sources[0].role = .backup
         f.document.store.replaceLoadedModel(changed)
         await #expect(throws: PrimaryPCMRefusal.selectionChanged) {
@@ -198,7 +199,7 @@ struct PrimarySpeechIssuerHostedTests {
     @Test func recordABAAndCancellationRefuse() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let key = DeviceAccessKey(showID: f.document.store.model.show.id, sourceID: f.source.id)
+        let key = DeviceAccessKey(showID: f.document.store.residentModel.show.id, sourceID: f.source.id)
         let original = try #require(try await f.accessStore.record(for: key))
         let store = MutatingSnapshotStore(base: f.accessStore, replacement: original)
         await #expect(throws: PrimaryPCMRefusal.accessChanged) {
@@ -312,7 +313,7 @@ struct PrimarySpeechIssuerHostedTests {
     @Test func relinkABAAfterSyntheticInferenceCannotPublish() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let key = DeviceAccessKey(showID: f.document.store.model.show.id, sourceID: f.source.id)
+        let key = DeviceAccessKey(showID: f.document.store.residentModel.show.id, sourceID: f.source.id)
         let record = try #require(try await f.accessStore.record(for: key))
         let store = f.accessStore
         await #expect(throws: PrimaryPCMRefusal.accessChanged) {
@@ -366,7 +367,7 @@ struct PrimarySpeechIssuerHostedTests {
                 for: f.setup, accessStore: f.accessStore
             ) { _, _, _ in
                 await MainActor.run {
-                    var changed = store.model
+                    var changed = store.residentModel
                     let epoch = RecordingEpoch(label: "Moved after inference")
                     changed.episodes[0].recorderGroups[0].epochs.append(epoch)
                     changed.episodes[0].sources[0].placement.epochID = epoch.id

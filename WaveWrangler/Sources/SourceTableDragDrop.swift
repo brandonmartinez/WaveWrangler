@@ -114,7 +114,7 @@ extension EpisodeSetupModel {
             return nil
         }
         guard recordings.allSatisfy({
-            $0.version == 1 && $0.showID == store.model.show.id && $0.episodeID == episodeID
+            $0.version == 1 && $0.showID == store.residentModel.show.id && $0.episodeID == episodeID
         }) else {
             message = "Only recordings from this episode can be moved between its recorder groups."
             return false

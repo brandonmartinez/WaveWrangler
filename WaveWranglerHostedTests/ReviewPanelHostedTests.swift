@@ -17,7 +17,7 @@ struct ReviewPanelHostedTests {
         f.model.placeGroupsAtSourceTime()
         try await wait {
             !f.model.isWorking && !f.model.isLoadingWaveforms && !f.model.waveformNeedsRefreshAfterSave
-                && f.document.verifiedModel == f.document.store.model && f.model.waveformMap != nil
+                && f.document.verifiedModel == f.document.store.residentModel && f.model.waveformMap != nil
         }
         let state = ShowWindowState(store: f.document.store, episodeID: f.model.episodeID)
         state.select(.alignment)
@@ -26,7 +26,7 @@ struct ReviewPanelHostedTests {
         cleanup.connectWorkspace(to: f.model)
         state.cleanupModel = cleanup
         await cleanup.refresh()
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let transcripts = try await f.runtime.transcribeCleanup(model: snapshot, episode: f.model.episodeID,
             modelRevision: "synthetic-review-panel", chunking: .fixed, transcribeWindow: { _ in
                 PCMTranscript(segments: [
@@ -47,7 +47,7 @@ struct ReviewPanelHostedTests {
     @Test func rowSelectionCentersZoomsAndKeepsReadableTimeWithoutRoundingSavedBounds() async throws {
         let (f, cleanup, _) = try await fixture()
         defer { cleanup.cancel(); f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         let rows = cleanup.reviewRows
         #expect(rows.map(\.phrase) == ["um", "uh"])
@@ -65,7 +65,7 @@ struct ReviewPanelHostedTests {
                 "Repeated focus uses the automatic context, not the current viewport's zoom.")
         #expect(cleanup.listening.selection == 1...1.3)
         #expect(cleanup.state.workspaceInspector == .transcript && cleanup.state.inspectorPresented)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         cleanup.windowStart = 3
         #expect(cleanup.reviewRows == rows)
         #expect(cleanup.reviewRowsSnapshot?.generation == f.document.store.modelGeneration)
@@ -99,7 +99,7 @@ struct ReviewPanelHostedTests {
         let indicator = try #require(host.descendants.compactMap {
             $0 as? ReviewPlaybackIndicator.IndicatorView
         }.first)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         #expect(indicator.line.isHidden)
         #expect(cleanup.reviewPlaybackAlignedTime == nil)
         cleanup.play(interval: 0...6, loop: false)
@@ -118,7 +118,7 @@ struct ReviewPanelHostedTests {
         try await host.settle()
         #expect(indicator.line.isHidden)
         #expect(cleanup.reviewPlaybackAlignedTime == nil)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
     }
 
     @Test(arguments: [
@@ -177,7 +177,7 @@ struct ReviewPanelHostedTests {
     @Test func plusMinusAndRowCutsUseExistingUndoAndPreserveRawTranscriptAndRecordings() async throws {
         let (f, cleanup, _) = try await fixture()
         defer { cleanup.cancel(); f.close() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         let review = try #require(cleanup.fillerReviews.first)
         cleanup.focusReviewRow(review.id)
@@ -195,7 +195,7 @@ struct ReviewPanelHostedTests {
         #expect(expanded.initialBounds == review.initialBounds && expanded.word == review.word)
         #expect(cleanup.reviewRows.first?.status == "Adjusted")
         undo.undo()
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         undo.redo()
         #expect(cleanup.fillerReviews.first?.bounds == expanded.bounds)
         undo.undo()
@@ -208,7 +208,7 @@ struct ReviewPanelHostedTests {
         #expect(cleanup.reviewRows.first?.category == .cut)
         #expect(cleanup.episode?.cleanup?.transcripts == before.episodes[0].cleanup?.transcripts)
         #expect(cleanup.episode?.alignment == before.episodes[0].alignment)
-        let cutModel = f.document.store.model
+        let cutModel = f.document.store.residentModel
         undo.beginUndoGrouping()
         cleanup.resizeReviewInterval(review.id, expanding: true)
         undo.endUndoGrouping()
@@ -216,17 +216,17 @@ struct ReviewPanelHostedTests {
         #expect(cleanup.activeManualCuts.first?.endFrame == 62_880)
         undo.undo()
         cleanup.synchronizeCutTimeline()
-        #expect(f.document.store.model == cutModel)
+        #expect(f.document.store.residentModel == cutModel)
         undo.undo()
         cleanup.synchronizeCutTimeline()
-        #expect(f.document.store.model == before && cleanup.activeManualCuts.isEmpty)
+        #expect(f.document.store.residentModel == before && cleanup.activeManualCuts.isEmpty)
         #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
-        let unchanged = f.document.store.model
+        let unchanged = f.document.store.residentModel
         cleanup.resizeReviewInterval(review.id, expanding: false, seconds: 0.2)
-        #expect(cleanup.error != nil && f.document.store.model == unchanged)
+        #expect(cleanup.error != nil && f.document.store.residentModel == unchanged)
         cleanup.isRefreshing = true
         cleanup.autoCutReviewRow(review.id)
-        #expect(f.document.store.model == unchanged)
+        #expect(f.document.store.residentModel == unchanged)
         cleanup.isRefreshing = false
         let stale = FillerTimingReview(origin: .manual, speaker: review.speaker, primary: review.primary,
             sourceRate: review.sourceRate, sourceIdentity: String(repeating: "b", count: 64),
@@ -239,10 +239,10 @@ struct ReviewPanelHostedTests {
         }
         undo.endUndoGrouping()
         try #require(appended)
-        let retained = f.document.store.model
+        let retained = f.document.store.residentModel
         #expect(cleanup.reviewRows.first { $0.id == stale.id }?.category == .inactive)
         cleanup.autoCutReviewRow(stale.id)
-        #expect(cleanup.error != nil && f.document.store.model == retained)
+        #expect(cleanup.error != nil && f.document.store.residentModel == retained)
     }
 
     @Test(arguments: [false, true])
@@ -253,7 +253,7 @@ struct ReviewPanelHostedTests {
         let detected = try #require(cleanup.fillerReviews.first)
         cleanup.resizeReviewInterval(detected.id, expanding: true)
         let review = try #require(cleanup.selectedFiller)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         cleanup.requestReviewRowFocus(review.id)
         cleanup.auditionReviewRow(review.id)
@@ -266,11 +266,11 @@ struct ReviewPanelHostedTests {
             : "Finished selection audition."
         #expect(f.model.auditionLabel == expected)
         #expect(abs(f.model.waveformPlayheadSeconds - review.bounds.alignedEnd) < 1 / 48_000)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         cleanup.autoCutReviewRow(review.id)
         let cut = try #require(cleanup.activeManualCuts.first)
         cleanup.showManualCut(cut.id, expanded: false)
-        let withCut = f.document.store.model
+        let withCut = f.document.store.residentModel
         cleanup.auditionReviewRow(review.id)
         try #require(f.model.canStopAudition, "\(cleanup.error ?? f.model.auditionLabel)")
         try await wait { cleanup.reviewPlaybackAlignedTime != nil }
@@ -282,7 +282,7 @@ struct ReviewPanelHostedTests {
         #expect(cleanup.listening.expandedManualCutID == cut.id)
         #expect(abs(f.model.waveformPlayheadSeconds
             - cleanup.cutTimeline.editedTime(forAlignedTime: cut.alignedEnd)) < 1 / 48_000)
-        #expect(f.document.store.model == withCut)
+        #expect(f.document.store.residentModel == withCut)
         cleanup.isRefreshing = true
         cleanup.auditionReviewRow(review.id)
         #expect(!f.model.canStopAudition && cleanup.error != nil)
@@ -294,7 +294,7 @@ struct ReviewPanelHostedTests {
         let (f, cleanup, state) = try await fixture()
         defer { cleanup.cancel(); f.close() }
         state.reviewPanelPresented = true
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         var host = HostedTimelineWindow(width: 1100, height: 800,
             content: AlignmentWorkspace(state: state, model: f.model, showInspector: {}))
         defer { host.close() }
@@ -352,7 +352,7 @@ struct ReviewPanelHostedTests {
         #expect(restoredSplit.arrangedSubviews.first.map { $0.frame.height >= 64 } == true)
         #expect(restoredSplit.arrangedSubviews.allSatisfy { $0.frame.height >= 0 },
                 "The bottom pane yields space before it can clip the fixed control bar.")
-        #expect(f.document.store.model.episodes[0].alignment == before.episodes[0].alignment)
+        #expect(f.document.store.residentModel.episodes[0].alignment == before.episodes[0].alignment)
         state.reviewPanelPresented = false
         try await host.settle()
         #expect(!state.reviewPanelPresented)

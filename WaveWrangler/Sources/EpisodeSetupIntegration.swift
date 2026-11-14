@@ -185,7 +185,7 @@ final class SetupSourceCommandHandler: SourceCommandHandling {
     }
 
     func canImportSources(store: ShowDocumentStore, episode: EpisodeID) -> Bool {
-        store.model.episode(episode) != nil
+        store.residentModel.episode(episode) != nil
     }
 
     func importSources(store: ShowDocumentStore, episode: EpisodeID, window: NSWindow?) {

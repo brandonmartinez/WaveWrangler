@@ -61,7 +61,7 @@ final class EpisodeReviewPresentation {
             return
         }
         detachedWindow?.window?.title = "\(episode.title) - Transcript & Review"
-        detachedWindow?.window?.subtitle = AppBuildIdentity.current.subtitle(context: state.store.model.show.title)
+        detachedWindow?.window?.subtitle = AppBuildIdentity.current.subtitle(context: state.store.residentModel.show.title)
     }
 
     func originDidClose() {

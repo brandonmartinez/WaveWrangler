@@ -65,7 +65,21 @@ public struct EnvelopeHeaderInfo: Sendable, Equatable, Decodable {
     public let revision: Int?
     public let schemaVersion: Int?
 
+    private enum CodingKeys: String, CodingKey {
+        case checksum, format, publicationID, revision, schemaVersion, modelSchemaVersion
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        checksum = try values.decodeIfPresent(String.self, forKey: .checksum)
+        format = try values.decodeIfPresent(String.self, forKey: .format)
+        publicationID = try values.decodeIfPresent(UUID.self, forKey: .publicationID)
+        revision = try values.decodeIfPresent(Int.self, forKey: .revision)
+        schemaVersion = try values.decodeIfPresent(Int.self, forKey: .modelSchemaVersion)
+            ?? values.decodeIfPresent(Int.self, forKey: .schemaVersion)
+    }
+
     public static func peek(_ data: Data) -> EnvelopeHeaderInfo? {
-        try? JSONDecoder().decode(EnvelopeHeaderInfo.self, from: data)
+        try? JSONDecoder().decode(EnvelopeHeaderInfo.self, from: ShowPackage.envelopeHeader(data) ?? data)
     }
 }

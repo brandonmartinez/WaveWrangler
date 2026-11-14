@@ -30,14 +30,14 @@ struct WorkspaceConcurrencyHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let state = ShowWindowState(store: f.document.store)
         let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
         cleanup.saveRange(inValue: 0, outValue: 5)
         await cleanup.refresh()
         try #require(cleanup.plan?.isReady == true)
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         let gate = WorkerGate()
         cleanup.isBusy = true
@@ -73,15 +73,15 @@ struct WorkspaceConcurrencyHostedTests {
         let transcripts = try await job.value
         cleanup.isBusy = false
         #expect(try cleanup.publishTranscripts(transcripts, expecting: snapshot))
-        #expect(state.store.model.speakerAppearance(speaker, in: f.model.episodeID)?.color == .teal)
+        #expect(state.store.residentModel.speakerAppearance(speaker, in: f.model.episodeID)?.color == .teal)
         #expect(cleanup.episode?.cleanup?.transcripts == transcripts)
         #expect(cleanup.listening.playback.soloed == [.speaker(speaker)])
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
-        let beforeRangeChange = state.store.model
+        let beforeRangeChange = state.store.residentModel
         cleanup.saveRange(inValue: 0.5, outValue: 4)
-        let changed = state.store.model
+        let changed = state.store.residentModel
         #expect(try !cleanup.publishTranscripts(transcripts, expecting: beforeRangeChange))
-        #expect(state.store.model == changed, "A real job-input change refuses publication rather than overwriting current state.")
+        #expect(state.store.residentModel == changed, "A real job-input change refuses publication rather than overwriting current state.")
     }
 
     private func wait(_ condition: () -> Bool) async throws {

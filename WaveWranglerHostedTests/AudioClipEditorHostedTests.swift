@@ -41,7 +41,7 @@ struct AudioClipEditorHostedTests {
         try Self.wave(rate: 44_100, frames: 44_100).write(to: file)
         let initial = ShowDocumentModel(show: Show(title: "Synthetic audio editor"), episodes: [Episode(title: "Empty episode")])
         let url = folder.appendingPathComponent("show.wwshow")
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(initial, revision: 1, publicationID: UUID()).data.write(to: url)
+        try LocalFileOperations().writeNew(ShowCatalogCoder().encodeDocument(ShowCatalog(initial), revision: 1, publicationID: UUID()).data, to: url)
         let document = try #require(try NSDocumentController.shared.makeDocument(
             withContentsOf: url, ofType: DocumentTypes.show) as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
@@ -51,6 +51,7 @@ struct AudioClipEditorHostedTests {
         let runtime = try await AlignmentRuntime.make(showID: initial.show.id, accessStore: access, access: context)
         let model = EpisodeAlignmentModel(document: document, episodeID: initial.episodes[0].id, runtime: runtime)
         let state = ShowWindowState(store: document.store, episodeID: model.episodeID)
+        try await document.store.ensureEpisodeLoaded(model.episodeID)
         state.alignmentModel = model
         state.select(.alignment)
         let owner = EpisodeWindowController(state: state)
@@ -86,12 +87,17 @@ struct AudioClipEditorHostedTests {
         try #require(condition(), "The bounded editor workflow did not finish.")
     }
 
+    private func settleResidency(_ f: Fixture) async throws {
+        try await f.document.store.ensureEpisodeLoaded(f.model.episodeID)
+        try await wait { f.document.store.residentRevisionCount <= 1 }
+    }
+
     @Test func productionBoundariesAreAtomicUndoableAndPersistWithoutChangingOriginals() async throws {
         let f = try await fixture()
         defer { f.close() }
         _ = try await imported(f)
         let original = try Data(contentsOf: f.file)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         let composition = try #require(f.editor.composition)
         let range = EpisodeProductionRange(
             start: try composition.timeline.unpinnedAnchor(atProgramFrame: -24_000),
@@ -99,24 +105,26 @@ struct AudioClipEditorHostedTests {
             restrictSpeech: true)
         #expect(f.editor.setBoundaryTimes(range: range, speakerIn: nil, speakerOut: nil))
         f.editor.refresh()
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         let frames = f.editor.production?.episodeFrames
         #expect(frames == -24_000..<72_000)
         f.document.undoManager?.undo()
-        #expect(f.document.store.model == before)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == before)
         f.document.undoManager?.redo()
-        #expect(f.document.store.model == after)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == after)
         f.editor.refresh()
         var invalid = range
         invalid.end = range.start
         #expect(!f.editor.setProductionRange(invalid))
-        #expect(f.document.store.model == after)
+        #expect(f.document.store.residentModel == after)
         #expect(f.editor.error != nil)
         #expect(!f.editor.setBoundaryTimes(range: range, speakerIn: 0.1, speakerOut: 0.9),
                 "Audio-only episodes must not acquire fabricated speaker timing.")
-        #expect(f.document.store.model == after)
+        #expect(f.document.store.residentModel == after)
         try await MixerHostedTests().save(f.document)
-        let bytes = try Data(contentsOf: #require(f.document.fileURL))
+        let bytes = try LocalFileOperations().read(#require(f.document.fileURL))
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
         #expect(reopened.payload == after)
         #expect(try Data(contentsOf: f.file) == original)
@@ -158,7 +166,9 @@ struct AudioClipEditorHostedTests {
             #expect(stopped, "A production edit synchronously stops the old mix in the episode window.")
             #expect(clockCleared)
             f.document.undoManager?.undo()
+            try await settleResidency(f)
             f.document.undoManager?.redo()
+            try await settleResidency(f)
             let remainsStopped = !f.model.canStopAudition
             #expect(remainsStopped, "Undo/Redo must not restart a stale producer.")
             try await MixerHostedTests().save(f.document)
@@ -178,15 +188,15 @@ struct AudioClipEditorHostedTests {
         f.model.loadWaveforms()
         #expect(f.model.trackProcessingOperation?.kind != .waveforms,
                 "An episode without recorders must not be blocked by a recording-only preparation.")
-        let original = try Data(contentsOf: f.file), before = f.document.store.model
+        let original = try Data(contentsOf: f.file), before = f.document.store.residentModel
         let review = try await review(f)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         #expect(try await f.access.allRecords().isEmpty)
         f.editor.importer.commit(review)
         try await wait { f.editor.importer.processing == nil }
         try #require(f.editor.importer.error == nil, Comment(rawValue: f.editor.importer.error ?? ""))
         f.editor.refresh()
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         let episode = try #require(after.episode(f.model.episodeID))
         #expect(episode.alignment == nil && episode.recorderGroups.isEmpty && episode.speakerAssignments.isEmpty)
         #expect(episode.alignmentSources.isEmpty && episode.sources.count == 1)
@@ -194,17 +204,20 @@ struct AudioClipEditorHostedTests {
         #expect(f.editor.waveforms.values.first?.envelope.bins.isEmpty == false)
         #expect(f.document.undoManager?.undoActionName == "Add Audio")
         f.document.undoManager?.undo()
-        #expect(f.document.store.model == before)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == before)
         f.document.undoManager?.redo()
-        #expect(f.document.store.model == after)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == after)
         try await MixerHostedTests().save(f.document)
-        let bytes = try Data(contentsOf: #require(f.document.fileURL))
+        let bytes = try LocalFileOperations().read(#require(f.document.fileURL))
         let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
         #expect(reopened.payload == after)
         let savedURL = try #require(f.document.fileURL)
         let reopenedDocument = try #require(try NSDocumentController.shared.makeDocument(
             withContentsOf: savedURL, ofType: DocumentTypes.show) as? ShowDocument)
-        #expect(reopenedDocument.store.model == after)
+        try await reopenedDocument.store.ensureEpisodeLoaded(f.model.episodeID)
+        #expect(reopenedDocument.store.residentModel == after)
         reopenedDocument.close()
         let recovery = RecoveryStore(root: f.folder.appendingPathComponent("recovery"))
         let checkpoint = try recovery.retainCheckpoint(bytes, for: .show(after.show.id))
@@ -212,7 +225,8 @@ struct AudioClipEditorHostedTests {
         try recovery.bytes(of: checkpoint).write(to: recoveredURL)
         let recovered = try #require(try NSDocumentController.shared.makeDocument(
             withContentsOf: recoveredURL, ofType: DocumentTypes.show) as? ShowDocument)
-        #expect(recovered.store.model == after)
+        try await recovered.store.ensureEpisodeLoaded(f.model.episodeID)
+        #expect(recovered.store.residentModel == after)
         recovered.close()
         #expect(try Data(contentsOf: f.file) == original)
         let source = try #require(episode.sources.first)
@@ -228,13 +242,13 @@ struct AudioClipEditorHostedTests {
             defer { f.close() }
             let file = f.folder.appendingPathComponent("generated.m4a")
             try SupplementalProductionHostedTests.writeAudio(file, codec: codec, containerType: kAudioFileM4AType)
-            let original = try Data(contentsOf: file), before = f.document.store.model
+            let original = try Data(contentsOf: file), before = f.document.store.residentModel
             f.editor.importer.commit(try await review(f, files: [file]))
             try await wait { f.editor.importer.processing == nil }
             let error = f.editor.importer.error
             try #require(error == nil, Comment(rawValue: error ?? ""))
             f.editor.refresh()
-            let after = f.document.store.model
+            let after = f.document.store.residentModel
             let episode = try #require(after.episode(f.model.episodeID))
             let track = try #require(episode.audioArrangement?.tracks.first)
             #expect(episode.alignment == nil && episode.alignmentSources.isEmpty)
@@ -247,14 +261,16 @@ struct AudioClipEditorHostedTests {
             #expect(channels.count == 2 && channels.allSatisfy { $0.count == 4800 })
             #expect(channels.allSatisfy { $0.contains { $0 != 0 } })
             f.document.undoManager?.undo()
-            let undone = f.document.store.model
+            try await settleResidency(f)
+            let undone = f.document.store.residentModel
             #expect(undone == before)
             f.document.undoManager?.redo()
-            let redone = f.document.store.model
+            try await settleResidency(f)
+            let redone = f.document.store.residentModel
             #expect(redone == after)
             try await MixerHostedTests().save(f.document)
             let savedURL = f.document.fileURL
-            let saved = try Data(contentsOf: #require(savedURL))
+            let saved = try LocalFileOperations().read(#require(savedURL))
             #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(saved).payload == after)
             #expect(try Data(contentsOf: file) == original)
         }
@@ -280,20 +296,24 @@ struct AudioClipEditorHostedTests {
         })
         f.editor.refresh()
         f.editor.splitSelected(atProgramSeconds: 2.0 / 48_000)
+        try await settleResidency(f)
         let clips = try #require(f.editor.composition?.clips)
         #expect(clips.suffix(2).map(\.programFrames) == [0..<2, 2..<480])
         #expect(clips[1].clip.id == original.clip.id && clips[2].clip.id != original.clip.id)
         #expect(clips[1].clip.trim == clips[2].clip.trim)
         f.editor.select(clips[2].clip.id)
         f.editor.addTrack()
+        try await settleResidency(f)
         let track = try #require(f.editor.tracks.last)
         f.editor.moveSelected(start: "1.25", track: track.id)
         f.editor.pinSelected(true)
         #expect(f.editor.selected?.clip.anchor == .absolute(frame: 60_000))
         #expect(f.editor.selected?.clip.envelope == clips[2].clip.envelope)
         f.editor.pinSelected(false)
+        try await settleResidency(f)
         #expect(f.editor.selected?.programFrames.lowerBound == 60_000)
         f.editor.resizeSelected(start: "3", end: "479")
+        try await settleResidency(f)
         #expect(f.editor.selected?.clip.outputWindow == .init(offsetFrames: 3, countFrames: 476))
         let cropped = try #require(f.editor.selected)
         f.editor.resizeSelected(start: "2", end: "479")
@@ -301,29 +321,32 @@ struct AudioClipEditorHostedTests {
         f.editor.resizeSelected(start: String(Int64.min), end: String(Int64.max))
         #expect(f.editor.selected == cropped)
         f.editor.duplicateSelected()
+        try await settleResidency(f)
         #expect(f.editor.composition?.clips.count == 4)
         f.editor.renameTrack(track.id, name: "Bed")
         f.editor.reorderTrack(track.id, by: -1)
         #expect(f.editor.tracks.first?.name == "Bed")
-        let beforeGesture = f.document.store.model
+        let beforeGesture = f.document.store.residentModel
         let moving = try #require(f.editor.selected)
         f.editor.beginGesture(moving)
         f.editor.previewGesture(start: 70_000, track: track.id)
-        #expect(f.document.store.model == beforeGesture)
+        #expect(f.document.store.residentModel == beforeGesture)
         f.editor.cancelGesture()
-        #expect(f.document.store.model == beforeGesture)
+        #expect(f.document.store.residentModel == beforeGesture)
         f.editor.beginGesture(moving)
         f.editor.previewGesture(start: 70_000, track: track.id)
         f.editor.refuseGesture("Synthetic invalid final edge")
         f.editor.completeGesture()
-        #expect(f.document.store.model == beforeGesture)
+        #expect(f.document.store.residentModel == beforeGesture)
         f.editor.beginGesture(moving)
         f.editor.previewGesture(start: 70_000, track: track.id)
         f.editor.completeGesture()
         #expect(f.document.undoManager?.undoActionName == "Move Audio Clip")
         f.document.undoManager?.undo()
-        #expect(f.document.store.model == beforeGesture)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == beforeGesture)
         f.document.undoManager?.redo()
+        try await settleResidency(f)
         f.editor.refresh()
         #expect(f.editor.selected?.programFrames.lowerBound == 70_000)
         try await MixerHostedTests().save(f.document)
@@ -332,7 +355,7 @@ struct AudioClipEditorHostedTests {
     @Test func canceledStaleRestoredAndReplacedDestinationsCannotPublish() async throws {
         for scenario in 0..<4 {
             let f = try await fixture()
-            let before = f.document.store.model
+            let before = f.document.store.residentModel
             let review = try await review(f)
             switch scenario {
             case 0:
@@ -340,6 +363,7 @@ struct AudioClipEditorHostedTests {
                     try model.addingAudioTrack(.init(name: "Temporary"), in: f.model.episodeID)
                 })
                 f.document.undoManager?.undo()
+                try await settleResidency(f)
             case 1: f.document.store.replaceLoadedModel(before)
             case 2:
                 f.owner.state.alignmentModel = nil
@@ -347,7 +371,7 @@ struct AudioClipEditorHostedTests {
             }
             f.editor.importer.commit(review)
             try await wait { f.editor.importer.processing == nil }
-            #expect(f.document.store.model == before)
+            #expect(f.document.store.residentModel == before)
             #expect(try await f.access.allRecords().isEmpty)
             f.close()
         }
@@ -355,13 +379,13 @@ struct AudioClipEditorHostedTests {
         defer { f.close() }
         let gate = AudioImportGate()
         f.editor.importer.beforeQualificationForTesting = { await gate.pause() }
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         f.editor.importer.commit(try await review(f))
         try await wait { gate.entered }
         f.editor.importer.cancel()
         gate.release()
         try await Task.sleep(for: .milliseconds(50))
-        #expect(f.document.store.model == before && f.editor.importer.completedClips.isEmpty)
+        #expect(f.document.store.residentModel == before && f.editor.importer.completedClips.isEmpty)
         #expect(try await f.access.allRecords().isEmpty)
         f.editor.importer.beforeQualificationForTesting = nil
         _ = try await imported(f)
@@ -389,11 +413,11 @@ struct AudioClipEditorHostedTests {
         defer { f.close() }
         let unsupported = f.folder.appendingPathComponent("unsupported.mp3")
         try Data("Not an MPEG stream".utf8).write(to: unsupported)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         f.editor.importer.commit(try await review(f, files: [f.file, unsupported]))
         try await wait { f.editor.importer.processing == nil }
         #expect(f.editor.importer.error != nil)
-        #expect(f.document.store.model == before && f.editor.importer.completedClips.isEmpty)
+        #expect(f.document.store.residentModel == before && f.editor.importer.completedClips.isEmpty)
         #expect(try await f.access.allRecords().isEmpty)
     }
 
@@ -414,13 +438,13 @@ struct AudioClipEditorHostedTests {
         let other = f.folder.appendingPathComponent("other.wav")
         try Self.wave(rate: 48_000, frames: 4800).write(to: other)
         let review = try await review(f, files: [other])
-        #expect(f.document.store.model.episode(f.model.episodeID)?.mix?.audioTracks?.first?.inserts.first?.documentState != nil)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.mix?.audioTracks?.first?.inserts.first?.documentState != nil)
         #expect(f.model.mixer.processor == nil)
-        let captured = f.document.store.model
+        let captured = f.document.store.residentModel
         f.document.store.replaceLoadedModel(captured)
         f.editor.importer.commit(review)
         try await wait { f.editor.importer.processing == nil }
-        #expect(f.document.store.model == captured)
+        #expect(f.document.store.residentModel == captured)
         #expect(f.editor.importer.error?.contains("changed") == true)
     }
 
@@ -486,14 +510,14 @@ struct AudioClipEditorHostedTests {
         defer { f.close() }
         let second = f.folder.appendingPathComponent("short.wav")
         try Self.wave(rate: 44_100, frames: 441).write(to: second)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         f.editor.importer.scan([f.file, second], in: f.owner.state,
             destination: .init(frame: 123_457, track: .newTrack))
         try await wait { f.editor.importer.review != nil || f.editor.importer.error != nil }
         var review = try #require(f.editor.importer.review)
         #expect(review.layout == .sequential && review.track == .newTrack)
         #expect(try AudioClipEditorModel.programFrame(review.programSeconds) == 123_457)
-        #expect(try await f.access.allRecords().isEmpty && f.document.store.model == before)
+        #expect(try await f.access.allRecords().isEmpty && f.document.store.residentModel == before)
         let last = try #require(review.order.last)
         review.move(last, by: -1)
         f.editor.importer.commit(review)
@@ -504,14 +528,16 @@ struct AudioClipEditorHostedTests {
         #expect(clips.map(\.programFrames) == [123_457..<123_937, 123_937..<171_937])
         #expect(f.editor.episode?.source(clips[0].clip.source)?.displayNameHint == second.lastPathComponent)
         #expect(f.document.undoManager?.undoActionName == "Add Audio")
-        let after = f.document.store.model
+        let after = f.document.store.residentModel
         f.document.undoManager?.undo()
-        #expect(f.document.store.model == before)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == before)
         f.document.undoManager?.redo()
-        #expect(f.document.store.model == after)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == after)
         try await MixerHostedTests().save(f.document)
         let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
-            Data(contentsOf: #require(f.document.fileURL))).payload
+            LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(saved == after)
         let recipe = try await f.runtime.mixerRecipe(model: after, episode: f.model.episodeID,
             programFrames: 123_457..<171_937)
@@ -523,11 +549,11 @@ struct AudioClipEditorHostedTests {
         defer { f.close() }
         let first = try await imported(f)
         let original = try Data(contentsOf: f.file)
-        let record = try #require(try await f.access.record(for: .init(showID: f.document.store.model.show.id,
+        let record = try #require(try await f.access.record(for: .init(showID: f.document.store.residentModel.show.id,
                                                                      sourceID: first.clip.source)))
         let fresh = f.folder.appendingPathComponent("fresh.wav")
         try Self.wave(rate: 48_000, frames: 480).write(to: fresh)
-        let before = f.document.store.model
+        let before = f.document.store.residentModel
         f.editor.importer.scan([f.file, fresh], in: f.owner.state,
             destination: .init(frame: 96_000, track: .existing(first.clip.track)))
         try await wait { f.editor.importer.review != nil || f.editor.importer.error != nil }
@@ -544,8 +570,10 @@ struct AudioClipEditorHostedTests {
         #expect(f.editor.composition?.clips.map(\.programFrames.lowerBound) == [0, 96_000, 144_000])
         #expect(f.editor.composition?.clips.prefix(2).map(\.clip.source) == [first.clip.source, first.clip.source])
         f.document.undoManager?.undo()
-        #expect(f.document.store.model == before)
+        try await settleResidency(f)
+        #expect(f.document.store.residentModel == before)
         f.document.undoManager?.redo()
+        try await settleResidency(f)
         #expect(try Data(contentsOf: f.file) == original)
     }
 
@@ -556,7 +584,7 @@ struct AudioClipEditorHostedTests {
         let first = try await imported(f)
         let originalBytes = try Data(contentsOf: f.file)
         let firstEpisodeID = f.model.episodeID
-        let originRecord = try #require(try await f.access.record(for: .init(showID: f.document.store.model.show.id,
+        let originRecord = try #require(try await f.access.record(for: .init(showID: f.document.store.residentModel.show.id,
                                                                            sourceID: first.clip.source)))
         let second = Episode(title: "Second synthetic episode")
         try #require(f.document.store.apply("Synthetic episode") { model throws(DomainError) in
@@ -597,11 +625,11 @@ struct AudioClipEditorHostedTests {
             model.audioEditor.refresh()
             let copied = try #require(model.audioEditor.composition?.clips.first)
             #expect(copied.clip.source != first.clip.source && copied.clip.id != first.clip.id)
-            #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
+            #expect(f.document.store.residentModel.episode(firstEpisode.id) == firstEpisode)
             #expect(f.model.mixer.processor === originProcessor && f.model.mixer.editorObservationKey == "f6.origin")
             #expect(try await f.access.record(for: originRecord.key) == originRecord)
             #expect(try await f.access.allRecords().count == 2)
-            let singleModel = f.document.store.model
+            let singleModel = f.document.store.residentModel
             let singleRecipe = try await f.runtime.mixerRecipe(model: singleModel, episode: second.id,
                 programFrames: 24_000..<24_480)
             let singlePCM = try await f.runtime.productionPCM(recipe: singleRecipe, model: singleModel,
@@ -609,9 +637,9 @@ struct AudioClipEditorHostedTests {
             model.audioEditor.select(copied.clip.id)
             model.audioEditor.duplicateSelected()
             let composition = try #require(model.audioEditor.composition)
-            let recipe = try await f.runtime.mixerRecipe(model: f.document.store.model, episode: second.id,
+            let recipe = try await f.runtime.mixerRecipe(model: f.document.store.residentModel, episode: second.id,
                 programFrames: 24_000..<24_480)
-            let pcm = try await f.runtime.productionPCM(recipe: recipe, model: f.document.store.model, frames: 24_000..<24_480)
+            let pcm = try await f.runtime.productionPCM(recipe: recipe, model: f.document.store.residentModel, frames: 24_000..<24_480)
             let trackPCM = try #require(pcm.audioTracks[copied.clip.track])
             #expect(composition.clips.count == 2 && trackPCM.flatMap { $0 }.contains { $0 != 0 })
             let singleTrack = try #require(singlePCM.audioTracks[copied.clip.track])
@@ -622,7 +650,7 @@ struct AudioClipEditorHostedTests {
             #expect(composition.programFrames == 24_000..<72_000)
             model.audioEditor.moveSelected(start: "2", track: copied.clip.track)
             #expect(model.audioEditor.composition?.clips.map(\.programFrames.lowerBound) == [24_000, 96_000])
-            #expect(f.document.store.model.episode(firstEpisode.id) == firstEpisode)
+            #expect(f.document.store.residentModel.episode(firstEpisode.id) == firstEpisode)
             try await MixerHostedTests().save(f.document)
             #expect(try Data(contentsOf: f.file) == originalBytes)
             outcome = .success(())
@@ -648,7 +676,7 @@ struct AudioClipEditorHostedTests {
             provider.registerDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier, visibility: .all) {
                 transfer.begin($0)
             }
-            let before = f.document.store.model
+            let before = f.document.store.residentModel
             #expect(f.editor.importer.receiveDrop([provider], in: f.owner.state,
                 destination: .init(frame: 12_345, track: .newTrack)))
             try await wait { transfer.started }
@@ -672,7 +700,8 @@ struct AudioClipEditorHostedTests {
             } else {
                 #expect(f.editor.importer.review == nil)
             }
-            #expect(f.document.store.model == before && f.editor.importer.completedClips.isEmpty)
+            let unchanged = try f.document.store.captureCatalog().resolved().materializedModel() == before
+            #expect(unchanged && f.editor.importer.completedClips.isEmpty)
             #expect(try await f.access.allRecords().isEmpty)
             f.close()
         }
@@ -698,7 +727,7 @@ struct AudioClipEditorHostedTests {
         try Self.wave(rate: 48_000, frames: 480).write(to: fresh)
         let unsupported = f.folder.appendingPathComponent("unsupported-mixed.mp3")
         try Data("Synthetic unsupported MPEG stream".utf8).write(to: unsupported)
-        let before = f.document.store.model, records = try await f.access.allRecords()
+        let before = f.document.store.residentModel, records = try await f.access.allRecords()
         f.editor.importer.scan([fresh, f.file, unsupported], in: f.owner.state,
             destination: .init(frame: 48_000, track: .newTrack))
         try await wait { f.editor.importer.review != nil || f.editor.importer.error != nil }
@@ -707,7 +736,7 @@ struct AudioClipEditorHostedTests {
         f.editor.importer.commit(review)
         try await wait { f.editor.importer.processing == nil }
         #expect(f.editor.importer.error != nil && f.editor.importer.completedClips.isEmpty)
-        #expect(f.document.store.model == before)
+        #expect(f.document.store.residentModel == before)
         #expect(try await f.access.allRecords() == records)
     }
 

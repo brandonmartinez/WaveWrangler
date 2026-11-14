@@ -190,7 +190,7 @@ struct TranscriptionSettingsTests {
         settings.selection = .baseEnglish
         #expect(first.transcriptionSettings.selection == .baseEnglish)
         #expect(second.transcriptionSettings.selection == .baseEnglish)
-        #expect(state.store.model == document)
+        #expect(state.store.residentModel == document)
     }
 
     @Test func failedVerificationPreservesExistingModelAndRemovesPartial() async throws {

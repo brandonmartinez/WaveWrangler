@@ -12,8 +12,8 @@ struct SpeakerMuteHostedTests {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: primaryCount, durationSeconds: 6)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let store = f.document.store, original = store.model
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let store = f.document.store, original = store.residentModel
         let episode = try #require(original.episode(f.model.episodeID))
         let speaker = try #require(episode.speakerAssignments.first?.speakerID)
         let sources = episode.sources.map(\.id)
@@ -32,7 +32,7 @@ struct SpeakerMuteHostedTests {
         cleanup.muteSelection(for: speaker)
         let error = cleanup.error
         try #require(error == nil, "\(error ?? "")")
-        let applied = store.model
+        let applied = store.residentModel
         let region = try #require(applied.episode(episode.id)?.activeSpeakerMuteRegions.first)
         #expect(region.startFrame == 48_000 && region.endFrame == 96_000)
         #expect(applied.episode(episode.id)?.sources == episode.sources)
@@ -68,19 +68,19 @@ struct SpeakerMuteHostedTests {
                 "Production receives the same mute before effects")
         }
         undo.undo()
-        #expect(store.model == original)
+        #expect(store.residentModel == original)
         undo.redo()
-        #expect(store.model == applied)
+        #expect(store.residentModel == applied)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        try await wait { f.document.verifiedModel == store.model }
-        let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: #require(f.document.fileURL)))
+        try await wait { f.document.verifiedModel == store.residentModel }
+        let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(#require(f.document.fileURL)))
         #expect(decoded.payload == applied)
         cleanup.removeSpeakerMute(region.id)
-        let restored = try await f.runtime.sourceAuditions(model: store.model, episode: episode.id,
+        let restored = try await f.runtime.sourceAuditions(model: store.residentModel, episode: episode.id,
             sources: sources, outputFrames: window)
         for id in sources { #expect(restored[id]?.samples == baseline[id]?.samples) }
         undo.undo()
-        #expect(store.model == applied)
+        #expect(store.residentModel == applied)
         var overlapping = try #require(applied.episode(episode.id)?.cleanup)
         let other = SpeakerMuteRegion(speaker: speaker, alignmentRevision: region.alignmentRevision,
             startFrame: 72_000, endFrame: 120_000)
@@ -90,9 +90,9 @@ struct SpeakerMuteHostedTests {
             try model.settingCleanup(overlapping, in: episode.id)
         })
         cleanup.removeSpeakerMute(region.id)
-        let remaining = try #require(store.model.episode(episode.id))
+        let remaining = try #require(store.residentModel.episode(episode.id))
         #expect(remaining.activeSpeakerMuteRegions == [other])
-        let cutWindow = try await f.runtime.sourceAuditions(model: store.model, episode: episode.id,
+        let cutWindow = try await f.runtime.sourceAuditions(model: store.residentModel, episode: episode.id,
             sources: sources, outputFrames: 24_000..<120_000)
         for id in sources {
             let samples = try #require(cutWindow[id]?.samples)

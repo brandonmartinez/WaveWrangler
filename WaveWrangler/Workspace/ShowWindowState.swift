@@ -20,6 +20,7 @@ final class ShowWindowState {
             guard oldValue != sidebarSelection else { return }
             reviewSelectionGeneration += 1
             invalidateBoundReview()
+            updateEpisodePin()
             if reportsInteractions { Responsiveness.interaction("show.sidebarSelection") }
         }
     }
@@ -132,7 +133,7 @@ final class ShowWindowState {
         if let existing = listeningStates[episode] { return existing }
         let value = EpisodeListeningState()
         value.restoreWorkspace(from: EpisodeWorkspaceViewStore(
-            defaults: PersistenceEnvironment.preferences, show: store.model.show.id, episode: episode,
+            defaults: PersistenceEnvironment.preferences, show: store.residentModel.show.id, episode: episode,
             namespace: PersistenceEnvironment.isUITestRun ? "ui-tests" : "standard"))
         listeningStates[episode] = value
         return value
@@ -161,6 +162,8 @@ final class ShowWindowState {
     @ObservationIgnored private var reviewWindowClosed = false
     /// Selection changes count as user interactions (WW-007 timing) only after the window's first passes.
     @ObservationIgnored private var reportsInteractions = false
+    @ObservationIgnored private let residencyOwner = UUID()
+    @ObservationIgnored private var pinnedEpisode: EpisodeID?
 
     let store: ShowDocumentStore
     /// Nil only for Library's episode-management state.
@@ -171,7 +174,7 @@ final class ShowWindowState {
     init(store: ShowDocumentStore, episodeID: EpisodeID? = nil) {
         self.store = store
         boundEpisodeID = episodeID
-        sidebarSelection = (episodeID ?? store.model.episodes.first?.id).map { .episode($0) }
+        sidebarSelection = (episodeID ?? store.episodeSummaries.first?.id).map { .episode($0) }
         if let episodeID {
             let view = listeningState(for: episodeID).workspace
             destination = ShowDestination(rawValue: view.destination).flatMap {
@@ -184,14 +187,14 @@ final class ShowWindowState {
         #if DEBUG
         if UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
-           store.model.show.title == "Synthetic Review Binding Fixture",
-           let first = store.model.episodes.first, first.sources.isEmpty {
+           store.residentModel.show.title == "Synthetic Review Binding Fixture",
+           let first = store.residentModel.episodes.first, first.sources.isEmpty {
             let speaker = Speaker(name: "Synthetic review speaker")
             let source = SourceRecord(
                 displayNameHint: "Synthetic review fixture Primary",
                 role: .primary, roleConfirmation: .userConfirmed
             )
-            var model = store.model
+            var model = store.residentModel
             model.speakers.append(speaker)
             model.episodes[0].sources.append(source)
             model.episodes[0].speakerAssignments.append(SpeakerAssignment(
@@ -202,6 +205,15 @@ final class ShowWindowState {
             store.replaceLoadedModel(model)
         }
         #endif
+        updateEpisodePin()
+    }
+
+    private func updateEpisodePin() {
+        guard !reviewWindowClosed, pinnedEpisode != selectedEpisodeID else { return }
+        let previous = pinnedEpisode
+        pinnedEpisode = selectedEpisodeID
+        if let previous { store.unpinEpisode(previous, owner: residencyOwner) }
+        if let pinnedEpisode { store.pinEpisode(pinnedEpisode, owner: residencyOwner) }
     }
 
     // MARK: - Status
@@ -217,7 +229,7 @@ final class ShowWindowState {
     var saveStatus: DocumentSaveStatus { statusProvider.saveStatus }
 
     var presentation: SaveStatusPresentation {
-        SaveStatusPresentation(saveStatus, showName: store.model.show.title)
+        SaveStatusPresentation(saveStatus, showName: store.residentModel.show.title)
     }
 
     /// ST-14: read-only states disable every editing command.
@@ -233,19 +245,19 @@ final class ShowWindowState {
         return nil
     }
 
-    var selectedEpisode: Episode? { selectedEpisodeID.flatMap { store.model.episode($0) } }
+    var selectedEpisode: Episode? { selectedEpisodeID.flatMap { store.residentModel.episode($0) } }
 
     /// Keeps the selection valid after undo/redo or deletion elsewhere (IA §9: fall back to the first).
     func reconcileSelection(previousOrder: [EpisodeID]) {
         if let boundEpisodeID {
-            if store.model.episode(boundEpisodeID) == nil { invalidateBoundReview() }
+            if !store.containsEpisode(boundEpisodeID) { invalidateBoundReview() }
             return
         }
-        guard case .episode(let id) = sidebarSelection, store.model.episode(id) == nil else {
-            if sidebarSelection == nil, let first = store.model.episodes.first { sidebarSelection = .episode(first.id) }
+        guard case .episode(let id) = sidebarSelection, !store.containsEpisode(id) else {
+            if sidebarSelection == nil, let first = store.episodeSummaries.first { sidebarSelection = .episode(first.id) }
             return
         }
-        let episodes = store.model.episodes
+        let episodes = store.episodeSummaries
         if let oldIndex = previousOrder.firstIndex(of: id), !episodes.isEmpty {
             sidebarSelection = .episode(episodes[min(oldIndex, episodes.count - 1)].id)
         } else {
@@ -260,7 +272,7 @@ final class ShowWindowState {
     func newEpisode() {
         guard boundEpisodeID == nil else { return }
         guard canEdit else { return }
-        let episode = store.model.nextNewEpisode()
+        let episode = store.nextNewEpisode
         if store.apply(UndoActionName.newEpisode, { model throws(DomainError) in try model.addingEpisode(episode) }) {
             sidebarSelection = .episode(episode.id)
             renamingEpisodeID = episode.id
@@ -279,18 +291,19 @@ final class ShowWindowState {
     @discardableResult
     func commitRename(_ id: EpisodeID, to title: String) -> Bool {
         renamingEpisodeID = nil
-        guard let episode = store.model.episode(id), title != episode.title else { return true }
+        guard let episode = store.residentModel.episode(id) else { return false }
+        guard title != episode.title else { return true }
         return store.apply(UndoActionName.renameEpisode) { model throws(DomainError) in try model.renamingEpisode(id, to: title) }
     }
 
     func deleteSelectedEpisode() {
-        guard canEdit, let episode = selectedEpisode else { return }
+        guard canEdit, let id = selectedEpisodeID, let episode = store.episodeSummaries.first(where: { $0.id == id }) else { return }
         let wording = ConfirmationWording.deleteEpisode(episode.title)
-        let order = store.model.episodes.map(\.id)
+        let order = store.episodeSummaries.map(\.id)
         Task {
             guard await Dialogs.confirm(in: window, message: wording.message, informative: wording.informative, confirmTitle: wording.button,
                                         destructiveIsDefault: true) else { return }
-            if store.apply(UndoActionName.deleteEpisode, { model throws(DomainError) in try model.removingEpisode(episode.id) }) {
+            if store.removeEpisode(episode.id) {
                 reconcileSelection(previousOrder: order)
                 announce("Deleted \(episode.title)")
             }
@@ -299,24 +312,22 @@ final class ShowWindowState {
 
     func canMoveSelectedEpisode(by offset: Int) -> Bool {
         guard canEdit, let id = selectedEpisodeID else { return false }
-        return store.model.canMoveEpisode(id, by: offset)
+        return store.canMoveEpisode(id, by: offset)
     }
 
     func moveSelectedEpisode(by offset: Int) {
         guard canMoveSelectedEpisode(by: offset), let id = selectedEpisodeID else { return }
-        store.apply(UndoActionName.moveEpisode) { model throws(DomainError) in try model.movingEpisode(id, by: offset) }
+        store.moveEpisode(id, by: offset)
     }
 
     func moveEpisodes(fromOffsets source: IndexSet, toOffset destination: Int) {
         guard canEdit else { return }
-        store.apply(UndoActionName.moveEpisode) { model throws(DomainError) in
-            model.movingEpisodes(fromOffsets: source, toOffset: destination)
-        }
+        store.moveEpisodes(fromOffsets: source, toOffset: destination)
     }
 
     /// Episode › Episode Info (⌘I): show the inspector and focus Title (a user-initiated focus move).
     func showEpisodeInfo() {
-        if selectedEpisodeID == nil, let first = store.model.episodes.first { sidebarSelection = .episode(first.id) }
+        if selectedEpisodeID == nil, let first = store.episodeSummaries.first { sidebarSelection = .episode(first.id) }
         guard selectedEpisodeID != nil else { return }
         if destination == .review || destination == .alignment {
             select(.setup)
@@ -334,7 +345,7 @@ final class ShowWindowState {
         if changed, destination == .review,
            UserDefaults.standard.bool(forKey: "WWUITestHooks"),
            UserDefaults.standard.bool(forKey: "WWUITestReviewBindingFixture"),
-           store.model.show.title == "Synthetic Review Binding Fixture",
+           store.residentModel.show.title == "Synthetic Review Binding Fixture",
            let setup = EpisodeSetupViewController.controller(for: window)?.model,
            let binding = setup.captureSelectedPrimaryTranscriptReviewBinding() {
             presentSelectedPrimaryTranscript(
@@ -358,7 +369,7 @@ final class ShowWindowState {
 
     func showReviewSetup() {
         if selectedEpisodeID == nil {
-            sidebarSelection = store.model.episodes.first.map { .episode($0.id) }
+            sidebarSelection = store.episodeSummaries.first.map { .episode($0.id) }
         }
         select(.setup)
     }
@@ -383,7 +394,7 @@ final class ShowWindowState {
               activeReviewSetup == nil || activeReviewSetup === setup,
               setup.store === store, setup.episodeID == selectedEpisodeID,
               setup.speakerSelection.count == 1, let speakerID = setup.speakerSelection.first,
-              store.model.speaker(speakerID) != nil,
+              store.residentModel.speaker(speakerID) != nil,
               let episode = selectedEpisode, let assignment = episode.assignment(for: speakerID),
               let primary = assignment.primary, assignment.primaryConfirmation == .userConfirmed,
               let channel = primary.channel.value, channel >= 0,
@@ -391,7 +402,7 @@ final class ShowWindowState {
               source.roleConfirmation == .userConfirmed else { return nil }
         activeReviewSetup = setup
         return SelectedPrimaryTranscriptBinding(
-            showID: store.model.show.id, episodeID: episode.id, speakerID: speakerID,
+            showID: store.residentModel.show.id, episodeID: episode.id, speakerID: speakerID,
             primary: primary, sourceName: source.displayNameHint,
             modelGeneration: store.modelGeneration, selectionGeneration: reviewSelectionGeneration,
             speakerSelectionGeneration: setup.speakerSelectionGeneration, setup: setup
@@ -409,9 +420,9 @@ final class ShowWindowState {
               binding.setup.speakerSelection == [binding.speakerID],
               store.modelGeneration == binding.modelGeneration,
               reviewSelectionGeneration == binding.selectionGeneration,
-              store.model.show.id == binding.showID,
+              store.residentModel.show.id == binding.showID,
               selectedEpisodeID == binding.episodeID,
-              store.model.speaker(binding.speakerID) != nil,
+              store.residentModel.speaker(binding.speakerID) != nil,
               let episode = selectedEpisode, let assignment = episode.assignment(for: binding.speakerID),
               assignment.primary == binding.primary, assignment.primaryConfirmation == .userConfirmed,
               let channel = binding.primary.channel.value, channel >= 0,
@@ -441,6 +452,7 @@ final class ShowWindowState {
     func reviewSpeakerSelectionDidChange() { invalidateBoundReview() }
 
     func reviewWindowDidClose() {
+        guard !reviewWindowClosed else { return }
         reviewWindowClosed = true
         cleanupModel?.cancel()
         cleanupModel = nil
@@ -449,6 +461,8 @@ final class ShowWindowState {
         reviewPresentation.originDidClose()
         alignmentModel?.suspend()
         alignmentModel = nil
+        if let pinnedEpisode { store.unpinEpisode(pinnedEpisode, owner: residencyOwner) }
+        pinnedEpisode = nil
     }
 
     /// The only handoff point for a future source-bound, in-process transcript producer.
@@ -520,7 +534,7 @@ final class ShowWindowState {
 
     var editCheckpointOffer: (state: EditCheckpointOfferState, presentation: EditCheckpointOfferPresentation)? {
         guard let provider: EditCheckpointOfferProviding = store.document, let state = provider.editCheckpointOfferState else { return nil }
-        return (state, EditCheckpointOfferPresentation(state, showName: store.model.show.title))
+        return (state, EditCheckpointOfferPresentation(state, showName: store.residentModel.show.title))
     }
 
     /// Discard and Dismiss ask first (Cancel on Esc, no destructive default); the others act directly.
@@ -546,14 +560,15 @@ final class ShowWindowState {
 
     /// Announces save-state changes per states §7 (first failure once, explicit/after-retry "Saved").
     func saveStateDidChange(from old: DocumentSaveState, to new: DocumentSaveState) {
-        if let text = SaveStatusPresentation.announcement(from: old, to: new, showName: store.model.show.title, explicitSave: explicitSavePending) {
+        if let text = SaveStatusPresentation.announcement(from: old, to: new, showName: store.residentModel.show.title, explicitSave: explicitSavePending) {
             announce(text)
         }
         if new.isCoherentlySaved || new.announcementIsTerminalFailure { explicitSavePending = false }
         // P6 ordering: the library learns a show's new title only after coherent disk truth (D1).
         if new.isCoherentlySaved {
-            let model = store.model
-            LibraryUIStore.shared.showDidSaveCoherently(id: model.show.id, model: model, fileURL: store.document?.fileURL)
+            let model = store.residentModel
+            LibraryUIStore.shared.showDidSaveCoherently(id: model.show.id, model: model, fileURL: store.document?.fileURL,
+                                                       catalogSummary: store.librarySummary)
         }
     }
 
@@ -602,10 +617,11 @@ final class ShowWindowState {
             // document's state when it runs (so a save in between is never recorded over by an older title).
             let store = self.store
             OpenSignposts.afterFirstFrame { [weak self] in
-                let model = store.model
+                let model = store.residentModel
                 let hasUnsavedChanges = (self?.saveStatus.hasUnsavedChanges ?? false) || store.document?.hasUnsavedModelChanges == true
                 OpenSignposts.measure("library.showDidOpen") {
-                    LibraryUIStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: store.document?.presentedFileURL, hasUnsavedChanges: hasUnsavedChanges)
+                    LibraryUIStore.shared.showDidOpen(id: model.show.id, model: model, fileURL: store.document?.presentedFileURL,
+                                                      hasUnsavedChanges: hasUnsavedChanges, catalogSummary: store.librarySummary)
                 }
             }
         }
@@ -667,12 +683,13 @@ final class ShowWindowState {
     /// IA-06: retain show/episode context alongside the running app's version and build.
     func updateSubtitle() {
         if boundEpisodeID != nil {
-            window?.title = selectedEpisode.map(ShowSidebarPresentation.episodeRowTitle) ?? "Episode Unavailable"
-            window?.subtitle = AppBuildIdentity.current.subtitle(context: store.model.show.title)
+            window?.title = store.episodeSummaries.first { $0.id == boundEpisodeID }
+                .map(ShowSidebarPresentation.episodeRowTitle) ?? "Episode Unavailable"
+            window?.subtitle = AppBuildIdentity.current.subtitle(context: store.residentModel.show.title)
             return
         }
         window?.subtitle = AppBuildIdentity.current.subtitle(
-            context: ShowSidebarPresentation.windowSubtitle(model: store.model, selectedEpisode: selectedEpisodeID)
+            context: ShowSidebarPresentation.windowSubtitle(model: store.residentModel, selectedEpisode: selectedEpisodeID)
         )
     }
 }

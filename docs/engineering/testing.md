@@ -54,6 +54,72 @@ destination and a separate `-derivedDataPath`. For hosted/UI runtime work,
 follow the [GUI build/stage/run procedure](gui-testing.md) instead of running
 `xcodebuild test` on the desktop.
 
+### Generated catalog memory measurements
+
+The opt-in persistence probe separates fixture generation from fresh-process
+measurement; never generate a large model inside the measured process. Build
+`wwpersist-probe` with `swift build -c release`, bounded jobs and a separate
+scratch root. On a ready, exclusively leased VM, use new local paths:
+
+```sh
+wwpersist-probe catalog-generate --file "$RUN/catalog.wwshow" \
+  --episodes 8 --words 8000 --flat-copy "$RUN/flat.wwshow"
+wwpersist-probe catalog-memory --file "$RUN/catalog.wwshow" --storage package
+wwpersist-probe catalog-memory --file "$RUN/flat.wwshow" --storage flat
+wwpersist-probe catalog-memory --file "$RUN/catalog.wwshow" --storage package \
+  --save 1 --recovery "$RUN/package-recovery"
+wwpersist-probe catalog-memory --file "$RUN/flat.wwshow" --storage flat \
+  --save 1 --recovery "$RUN/flat-recovery"
+```
+
+The generator permits 1-32 episodes and 1-8,000 words per current and historical
+generation per episode, preserving independent identities and historical review
+references, plus one deterministic 256-by-256 generated PNG. The optional flat
+copy has the identical model. It reads no recording content. Run sizes
+sequentially and keep space for exact recovery checkpoints and staged replacement.
+
+Samples report `task_info(TASK_VM_INFO)` resident bytes and physical footprint,
+and macOS `getrusage` process-lifetime maximum RSS, all in bytes. Baseline is
+before opening; retained samples are immediate after temporary open/save scopes
+exit with the decoded model deliberately alive. They include allocator caches
+and are **not** an estimate of live Swift objects alone. The cumulative RSS
+high-water mark is not a phase-local or physical-footprint peak. Open timing
+includes reading, validating and decoding; save includes verified publication
+and prior-version recovery. Repeat in fresh processes and report actual
+workloads, source/patch identity, VM configuration, refusals and counts.
+These are headless codec/publisher measurements, not editor, Undo, waveform,
+SwiftUI layout, audio-runtime or representative physical-hardware measurements.
+`CatalogMemoryTests/freshProcessCodecAndPublisherMeasurements(episodes:)` in the
+unhosted `WaveWranglerTests` target provides a VM-leased `test-without-building`
+harness: explicitly set runner variables
+`WW_CATALOG_MEMORY_TESTS=1`, `WW_CATALOG_MEMORY_ROOT` to this run's existing guest
+directory, and `WW_PROBE` to its verified optimized probe (use the corresponding
+`TEST_RUNNER_` prefixes when dispatching Xcode). It generates 1/8/32-episode
+identical-model pairs and runs three fresh-process open/save comparisons per
+format, reversing format order on the second repetition. Collect the generated
+`catalog-*/measurements.jsonl` files before cleaning owned guest paths. The
+unhosted harness does not turn its child-probe metrics into app-memory results.
+Use the unhosted runner, not the sandboxed editor's hosted runner: generating
+fixtures in an external staging directory does not grant the editor sandbox
+access to that directory. Do not disable sandboxing for measurements.
+
+For indexed storage, add `--indexed-copy "$RUN/indexed.wwshow"` when generating
+the identical-model comparisons. `catalog-memory --storage indexed` measures
+catalog-only open; add `--episode 1 --save 1 --recovery "$RUN/indexed-recovery"`
+to load/edit/save one episode and verify all unvisited stored records unchanged.
+`WW_LAZY_CATALOG_MEMORY_TESTS=1` selects three fresh-process repetitions of
+catalog-only, indexed single-episode save, version-1 package save and flat save
+for each 1/8/32-episode workload in the same leased unhosted harness.
+
+`LazyCatalogHostedTests` covers native unloaded saves, shared-window pins,
+archived Undo, unloaded reorder/deletion and archival backpressure. Its opt-in
+`nativeDocumentStoreMemory()` selector takes `WW_LAZY_CATALOG_FIXTURE` and
+`WW_LAZY_CATALOG_RESULT`, both pointing to newly owned generated paths inside
+the app's sandbox container. Run that selector alone in a fresh hosted process
+per repetition. It samples actual application-hosted `ShowDocument`/store
+open, one episode's residency and native verified save, but not editor layout,
+waveform/audio runtime, or representative physical-hardware performance.
+
 ## Resource and isolation limits
 
 - `WW_JOBS` defaults to four; `WW_TEST_WORKERS` defaults to four and controls

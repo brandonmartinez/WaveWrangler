@@ -158,7 +158,7 @@ struct TranscriptReviewBindingTests {
 
         let newer = try #require(f.setup.captureSelectedPrimaryTranscriptReviewBinding())
         f.state.presentSelectedPrimaryTranscript(f.input("New capture"), boundTo: newer)
-        var changed = f.store.model
+        var changed = f.store.residentModel
         changed.episodes[0].speakerAssignments[0].primary =
             ChannelReference(sourceID: f.secondSource.id, statedChannel: 0)
         f.store.replaceLoadedModel(changed)
@@ -170,7 +170,7 @@ struct TranscriptReviewBindingTests {
     @Test func equalModelUndoAndCloseCannotReanimateOldHandoff() throws {
         let f = fixture()
         let binding = try #require(f.setup.captureSelectedPrimaryTranscriptReviewBinding())
-        let original = f.store.model
+        let original = f.store.residentModel
         var edited = original
         edited.episodes[0].speakerAssignments[0].primary = nil
         f.store.replaceLoadedModel(edited)
@@ -193,12 +193,12 @@ struct TranscriptReviewBindingTests {
         f.setup.speakerSelection = []
         #expect(f.setup.captureSelectedPrimaryTranscriptReviewBinding() == nil)
         f.setup.speakerSelection = [f.speaker.id]
-        var unconfirmed = f.store.model
+        var unconfirmed = f.store.residentModel
         unconfirmed.episodes[0].speakerAssignments[0].primaryConfirmation = .provisional
         f.store.replaceLoadedModel(unconfirmed)
         #expect(f.setup.captureSelectedPrimaryTranscriptReviewBinding() == nil)
 
-        var unknownChannel = f.store.model
+        var unknownChannel = f.store.residentModel
         unknownChannel.episodes[0].speakerAssignments[0].primaryConfirmation = .userConfirmed
         unknownChannel.episodes[0].speakerAssignments[0].primary =
             ChannelReference(sourceID: f.firstSource.id, statedChannel: nil)
@@ -210,14 +210,14 @@ struct TranscriptReviewBindingTests {
         let f = fixture()
         #expect(f.state.reviewState.presentation == .syntheticFixture)
         f.state.sidebarSelection = .episode(f.second.id)
-        f.store.replaceLoadedModel(f.store.model)
+        f.store.replaceLoadedModel(f.store.residentModel)
         #expect(f.state.reviewState.presentation == .syntheticFixture)
     }
 
     @Test func everyPublishedModelHasANewGenerationIncludingEqualLoadsAndCoalescing() {
         let f = fixture()
         let initial = f.store.modelGeneration
-        f.store.replaceLoadedModel(f.store.model)
+        f.store.replaceLoadedModel(f.store.residentModel)
         #expect(f.store.modelGeneration == initial + 1)
         let beforeEdit = f.store.modelGeneration
         #expect(f.store.apply("Rename", coalescing: "title") { model in

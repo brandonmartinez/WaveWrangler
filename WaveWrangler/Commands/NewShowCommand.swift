@@ -42,6 +42,7 @@ enum NewShowCommand {
         do {
             guard let document = try controller.makeUntitledDocument(ofType: DocumentTypes.show) as? ShowDocument else { return }
             document.store.replaceLoadedModel(model)
+            document.store.enableDemandDrivenEditing()
             document.save(to: url, ofType: DocumentTypes.show, for: .saveAsOperation) { error in
                 MainActor.assumeIsolated {
                     if let error {
@@ -49,7 +50,7 @@ enum NewShowCommand {
                         return
                     }
                     controller.addDocument(document)
-                    if document.store.model.episodes.isEmpty {
+                    if document.store.episodeSummaries.isEmpty {
                         LibraryWindowController.show(document: document)
                     } else {
                         document.makeWindowControllers()

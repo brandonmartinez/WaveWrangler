@@ -184,7 +184,7 @@ struct TrackProcessingOverlayHostedTests {
     @Test func alignmentCancellationLeavesTheDocumentAndOriginalsUnchanged() async throws {
         let f = try await AlignmentWaveformRetentionHostedTests().fixture(cleanupPrimaries: 2)
         defer { f.close() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let bytes = try f.files.map { try Data(contentsOf: $0) }
         f.model.analyzeTracks()
         let operation = try #require(TrackProcessingOperation.current(alignment: f.model, cleanup: nil))
@@ -193,7 +193,7 @@ struct TrackProcessingOverlayHostedTests {
         let deadline = ContinuousClock.now.advanced(by: .seconds(15))
         while f.model.isWorking, ContinuousClock.now < deadline { try await Task.sleep(for: .milliseconds(10)) }
         #expect(!f.model.isWorking && f.model.lastError == nil, "\(f.model.lastError ?? "")")
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
         #expect(try f.files.map { try Data(contentsOf: $0) } == bytes)
     }
 
@@ -203,7 +203,7 @@ struct TrackProcessingOverlayHostedTests {
         let state = ShowWindowState(store: f.document.store, episodeID: f.model.episodeID)
         let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID)
         defer { cleanup.cancel() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         cleanup.isBusy = true
         cleanup.message = "Waiting for local transcription resources."
         let operation = try #require(TrackProcessingOperation.current(alignment: f.model, cleanup: cleanup))
@@ -211,7 +211,7 @@ struct TrackProcessingOverlayHostedTests {
         TrackProcessingOperation.cancel(alignment: f.model, cleanup: cleanup)
         #expect(!cleanup.isBusy)
         #expect(cleanup.message == "Transcription canceled. No partial result was saved.")
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
     }
 
     @Test func commandReturnCannotStartAuditionBehindTranscription() async throws {

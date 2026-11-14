@@ -37,6 +37,19 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
     }
 
     public func decode(_ data: Data) throws(PersistenceError) -> DecodedDocument<Payload> {
+        if format.identifier == DocumentFormat.show.identifier, ShowPackage.isSnapshot(data) {
+            do {
+                guard let document = try ShowPackage.decode(data) as? DecodedDocument<Payload> else {
+                    throw PersistenceError.malformed("Show packages require the show document payload")
+                }
+                return document
+            }
+            catch let error as PersistenceError { throw error }
+            catch DomainError.unsupportedPublicationArtworkSchema(let found, let supported) {
+                throw .unknownNewerSchema(found: found, supported: supported)
+            }
+            catch { throw .malformed("Unreadable show package: \(error.localizedDescription)") }
+        }
         // Strict structure first: duplicate keys would make envelope fields (revision, schemaVersion) ambiguous.
         do {
             try StrictJSON.validate(data)

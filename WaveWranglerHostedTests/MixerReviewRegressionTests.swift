@@ -13,7 +13,7 @@ struct MixerReviewRegressionTests {
 
     private func offer(_ payload: ShowDocumentModel, for document: ShowDocument) throws -> URL {
         try #require(PersistenceEnvironment.isUITestRun)
-        let disk = try Data(contentsOf: #require(document.fileURL))
+        let disk = try LocalFileOperations().read(#require(document.fileURL))
         let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
             payload, revision: document.revision + 1, publicationID: UUID()).data
         let schema = try #require(EnvelopeHeaderInfo.peek(encoded)?.schemaVersion)
@@ -36,7 +36,7 @@ struct MixerReviewRegressionTests {
             (presentation.editorWindow != nil && !f.document.mixerTransactions.isBusy) || presentation.error != nil
         }
         try #require(presentation.error == nil)
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         var changed = slot
         changed.bypassed = true
         let candidate = try original.settingMasterMix(MasterMixState(inserts: [changed]), in: f.model.episodeID)
@@ -45,7 +45,7 @@ struct MixerReviewRegressionTests {
         let bytes = try Data(contentsOf: url)
         #expect(f.document.mixerTransactions.refusesReplacement(from: original, to: candidate))
         f.document.restoreOfferedEditCheckpoint()
-        #expect(f.document.store.model == original && f.document.store.lastError != nil)
+        #expect(f.document.store.residentModel == original && f.document.store.lastError != nil)
         #expect(!f.document.isEditCheckpointRestoreInEffect)
         #expect(f.document.status.editCheckpointOffer?.candidate?.url == url)
         try await helper.save(f.document)
@@ -90,7 +90,7 @@ struct MixerReviewRegressionTests {
         }?.value) - 1000) < 0.1)
         try await current.setParameter(slot: slot.id, address: parameter.address, value: 2000)
         try await helper.save(f.document)
-        #expect(f.document.verifiedModel == f.document.store.model)
+        #expect(f.document.verifiedModel == f.document.store.residentModel)
         second.close()
         try await helper.wait("second close: \(b.error ?? "")") { b.isClosed && !f.document.mixerTransactions.isBusy }
         #expect(!a.isClosed && b.editorWindow == nil)
@@ -114,13 +114,13 @@ struct MixerReviewRegressionTests {
             (presentation.editorWindow != nil && !f.document.mixerTransactions.isBusy) || presentation.error != nil
         }
         try #require(presentation.error == nil)
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         var changed = slot
         changed.bypassed = true
         let candidate = try original.settingMasterMix(.init(inserts: [changed]), in: f.model.episodeID)
         let url = try offer(candidate, for: f.document)
         defer { try? PersistenceEnvironment.recovery.discardOfferedEditCheckpoints([url], for: f.document.documentKey) }
-        let disk = try Data(contentsOf: #require(f.document.fileURL))
+        let disk = try LocalFileOperations().read(#require(f.document.fileURL))
         f.model.mixer.beforeStateCapture = { throw MixerFailure.state(slot.id, "synthetic native capture refusal") }
         do {
             try await helper.save(f.document)
@@ -129,15 +129,15 @@ struct MixerReviewRegressionTests {
         owner.close()
         try await helper.wait { !f.document.mixerTransactions.isBusy && presentation.error != nil }
         #expect(!presentation.isClosed && presentation.editorWindow != nil && presentation.canDiscardEditorChanges)
-        #expect(f.document.store.model == original)
-        #expect(try Data(contentsOf: #require(f.document.fileURL)) == disk)
+        #expect(f.document.store.residentModel == original)
+        #expect(try LocalFileOperations().read(#require(f.document.fileURL)) == disk)
         f.document.restoreOfferedEditCheckpoint()
         #expect(!f.document.isEditCheckpointRestoreInEffect && FileManager.default.fileExists(atPath: url.path))
         try await presentation.discardFailedEditorChanges(confirm: { false })
-        #expect(presentation.editorWindow != nil && f.document.store.model == original)
+        #expect(presentation.editorWindow != nil && f.document.store.residentModel == original)
         try await presentation.discardFailedEditorChanges(confirm: { true })
         #expect(presentation.editorWindow == nil && !f.model.mixer.hasObservedState)
-        #expect(f.document.store.model == original && f.model.mixer.preparedInstanceIsCurrent)
+        #expect(f.document.store.residentModel == original && f.model.mixer.preparedInstanceIsCurrent)
         f.model.mixer.beforeStateCapture = nil
         try await helper.save(f.document)
         #expect(f.document.verifiedModel == original && FileManager.default.fileExists(atPath: url.path))
@@ -186,19 +186,19 @@ struct MixerReviewRegressionTests {
         let f = try await helper.ready()
         defer { f.document.debugViewingMode = false; f.document.status.setReadOnly(nil); f.close() }
         let owner = helper.owner(f)
-        let reference = try #require(f.document.store.model.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
-        let original = f.document.store.model
+        let reference = try #require(f.document.store.residentModel.episode(f.model.episodeID)?.speakerAssignments.first?.primary)
+        let original = f.document.store.residentModel
         let undo = try #require(f.document.undoManager)
         while undo.groupingLevel > 0 { undo.endUndoGrouping() }
         undo.removeAllActions()
         f.document.debugViewingMode = true
         #expect(f.document.isViewingForEditing && !owner.state.canEdit && !f.document.store.canEdit)
         #expect(!f.document.store.setRecordingInputGain(12, reference: reference, in: f.model.episodeID))
-        #expect(f.document.store.model == original && !undo.canUndo)
+        #expect(f.document.store.residentModel == original && !undo.canUndo)
         f.document.debugViewingMode = false
         f.document.status.setReadOnly("Synthetic recovered read-only show")
         #expect(!f.document.store.setRecordingInputGain(6, reference: reference, in: f.model.episodeID))
-        #expect(f.document.store.model == original && !undo.canUndo && f.document.store.lastError != nil)
+        #expect(f.document.store.residentModel == original && !undo.canUndo && f.document.store.lastError != nil)
     }
 
     @Test func leavingAlignmentStopsDiagnosticButPreservesDeliberateDetachedProduction() async throws {

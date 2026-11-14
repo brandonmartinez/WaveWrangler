@@ -45,7 +45,7 @@ final class EpisodeExportService {
             try await document.mixerTransactions.barrier(replacingInstances: true, capturingAllLoadedState: true) {}
             try await runtime.productionRetirements.wait()
             try checkCancellation()
-            let snapshot = document.store.model
+            let snapshot = document.store.residentModel
             let generation = document.store.modelGeneration
             guard let episode = snapshot.episode(id),
                   document.verifiedModel?.hasSameMediaInputs(as: snapshot, in: id) == true else {

@@ -49,7 +49,11 @@ source access.
 
 ## Three kinds of state
 
-**Canonical user work** lives in `ShowDocumentModel` and `LibraryModel`.
+**Canonical user work** lives in the complete show catalog and `LibraryModel`.
+`ShowDocumentModel` is the domain operation value; the native store's explicitly
+named `residentModel` is only a projection of loaded episodes, never catalog
+membership or save authority. `ShowCatalogRevision` retains every ordered slot,
+including exact immutable stored records for unloaded episodes.
 **Device-local state** includes grants, location hints, view preferences and
 recovery checkpoints. **Derived state** includes waveforms, decoded/rendered
 tiles and indexes, all rebuildable. Never use a cache to repair missing
@@ -68,6 +72,12 @@ All windows for one show share one `ShowDocument`, `ShowDocumentStore`, save
 status and document Undo manager. `ShowDocumentStore.apply(_:coalescing:_:)`
 applies validated transforms, not stale whole-model snapshots.
 Library organization has its own canonical store and Undo history.
+Episode windows share residency pins and load tasks. Unpinned current and Undo
+revisions archive/evict without changing logical identity; UUID revisions and
+generation checks reject stale asynchronous results. Catalog membership,
+reordering, source inventories and Library summaries use the complete index.
+The serial persistence lane also admits episode loads and archival; it does not
+create a worker pool proportional to catalog size.
 
 An `EpisodeWindowController` has a fixed `ShowWindowState.boundEpisodeID`.
 Opening an existing episode normally reuses its window; an explicitly new

@@ -398,7 +398,7 @@ struct EpisodeCleanupContent: View {
         return AudioTimelineTrackRow(headerWidth: headerWidth) {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 5) {
-                    SpeakerAvatarView(name: lane.name, appearance: state.store.model.speakerAppearance(
+                    SpeakerAvatarView(name: lane.name, appearance: state.store.residentModel.speakerAppearance(
                         lane.speaker, in: model.episodeID) ?? .init(color: .defaultColor(for: lane.speaker)))
                     Text(lane.name).font(.callout.weight(.semibold)).lineLimit(1)
                     if !uncertainIDs.isEmpty {
@@ -435,7 +435,7 @@ struct EpisodeCleanupContent: View {
                     selectedRange: model.selectedSpeaker == lane.speaker ? selectedWordRange : nil,
                     regions: lane.regions, normalized: model.normalizeView,
                     muted: model.mutedSpeakers.contains(lane.speaker), displayScale: displayScale,
-                    color: state.store.model.speakerAppearance(lane.speaker, in: model.episodeID)?.color.swiftUIColor ?? .accentColor,
+                    color: state.store.residentModel.speakerAppearance(lane.speaker, in: model.episodeID)?.color.swiftUIColor ?? .accentColor,
                     cuts: model.cutTimeline) {
                     guard model.canNavigate else { return }
                     model.selectedSpeaker = lane.speaker
@@ -731,7 +731,7 @@ struct CleanupInspectorView: View {
             model.selectedSpeaker == nil || $0.speaker == model.selectedSpeaker
         } ?? []
         ForEach(active) { transcript in
-            Text(model.state.store.model.speaker(transcript.speaker)?.name ?? "Speaker").font(.headline)
+            Text(model.state.store.residentModel.speaker(transcript.speaker)?.name ?? "Speaker").font(.headline)
             if model.plan?.lanes.first(where: { $0.speaker == transcript.speaker })
                 .flatMap({ model.transcript(for: $0) }) == nil {
                 Label("Retained transcript: source or timing verification is no longer current.",
@@ -757,7 +757,7 @@ struct CleanupInspectorView: View {
         if !history.isEmpty {
             DisclosureGroup("Earlier transcripts (\(history.count))") {
                 ForEach(history) { transcript in
-                    DisclosureGroup("\(model.state.store.model.speaker(transcript.speaker)?.name ?? "Speaker") · revision \(transcript.alignmentRevision) · \(transcript.model)") {
+                    DisclosureGroup("\(model.state.store.residentModel.speaker(transcript.speaker)?.name ?? "Speaker") · revision \(transcript.alignmentRevision) · \(transcript.model)") {
                         Text(transcript.words.map(\.text).joined(separator: " ")).textSelection(.enabled)
                         Text("Historical recognition; not asserted to match current source timing.").font(.caption)
                     }

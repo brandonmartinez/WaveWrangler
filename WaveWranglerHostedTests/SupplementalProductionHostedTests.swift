@@ -15,7 +15,7 @@ import WWMix
 @MainActor
 @Suite("Supplemental production adapters", .serialized)
 struct SupplementalProductionHostedTests {
-    private struct Fixture {
+    @MainActor private struct Fixture {
         let folder: URL
         let url: URL
         let document: ShowDocument
@@ -24,8 +24,10 @@ struct SupplementalProductionHostedTests {
         let source: SourceRecord
         let track: AudioTrack
         let episode: EpisodeID
+        let residencyOwner: UUID
 
         func close() {
+            document.store.unpinEpisode(episode, owner: residencyOwner)
             NSDocumentController.shared.removeDocument(document)
             document.close()
             try? FileManager.default.removeItem(at: folder)
@@ -56,14 +58,17 @@ struct SupplementalProductionHostedTests {
                                     recordedAt: Date(), rawWitness: witness), createdAt: Date())
         let access = InMemoryDeviceAccessStore([record])
         let showURL = folder.appendingPathComponent("synthetic.wwshow")
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(model, revision: 1, publicationID: UUID()).data.write(to: showURL)
+        try LocalFileOperations().writeNew(ShowCatalogCoder().encodeDocument(ShowCatalog(model), revision: 1, publicationID: UUID()).data, to: showURL)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: showURL, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
+        let residencyOwner = UUID()
+        document.store.pinEpisode(episode.id, owner: residencyOwner)
+        try await document.store.ensureEpisodeLoaded(episode.id)
         let runtime = try await AlignmentRuntime.make(showID: model.show.id, accessStore: access, access: context,
             nativeConfiguration: .init(maximumStorageBytes: storage))
         return .init(folder: folder, url: url, document: document, runtime: runtime, access: access,
-                     source: source, track: track, episode: episode.id)
+                     source: source, track: track, episode: episode.id, residencyOwner: residencyOwner)
     }
 
     static func writeAudio(_ url: URL, codec: UInt32 = kAudioFormatLinearPCM,
@@ -95,14 +100,14 @@ struct SupplementalProductionHostedTests {
     }
 
     private func joining(_ first: Fixture, _ second: Fixture) async throws -> ShowDocumentModel {
-        let secondModel = second.document.store.model
+        let secondModel = second.document.store.residentModel
         let candidate = await second.access.record(for: .init(showID: secondModel.show.id, sourceID: second.source.id))
         var record = try #require(candidate)
-        record.showID = first.document.store.model.show.id
+        record.showID = first.document.store.residentModel.show.id
         await first.access.save(record)
         let candidateEpisode = secondModel.episode(second.episode)
         let episode = try #require(candidateEpisode)
-        return try first.document.store.model.addingEpisode(episode)
+        return try first.document.store.residentModel.addingEpisode(episode)
     }
 
     @Test func retirementCancelsBeforePublicationAndRefusesSelfJoinWithoutWaitingForActiveWork() async throws {
@@ -232,7 +237,7 @@ struct SupplementalProductionHostedTests {
     @Test func audioOnlyPreparationAndOfflineUseIdenticalPlanPCMAndDSPWithoutAcceptedTiming() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let model = f.document.store.model
+        let model = f.document.store.residentModel
         let composition = try await f.runtime.programComposition(model: model, episode: f.episode)
         #expect(composition.programFrames == 0..<4800 && composition.timeline.dialogueFrames == nil)
         let recipe = try await f.runtime.mixerRecipe(model: model, episode: f.episode, programFrames: 0..<4800)
@@ -250,7 +255,7 @@ struct SupplementalProductionHostedTests {
     @Test func adapterCacheReuseStillRefusesRevokedDeviceRecordAndChangedOriginal() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let model = f.document.store.model
+        let model = f.document.store.residentModel
         let recipe = try await f.runtime.mixerRecipe(model: model, episode: f.episode, programFrames: 0..<4800)
         _ = try await f.runtime.productionPCM(recipe: recipe, model: model, frames: 0..<1024)
         await f.access.removeRecord(for: .init(showID: model.show.id, sourceID: f.source.id))
@@ -260,7 +265,7 @@ struct SupplementalProductionHostedTests {
         await #expect(throws: (any Error).self) { try await f.runtime.validateProduction(recipe: recipe, model: model) }
         let other = try await fixture()
         defer { other.close() }
-        let snapshot = other.document.store.model
+        let snapshot = other.document.store.residentModel
         let otherRecipe = try await other.runtime.mixerRecipe(model: snapshot, episode: other.episode, programFrames: 0..<4800)
         _ = try await other.runtime.productionPCM(recipe: otherRecipe, model: snapshot, frames: 0..<1024)
         var bytes = try Data(contentsOf: other.url)
@@ -311,7 +316,7 @@ struct SupplementalProductionHostedTests {
         try await processor.setParameter(slot: slot.id, address: parameter.address, value: value)
         try await controller.endEditorObservation()
         #expect(controller.unitStatuses.count == 1)
-        #expect(f.document.store.model.episode(f.episode)?.mix?.audioTracks?.first?.inserts.first?.documentState != nil)
+        #expect(f.document.store.residentModel.episode(f.episode)?.mix?.audioTracks?.first?.inserts.first?.documentState != nil)
         try await f.document.mixerTransactions.barrier(replacingInstances: true, episode: f.episode) {}
         #expect(controller.processor == nil)
     }
@@ -325,12 +330,12 @@ struct SupplementalProductionHostedTests {
         let io = SystemSourceIO()
         guard case .success(let metadata) = io.metadata(at: url) else { throw DecodeFailure.notFound }
         let witness = try await SourceDecoder(access: .init(io: io)).captureRawIdentity(url, matching: metadata.fingerprint)
-        let show = f.document.store.model.show.id
+        let show = f.document.store.residentModel.show.id
         try await FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json")).save(.init(
             showID: show, sourceID: source.id, bookmark: try io.makeReadOnlyBookmark(for: url), lastKnownPath: url.path,
             recordedIdentity: .init(fingerprint: metadata.fingerprint, confirmation: .userConfirmed,
                                     recordedAt: Date(), rawWitness: witness), createdAt: Date()))
-        let episode = try #require(f.document.store.model.episode(f.model.episodeID))
+        let episode = try #require(f.document.store.residentModel.episode(f.model.episodeID))
         let accepted = try #require(episode.alignment?.acceptedMap)
         let track = AudioTrack(name: "Intro and outro")
         let region = try AudioInsertionRegion(anchor: .dialogue(.init(map: accepted, frame: 0)), durationFrames: 4800)
@@ -343,7 +348,7 @@ struct SupplementalProductionHostedTests {
             try model.settingAudioState(arrangement, mix: episode.mix, sources: episode.sources + [source], in: episode.id)
         })
         try await helper.save(f.document)
-        let model = f.document.store.model
+        let model = f.document.store.residentModel
         let recipe = try await f.runtime.mixerRecipe(model: model, episode: episode.id, programFrames: 0..<214_800)
         #expect(recipe.composition?.timeline.dialogueFrames == 0..<192_000)
         #expect(recipe.composition?.programFrames == 0..<214_800)
@@ -373,14 +378,14 @@ struct SupplementalProductionHostedTests {
         #expect(model.listeningMode == .productionMix)
         #expect(model.auditionLabel == "Production mix reached the end of the selected program.")
         #expect(model.productionPlayheadSeconds == 0.1)
-        #expect(f.document.store.model.episode(f.episode)?.alignment == nil)
+        #expect(f.document.store.residentModel.episode(f.episode)?.alignment == nil)
         model.suspend()
     }
 
     @Test func discardedRuntimeReleasesCachedAdmissionsAndItsExclusiveNativeStore() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let model = f.document.store.model
+        let model = f.document.store.residentModel
         var runtime: AlignmentRuntime? = try await AlignmentRuntime.make(
             showID: model.show.id, accessStore: f.access, access: .init(io: SystemSourceIO()))
         let root = try #require(runtime).nativeCacheRootForTesting

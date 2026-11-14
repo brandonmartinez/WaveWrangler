@@ -153,7 +153,7 @@ extension LibraryModel {
         return trimmed
     }
 
-    static func moving<Element>(_ array: [Element], fromOffsets source: IndexSet, toOffset destination: Int) -> [Element] {
+    public static func moving<Element>(_ array: [Element], fromOffsets source: IndexSet, toOffset destination: Int) -> [Element] {
         let valid = source.filter { array.indices.contains($0) }
         guard !valid.isEmpty else { return array }
         let moved = valid.map { array[$0] }

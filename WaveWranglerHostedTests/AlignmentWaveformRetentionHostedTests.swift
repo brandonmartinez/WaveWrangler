@@ -21,9 +21,11 @@ struct AlignmentWaveformRetentionHostedTests {
         let runtime: AlignmentRuntime
         let target: SourceID
         let files: [URL]
+        let residencyOwner: UUID
 
         func close() {
             model.suspend()
+            document.store.unpinEpisode(model.episodeID, owner: residencyOwner)
             NSDocumentController.shared.removeDocument(document)
             document.close()
             try? FileManager.default.removeItem(at: folder)
@@ -104,12 +106,15 @@ struct AlignmentWaveformRetentionHostedTests {
             ))
         }
         let url = folder.appendingPathComponent("show.wwshow")
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
-            initial, revision: 1, publicationID: UUID()
-        ).data.write(to: url)
+        try LocalFileOperations().writeNew(ShowCatalogCoder().encodeDocument(
+            ShowCatalog(initial), revision: 1, publicationID: UUID()
+        ).data, to: url)
         let raw = try NSDocumentController.shared.makeDocument(withContentsOf: url, ofType: DocumentTypes.show)
         let document = try #require(raw as? ShowDocument)
         NSDocumentController.shared.addDocument(document)
+        let residencyOwner = UUID()
+        document.store.pinEpisode(episode.id, owner: residencyOwner)
+        try await document.store.ensureEpisodeLoaded(episode.id)
         let runtime = try await AlignmentRuntime.make(
             showID: initial.show.id, accessStore: accessStore, access: SourceAccessContext(io: io)
         )
@@ -120,7 +125,8 @@ struct AlignmentWaveformRetentionHostedTests {
             && model.waveformTracks.count == 2 + extraSources + extraGroups && !model.isLoadingWaveforms }
         model.ensureWaveformOverview()
         try await wait { !model.isLoadingOverview && model.waveformOverviewTracks.count == 2 + extraSources + extraGroups }
-        return Fixture(folder: folder, document: document, model: model, runtime: runtime, target: target.id, files: files)
+        return Fixture(folder: folder, document: document, model: model, runtime: runtime, target: target.id,
+                       files: files, residencyOwner: residencyOwner)
     }
 
     private func wait(_ context: @autoclosure () -> String = "synthetic model", _ condition: () -> Bool) async throws {
@@ -148,11 +154,11 @@ struct AlignmentWaveformRetentionHostedTests {
         defer { f.close() }
         if accepted {
             f.model.placeGroupsAtSourceTime()
-            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         }
         f.model.loadWaveformOverview()
         try await wait { !f.model.isLoadingOverview && f.model.waveformOverviewTracks.count == 2 }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let strokes = f.model.waveformOverviewStrokes
         let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
         let fresh = try await AlignmentRuntime.make(showID: original.show.id,
@@ -175,13 +181,13 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(reopened.waveformOverviewRefusals.isEmpty)
         reopened.suspend()
         await fresh.coordinator.shutdown()
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
     }
 
     @Test func preparedOverviewCacheNeverBypassesRevokedSourceAccess() async throws {
         let f = try await fixture()
         defer { f.close() }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
         try await access.removeRecord(for: DeviceAccessKey(showID: original.show.id, sourceID: f.target))
         let fresh = try await AlignmentRuntime.make(showID: original.show.id,
@@ -194,7 +200,7 @@ struct AlignmentWaveformRetentionHostedTests {
             episode: original.episode(f.model.episodeID), cuts: .unedited)
         #expect(prepared.restoredTracks == 1 && prepared.strokes[f.target] == nil)
         await fresh.coordinator.shutdown()
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
     }
 
     @Test(arguments: [false, true])
@@ -203,9 +209,9 @@ struct AlignmentWaveformRetentionHostedTests {
         defer { f.close() }
         if accepted {
             f.model.placeGroupsAtSourceTime()
-            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+            try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         let listening = EpisodeListeningState()
         listening.workspace.layout = .speakersOnly
@@ -240,7 +246,7 @@ struct AlignmentWaveformRetentionHostedTests {
             try await wait(reopened.auditionLabel) { reopened.isAuditioning }
             reopened.stopAudition()
         }
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
         #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
     }
 
@@ -257,10 +263,10 @@ struct AlignmentWaveformRetentionHostedTests {
         f.model.analyze()
         try await wait { !f.model.isWorking }
         try #require(f.model.canAcceptProposal, "\(f.model.message); \(String(describing: f.model.lastError)); \(String(describing: f.model.selectedAnalysis?.abstention))")
-        let liveBeforePreview = f.document.store.model
+        let liveBeforePreview = f.document.store.residentModel
         let ghost = f.model.proposedWaveformStrokes(for: target)
         #expect(!ghost.isEmpty)
-        #expect(f.document.store.model == liveBeforePreview)
+        #expect(f.document.store.residentModel == liveBeforePreview)
         #expect(!f.model.isAuditioning)
         f.model.setTrack(target.id, enabled: false)
         f.model.waveformStartSeconds = 1
@@ -270,9 +276,9 @@ struct AlignmentWaveformRetentionHostedTests {
             #expect(Set(f.model.waveformTracks.map(\.id)) == Set(tracks.map(\.id)))
             try await Task.sleep(for: .milliseconds(10))
         }
-        try await wait("acceptance: \(f.model.waveformMessage); \(String(describing: f.model.lastError)); map=\(String(describing: f.model.waveformMapRevision)); loading=\(f.model.isLoadingWaveforms); verified=\(f.document.verifiedModel == f.document.store.model); saved=\(f.document.status.saveStatus.state.isVerifiedOnDisk)") {
+        try await wait("acceptance: \(f.model.waveformMessage); \(String(describing: f.model.lastError)); map=\(String(describing: f.model.waveformMapRevision)); loading=\(f.model.isLoadingWaveforms); verified=\(f.document.verifiedModel == f.document.store.residentModel); saved=\(f.document.status.saveStatus.state.isVerifiedOnDisk)") {
             f.model.waveformMapRevision != nil && !f.model.isLoadingWaveforms
-                && f.document.verifiedModel == f.document.store.model
+                && f.document.verifiedModel == f.document.store.residentModel
                 && f.model.waveformMessage.contains("updated in place")
         }
         #expect(binAddresses(f.model.waveformTracks) == addresses, "Acceptance must not decode replacement main buffers")
@@ -281,7 +287,7 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(f.model.waveformStartSeconds == 1 && f.model.waveformPlayheadSeconds == 2)
         #expect(!f.model.trackEnabled(target.id))
         #expect(f.model.proposedWaveformStrokes(for: target).isEmpty)
-        let accepted = f.document.store.model
+        let accepted = f.document.store.residentModel
         let manager = try #require(f.document.undoManager)
         try #require(manager.canUndo)
         manager.undo()
@@ -310,13 +316,13 @@ struct AlignmentWaveformRetentionHostedTests {
         try Self.wave(target: true).write(to: f.files[1], options: .atomic)
         await #expect(throws: (any Error).self) {
             try await f.runtime.revalidateWaveforms(
-                model: f.document.store.model, episode: f.model.episodeID, tracks: f.model.waveformTracks
+                model: f.document.store.residentModel, episode: f.model.episodeID, tracks: f.model.waveformTracks
             )
         }
         f.model.applyNumeric(ratePPM: 0, offsetMilliseconds: 180)
         try await wait { !f.model.isWorking }
         #expect(f.model.lastError != nil)
-        #expect(f.document.store.model.episodes[0].alignment?.acceptedRevision == nil)
+        #expect(f.document.store.residentModel.episodes[0].alignment?.acceptedRevision == nil)
         #expect(f.model.waveformMap == nil)
     }
 
@@ -326,8 +332,8 @@ struct AlignmentWaveformRetentionHostedTests {
         defer { if !ready { f.close() } }
         f.model.placeGroupsAtSourceTime()
         try await wait { !f.model.isWorking && f.model.waveformMap != nil
-            && f.document.verifiedModel == f.document.store.model && !f.model.isLoadingWaveforms }
-        let prior = f.document.store.model
+            && f.document.verifiedModel == f.document.store.residentModel && !f.model.isLoadingWaveforms }
+        let prior = f.document.store.residentModel
         let episode = try #require(prior.episode(f.model.episodeID))
         let revision = try #require(episode.alignment?.acceptedRevision)
         let version = try #require(episode.alignment?.map(revision: revision))
@@ -362,7 +368,7 @@ struct AlignmentWaveformRetentionHostedTests {
         f.model.selectWaveform(track)
         f.model.setPositionLocked(false, group: track.group)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        try await wait { f.document.verifiedModel == f.document.store.model }
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
         ready = true
         return f
     }
@@ -371,16 +377,16 @@ struct AlignmentWaveformRetentionHostedTests {
     func savedProposalReviewPublishesAndSupportsUndoRedo(reject: Bool) async throws {
         let f = try await savedProposalFixture()
         defer { f.close() }
-        let prior = f.document.store.model
+        let prior = f.document.store.residentModel
         let originals = try f.files.map { try Data(contentsOf: $0) }
         let epoch = try #require(f.model.selection)
         try #require(f.model.selectedAnalysis == nil && f.model.canAcceptProposal)
         if reject { f.model.rejectProposal() } else { f.model.acceptProposal() }
         try await wait { !f.model.isWorking }
         try #require(f.model.lastError == nil, "\(String(describing: f.model.lastError))")
-        try #require(f.document.store.model != prior)
-        try await wait { f.document.verifiedModel == f.document.store.model }
-        let changed = f.document.store.model
+        try #require(f.document.store.residentModel != prior)
+        try await wait { f.document.verifiedModel == f.document.store.residentModel }
+        let changed = f.document.store.residentModel
         let revision = try #require(changed.episode(f.model.episodeID)?.alignment?.acceptedRevision)
         let map = try changed.timeMap(revision: revision, in: f.model.episodeID)
         let mapping = try #require(map.groups.flatMap(\.epochs).first { $0.epoch == epoch }?.mapping)
@@ -402,13 +408,13 @@ struct AlignmentWaveformRetentionHostedTests {
     @Test func changedOriginalCannotPublishSavedProposalReview() async throws {
         let f = try await savedProposalFixture()
         defer { f.close() }
-        let prior = f.document.store.model
+        let prior = f.document.store.residentModel
         try #require(f.model.canAcceptProposal)
         try Self.wave(target: true, durationSeconds: 13).write(to: f.files[1], options: .atomic)
         f.model.acceptProposal()
         try await wait { !f.model.isWorking }
         #expect(f.model.lastError != nil)
-        #expect(f.document.store.model == prior)
+        #expect(f.document.store.residentModel == prior)
     }
 
     @Test func savedProposalReviewRespectsPositionLocksAndTheReference() async throws {
@@ -431,8 +437,8 @@ struct AlignmentWaveformRetentionHostedTests {
         defer { f.close() }
         let originals = try f.files.map { try Data(contentsOf: $0) }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
-        let revision = try #require(f.document.store.model.episodes[0].alignment?.acceptedRevision)
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
+        let revision = try #require(f.document.store.residentModel.episodes[0].alignment?.acceptedRevision)
         let state = ShowWindowState(store: f.document.store)
         let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
@@ -492,7 +498,7 @@ struct AlignmentWaveformRetentionHostedTests {
         let f = try await fixture(cleanupPrimaries: 1)
         defer { f.close() }
         f.model.placeGroupsAtSourceTime()
-        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.model }
+        try await wait { !f.model.isWorking && f.document.verifiedModel == f.document.store.residentModel }
         let state = ShowWindowState(store: f.document.store)
         let cleanup = EpisodeCleanupModel(state: state, episodeID: f.model.episodeID, runtime: f.runtime)
         defer { cleanup.cancel() }
@@ -506,7 +512,7 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(cleanup.waveformIndex(for: lane.speaker).strokes == cleanup.strokes(for: lane.speaker))
         #expect(cleanup.identities.keys.contains(lane.primary.sourceID))
         #expect(!cleanup.identities.keys.contains(f.target))
-        let snapshot = f.document.store.model
+        let snapshot = f.document.store.residentModel
         let first = try await f.runtime.cleanupPreview(model: snapshot, episode: f.model.episodeID,
             start: 0.123456, duration: 1.25, respectWorkingRange: false)
         let next = try await f.runtime.cleanupPreview(model: snapshot, episode: f.model.episodeID,
@@ -523,7 +529,7 @@ struct AlignmentWaveformRetentionHostedTests {
         #expect(first.start + first.duration == next.start)
         #expect(abs(next.start + next.duration - (whole.start + whole.duration)) < 1 / 48_000)
         #expect(firstSamples.allSatisfy(\.isFinite) && firstSamples.contains { abs($0) > 0.001 })
-        #expect(f.document.store.model == snapshot)
+        #expect(f.document.store.residentModel == snapshot)
     }
 
     @Test func closeZoomGroupPreviewUsesShiftedCacheCoverageWithoutChangingSamples() async throws {
@@ -543,7 +549,7 @@ struct AlignmentWaveformRetentionHostedTests {
         let clip = try #require(AlignmentWaveformProjection.viewportClip(
             range: slice.range, start: 2, duration: 0.5, width: 640, shift: 0.25))
         #expect(clip.origin == 0 && clip.width == 640)
-        #expect(f.document.store.model.episode(f.model.episodeID)?.alignment == nil)
+        #expect(f.document.store.residentModel.episode(f.model.episodeID)?.alignment == nil)
     }
 
     @Test func offscreenTrackRowsAreLazyAndMaterializeWhenScrolled() async throws {
@@ -595,7 +601,7 @@ struct AlignmentWaveformRetentionHostedTests {
         if workload == .move {
             f.model.selectWaveform(try #require(f.model.waveformTracks.first { $0.id == f.target }))
         }
-        let original = f.document.store.model
+        let original = f.document.store.residentModel
         let snapshot = f.model.waveformOverviewSnapshotID
         let host = HostedTimelineWindow(width: 1_200, height: 800,
             content: AlignmentWaveformView(model: f.model, showInspector: {}))
@@ -637,7 +643,7 @@ struct AlignmentWaveformRetentionHostedTests {
             + "navigation_p50_ms=\(percentile(navigation, 0.5)) navigation_p95_ms=\(percentile(navigation, 0.95)) "
             + "layout_p50_ms=\(percentile(updates, 0.5)) layout_p95_ms=\(percentile(updates, 0.95))")
         #expect(f.model.waveformOverviewSnapshotID == snapshot)
-        #expect(f.document.store.model == original)
+        #expect(f.document.store.residentModel == original)
     }
 
     @concurrent
