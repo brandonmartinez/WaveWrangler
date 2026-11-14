@@ -4,6 +4,7 @@ import SwiftUI
 import Testing
 import WWCore
 import WWPersistence
+import WWSources
 @testable import WWSpeech
 @testable import WaveWrangler
 
@@ -42,6 +43,77 @@ struct ReviewPanelHostedTests {
         try await wait { !f.model.isLoadingWaveforms && f.model.canApplyManualCuts }
         ready = true
         return (f, cleanup, state)
+    }
+
+    @Test(arguments: [false, true])
+    func identicalEpisodeReadmissionRebuildsInvalidatedCleanupReadiness(refreshWhileUnloaded: Bool) async throws {
+        let (f, cleanup, _) = try await fixture()
+        defer { cleanup.cancel(); f.close() }
+        let original = f.document.store.residentModel
+        let episodeID = cleanup.episodeID
+        let review = try #require(cleanup.fillerReviews.first)
+        let initialIssue = cleanup.fillerIssue(review)
+        try #require(initialIssue == nil)
+        let catalog = try ShowCatalog(original)
+
+        f.document.store.replaceLoadedCatalog(catalog)
+        let isUnloaded = cleanup.episode == nil
+        #expect(isUnloaded)
+        if refreshWhileUnloaded {
+            await cleanup.refresh()
+        } else {
+            cleanup.modelDidChange()
+        }
+        let hasNoLanes = cleanup.plan?.lanes.isEmpty != false
+        let hasNoIdentities = cleanup.identities.isEmpty
+        let unloadedIssue = cleanup.fillerIssue(review)
+        #expect(hasNoLanes)
+        #expect(hasNoIdentities)
+        #expect(unloadedIssue != nil)
+
+        try await f.document.store.ensureEpisodeLoaded(episodeID)
+        await cleanup.refresh()
+        let restoredExactly = f.document.store.residentModel == original
+        let currentRows = cleanup.reviewRows
+        let readinessError = cleanup.error
+        let canReview = cleanup.canReviewFillers
+        let planReady = cleanup.plan?.isReady == true
+        let hasTranscript = cleanup.plan?.lanes.first.map { cleanup.transcript(for: $0) != nil } ?? false
+        #expect(restoredExactly)
+        #expect(readinessError == nil)
+        #expect(canReview)
+        #expect(planReady)
+        #expect(hasTranscript)
+        #expect(currentRows.count == 2 && currentRows.allSatisfy { $0.issue == nil })
+    }
+
+    @Test func identicalEpisodeReadmissionStillRefusesRevokedPrimaryAccess() async throws {
+        let (f, cleanup, _) = try await fixture()
+        defer { cleanup.cancel(); f.close() }
+        let original = f.document.store.residentModel
+        let review = try #require(cleanup.fillerReviews.first)
+        let initialIssue = cleanup.fillerIssue(review)
+        try #require(initialIssue == nil)
+        let catalog = try ShowCatalog(original)
+        f.document.store.replaceLoadedCatalog(catalog)
+        cleanup.modelDidChange()
+        let access = FileDeviceAccessStore(fileURL: f.folder.appendingPathComponent("access.json"))
+        try await access.removeRecord(for: DeviceAccessKey(showID: original.show.id, sourceID: review.primary.sourceID))
+        try await f.document.store.ensureEpisodeLoaded(cleanup.episodeID)
+
+        await cleanup.refresh()
+        let unchanged = f.document.store.residentModel == original
+        let readinessError = cleanup.error
+        let hasNoIdentities = cleanup.identities.isEmpty
+        let hasNoPlan = cleanup.plan == nil
+        let issue = cleanup.fillerIssue(review)
+        let canReview = cleanup.canReviewFillers
+        #expect(unchanged)
+        #expect(readinessError?.contains("Cleanup readiness could not be verified") == true)
+        #expect(hasNoIdentities)
+        #expect(hasNoPlan)
+        #expect(issue != nil)
+        #expect(!canReview)
     }
 
     @Test func rowSelectionCentersZoomsAndKeepsReadableTimeWithoutRoundingSavedBounds() async throws {

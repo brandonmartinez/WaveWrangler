@@ -228,6 +228,7 @@ final class EpisodeCleanupModel {
             waveformWindow = nil
             waveformSnapshot = UUID()
         }
+        readyInputs = nil
         identities = [:]
         readinessError = nil
         plan = nil
@@ -278,12 +279,14 @@ final class EpisodeCleanupModel {
             let reason = "Accepted alignment could not be read: \(Self.describe(error))"
             readinessError = reason
             self.error = reason
+            readyInputs = nil
             plan = nil
             identities = [:]
             return
         }
 
         if readyInputs != episode.map({ EpisodeMediaInputs($0, includingWorkingRange: true) }) {
+            readyInputs = nil
             plan = PrimaryCleanupPlan.make(model: snapshot, episode: episodeID, map: map)
             identities = [:]
         }

@@ -100,6 +100,11 @@ A synced show does not automatically grant another Mac access to its audio.
 Keep originals available and use **Grant Access**, **Relink Source**, or the
 recording's displayed remedy when needed.
 
+Updating document storage preserves accepted timing, transcripts, and review
+decisions. Their live source and timing verification is separate: an inactive
+label alone does not mean the saved data was removed. Verification must use the
+current original recordings and this Mac's access, not saved waveform displays.
+
 Changed identity can invalidate alignment, transcripts, and edits. Restore the
 intended original or review the replacement; do not clear warnings by pretending
 two different recordings are identical.

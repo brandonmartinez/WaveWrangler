@@ -66,6 +66,10 @@ at most four unarchived historical/unpinned revisions are admitted before
 edits visibly wait for archival. Current pinned episodes remain resident across
 windows. Backing storage has a shared process-wide 1 GiB admission limit.
 Closing cancels residency work and drains the shared persistence lane.
+Cleanup readiness invalidation clears both its live plan/identities and its
+verified-input cache marker. Re-admitting the same episode after migration,
+reload or Undo must rebuild the plan and reverify current source access; equal
+persisted inputs alone never restore a live verification grant.
 
 These are decoded-working-set bounds, not constant total process memory:
 summaries scale with episode/source counts, each open editor demands its episode,
