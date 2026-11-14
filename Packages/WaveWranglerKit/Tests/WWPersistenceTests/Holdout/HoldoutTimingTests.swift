@@ -54,7 +54,7 @@ struct HoldoutTimingTests {
                     return CaseResult("publishedRevision", seconds: Stats.seconds(.now - lastMutation))
                 }
                 if let record = rig.recovery.latestEditCheckpoint(for: key), record.unpublished,
-                   (try? ShowCoder.show.decode(record.snapshot))?.payload == expected {
+                   (try? ShowCoder.fixture.decode(record.snapshot))?.payload == expected {
                     try check(decodeShow(url)?.payload == model, "edit checkpoint changed canonical bytes")
                     return CaseResult("editCheckpoint", seconds: Stats.seconds(.now - lastMutation))
                 }
@@ -88,7 +88,7 @@ struct HoldoutTimingTests {
             shows.append(show)
         }
         #expect(Set(shows.flatMap { $0.episodes.flatMap(\.sources).map(\.id) }).count == 1_000)
-        let publisher = DocumentPublisher(coder: ShowCoder.show, recovery: nil)
+        let publisher = DocumentPublisher(coder: ShowCoder.fixture, recovery: nil)
         var urls: [ShowID: URL] = [:]
         for show in shows {
             let url = docs.appending(path: "\(show.show.id).wwshow")
@@ -102,7 +102,7 @@ struct HoldoutTimingTests {
                                                episodes: show.episodes.map { EpisodeSummary(id: $0.id, number: $0.number, title: $0.title) },
                                                sourceReferenceCount: show.episodes.flatMap(\.sources).count))
         })
-        let opener = DocumentOpener<ShowCoder>.show(recovery: nil)
+        let opener = DocumentOpener<ShowCoder>.fixture(recovery: nil)
         let fileURLs = urls
         let order = shows.map(\.show.id)
         let openCount = Mutex(0)

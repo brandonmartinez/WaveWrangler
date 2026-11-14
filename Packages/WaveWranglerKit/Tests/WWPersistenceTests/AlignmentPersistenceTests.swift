@@ -77,19 +77,17 @@ struct AlignmentPersistenceFixture {
 
 @Suite("Versioned map persistence")
 struct AlignmentPersistenceTests {
-    let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+    let coder = JSONEnvelopeCoder<ShowDocumentModel>.fixture
     /// Encodes without validation, to build documents the real coder must refuse on open.
-    let unchecked = JSONEnvelopeCoder<ShowDocumentModel>(format: .show) { _, _ in [] }
+    let unchecked = JSONEnvelopeCoder<ShowDocumentModel>(format: JSONEnvelopeCoder<ShowDocumentModel>.fixture.format) { _, _ in [] }
     let fixture = AlignmentPersistenceFixture()
 
     func invalidPayloadCodes(_ error: any Error) -> [ValidationIssue.Code]? {
         if case let .invalidPayload(issues)? = error as? PersistenceError { issues.map(\.code) } else { nil }
     }
 
-    /// Schema bump discipline: WW-020 is show schema 3 (`Episode.alignment`, migrated from 1 and 2 by C5); the
-    /// embedded map format is WWTimeMap schema 1, which is part of show schema 3. A time-map schema bump requires a
-    /// show schema bump (so an older build refuses the show as unknown-newer at the envelope), a C5 migration step
-    /// and frozen golden fixtures of the previous show schema — update both pins together, never one alone.
+    /// A time-map schema bump requires a show schema bump, an explicit package migration and
+    /// independent previous-version fixtures. Update both pins together, never one alone.
     @Test func schemaVersionsArePinned() {
         #expect(SchemaVersion.show == 14, "a show schema bump needs a C5 step and frozen goldens of the previous schema")
         #expect(TimeMapSchema.currentVersion == 1, "a time-map schema bump requires a show schema bump (see this test's doc comment)")
@@ -158,7 +156,7 @@ struct AlignmentPersistenceTests {
         let model = try showWithNewerMap(nested: nested)
         let data = try unchecked.encode(model, revision: 2)
         #expect(throws: PersistenceError.unknownNewerSchema(found: found, supported: supported)) { try coder.decode(data) }
-        #expect(throws: PersistenceError.unknownNewerSchema(found: found, supported: supported)) { try ShowSchemaMigration.decodeUpgradingOlder(data) }
+        #expect(throws: PersistenceError.unknownNewerSchema(found: found, supported: supported)) { try coder.decode(data) }
 
         // Opened by the app's opener with an older recovery checkpoint available: refused, nothing offered.
         let rig = Rig()
@@ -167,7 +165,7 @@ struct AlignmentPersistenceTests {
         let key = DocumentKey.show(model.show.id)
         try rig.recovery.retainCheckpoint(try coder.encode(fixture.show, revision: 1), for: key)
         try rig.recovery.recordLocation(url, for: key)
-        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: rig.recovery)
+        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.fixture(recovery: rig.recovery)
         guard case .refusedNewerFormat(found: found, supported: supported, _) = opener.open(url, key: key) else {
             Issue.record("a newer embedded map must be refused as unknown-newer, got \(opener.open(url, key: key))")
             return
@@ -176,7 +174,7 @@ struct AlignmentPersistenceTests {
             Issue.record("refused when opened by location too")
             return
         }
-        #expect(throws: PublicationError.self) { try DocumentMigrator.show(publisher: rig.publisher).migrate(url, key: key) }
+        #expect(throws: PublicationError.self) { try DocumentMigrator(publisher: rig.publisher, steps: []).migrate(url, key: key) }
         #expect(try Data(contentsOf: url) == data, "never migrated, repaired or downsaved")
         // …and this build never publishes such a value.
         do { _ = try coder.encode(model, revision: 3); Issue.record("save must refuse") } catch { #expect(invalidPayloadCodes(error) == [.invalidAlignment]) }
@@ -194,7 +192,7 @@ struct AlignmentPersistenceTests {
         let rig = Rig()
         let url = rig.url()
         try data.write(to: url)
-        guard case .refusedNewerFormat = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: rig.recovery).open(url) else {
+        guard case .refusedNewerFormat = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.fixture(recovery: rig.recovery).open(url) else {
             Issue.record("expected unknown-newer refusal")
             return
         }

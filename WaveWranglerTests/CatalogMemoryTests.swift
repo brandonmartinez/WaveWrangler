@@ -38,22 +38,18 @@ struct CatalogMemoryTests {
             }
 
             let package = run.appendingPathComponent("package.wwshow").path
-            let flat = run.appendingPathComponent("flat.wwshow").path
             let indexed = run.appendingPathComponent("indexed.wwshow").path
-            try invoke(["catalog-generate", "--file", package, "--flat-copy", flat,
+            try invoke(["catalog-generate", "--file", package,
                         "--episodes", "\(episodes)", "--words", "8000"] + (lazy ? ["--indexed-copy", indexed] : []))
-            for repetition in 1...3 {
+            for _ in 1...3 {
                 if lazy {
                     try invoke(["catalog-memory", "--file", indexed, "--storage", "indexed"])
                     try invoke(["catalog-memory", "--file", indexed, "--storage", "indexed", "--episode", "1",
                                 "--save", "1", "--recovery", run.appendingPathComponent("indexed-recovery").path])
                 }
-                for storage in repetition == 2 ? ["flat", "package"] : ["package", "flat"] {
-                    let fixture = storage == "package" ? package : flat
-                    if !lazy { try invoke(["catalog-memory", "--file", fixture, "--storage", storage]) }
-                    try invoke(["catalog-memory", "--file", fixture, "--storage", storage,
-                                "--save", "1", "--recovery", run.appendingPathComponent("\(storage)-recovery").path])
-                }
+                if !lazy { try invoke(["catalog-memory", "--file", package, "--storage", "package"]) }
+                try invoke(["catalog-memory", "--file", package, "--storage", "package",
+                            "--save", "1", "--recovery", run.appendingPathComponent("package-recovery").path])
             }
             try log.synchronize()
             let lines = try String(contentsOf: output, encoding: .utf8).split(separator: "\n")
@@ -61,7 +57,7 @@ struct CatalogMemoryTests {
                 let record = try #require(JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any])
                 return record["result"] as? String == "measured" ? record : nil
             }
-            #expect(measured.count == 12)
+            #expect(measured.count == (lazy ? 9 : 6))
             for record in measured {
                 #expect(record["episodes"] as? Int == episodes)
                 if record["storage"] as? String == "indexed" {

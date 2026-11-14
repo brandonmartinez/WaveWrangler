@@ -73,16 +73,16 @@ not silently removed. Closing an editor can release its decoded episode while
 retaining edits and Undo history. Very rapid edits can briefly wait for earlier
 revisions to finish archiving; a refusal leaves the current edit unchanged.
 
-An older show may require **Update** before saving. The update requires explicit
+An older package show may require **Update** before saving. The update requires explicit
 consent and backs up the original bytes. **Open Read-Only** lets you inspect
 without committing the format change. If an update fails, retain the exact-byte
 backup and follow the reported recovery actions; do not assume an unverified
 publication succeeded.
 
-This includes existing JSON `.wwshow` files even when their editing-data schema
-is current. Updating replaces that document with a package after preserving its
-original bytes in a local migration backup. To keep the old file separately,
-make a copy first and update the copy. Older builds may not open package shows.
+Pre-container JSON `.wwshow` files are no longer supported, including files with
+the last JSON editing-data schema. This prerelease build does not open or
+convert them. Already migrated package shows are unaffected. Older builds may
+not open package shows.
 
 Keep a separate backup before moving important work between app versions.
 Newer or damaged formats may open read-only instead of being silently rewritten.

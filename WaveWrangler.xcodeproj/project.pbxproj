@@ -37,7 +37,6 @@
 		A6E217D71C470B6700000018 /* WWEpisodeSetup in Frameworks */ = {isa = PBXBuildFile; productRef = 6F8B2D3C0E5A4F7B9C1D2E3F /* WWEpisodeSetup */; };
 		A75130000000000000000001 /* WWCore in Frameworks */ = {isa = PBXBuildFile; productRef = EFD0098BA1885BA053D2704C /* WWCore */; };
 		A75130000000000000000002 /* WWPersistence in Frameworks */ = {isa = PBXBuildFile; productRef = 69CABF447993DF3333764DC0 /* WWPersistence */; };
-		5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -55,7 +54,6 @@
 		65BA5EA7D383BDC1C1B6760D /* WaveWranglerTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A6E217D71C470B6700000001 /* WaveWranglerHostedTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerHostedTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		E932B07FC4428F442F2A99D1 /* WaveWranglerUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = WaveWranglerUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Packages/WaveWranglerKit/Tests/WWPersistenceTests/ShowSchema1Fixtures.swift; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -204,7 +202,6 @@
 		5C1A9E3B7D2F4A6E8B0C2D43 /* Shared Fixtures */ = {
 			isa = PBXGroup;
 			children = (
-				5C1A9E3B7D2F4A6E8B0C2D41 /* ShowSchema1Fixtures.swift */,
 			);
 			name = "Shared Fixtures";
 			sourceTree = "<group>";
@@ -465,7 +462,6 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				5C1A9E3B7D2F4A6E8B0C2D42 /* ShowSchema1Fixtures.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

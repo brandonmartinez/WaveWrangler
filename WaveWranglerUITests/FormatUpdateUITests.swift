@@ -1,15 +1,13 @@
 import AppKit
 import XCTest
+import WWCore
+import WWPersistence
 
-/// #159 (accessibility-acceptance T21; states-and-recovery D14/D15): opening a show written by the M1 (schema 1)
-/// build asks "Update “…” to the current format?" with Update (default, Return), Open Read-Only (⌘R) and Cancel (Esc),
-/// keyboard only. F-OLDER is the frozen M1 golden bytes (`ShowSchema1Fixtures`, shared with the package tests);
-/// F-OLDER-BAD is the same bytes with the payload changed under its checksum. The D15 case forces the migration to fail
-/// after its backup is kept (`-WWUITestFailFormatUpdate YES`, Debug only). Every case checks the file's bytes.
+/// Version-1 packages require explicit consent before indexed publication. Keyboard actions,
+/// read-only/cancel behavior, failed updates and recovery preserve exact original package bytes.
 @MainActor
 final class FormatUpdateUITests: XCTestCase {
-    /// `SchemaVersion.show` (the UI test bundle doesn't link WaveWranglerKit): 3 since WW-020.
-    private static let currentShowSchema = 3
+    private static let currentStorageVersion = ShowPackage.version
     private var app: XCUIApplication!
     private var workDirectory: URL!
     private var findings: [String] = []
@@ -37,14 +35,14 @@ final class FormatUpdateUITests: XCTestCase {
     // MARK: - Tasks
 
     /// T21: the prompt appears before anything can be edited; Return = Update rewrites the show in the current format
-    /// (stated channels kept, the index-0 placeholder now Unknown) and the window becomes editable and Saved.
+    /// (stated channels kept, the unknown channels unchanged) and the window becomes editable and Saved.
     func testT21UpdateWithReturn() throws {
-        let document = try writeOlder("Older Show", ShowSchema1Fixtures.statedChannels)
-        let original = try Data(contentsOf: document)
+        let document = try writeOlder("Older Show", PackageUpgradeFixtures.statedChannels)
+        let original = try ShowStorage.read(document)
         try task("T21-update") {
             let window = try openAndExpectPrompt(document, name: "Older Show", original: original)
             app.typeKey(.return, modifierFlags: [])
-            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "Return updates the file to the current schema: \(String(describing: diskSchemaVersion(document)))")
+            check(Acceptance.waitFor(timeout: 10) { self.diskStorageVersion(document) == Self.currentStorageVersion }, "Return updates the package storage version: \(String(describing: diskStorageVersion(document)))")
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "status Saved after the update: \(value(status))")
             check(diskShowTitle(document) == "Stated Show", "content kept: \(String(describing: diskShowTitle(document)))")
@@ -58,23 +56,23 @@ final class FormatUpdateUITests: XCTestCase {
         }
     }
 
-    /// T21 placeholder: a show whose channels were never stated reads "Unknown channel" after the update, never 0.
-    func testT21UpdatePlaceholderBecomesUnknown() throws {
-        let document = try writeOlder("Placeholder", ShowSchema1Fixtures.placeholderOnly)
-        let original = try Data(contentsOf: document)
-        try task("T21-placeholder") {
+    /// T21: an unknown channel remains unknown after the package upgrade.
+    func testT21UpdateUnknownChannelIsPreserved() throws {
+        let document = try writeOlder("Placeholder", PackageUpgradeFixtures.unknownChannels)
+        let original = try ShowStorage.read(document)
+        try task("T21-unknown-channel") {
             _ = try openAndExpectPrompt(document, name: "Placeholder", original: original)
             app.typeKey(.return, modifierFlags: [])
-            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "updated to the current schema")
-            check(diskPrimaryChannels(document) == ["unknown"], "the index-0 placeholder became Unknown: \(diskPrimaryChannels(document))")
+            check(Acceptance.waitFor(timeout: 10) { self.diskStorageVersion(document) == Self.currentStorageVersion }, "updated to indexed package storage")
+            check(diskPrimaryChannels(document) == ["unknown"], "the unknown channel is preserved: \(diskPrimaryChannels(document))")
         }
     }
 
     /// T21 Open Read-Only (⌘R): the show is shown upgraded in memory, editing and saving are unavailable, and nothing is
     /// ever written (autosave is on).
     func testT21OpenReadOnlyWithCommandR() throws {
-        let document = try writeOlder("Read Only", ShowSchema1Fixtures.mixed)
-        let original = try Data(contentsOf: document)
+        let document = try writeOlder("Read Only", PackageUpgradeFixtures.mixed)
+        let original = try ShowStorage.read(document)
         try task("T21-readonly") {
             let window = try openAndExpectPrompt(document, name: "Read Only", original: original)
             app.typeKey("r", modifierFlags: .command)
@@ -96,29 +94,29 @@ final class FormatUpdateUITests: XCTestCase {
             app.typeKey(.escape, modifierFlags: [])
             app.typeKey("s", modifierFlags: .command)
             Thread.sleep(forTimeInterval: 3)   // past the autosave delay
-            check((try? Data(contentsOf: document)) == original, "nothing is written: the file is byte-unchanged")
+            check((try? ShowStorage.read(document)) == original, "nothing is written: the file is byte-unchanged")
             try audit("T21 read-only window")
         }
     }
 
     /// T21 Cancel (Esc): the show closes and the file is untouched.
     func testT21CancelWithEscape() throws {
-        let document = try writeOlder("Canceled", ShowSchema1Fixtures.placeholderOnly)
-        let original = try Data(contentsOf: document)
+        let document = try writeOlder("Canceled", PackageUpgradeFixtures.unknownChannels)
+        let original = try ShowStorage.read(document)
         try task("T21-cancel") {
             let window = try openAndExpectPrompt(document, name: "Canceled", original: original)
             app.typeKey(.escape, modifierFlags: [])
             check(Acceptance.waitFor(timeout: 5) { !window.exists }, "Esc closes the show")
             check(app.windows.matching(identifier: "ww.show.window").count == 0, "no show window remains")
-            check((try? Data(contentsOf: document)) == original, "the file is byte-unchanged")
+            check((try? ShowStorage.read(document)) == original, "the file is byte-unchanged")
         }
     }
 
     /// D15: the update fails after the backup is kept; "Couldn't update this show" says the original is unchanged, the
     /// read-only view stays open, Try Again and Show Details are reachable by keyboard, and the file is byte-unchanged.
     func testD15UpdateFailureKeepsOriginalAndReadOnlyView() throws {
-        let document = try writeOlder("Failing", ShowSchema1Fixtures.mixed)
-        let original = try Data(contentsOf: document)
+        let document = try writeOlder("Failing", PackageUpgradeFixtures.mixed)
+        let original = try ShowStorage.read(document)
         try task("T21-D15") {
             let window = try openAndExpectPrompt(document, name: "Failing", original: original, extra: ["-WWUITestFailFormatUpdate", "YES"])
             app.typeKey(.return, modifierFlags: [])
@@ -130,14 +128,14 @@ final class FormatUpdateUITests: XCTestCase {
             let status = element("ww.show.saveStatus")
             check(value(status).hasPrefix("Read-only"), "still read-only (not color alone): \(value(status))")
             check(window.exists, "the read-only view stays open")
-            check((try? Data(contentsOf: document)) == original, "the original file is byte-unchanged")
+            check((try? ShowStorage.read(document)) == original, "the original file is byte-unchanged")
             let tryAgain = bar.buttons["Try Again"], details = bar.buttons["Show Details"]
             check(tryAgain.exists && details.exists, "Try Again and Show Details: \(bar.buttons.allElementsBoundByIndex.map(\.title))")
             try audit("T21 D15 failure bar")
             // Keyboard navigation of buttons depends on the host's Full Keyboard Access setting.
             activate(tryAgain, step: "D15 Tab/Space to Try Again")
             Thread.sleep(forTimeInterval: 2)
-            check(bar.exists && (try? Data(contentsOf: document)) == original, "Try Again fails again, original unchanged")
+            check(bar.exists && (try? ShowStorage.read(document)) == original, "Try Again fails again, original unchanged")
             activate(details, step: "D15 Tab/Space to Show Details")
             let detailsSheet = app.sheets.firstMatch
             check(detailsSheet.waitForExistence(timeout: 5), "Show Details explains the failure")
@@ -152,8 +150,8 @@ final class FormatUpdateUITests: XCTestCase {
     /// D14 fallback (#175 review): after Open Read-Only, Update… in the save-status popover asks again (focused first,
     /// Space activates) and Return updates the show.
     func testT21UpdateFromStatusItemAfterOpenReadOnly() throws {
-        let document = try writeOlder("Later", ShowSchema1Fixtures.statedChannels)
-        let original = try Data(contentsOf: document)
+        let document = try writeOlder("Later", PackageUpgradeFixtures.statedChannels)
+        let original = try ShowStorage.read(document)
         try task("T21-update-later") {
             _ = try openAndExpectPrompt(document, name: "Later", original: original)
             app.typeKey("r", modifierFlags: .command)
@@ -183,19 +181,19 @@ final class FormatUpdateUITests: XCTestCase {
             let sheet = app.sheets.firstMatch
             check(sheet.waitForExistence(timeout: 5), "Update… asks again")
             check(texts(in: sheet).contains("Update “Later” to the current format?"), "prompt title: \(texts(in: sheet))")
-            check((try? Data(contentsOf: document)) == original, "nothing is written before Update")
+            check((try? ShowStorage.read(document)) == original, "nothing is written before Update")
             app.typeKey(.return, modifierFlags: [])
-            check(Acceptance.waitFor(timeout: 10) { self.diskSchemaVersion(document) == Self.currentShowSchema }, "Return updates the file to the current schema")
+            check(Acceptance.waitFor(timeout: 10) { self.diskStorageVersion(document) == Self.currentStorageVersion }, "Return updates the package storage version")
             check(Acceptance.waitFor(timeout: 10) { self.value(status).hasPrefix("Saved") }, "status Saved after the update: \(value(status))")
         }
     }
 
-    /// Several older shows opened as tabs (#175 review; the M1→M2 upgrade path, as at a state-restored launch): each
+    /// Several older shows opened as tabs (#175 review; the package-v1→v2 upgrade path, as at a state-restored launch): each
     /// show asks once, on its own tab, when that tab is selected; none is lost for being a background tab.
     func testT21EachTabbedOlderShowAsksWhenSelected() throws {
-        let first = try writeOlder("First Tab", ShowSchema1Fixtures.statedChannels)
-        let second = try writeOlder("Second Tab", ShowSchema1Fixtures.mixed)
-        let originals = [first: try Data(contentsOf: first), second: try Data(contentsOf: second)]
+        let first = try writeOlder("First Tab", PackageUpgradeFixtures.statedChannels)
+        let second = try writeOlder("Second Tab", PackageUpgradeFixtures.mixed)
+        let originals = [first: try ShowStorage.read(first), second: try ShowStorage.read(second)]
         try task("T21-tabs") {
             launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES"], opening: first)
             check(app.windows.matching(identifier: "ww.show.window").firstMatch.waitForExistence(timeout: 10), "the first show opens")
@@ -220,22 +218,23 @@ final class FormatUpdateUITests: XCTestCase {
             app.typeKey("\t", modifierFlags: .control)
             check(!app.sheets.firstMatch.waitForExistence(timeout: 3), "no second prompt after Open Read-Only")
             for (url, original) in originals {
-                check((try? Data(contentsOf: url)) == original, "\(url.lastPathComponent) is byte-unchanged")
+                check((try? ShowStorage.read(url)) == original, "\(url.lastPathComponent) is byte-unchanged")
             }
         }
     }
 
     /// F-OLDER-BAD: an older file whose payload doesn't match its checksum is refused as damaged, without the update
-    /// prompt, and left unchanged. Its M1-era retained checkpoint is still offered (M1 "Open Recovered Copy", #175
+    /// prompt, and left unchanged. Its retained package checkpoint is still offered (M1 "Open Recovered Copy", #175
     /// review): choosing it opens the last complete version, upgraded in memory, as a new unsaved copy.
     func testOlderDamagedFileIsRefusedUnchanged() throws {
-        var bytes = ShowSchema1Fixtures.placeholderOnly
-        let range = try XCTUnwrap(bytes.range(of: Data("Placeholder Show".utf8)))
-        bytes.replaceSubrange(range, with: Data("Placeholder Shoe".utf8))
+        let original = try PackageUpgradeFixtures.unknownChannels
+        var bytes = original
+        let range = try XCTUnwrap(bytes.range(of: Data("Unknown Channel Show".utf8)))
+        bytes.replaceSubrange(range, with: Data("Unknown Channel Shoe".utf8))
         let document = try writeOlder("Older Bad", bytes)
         try task("F-OLDER-BAD") {
             launch(["-WWUITestAutosave", "ON", "-WWUITestResetStorage", "YES",
-                    "-WWUITestRetainOlderCheckpoint", ShowSchema1Fixtures.placeholderOnly.base64EncodedString()], opening: document)
+                    "-WWUITestRetainOlderCheckpoint", original.base64EncodedString()], opening: document)
             check(Acceptance.waitFor(timeout: 10) { self.app.dialogs.firstMatch.exists || self.app.sheets.firstMatch.exists },
                   "a damaged-file refusal appears")
             check(!app.buttons["Update"].exists, "no update prompt for a damaged file")
@@ -253,7 +252,7 @@ final class FormatUpdateUITests: XCTestCase {
                     let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
                     check(copy.waitForExistence(timeout: 10), "the recovered copy opens")
                     let title = copy.staticTexts.matching(
-                        NSPredicate(format: "value == %@", "Placeholder Show")).firstMatch
+                        NSPredicate(format: "value == %@", "Unknown Channel Show")).firstMatch
                     check(title.waitForExistence(timeout: 5),
                           "the last complete version opens with its retained Show title")
                     check(!app.buttons["ww.formatUpdate.update"].exists, "a recovered copy is a new current-format show: no update prompt")
@@ -261,7 +260,7 @@ final class FormatUpdateUITests: XCTestCase {
                     app.typeKey(.escape, modifierFlags: [])
                 }
             }
-            check((try? Data(contentsOf: document)) == bytes, "the damaged file is byte-unchanged")
+            check((try? ShowStorage.read(document)) == bytes, "the damaged file is byte-unchanged")
         }
     }
 
@@ -311,13 +310,13 @@ final class FormatUpdateUITests: XCTestCase {
         }
         try audit("T21 update prompt")
         Thread.sleep(forTimeInterval: 2)   // past the autosave delay: waiting writes nothing
-        check((try? Data(contentsOf: document)) == original, "nothing is written while the prompt waits")
+        check((try? ShowStorage.read(document)) == original, "nothing is written while the prompt waits")
         return window
     }
 
     private func writeOlder(_ name: String, _ bytes: Data) throws -> URL {
         let url = workDirectory.appending(path: "\(name).wwshow")
-        try bytes.write(to: url)
+        try LocalFileOperations().writeNew(bytes, to: url)
         return url
     }
 
@@ -369,7 +368,9 @@ final class FormatUpdateUITests: XCTestCase {
         try? ShowStorage.envelope(url)
     }
 
-    private func diskSchemaVersion(_ url: URL) -> Int? { envelope(url)?["schemaVersion"] as? Int }
+    private func diskStorageVersion(_ url: URL) -> Int? {
+        try? ShowPackage.storageVersion(of: ShowStorage.read(url))
+    }
 
     private func diskShowTitle(_ url: URL) -> String? {
         ((envelope(url)?["payload"] as? [String: Any])?["show"] as? [String: Any])?["title"] as? String

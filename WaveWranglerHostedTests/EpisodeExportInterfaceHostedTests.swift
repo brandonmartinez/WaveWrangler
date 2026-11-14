@@ -20,7 +20,7 @@ struct EpisodeExportInterfaceHostedTests {
         let model = ShowDocumentModel(show: .init(title: "Synthetic show",
             publication: .init(creator: "Show artist", publisher: "Publisher")), episodes: [episode])
         let document = ShowDocument()
-        try document.read(from: JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        try document.read(from: ShowPackageCoder().encodeDocument(
             model, revision: 1, publicationID: UUID()).data, ofType: "com.brandonmartinez.wavewrangler.show")
         return (document, episode.id)
     }
@@ -184,7 +184,7 @@ struct EpisodeExportInterfaceHostedTests {
             #expect(try f.files.map { try Data(contentsOf: $0) } == originals)
             #expect(owner.state.store === f.document.store)
             try await MixerHostedTests().save(f.document)
-            let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload
+            let reopened = try ShowPackageCoder().decode(LocalFileOperations().read(#require(f.document.fileURL))).payload
             #expect(reopened == capturedModel)
             try await controller.discardUncapturedEditorState()
         }

@@ -20,11 +20,9 @@ public struct DocumentFormat: Sendable, Equatable {
 
     /// Portable show document (`.wwshow`). Must match `UTExportedTypeDeclarations` in the app Info.plist.
     public static let show = DocumentFormat(
-        identifier: "com.brandonmartinez.wavewrangler.show",
+        identifier: ShowPackage.typeIdentifier,
         filenameExtension: "wwshow",
         currentSchemaVersion: SchemaVersion.show,
-        // Schema 1 (bare channel index, 0 as placeholder) opens as `.needsMigration` and changes only through
-        // the consented C5 migration (`ShowSchemaMigration`, `DocumentMigrator.show`).
         minimumReadableSchemaVersion: SchemaVersion.show
     )
 
@@ -64,7 +62,7 @@ public struct EncodedDocument: Sendable {
 }
 
 /// Encodes/decodes a canonical document value to bytes. Kept behind a protocol so the selected
-/// representation (versioned single JSON value) stays swappable.
+/// representation stays swappable.
 public protocol CanonicalDocumentCoding: Sendable {
     associatedtype Payload: Sendable
 

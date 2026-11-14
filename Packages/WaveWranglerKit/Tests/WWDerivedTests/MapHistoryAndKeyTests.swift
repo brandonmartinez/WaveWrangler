@@ -43,7 +43,7 @@ struct MapHistoryTests {
             .episode(fixture.episodeID)?.alignment?.acceptedRevision == 3)
 
         // The recorded show round-trips through the strict show coder.
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         #expect(try coder.decode(try coder.encode(model, revision: 1)).payload == model)
     }
 
@@ -107,7 +107,7 @@ struct MapHistoryTests {
         expected.episodes[0].cleanup = try original.episodes[0].cleanup?.resettingForReplacementAlignment()
         #expect(reset == expected, "Grouping, reference, locks, assignments, sources and other metadata stay exact")
         #expect(try reset.resettingAlignment(in: fixture.episodeID) == reset)
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         #expect(try coder.decode(try coder.encode(reset, revision: 1)).payload == reset)
         let (next, nextRevision) = try reset.recordingMap(fixture.map(), in: fixture.episodeID)
         #expect(nextRevision.revision > revision.revision)
@@ -158,7 +158,7 @@ struct MapHistoryTests {
         // Stale maps are still valid, openable documents.
         var staleShow = model
         staleShow.episodes[0] = withoutGroup
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         #expect(try coder.decode(try coder.encode(staleShow, revision: 1)).payload == staleShow)
     }
 }

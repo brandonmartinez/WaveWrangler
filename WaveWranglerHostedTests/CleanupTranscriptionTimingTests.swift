@@ -190,7 +190,7 @@ struct CleanupTranscriptionTimingTests {
         #expect(cleanup.error == nil)
         let adjusted = f.document.store.residentModel
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let savedMatches = try coder.decode(LocalFileOperations().read(#require(f.document.fileURL))).payload == adjusted
         #expect(savedMatches)
         #expect(f.document.verifiedModel == adjusted)

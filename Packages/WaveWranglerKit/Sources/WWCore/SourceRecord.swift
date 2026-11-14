@@ -23,7 +23,7 @@ public struct SourceRecord: Sendable, Equatable, Codable, Identifiable {
     public var placement: SourcePlacement
     public var role: SourceRole
     public var roleConfirmation: Confirmation
-    /// Omitted before schema 10. Absence preserves recording behavior and canonical older bytes.
+    /// Absence means recording purpose and remains omitted from canonical bytes.
     public var purpose: SourcePurpose?
 
     public var isRecording: Bool { purpose != .supplementalAudio }
@@ -95,11 +95,10 @@ public struct ChannelLabel: Sendable, Equatable, Codable {
 
 /// A channel of a specific logical source.
 ///
-/// Since show schema 2 the channel is an explicit `Knowledge<Int>`: `.known(n)` is a zero-based channel
+/// The channel is an explicit `Knowledge<Int>`: `.known(n)` is a zero-based channel
 /// index a person stated (or the generic API recorded), and `.unknown` means "this source, channel not
 /// yet stated". `.unknown` is never encoded as channel 0. A consumer may resolve the sole channel of
-/// verified mono media without changing this stored knowledge. Schema 1 stored a bare index and
-/// used 0 as a placeholder; `ShowSchemaMigration` (WWPersistence) converts that placeholder to `.unknown`.
+/// verified mono media without changing this stored knowledge.
 public struct ChannelReference: Sendable, Hashable, Codable, CustomStringConvertible {
     public var sourceID: SourceID
     /// Zero-based channel index when known; `.unknown` until a person states it.

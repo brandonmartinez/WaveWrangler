@@ -183,7 +183,7 @@ struct LocalAlignmentPairTests {
                         let accepted = try await pipeline.acceptAdaptive(model: model, episode: episode.id,
                             record: record, sources: sources, authorizations: authorizations,
                             includeEstimated: PairEnvironment.estimated)
-                        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+                        let coder = ShowPackageCoder()
                         let restored = try coder.decode(coder.encode(accepted.model, revision: 1)).payload
                         #expect(restored == accepted.model)
                         try await pipeline.activate(accepted)

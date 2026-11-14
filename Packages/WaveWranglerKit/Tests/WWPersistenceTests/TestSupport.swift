@@ -128,7 +128,7 @@ enum SyntheticV0 {
         )
         let encoder = JSONEncoder()
         encoder.outputFormatting = .sortedKeys
-        return try encoder.encode(Envelope(checksum: "none", format: DocumentFormat.show.identifier, payload: payload, revision: revision, schemaVersion: 0))
+        return try encoder.encode(Envelope(checksum: "none", format: JSONEnvelopeCoder<ShowDocumentModel>.fixture.format.identifier, payload: payload, revision: revision, schemaVersion: 0))
     }
 
     static let step = MigrationStep<ShowDocumentModel>(

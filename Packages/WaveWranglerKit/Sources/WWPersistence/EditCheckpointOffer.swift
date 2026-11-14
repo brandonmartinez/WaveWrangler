@@ -68,14 +68,14 @@ public struct EditCheckpointOffer<Payload: Codable & Sendable>: Sendable {
 
     public var isEmpty: Bool { candidate == nil && problems.isEmpty }
 
-    public static func assess(
+    public static func assess<Coder: CanonicalDocumentCoding>(
         _ stored: [StoredEditCheckpoint],
         documentID: String,
         onDisk: RevisionFingerprint?,
-        coder: JSONEnvelopeCoder<Payload>,
+        coder: Coder,
         decodeOlder: ((Data) throws(PersistenceError) -> DecodedDocument<Payload>)? = nil,
         belongsToDocument: (Payload) -> Bool
-    ) -> EditCheckpointOffer {
+    ) -> EditCheckpointOffer where Coder.Payload == Payload {
         var usable: [Candidate] = []
         var problems: [Problem] = []
         let supported = coder.format.currentSchemaVersion

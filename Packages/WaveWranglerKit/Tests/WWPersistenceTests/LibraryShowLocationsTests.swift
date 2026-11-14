@@ -8,7 +8,7 @@ import WWCore
 /// stores that only read the persisted device-local data. Synthetic shows in temporary folders only.
 @Suite("Library show locations survive relaunch (#88)")
 struct LibraryShowLocationsTests {
-    let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+    let coder = JSONEnvelopeCoder<ShowDocumentModel>.fixture
 
     private func makeShow(in folder: URL, seed: UInt64, title: String) throws -> (ShowDocumentModel, URL) {
         let model = Fixtures.show(seed: seed, episodes: 3, title: title)
@@ -49,7 +49,7 @@ struct LibraryShowLocationsTests {
         let grant = try launch2.beginAccess(model.show.id)
         #expect(!grant.followedMove)
         let recovery = RecoveryStore(root: dir.sub("Recovery"))
-        guard case let .editable(document, fingerprint) = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: recovery)
+        guard case let .editable(document, fingerprint) = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.fixture(recovery: recovery)
             .open(grant.url, key: .show(model.show.id)) else {
             Issue.record("expected the same show to open editable")
             return
@@ -99,7 +99,7 @@ struct LibraryShowLocationsTests {
 
         let grant = try store.beginAccess(model.show.id)
         defer { store.endAccess(grant) }
-        let outcome = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil).open(grant.url, key: .show(model.show.id))
+        let outcome = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.fixture(recovery: nil).open(grant.url, key: .show(model.show.id))
         guard case .damaged(.identityMismatch, _) = outcome else {
             Issue.record("a different show must not be trusted at the recorded location, got \(outcome)")
             return
@@ -128,7 +128,7 @@ struct LibraryShowLocationsTests {
         let folder = dir.sub("Shows")
         let bookmarks = CountingBookmarks()
         let store = LibraryShowLocations(root: dir.sub("Device"), bookmarks: bookmarks)
-        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil)
+        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.fixture(recovery: nil)
 
         // Mismatched ShowID: a different show is at the recorded path.
         let (model, url) = try makeShow(in: folder, seed: 93, title: "Mismatch")

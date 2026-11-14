@@ -6,24 +6,9 @@ import Foundation
 /// Readers refuse versions newer than they support (no edit, save or downsave).
 public enum SchemaVersion {
     /// Canonical portable show document payload (`ShowDocumentModel`).
-    /// 2: speaker channel references carry an explicit `Knowledge<Int>` channel (`.unknown` until stated)
-    /// instead of a bare index with 0 as a placeholder. Schema 1 shows are upgraded only through the
-    /// explicit, consented C5 migration (WWPersistence `ShowSchemaMigration`), which keeps a backup first.
-    /// 3: episodes may carry `alignment` (WW-020: source occurrences/epochs, groups and versioned positive maps
-    /// as strict `WWTimeMap` JSON). Schema 1 and 2 shows are upgraded only through the same consented migration.
+    /// Schema 14 is the oldest supported package model. Pre-container show schemas are retired.
     /// An embedded map's `timeMapSchemaVersion` is part of this schema: a time-map schema bump requires a show
     /// schema bump (pinned by `AlignmentPersistenceTests.schemaVersionsArePinned`).
-    /// 4: human-accepted file-local pitch-preserving timing beside the unchanged recorder maps.
-    /// 5: shared episode in/out markers and source-bound local transcripts.
-    /// 6: nondestructive filler audible-word timing reviews with immutable detection provenance.
-    /// 7: portable show profiles, speaker appearance, recorder definitions and episode workspace preferences.
-    /// 8: manual cross-track ripple cuts on the original aligned frame grid.
-    /// 9: recording/channel input gain, speaker/Master controls, and ordered Audio Unit document state.
-    /// 10: source-purpose partition, supplemental assets/tracks/clips/arrangement and audio-track mix.
-    /// 11: independent finished-episode boundaries and optional spoken-track playback restriction.
-    /// 12: optional insert rack positions preserve empty rows without changing processing order.
-    /// 13: reversible per-speaker mute regions on the original aligned frame grid.
-    /// 14: reusable public publication metadata and versioned, embedded JPEG/PNG artwork.
     public static let show = 14
     /// Canonical library document payload (`LibraryModel`).
     /// 2: adds `libraryID`. Schema 1 libraries are upgraded with a derived, stable ID (see WWPersistence

@@ -240,7 +240,7 @@ struct MultiProcessTests {
     }
 
     @Test func twoProcessesSavingTheSameFileConflictAndPreserveBoth() throws {
-        let rig = Rig(label: "twoproc")
+        let rig = PackageRig(label: "twoproc")
         let rounds = 20
         var saved = 0, conflicts = 0, preserved = 0, other = 0
         for round in 0..<rounds {
@@ -264,7 +264,7 @@ struct MultiProcessTests {
                     conflicts += 1
                     if let path = result["preservedCandidate"] as? String, !path.isEmpty,
                        let bytes = try? Data(contentsOf: URL(fileURLWithPath: path)),
-                       let decoded = try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes),
+                       let decoded = try? ShowPackageCoder().decode(bytes),
                        decoded.payload.show.title == result["title"] as? String {
                         preserved += 1
                     }
@@ -283,7 +283,7 @@ struct MultiProcessTests {
     /// Real process death at each publisher boundary (M1-DUR-021-style owned-subprocess kill).
     @Test(arguments: [PublicationBoundary.candidateValidated, .priorRetained, .baseChecked, .stagedFlushed, .published, .readBackVerified])
     func processKillAtBoundary(_ boundary: PublicationBoundary) throws {
-        let rig = Rig(label: "kill")
+        let rig = PackageRig(label: "kill")
         let runs = 100
         var killed = 0, old = 0, new = 0, mixed = 0, zeroValid = 0
         var externalKillsRetried = 0

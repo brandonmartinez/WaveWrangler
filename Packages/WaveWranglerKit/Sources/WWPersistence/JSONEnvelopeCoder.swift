@@ -5,7 +5,7 @@ import WWCore
 /// Versioned single-value JSON envelope:
 ///
 /// ```json
-/// {"checksum":"sha256:…","format":"com.brandonmartinez.wavewrangler.show","payload":{…},
+/// {"checksum":"sha256:…","format":"com.brandonmartinez.wavewrangler.library","payload":{…},
 ///  "publicationID":"…UUID…","revision":3,"schemaVersion":1}
 /// ```
 ///
@@ -37,19 +37,6 @@ public struct JSONEnvelopeCoder<Payload: Codable & Sendable>: CanonicalDocumentC
     }
 
     public func decode(_ data: Data) throws(PersistenceError) -> DecodedDocument<Payload> {
-        if format.identifier == DocumentFormat.show.identifier, ShowPackage.isSnapshot(data) {
-            do {
-                guard let document = try ShowPackage.decode(data) as? DecodedDocument<Payload> else {
-                    throw PersistenceError.malformed("Show packages require the show document payload")
-                }
-                return document
-            }
-            catch let error as PersistenceError { throw error }
-            catch DomainError.unsupportedPublicationArtworkSchema(let found, let supported) {
-                throw .unknownNewerSchema(found: found, supported: supported)
-            }
-            catch { throw .malformed("Unreadable show package: \(error.localizedDescription)") }
-        }
         // Strict structure first: duplicate keys would make envelope fields (revision, schemaVersion) ambiguous.
         do {
             try StrictJSON.validate(data)
@@ -268,14 +255,6 @@ enum CanonicalDate {
         else { return nil }
         let whole = Int64(base.timeIntervalSince1970)
         return Date(timeIntervalSince1970: TimeInterval(whole * 1000 + millis) / 1000)
-    }
-}
-
-extension JSONEnvelopeCoder where Payload == ShowDocumentModel {
-    public static var show: JSONEnvelopeCoder<ShowDocumentModel> {
-        JSONEnvelopeCoder(format: .show, newerContent: { $0.newerEmbeddedTimeMapSchema() }) {
-            $0.validationIssues(expectedSchemaVersion: $1) + $0.embeddedMapIssues()
-        }
     }
 }
 

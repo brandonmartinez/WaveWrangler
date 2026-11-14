@@ -14,7 +14,7 @@ struct MixerReviewRegressionTests {
     private func offer(_ payload: ShowDocumentModel, for document: ShowDocument) throws -> URL {
         try #require(PersistenceEnvironment.isUITestRun)
         let disk = try LocalFileOperations().read(#require(document.fileURL))
-        let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        let encoded = try ShowPackageCoder().encodeDocument(
             payload, revision: document.revision + 1, publicationID: UUID()).data
         let schema = try #require(EnvelopeHeaderInfo.peek(encoded)?.schemaVersion)
         try PersistenceEnvironment.recovery.writeEditCheckpoint(snapshot: encoded, base: RevisionFingerprint(of: disk),

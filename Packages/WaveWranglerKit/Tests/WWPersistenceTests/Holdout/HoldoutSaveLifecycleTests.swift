@@ -73,7 +73,7 @@ struct HoldoutSaveLifecycleTests {
             try check(onDisk.revision == first.revision + 1 && onDisk.publication == second.publication, "revision/publication")
             let state = await session.status.state
             guard case .saved(second.revision, _) = state else { throw CaseFailure(description: "status \(state)") }
-            let priors = try rig.recovery.validatedCheckpoints(for: key, coder: JSONEnvelopeCoder<ShowDocumentModel>.show)
+            let priors = try rig.recovery.validatedCheckpoints(for: key, coder: JSONEnvelopeCoder<ShowDocumentModel>.fixture)
             try check(priors.first?.document.payload == model && priors.first?.document.revision == 1, "prior revision not retained")
             _ = await store.acknowledgeShowPublication(model.show.id, title: expected.show.title, publication: second.publication)
             let libraryAfter = try #require(decodeLibrary(library.containerFile))
@@ -208,7 +208,7 @@ struct HoldoutSaveLifecycleTests {
                 _ = try Rig(dir: show.rig.dir).publisher.publish(theirs, revision: 3, key: show.key, to: show.url, target: .inPlace(expectedBase: show.base))
             } else {
                 let other = HoldoutGen.show(&rng)
-                try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(other, revision: 7).write(to: show.url, options: .atomic)
+                try JSONEnvelopeCoder<ShowDocumentModel>.fixture.encode(other, revision: 7).write(to: show.url, options: .atomic)
             }
             let theirBytes = show.bytes
             guard case let .failure(.conflict(conflict)) = await session.save() else { throw CaseFailure(description: "no conflict") }
@@ -380,7 +380,7 @@ struct HoldoutSaveLifecycleTests {
             // Partial stage files are cleaned or ignored: the document and recovery records stay readable.
             show.rig.recovery.removeStagingLeftovers()
             try check(decodeShow(show.url)?.revision == 2, "current unreadable")
-            let priors = try show.rig.recovery.validatedCheckpoints(for: show.key, coder: JSONEnvelopeCoder<ShowDocumentModel>.show)
+            let priors = try show.rig.recovery.validatedCheckpoints(for: show.key, coder: JSONEnvelopeCoder<ShowDocumentModel>.fixture)
             try check(priors.contains { $0.document.revision == 1 && $0.document.payload == show.r1 }, "prior checkpoint")
             return CaseResult(stage)
         }
@@ -471,7 +471,7 @@ struct HoldoutSaveLifecycleTests {
             try check(faults.fired || variant == "libraryAckFailure", "fault did not fire")
             try check(await store.library == libraryBefore, "library advanced on an unverified/unacknowledged save")
             // Explicit reopen/reconcile adopts the coherent on-disk revision.
-            guard case let .editable(document, _) = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: show.rig.recovery).open(show.url, key: show.key)
+            guard case let .editable(document, _) = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.fixture(recovery: show.rig.recovery).open(show.url, key: show.key)
             else { throw CaseFailure(description: "reopen") }
             try check(document.payload == expected, "on-disk revision is not the saved value")
             _ = await store.reconcile([show.r2.show.id: .available(title: document.payload.show.title, publication: document.publication)])

@@ -156,7 +156,7 @@ struct AudioFadeHostedTests {
         }
         try await helper.save(f.document)
         let url = try #require(f.document.fileURL)
-        let savedMatches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(url)).payload == after
+        let savedMatches = try ShowPackageCoder().decode(LocalFileOperations().read(url)).payload == after
         #expect(savedMatches)
         #expect(try Data(contentsOf: bed.file) == bytes)
     }
@@ -208,7 +208,7 @@ struct AudioFadeHostedTests {
         #expect(chunk == actual.map { Array($0[17..<531]) })
         try await helper.save(f.document)
         let url = try #require(f.document.fileURL)
-        let savedMatches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(url)).payload == after
+        let savedMatches = try ShowPackageCoder().decode(LocalFileOperations().read(url)).payload == after
         #expect(savedMatches)
         let reopened = try #require(try NSDocumentController.shared.makeDocument(
             withContentsOf: url, ofType: DocumentTypes.show) as? ShowDocument)
@@ -269,7 +269,7 @@ struct AudioFadeHostedTests {
         try await helper.save(f.document)
         let savedURL = f.document.fileURL, savedModel = f.document.store.residentModel
         let saved = try LocalFileOperations().read(#require(savedURL))
-        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(saved).payload == savedModel)
+        #expect(try ShowPackageCoder().decode(saved).payload == savedModel)
         #expect(try Data(contentsOf: bed.file) == samples)
     }
 

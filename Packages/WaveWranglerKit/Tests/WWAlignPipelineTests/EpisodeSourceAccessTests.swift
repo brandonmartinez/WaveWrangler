@@ -233,13 +233,13 @@ struct EpisodeSourceAccessTests {
     @Test func externalShowReplacementRefusesWithUnchangedInMemoryModel() async throws {
         let (fixture, _, verifier) = try await fixture()
         let url = fixture.directory.url.appendingPathComponent("synthetic.wwshow")
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let original = try coder.encodeDocument(fixture.model, revision: 1, publicationID: UUID())
         try original.data.write(to: url)
         let base = RevisionFingerprint(of: original.data)
         let current: @Sendable () throws -> EpisodeSourceDocument = {
             let opener = DocumentOpener(
-                coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
+                coder: ShowPackageCoder(), recovery: nil,
                 identityOf: { .show($0.show.id) }
             )
             guard case let .editable(decoded, fingerprint) = opener.open(url, key: .show(fixture.model.show.id)),
@@ -302,7 +302,7 @@ struct EpisodeSourceAccessTests {
         let (fixture, _, verifier) = try await fixture()
         let openURL = fixture.directory.url.appendingPathComponent("open.wwshow")
         let oldCopy = fixture.directory.url.appendingPathComponent("old-copy.wwshow")
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let original = try coder.encodeDocument(fixture.model, revision: 1, publicationID: UUID())
         try original.data.write(to: openURL)
         try original.data.write(to: oldCopy)

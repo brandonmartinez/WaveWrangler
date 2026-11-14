@@ -4,7 +4,6 @@ import WWPersistence
 
 // Explicit opt-in only:
 // package-trial --file NEW_DIRECTORY --recovery LOCAL_DIRECTORY
-// package-convert --file LEGACY_SHOW --destination NEW_LOCAL_DIRECTORY
 extension Probe {
     private func providerState(_ url: URL) throws -> [String: Any] {
         let values = try url.resourceValues(forKeys: [.isUbiquitousItemKey, .isPackageKey,
@@ -84,7 +83,6 @@ extension Probe {
             let coder = ShowPackageCoder()
             let publisher = DocumentPublisher(coder: coder, recovery: recovery)
             let model = try syntheticPackageShow()
-            let legacy = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 1)
             let start = ContinuousClock.now
             let first = try publisher.publish(model, revision: 1, key: .show(model.show.id), to: url, target: .newLocation)
             let createSeconds = seconds(.now - start)
@@ -110,7 +108,7 @@ extension Probe {
             let unchanged = Set(before.keys).intersection(after.keys).filter { before[$0]?.bytes == after[$0]?.bytes }
             let retainedInodes = unchanged.filter { before[$0]?.inode == after[$0]?.inode }.count
             emit([
-                "result": "packageLocalRoundTripVerified", "legacyBytes": legacy.count,
+                "result": "packageLocalRoundTripVerified",
                 "packageBytes": before.values.reduce(0) { $0 + $1.bytes.count },
                 "storedFiles": before.count, "unchangedFiles": unchanged.count,
                 "reusedComponentWrappers": reusedCount, "unchangedFilesRetainingInodes": retainedInodes,
@@ -127,47 +125,4 @@ extension Probe {
         }
     }
 
-    /// Copies authorized legacy document content only. Never resolves or opens its referenced sources.
-    func packageConvert() -> Int32 {
-        do {
-            let ops = LocalFileOperations()
-            guard let destination = args.url("destination"), !ops.exists(destination) else {
-                throw CocoaError(.fileWriteFileExists)
-            }
-            let original = try NSFileCoordination().coordinateReading(at: file) { try ops.read($0) }
-            guard !ShowPackage.isSnapshot(original) else { throw PersistenceError.malformed("Expected a legacy show") }
-            let expected = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(original)
-            try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: false)
-            let copy = destination.appending(path: "Converted.wwshow")
-            try ops.writeNew(original, to: copy)
-            let recovery = RecoveryStore(root: destination.appending(path: "Recovery"))
-            let coder = ShowPackageCoder()
-            let publisher = DocumentPublisher(coder: coder, recovery: recovery)
-            let receipt = try DocumentMigrator.show(publisher: publisher).migrate(copy,
-                key: .show(expected.payload.show.id), expectedOriginal: original)
-            guard try ops.read(receipt.backup) == original,
-                  try NSFileCoordination().coordinateReading(at: file, { try ops.read($0) }) == original else {
-                throw PersistenceError.checksumMismatch
-            }
-            let decoded = try coder.decode(ops.read(copy))
-            guard decoded.payload == expected.payload else { throw PersistenceError.checksumMismatch }
-            // Independent JSON-tree comparison includes every identity, historical word and human judgment.
-            let legacyTree = try JSONSerialization.jsonObject(with: original) as? NSDictionary
-            let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(decoded.payload, revision: decoded.revision)
-            let newTree = try JSONSerialization.jsonObject(with: encoded) as? NSDictionary
-            guard let legacyPayload = legacyTree?["payload"] as? NSDictionary,
-                  let newPayload = newTree?["payload"] as? NSDictionary,
-                  legacyPayload == newPayload else {
-                throw PersistenceError.malformed("Independent payload comparison failed")
-            }
-            let files = try storedFiles(copy)
-            emit(["result": "localCopyConversionVerified", "legacyBytes": original.count,
-                "packageBytes": files.values.reduce(0) { $0 + $1.bytes.count }, "storedFiles": files.count,
-                "originalUnchanged": true, "exactBackupVerified": true, "independentPayloadMatch": true])
-            return 0
-        } catch {
-            emit(["result": "packageConversionFailed", "detail": "\(error)"])
-            return 1
-        }
-    }
 }

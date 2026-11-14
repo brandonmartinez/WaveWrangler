@@ -98,11 +98,11 @@ public final class ShowLocationStore: Sendable {
 
     /// Resolves the record, starts access for the duration of `body` only, opens the show and confirms it is
     /// the same show; `body` (e.g. edit + Save) runs only then. Access is always stopped afterwards.
-    public func withReopenedShow<T>(
+    public func withReopenedShow<Coder: CanonicalDocumentCoding, T>(
         _ showID: ShowID,
-        opener: DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>,
+        opener: DocumentOpener<Coder>,
         body: (URL, DecodedDocument<ShowDocumentModel>, RevisionFingerprint) async throws -> T
-    ) async rethrows -> (outcome: ShowReopenOutcome, result: T?) {
+    ) async rethrows -> (outcome: ShowReopenOutcome, result: T?) where Coder.Payload == ShowDocumentModel {
         guard var record = record(for: showID) else { return (.noRecord, nil) }
         let resolved: (url: URL, isStale: Bool)
         do {
@@ -191,36 +191,14 @@ public final class ShowLocationStore: Sendable {
     }()
 }
 
-extension DocumentOpener where Coder == JSONEnvelopeCoder<ShowDocumentModel> {
-    /// A show opener that refuses a different show found at an expected location. A schema 1 show opens as
-    /// `.needsMigration` (never as damaged, never upgraded on open); schema 1 recovery records stay offerable.
+extension DocumentOpener where Coder == ShowPackageCoder {
+    /// A package opener that refuses a different show found at an expected location.
     public static func show(
         ops: any FileOperations = LocalFileOperations(),
         coordination: any FileCoordinating = NSFileCoordination(),
-        recovery: RecoveryStore?,
-        migratableSchemas: Set<Int> = ShowSchemaMigration.migratableSchemas
-    ) -> DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>> {
-        DocumentOpener(coder: .show, ops: ops, coordination: coordination, recovery: recovery,
-                       migratableSchemas: migratableSchemas, identityOf: { .show($0.show.id) },
-                       recoveryDecode: { try ShowSchemaMigration.decodeUpgradingOlder($0) })
+        recovery: RecoveryStore?
+    ) -> DocumentOpener<ShowPackageCoder> {
+        DocumentOpener(coder: ShowPackageCoder(), ops: ops, coordination: coordination, recovery: recovery,
+                       identityOf: { .show($0.show.id) })
     }
-
-    /// #159: what a document window can show for an older-format show whose bytes it has read (after `outcome`
-    /// reported `.needsMigration`). Either the whole show upgraded in memory, for viewing only (nothing is written),
-    /// or, when the older file can't be decoded and verified whole (e.g. a checksum mismatch, which the schema check
-    /// reports before the checksum), the same damaged outcome as a current file: the file is left untouched and its
-    /// validated recovery checkpoints (older ones upgraded in memory) are offered as a new copy.
-    public func olderShowForViewing(_ data: Data, url: URL?, key: DocumentKey? = nil) -> OlderShowForViewing {
-        // (A `Result` rather than a typed `catch`: Swift 6.3's ownership verifier has crashed on the latter.)
-        switch Result(catching: { () throws(PersistenceError) in try ShowSchemaMigration.decodeUpgradingOlder(data) }) {
-        case let .success(document): .viewable(document)
-        case let .failure(error): .damaged(error, recoveryCandidates: candidates(url: url, key: key))
-        }
-    }
-}
-
-/// See `DocumentOpener.olderShowForViewing(_:url:key:)`.
-public enum OlderShowForViewing: Sendable {
-    case viewable(DecodedDocument<ShowDocumentModel>)
-    case damaged(PersistenceError, recoveryCandidates: [RecoveryCandidate<ShowDocumentModel>])
 }

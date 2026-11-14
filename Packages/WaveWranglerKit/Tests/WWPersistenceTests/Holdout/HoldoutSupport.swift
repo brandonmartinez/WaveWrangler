@@ -328,7 +328,9 @@ enum ProbeProcess {
 }
 
 func decodeShow(_ url: URL) -> DecodedDocument<ShowDocumentModel>? {
-    (try? Data(contentsOf: url)).flatMap { try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode($0) }
+    guard let bytes = try? LocalFileOperations().read(url) else { return nil }
+    if ShowPackage.isSnapshot(bytes) { return try? ShowPackageCoder().decode(bytes) }
+    return try? JSONEnvelopeCoder<ShowDocumentModel>.fixture.decode(bytes)
 }
 
 func decodeLibrary(_ url: URL) -> DecodedDocument<LibraryModel>? {

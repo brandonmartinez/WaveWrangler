@@ -133,7 +133,7 @@ final class ShowDocument: NSDocument {
     }
     /// Resident episodes from the last independently verified publication; `verifiedCatalog` owns complete
     /// membership. Live inspection never treats the mutable in-memory model as persisted truth.
-    private var verifiedLegacyModel: ShowDocumentModel?
+    private var verifiedPackageModel: ShowDocumentModel?
     private(set) var verifiedCatalog: ShowCatalog?
     private var verifiedCatalogIdentity: UUID?
     private var verifiedEpisodes: [EpisodeID: Episode] = [:]
@@ -142,13 +142,13 @@ final class ShowDocument: NSDocument {
             if let verifiedCatalog {
                 return verifiedCatalog.header.operationModel(episodes: verifiedCatalog.episodes.compactMap { verifiedEpisodes[$0.id] })
             }
-            return verifiedLegacyModel
+            return verifiedPackageModel
         }
         set {
             verifiedCatalog = nil
             verifiedCatalogIdentity = nil
             verifiedEpisodes = [:]
-            verifiedLegacyModel = newValue
+            verifiedPackageModel = newValue
         }
     }
 
@@ -174,7 +174,7 @@ final class ShowDocument: NSDocument {
     }
 
     private func adoptVerifiedCatalog(_ catalog: ShowCatalog, captured: ShowCatalogRevision? = nil) {
-        verifiedLegacyModel = nil
+        verifiedPackageModel = nil
         verifiedCatalog = catalog
         verifiedCatalogIdentity = captured?.identity ?? store.catalogIdentity
         verifiedEpisodes = [:]
@@ -392,11 +392,8 @@ final class ShowDocument: NSDocument {
                 throw PersistenceError.malformed("The indexed show could not be opened")
             }
         }
-        // A schema 1 show reports `.needsMigration`: it opens upgraded in memory, read-only, and nothing is written
-        // until the user chooses Update (#159). Schema 1 recovery checkpoints stay offerable, upgraded in memory.
-        let opener = DocumentOpener(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, coordination: AlreadyCoordinated(), recovery: recovery,
-                                    migratableSchemas: ShowSchemaMigration.migratableSchemas,
-                                    recoveryDecode: { try ShowSchemaMigration.decodeUpgradingOlder($0) })
+        // Version-1 packages remain read-only until the user consents to indexed storage.
+        let opener = DocumentOpener(coder: ShowPackageCoder(), coordination: AlreadyCoordinated(), recovery: recovery)
         let outcome = OpenSignposts.measure("document.decode") { opener.outcome(for: data, url: url) }
         switch outcome {
         case let .editable(document, fingerprint):
@@ -425,25 +422,8 @@ final class ShowDocument: NSDocument {
         case let .refusedNewerFormat(found, supported, _):
             // Refuse with reason; nothing is ever written to a newer document.
             throw PersistenceError.unknownNewerSchema(found: found, supported: supported)
-        case let .needsMigration(_, fingerprint):
-            // #159 D14: view the whole older show upgraded in memory (the same decode the migration stages), read-only.
-            // An older file that can't be decoded and verified whole is refused as damaged, unchanged, with its
-            // validated recovery checkpoints offered as a new copy (M1's "Open Recovered Copy").
-            let upgraded: DecodedDocument<ShowDocumentModel>
-            switch opener.olderShowForViewing(data, url: url) {
-            case let .viewable(document): upgraded = document
-            case let .damaged(error, candidates): throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
-            }
-            store.replaceLoadedModel(upgraded.payload)
-            verifiedModel = upgraded.payload
-            publication = upgraded.publication
-            onDiskBase = fingerprint
-            formatUpdateOriginal = data
-            formatUpdatePromptPending = true
-            status.setFormatUpdate(.needed)
-            status.set(.clean(revision: upgraded.revision))
-            // Edit checkpoints are set aside and offered only once the update has published (restoring is an edit).
-            scheduleAfterFirstFrame()
+        case .needsMigration:
+            throw PersistenceError.malformed("No registered upgrade for this show package")
         case let .damaged(error, candidates):
             throw DocumentRecoveryOffer.error(for: error, candidates: candidates)
         case let .unreadable(kind, detail, _):
@@ -1171,8 +1151,7 @@ final class ShowDocument: NSDocument {
         ShowPersistenceLane.enqueue { [weak self] in
             let offer = EditCheckpointOffer.assess(
                 recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue, onDisk: base,
-                coder: JSONEnvelopeCoder<ShowDocumentModel>.show,
-                decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
+                coder: ShowPackageCoder(),
                 belongsToDocument: { .show($0.show.id) == key }
             ).excluding(excluded)
             Task { @MainActor [weak self] in
@@ -1190,8 +1169,7 @@ final class ShowDocument: NSDocument {
         let showID = store.residentModel.show.id
         let offer = EditCheckpointOffer.assess(
             recovery.offeredEditCheckpoints(for: documentKey),
-            documentID: documentKey.rawValue, onDisk: onDiskBase, coder: JSONEnvelopeCoder<ShowDocumentModel>.show,
-            decodeOlder: ShowSchemaMigration.decodeUpgradingOlder,
+            documentID: documentKey.rawValue, onDisk: onDiskBase, coder: ShowPackageCoder(),
             belongsToDocument: { $0.show.id == showID }
         ).excluding(restoredOfferURLs.union(setAsideOfferURLs))
         status.setEditCheckpointOffer(offer.isEmpty ? nil : offer)

@@ -42,12 +42,12 @@ struct ShowPackageTests {
 
     @Test func roundTripPreservesAllHistoricalIdentitiesJudgmentsAndBinaryArtwork() throws {
         let model = try Self.richShow()
-        let legacy = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 17)
+        let uncompressed = try JSONEnvelopeCoder<ShowDocumentModel>.canonicalBytes(of: model)
         let encoded = try coder.encode(model, revision: 17)
         let decoded = try coder.decode(encoded)
         let payloadMatches = decoded.payload == model
         #expect(payloadMatches)
-        #expect(encoded.count < legacy.count / 2)
+        #expect(encoded.count < uncompressed.count / 2)
         let directory = TempDirectory()
         let url = directory.url.appending(path: "Synthetic.wwshow")
         try ops.writeNew(encoded, to: url)
@@ -60,21 +60,20 @@ struct ShowPackageTests {
             includingPropertiesForKeys: nil)
         let artwork = try #require(model.show.publication?.artwork?.image?.data)
         #expect(try files.contains { try Data(contentsOf: $0) == artwork })
-        let legacyReaderMatches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(ops.read(url)).payload == model
-        #expect(legacyReaderMatches)
         let stamp = RevisionFingerprint(of: encoded)
         #expect(stamp.schemaVersion == SchemaVersion.show)
         #expect(stamp.revision == 17)
     }
 
-    @Test func streamedPackageChecksumMatchesIndependentLegacyCanonicalEncoding() throws {
+    @Test func versionOneChecksumMatchesIndependentCanonicalPayloadEncoding() throws {
         var models = [ShowDocumentModel.untitled(), try Self.richShow()]
         models[0].show.notes = "Escapes: \" \\ \n and non-ASCII: caf\u{e9}"
         for model in models {
             let id = UUID()
-            let flat = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(model, revision: 3, publicationID: id)
+            let checksum = JSONEnvelopeCoder<ShowDocumentModel>.checksum(of:
+                try JSONEnvelopeCoder<ShowDocumentModel>.canonicalBytes(of: model))
             let package = try coder.encodeDocument(model, revision: 3, publicationID: id)
-            #expect(package.publication == flat.publication)
+            #expect(package.publication.checksum == checksum)
             let decoded = try coder.decode(package.data)
             let matches = decoded.payload == model
             #expect(matches)
@@ -120,34 +119,16 @@ struct ShowPackageTests {
         #expect(try recovery.conflictCandidates(for: .show(model.show.id)).count == 1)
     }
 
-    @Test(arguments: ShowSchema10MigrationTests.goldens + [
-        ShowSchema11MigrationTests.golden, ShowSchema12MigrationTests.golden, ShowSchema13MigrationTests.golden,
-    ])
-    func legacySchemasMigrateToPackagesWithExactBackups(_ bytes: Data) throws {
-        let directory = TempDirectory()
-        let url = directory.url.appending(path: "Synthetic.wwshow")
-        try bytes.write(to: url)
-        let expected = try ShowSchemaMigration.decodeUpgradingOlder(bytes)
-        let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(),
-            recovery: RecoveryStore(root: directory.sub("recovery")))
-        let receipt = try DocumentMigrator.show(publisher: publisher).migrate(url,
-            key: .show(expected.payload.show.id), expectedOriginal: bytes)
-        #expect(try Data(contentsOf: receipt.backup) == bytes)
-        let migratedMatches = try coder.decode(ops.read(url)).payload == expected.payload
-        #expect(migratedMatches)
-        #expect(try url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory == true)
-    }
-
     @Test func storageOnlyMigrationPreservesPayloadAndRefusesChangedOpenedBase() throws {
         let directory = TempDirectory()
         let url = directory.url.appending(path: "Synthetic.wwshow")
         let model = try Self.richShow()
-        let original = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 12)
-        try original.write(to: url)
+        let original = try coder.encode(model, revision: 12)
+        try ops.writeNew(original, to: url)
         let cachedType = try url.resourceValues(forKeys: [.isDirectoryKey])
-        #expect(cachedType.isDirectory == false)
+        #expect(cachedType.isDirectory == true)
         let recovery = RecoveryStore(root: directory.sub("recovery"))
-        let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        let publisher = DocumentPublisher(coder: ShowCatalogCoder(), coordination: AlreadyCoordinated(), recovery: recovery)
         let migrator = DocumentMigrator.show(publisher: publisher)
         #expect(throws: PublicationError.self) {
             try migrator.migrate(url, key: .show(model.show.id), expectedOriginal: original + Data("\n".utf8))
@@ -262,17 +243,17 @@ struct ShowPackageTests {
 
     @Test func canceledUpgradeLeavesOriginalAndExactBackup() throws {
         let directory = TempDirectory()
-        let url = directory.url.appending(path: "Legacy.wwshow")
+        let url = directory.url.appending(path: "VersionOne.wwshow")
         let model = Fixtures.show(seed: 6)
-        let original = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 1)
-        try original.write(to: url)
+        let original = try coder.encode(model, revision: 1)
+        try ops.writeNew(original, to: url)
         let recovery = RecoveryStore(root: directory.sub("recovery"))
-        let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        let publisher = DocumentPublisher(coder: ShowCatalogCoder(), coordination: AlreadyCoordinated(), recovery: recovery)
         #expect(throws: PublicationError.canceled) {
             try DocumentMigrator.show(publisher: publisher).migrate(url,
                 key: .show(model.show.id), expectedOriginal: original, isCanceled: { true })
         }
-        #expect(try Data(contentsOf: url) == original)
+        #expect(try ops.read(url) == original)
         let backups = try recovery.migrationBackups(for: .show(model.show.id))
         #expect(backups.count == 1)
         #expect(try Data(contentsOf: #require(backups.first)) == original)
@@ -287,7 +268,7 @@ struct ShowPackageTests {
         #expect(refused)
     }
 
-    @Test func packageEditCheckpointIsDeviceLocalAndLegacyReaderCompatible() throws {
+    @Test func packageEditCheckpointIsDeviceLocalAndWholeModelReadable() throws {
         let directory = TempDirectory()
         let model = Fixtures.show(seed: 6)
         let key = DocumentKey.show(model.show.id)
@@ -299,7 +280,7 @@ struct ShowPackageTests {
             schemaVersion: SchemaVersion.show, for: key)
         let bytes = record.snapshot
         #expect(ShowPackage.isSnapshot(bytes))
-        let matches = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes).payload == edited
+        let matches = try coder.decode(bytes).payload == edited
         #expect(matches)
         #expect(try recovery.latestEditCheckpoint(for: key)?.snapshot == snapshot)
     }

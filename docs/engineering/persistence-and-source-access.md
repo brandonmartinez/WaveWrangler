@@ -12,7 +12,7 @@ supplemental audio (10), production bounds (11), rack positions (12),
 speaker mutes (13), and publication metadata/artwork (14).
 Embedded time-map format changes require a show schema bump too.
 
-Library and legacy show envelopes contain `checksum`, `format`, `payload`, `publicationID`,
+Library envelopes contain `checksum`, `format`, `payload`, `publicationID`,
 `revision` and `schemaVersion`. SHA-256 covers canonical sorted payload bytes;
 it detects integrity failure, not authenticity. A revision orders publications
 but does not prove identity: conflict detection compares the exact opened base,
@@ -22,20 +22,23 @@ Unknown-newer envelope and embedded schemas are refused before version-specific
 payload/checksum interpretation. Do not treat them as damaged files, downsave
 them, or rewrite recovery/derived state on refusal.
 
-Supported schemas 1-13 migrate directly to current only with explicit consent.
-Retain an exact-byte, nonoverwriting backup and publish through the ordinary
-verified protocol. Never invent speaker roles, cuts, metadata or permissions.
-In particular, schema-1's ambiguous channel zero becomes unknown unless the
-old bytes explicitly establish that channel. Test migrations against independent
-old-format expectations, not only the current encoder.
+Show model schema 14 is the supported container baseline. Pre-container JSON
+shows and their schema 1-13 migrations are retired; they are not decoded or
+offered for conversion. The library's independent schema migration remains.
+
+For every future package/model schema bump, register an explicit step in
+`ShowCatalogMigration` and update version admission in `ShowPackage`. Refuse
+unknown-newer versions before interpreting their content. Retain exact-byte,
+nonoverwriting backups, recheck the consented base and publish through
+`DocumentMigrator` and the ordinary verified protocol. Test against independent
+previous-version fixtures and expectations, including cancellation, failures,
+recovery and unsupported-version refusal. Never invent user decisions or grants.
 
 ### Show packages
 
 New `.wwshow` documents use `com.brandonmartinez.wavewrangler.show-package`,
-conforming to `com.apple.package`, not JSON. The legacy show UTI and serialized
-`com.brandonmartinez.wavewrangler.show` identifier remain unchanged; open panels
-accept both, but new saves use the package type. A distinct UTI avoids competing
-JSON declarations from older installed builds. Native package storage version **2** is independent of model schema
+conforming to `com.apple.package`, not JSON. This is the only registered/openable
+show type; the retired JSON UTI is no longer declared. Native package storage version **2** is independent of model schema
 14. `Manifest.json` indexes `Components/<SHA256>` files: a catalog without
 episodes, one component per episode, and original binary artwork. JSON
 components use bounded LZFSE only when smaller; artwork stays uncompressed.
@@ -91,12 +94,11 @@ safe replacement and the same independent read-back check. Wrapper reuse keeps
 unchanged components distinguishable, but atomic writes may still replace their
 inodes. It does not establish reduced physical writes or network transfer.
 
-Flat and version-1 package shows require the existing explicit **Update** consent.
+Version-1 package shows require the existing explicit **Update** consent.
 The storage-only migration preserves the complete payload, keeps exact original
 bytes locally, rechecks the originally opened base, and publishes a package at
-the same URL with the next revision. Schemas 1-13 use their existing migration
-expectations before package publication. Legacy readers remain available while
-personal-document upgrades are being verified; do not remove them early.
+the same URL with the next revision. Flat files are refused unchanged, with no
+pre-container migration step or backup publication.
 
 ### Provider evaluation
 
@@ -127,12 +129,9 @@ metadata separately. `isUploaded` is provider-reported status, not a remote
 read-back. Verify `isUbiquitousItem` rather than assuming a Documents folder is
 iCloud-managed. Do not run these commands against unapproved cloud locations.
 
-For an explicitly authorized schema-14 personal document, `package-convert
---file LEGACY_SHOW --destination NEW_LOCAL_DIRECTORY` creates a separate local
-package and exact-byte backup, compares complete JSON payload trees, and
-rechecks the untouched original. It never opens referenced audio. Keep private
-trial/conversion evidence and document contents outside Git; generated local
-trials do not authorize hosted/UI execution on a physical host.
+The pre-container `package-convert` command is retired. Keep private trial
+evidence and document contents outside Git; generated local trials do not
+authorize hosted/UI execution on a physical host.
 
 ## Verified publication and recovery
 

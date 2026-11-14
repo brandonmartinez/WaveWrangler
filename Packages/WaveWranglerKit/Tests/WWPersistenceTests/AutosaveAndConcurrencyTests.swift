@@ -109,7 +109,7 @@ struct AutosavePolicyTests {
         let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
         #expect(record.unpublished && record.recordKind == "edit-checkpoint" && record.checkpointSequence == 1)
         #expect(record.relation(to: RevisionFingerprint(of: before)) == .basedOnCurrent)
-        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Drafted")
+        #expect(try JSONEnvelopeCoder<ShowDocumentModel>.fixture.decode(record.snapshot).payload.show.title == "Drafted")
         #expect(await session.isDirty)
         #expect(await !session.status.state.isVerifiedOnDisk)
         // A verified publication containing the edits prunes the record.
@@ -145,7 +145,7 @@ struct AutosavePolicyTests {
             let lastEdit = ContinuousClock.now
             let verified = try #require(await iterator.next())
             // Independent read-back of coherent disk truth.
-            let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(Data(contentsOf: url))
+            let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.fixture.decode(Data(contentsOf: url))
             #expect(decoded.payload.show.title == "Sample \(sample) final")
             latencies.append(Stats.seconds(verified - lastEdit))
         }
@@ -168,7 +168,7 @@ struct AutosavePolicyTests {
             let lastEdit = ContinuousClock.now
             let written = try #require(await draftIterator.next())
             let record = try #require(rig.recovery.latestEditCheckpoint(for: session.key))
-            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(record.snapshot).payload.show.title == "Draft sample \(sample)")
+            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.fixture.decode(record.snapshot).payload.show.title == "Draft sample \(sample)")
             draftLatencies.append(Stats.seconds(written - lastEdit))
             draftScheduler.cancelPending()
         }

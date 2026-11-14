@@ -150,7 +150,7 @@ struct LazyCatalogHostedTests {
         var candidate = original
         candidate.episodes = removingAll ? [] : [original.episodes[2], original.episodes[0]]
         let url = try #require(document.fileURL)
-        let snapshot = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        let snapshot = try ShowPackageCoder().encodeDocument(
             candidate, revision: document.revision + 1, publicationID: UUID()).data
         try PersistenceEnvironment.recovery.writeEditCheckpoint(
             snapshot: snapshot, base: RevisionFingerprint(of: LocalFileOperations().read(url)),

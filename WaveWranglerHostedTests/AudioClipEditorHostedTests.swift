@@ -125,7 +125,7 @@ struct AudioClipEditorHostedTests {
         #expect(f.document.store.residentModel == after)
         try await MixerHostedTests().save(f.document)
         let bytes = try LocalFileOperations().read(#require(f.document.fileURL))
-        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
+        let reopened = try ShowPackageCoder().decode(bytes)
         #expect(reopened.payload == after)
         #expect(try Data(contentsOf: f.file) == original)
         f.model.selectSourceAudition()
@@ -211,7 +211,7 @@ struct AudioClipEditorHostedTests {
         #expect(f.document.store.residentModel == after)
         try await MixerHostedTests().save(f.document)
         let bytes = try LocalFileOperations().read(#require(f.document.fileURL))
-        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
+        let reopened = try ShowPackageCoder().decode(bytes)
         #expect(reopened.payload == after)
         let savedURL = try #require(f.document.fileURL)
         let reopenedDocument = try #require(try NSDocumentController.shared.makeDocument(
@@ -271,7 +271,7 @@ struct AudioClipEditorHostedTests {
             try await MixerHostedTests().save(f.document)
             let savedURL = f.document.fileURL
             let saved = try LocalFileOperations().read(#require(savedURL))
-            #expect(try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(saved).payload == after)
+            #expect(try ShowPackageCoder().decode(saved).payload == after)
             #expect(try Data(contentsOf: file) == original)
         }
     }
@@ -536,7 +536,7 @@ struct AudioClipEditorHostedTests {
         try await settleResidency(f)
         #expect(f.document.store.residentModel == after)
         try await MixerHostedTests().save(f.document)
-        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+        let saved = try ShowPackageCoder().decode(
             LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(saved == after)
         let recipe = try await f.runtime.mixerRecipe(model: after, episode: f.model.episodeID,

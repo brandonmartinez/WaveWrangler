@@ -24,7 +24,7 @@ struct RecoveryCheckpointVerificationTests {
         let existing = try rig.recovery.checkpoints(for: key)
         #expect(existing.count == 3)
         let retained = try Dictionary(uniqueKeysWithValues: existing.map { ($0.url, try ops.read($0.url)) })
-        let changed = try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(
+        let changed = try JSONEnvelopeCoder<ShowDocumentModel>.fixture.encode(
             model.renamingShow(to: "Different checkpoint bytes"), revision: 4
         )
         ops.arm(fault, known: Set(retained.keys), changed: changed)
@@ -67,7 +67,7 @@ struct RecoveryCheckpointVerificationTests {
         #expect(ops.checkpointReadCount == 1)
         #expect(ops.listingCount == 1)
         let checkpoint = try #require(second.priorCheckpoint)
-        #expect(try rig.recovery.bytes(of: checkpoint) == JSONEnvelopeCoder<ShowDocumentModel>.show.encode(
+        #expect(try rig.recovery.bytes(of: checkpoint) == JSONEnvelopeCoder<ShowDocumentModel>.fixture.encode(
             model, revision: 1, publicationID: first.publication.publicationID
         ))
     }

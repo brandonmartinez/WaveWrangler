@@ -72,7 +72,7 @@ struct SustainedProductionPlaybackHostedTests {
         #expect(verified && saved && !edited)
         let fileURL = document.fileURL
         let url = try #require(fileURL)
-        let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(url)).payload
+        let decoded = try ShowPackageCoder().decode(LocalFileOperations().read(url)).payload
         let matches = decoded == expected
         #expect(matches)
     }

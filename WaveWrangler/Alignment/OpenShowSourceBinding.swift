@@ -79,7 +79,7 @@ final class OpenShowSourceBinding {
                 return EpisodeSourceSurveyInput(model: scoped, publication: decoded.publication)
             }
             let opener = DocumentOpener(
-                coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
+                coder: ShowPackageCoder(), recovery: nil,
                 identityOf: { .show($0.show.id) }
             )
             guard case let .editable(decoded, fingerprint) = opener.open(

@@ -174,7 +174,7 @@ final class PersistentLibraryEntryObserver: LibraryEntryObserving {
 
     func locateShow(_ id: ShowID) async throws {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.wwShow, .wwLegacyShow]
+        panel.allowedContentTypes = [.wwShow]
         panel.allowsMultipleSelection = false
         panel.message = "Choose the show file. WaveWrangler checks the show inside the file, not its name."
         if let hint = pathHints[id] { panel.directoryURL = URL(filePath: hint).deletingLastPathComponent() }

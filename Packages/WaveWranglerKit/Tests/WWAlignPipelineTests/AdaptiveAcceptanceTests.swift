@@ -27,7 +27,7 @@ struct AdaptiveAcceptanceTests {
         #expect(accepted.map == strict.map)
         #expect(accepted.model.episodes[0].sources == before.episodes[0].sources)
         #expect(accepted.model.episodes[0].recorderGroups == before.episodes[0].recorderGroups)
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let restored = try coder.decode(coder.encode(accepted.model, revision: 1)).payload
         #expect(restored == accepted.model)
         var withRange = strict.model
@@ -96,7 +96,7 @@ struct AdaptiveAcceptanceTests {
         #expect(correction.segments.filter { $0.kind == nil }.count == record.timing.regions.count)
         let quiet = try #require(correction.segments.first { $0.kind == .quietTransition })
         #expect(quiet.rateRatio > 1.0005, "pause timing has its own bounded leniency, not relaxed speech fitting")
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let restored = try coder.decode(coder.encode(accepted.model, revision: 1)).payload
         #expect(restored == accepted.model)
         #expect(restored.episodes[0].sources == before.episodes[0].sources)
@@ -147,7 +147,7 @@ struct AdaptiveAcceptanceTests {
         #expect(correction.channelCount == 2)
         #expect(accepted.model.episodes[0].sources == before.episodes[0].sources)
         #expect(accepted.model.episodes[0].recorderGroups == before.episodes[0].recorderGroups)
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let restored = try coder.decode(coder.encode(accepted.model, revision: 1)).payload
         #expect(restored == accepted.model)
         await #expect(throws: AlignmentAcceptanceError.supersededAcceptance) { try await fixture.pipeline.activate(superseded) }

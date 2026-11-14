@@ -170,7 +170,7 @@ enum NativeHoldoutRunner {
     }
 
     static func decode(_ url: URL) -> DecodedDocument<ShowDocumentModel>? {
-        (try? LocalFileOperations().read(url)).flatMap { try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode($0) }
+        (try? LocalFileOperations().read(url)).flatMap { try? ShowPackageCoder().decode($0) }
     }
 
     // MARK: - Families
@@ -236,7 +236,7 @@ enum NativeHoldoutRunner {
         let acknowledgments = acknowledgmentCount.withLock { $0 }
         document.close()
 
-        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: recovery)
+        let opener = DocumentOpener<ShowPackageCoder>.show(recovery: recovery)
         var outcome: String
         switch opener.open(target, key: key) {
         case let .editable(doc, _):
@@ -251,7 +251,7 @@ enum NativeHoldoutRunner {
         if operation == .saveAsOperation { try check(decode(url)?.payload == r2, "original changed by Save As") }
         // The NSDocument path reopens what is on disk.
         if outcome != "absent" { _ = try open(target).close() }
-        try check(!((try? recovery.validatedCheckpoints(for: key, coder: JSONEnvelopeCoder<ShowDocumentModel>.show)) ?? []).isEmpty, "no validated prior")
+        try check(!((try? recovery.validatedCheckpoints(for: key, coder: ShowPackageCoder())) ?? []).isEmpty, "no validated prior")
         if boundary == .libraryAcknowledged {
             try check(error == nil && outcome == "new", "P7 save should be verified: \(String(describing: error)) \(outcome)")
             try check(state.isVerifiedOnDisk, "status \(state)")

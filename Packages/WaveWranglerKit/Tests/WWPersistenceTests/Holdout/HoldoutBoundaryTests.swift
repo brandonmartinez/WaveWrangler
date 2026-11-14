@@ -87,7 +87,7 @@ struct HoldoutBoundaryTests {
             }
             if operation == "saveAs" { try check(decodeShow(url)?.payload == old, "original changed by Save As") }
             // A validated coherent prior is in the recovery store.
-            let priors = try after.recovery.validatedCheckpoints(for: key, coder: ShowCoder.show)
+            let priors = try after.recovery.validatedCheckpoints(for: key, coder: ShowCoder.fixture)
             try check(priors.contains { $0.document.payload == model || $0.document.payload == old }, "no validated prior")
             // The library never claims an unverified publication; the index always matches the library.
             let library = try #require(decodeLibrary(libraryURL), "library unreadable")

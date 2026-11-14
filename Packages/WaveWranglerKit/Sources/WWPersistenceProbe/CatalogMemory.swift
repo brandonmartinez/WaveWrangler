@@ -17,32 +17,20 @@ extension Probe {
                 throw PersistenceError.malformed("Use a new fixture path, 1...32 episodes and 1...8000 words")
             }
             let storage = args["storage"] ?? "package"
-            guard storage == "package" || storage == "flat" else {
-                throw PersistenceError.malformed("Storage must be package or flat")
+            guard storage == "package", args["flat-copy"] == nil else {
+                throw PersistenceError.malformed("Storage must be package; flat show generation is no longer supported")
             }
-            let flatCopy = args["flat-copy"].map { URL(fileURLWithPath: $0) }
             let indexedCopy = args["indexed-copy"].map { URL(fileURLWithPath: $0) }
             if let indexedCopy {
-                guard storage == "package", indexedCopy != file, indexedCopy != flatCopy,
+                guard indexedCopy != file,
                       !LocalFileOperations().exists(indexedCopy) else {
                     throw PersistenceError.malformed("Indexed comparison requires a new, distinct path and package primary")
                 }
             }
-            if let flatCopy {
-                guard storage == "package", flatCopy != file, !LocalFileOperations().exists(flatCopy) else {
-                    throw PersistenceError.malformed("Flat comparison requires a new, distinct path and package primary")
-                }
-            }
             let artwork = try catalogArtwork()
             let model = try syntheticPackageShow(episodes: count, wordsPerGeneration: words, artwork: artwork)
-            let bytes = storage == "package"
-                ? try ShowPackageCoder().encode(model, revision: 1)
-                : try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 1)
+            let bytes = try ShowPackageCoder().encode(model, revision: 1)
             try LocalFileOperations().writeNew(bytes, to: file)
-            if let flatCopy {
-                try LocalFileOperations().writeNew(
-                    JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 1), to: flatCopy)
-            }
             if let indexedCopy {
                 try LocalFileOperations().writeNew(ShowCatalogCoder().encode(ShowCatalog(model), revision: 1), to: indexedCopy)
             }
@@ -50,7 +38,7 @@ extension Probe {
                 "currentWords": count * words, "historicalWords": count * words,
                 "currentTranscripts": count, "historicalTranscripts": count,
                 "artworkBytes": artwork.count, "artworkImages": 1, "snapshotBytes": bytes.count,
-                "identicalModelFlatCopy": flatCopy != nil, "identicalModelIndexedCopy": indexedCopy != nil])
+                "identicalModelIndexedCopy": indexedCopy != nil])
             return 0
         } catch {
             emit(["result": "generationFailed", "detail": "\(error)"])
@@ -62,15 +50,15 @@ extension Probe {
         do {
             let storage = args["storage"] ?? "package"
             if storage == "indexed" { return try indexedCatalogMemory() }
-            guard storage == "package" || storage == "flat" else {
-                throw PersistenceError.malformed("Storage must be package or flat")
+            guard storage == "package" else {
+                throw PersistenceError.malformed("Storage must be package or indexed")
             }
 
             let baseline = try catalogMemorySample()
             let start = ContinuousClock.now
             let (document, fingerprint, snapshotBytes) = try autoreleasepool {
                 let bytes = try LocalFileOperations().read(file)
-                guard ShowPackage.isSnapshot(bytes) == (storage == "package") else {
+                guard ShowPackage.isSnapshot(bytes) else {
                     throw PersistenceError.malformed("Fixture does not match the requested storage")
                 }
                 return (try ShowPackageCoder().decode(bytes), RevisionFingerprint(of: bytes), bytes.count)
@@ -90,15 +78,9 @@ extension Probe {
                 try autoreleasepool {
                     let edited = try document.payload.renamingShow(to: "Synthetic catalog memory save \(document.revision + 1)")
                     let key = DocumentKey.show(edited.show.id)
-                    if storage == "package" {
-                        _ = try DocumentPublisher(coder: ShowPackageCoder(), recovery: recovery).publish(
-                            edited, revision: document.revision + 1, key: key, to: file,
-                            target: .inPlace(expectedBase: fingerprint))
-                    } else {
-                        _ = try DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: recovery).publish(
-                            edited, revision: document.revision + 1, key: key, to: file,
-                            target: .inPlace(expectedBase: fingerprint))
-                    }
+                    _ = try DocumentPublisher(coder: ShowPackageCoder(), recovery: recovery).publish(
+                        edited, revision: document.revision + 1, key: key, to: file,
+                        target: .inPlace(expectedBase: fingerprint))
                 }
                 result["saveSeconds"] = seconds(.now - saveStart)
                 result["saveRetained"] = try catalogMemorySample()

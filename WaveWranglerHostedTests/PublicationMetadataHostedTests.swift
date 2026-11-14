@@ -32,9 +32,9 @@ struct PublicationMetadataHostedTests {
         #expect(liveDescription == "Episode description")
         let liveCreator = try first.store.residentModel.resolvedPublication(for: episode.id).metadata.creator
         #expect(liveCreator == "Show artist")
-        let bytes = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(
+        let bytes = try ShowPackageCoder().encodeDocument(
             store.residentModel, revision: 1, publicationID: UUID()).data
-        let savedDescription = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
+        let savedDescription = try ShowPackageCoder().decode(bytes)
             .payload.episode(episode.id)?.publication?.metadata.publicDescription
         #expect(savedDescription == "Episode description")
         undo.undo()

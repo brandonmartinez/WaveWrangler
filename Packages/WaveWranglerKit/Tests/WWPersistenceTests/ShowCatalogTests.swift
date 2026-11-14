@@ -79,15 +79,11 @@ struct ShowCatalogTests {
         #expect(throws: PersistenceError.self) { try before.retainingEpisodes(in: [EpisodeID()]) }
     }
 
-    @Test func legacyPackagesAndFlatDocumentsRequireAnExplicitUpgrade() throws {
+    @Test func versionOnePackagesRequireAnExplicitUpgrade() throws {
         let model = Fixtures.show(seed: 819)
-        for bytes in [
-            try ShowPackageCoder().encode(model, revision: 2),
-            try JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 2),
-        ] {
-            #expect(throws: PersistenceError.unsupportedOlderSchema(found: 1, minimum: 2)) {
-                try coder.decode(bytes)
-            }
+        let bytes = try ShowPackageCoder().encode(model, revision: 2)
+        #expect(throws: PersistenceError.unsupportedOlderSchema(found: 1, minimum: 2)) {
+            try coder.decode(bytes)
         }
     }
 
@@ -110,17 +106,30 @@ struct ShowCatalogTests {
         #expect(throws: PersistenceError.self) { try coder.encode(catalog, revision: 3) }
     }
 
-    @Test(arguments: ShowSchema10MigrationTests.goldens + [
-        ShowSchema11MigrationTests.golden, ShowSchema12MigrationTests.golden, ShowSchema13MigrationTests.golden,
-    ])
-    func legacySchemaUpgradePreservesOriginalBytesAndAllEpisodeIdentities(_ original: Data) throws {
-        try checkUpgrade(original, expected: ShowSchemaMigration.decodeUpgradingOlder(original).payload)
+    @Test func episodePackageUpgradeIsExplicitAndExact() throws {
+        let model = try ShowPackageTests.richShow()
+        try checkUpgrade(ShowPackageCoder().encode(model, revision: 7), expected: model)
     }
 
-    @Test func currentFlatAndEpisodePackageUpgradeAreExplicitAndExact() throws {
-        let model = try ShowPackageTests.richShow()
-        try checkUpgrade(JSONEnvelopeCoder<ShowDocumentModel>.show.encode(model, revision: 7), expected: model)
-        try checkUpgrade(ShowPackageCoder().encode(model, revision: 7), expected: model)
+    @Test(arguments: [1, 13, 14, 15])
+    func preContainerEnvelopesAreRefusedWithoutMigrationOrWrites(_ schema: Int) throws {
+        let directory = TempDirectory()
+        let url = directory.url.appending(path: "Retired.wwshow")
+        let original = Data("""
+        {"format":"com.brandonmartinez.wavewrangler.show","schemaVersion":\(schema),"payload":{"future":"not interpreted"}}
+        """.utf8)
+        try original.write(to: url)
+        let key = DocumentKey.show(ShowID())
+        let recovery = RecoveryStore(root: directory.sub("recovery"))
+        let packageCoder = ShowPackageCoder()
+        #expect(throws: PersistenceError.self) { try packageCoder.decode(original) }
+        #expect(throws: PersistenceError.self) { try coder.decode(original) }
+        let publisher = DocumentPublisher(coder: coder, coordination: AlreadyCoordinated(), recovery: recovery)
+        #expect(throws: PublicationError.self) {
+            try DocumentMigrator.show(publisher: publisher).migrate(url, key: key, expectedOriginal: original)
+        }
+        #expect(try recovery.migrationBackups(for: key).isEmpty)
+        #expect(try Data(contentsOf: url) == original)
     }
 
     private func checkUpgrade(_ original: Data, expected: ShowDocumentModel) throws {

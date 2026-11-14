@@ -155,7 +155,7 @@ struct AudioInsertionHostedTests {
         #expect(f.document.store.residentModel == after)
         try await helper.wait { f.model.trackProcessingOperation == nil }
         try await helper.save(f.document)
-        let reopened = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+        let reopened = try ShowPackageCoder().decode(
             LocalFileOperations().read(#require(f.document.fileURL))).payload
         #expect(reopened == after)
         #expect(try await f.runtime.programComposition(model: reopened, episode: episode.id) == editor.composition)

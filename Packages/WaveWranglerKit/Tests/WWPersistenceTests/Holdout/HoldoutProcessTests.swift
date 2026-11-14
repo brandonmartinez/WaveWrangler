@@ -4,7 +4,7 @@ import Testing
 import WWCore
 @testable import WWPersistence
 
-private typealias ShowCoder = JSONEnvelopeCoder<ShowDocumentModel>
+private typealias ShowCoder = ShowPackageCoder
 
 @Suite("M1 durability holdout — real processes", .serialized, .enabled(if: Holdout.enabled, "WW_HOLDOUT=1"))
 struct HoldoutProcessTests {
@@ -13,7 +13,7 @@ struct HoldoutProcessTests {
     @Test func dur009TwoProcessRaces() async {
         let result = await runFamily("M1-DUR-009", calibration: 10, holdout: 100) { index, seed in
             var rng = SeededGenerator(seed: seed)
-            let rig = Rig(label: "dur009")
+            let rig = PackageRig(label: "dur009")
             let model = HoldoutGen.show(&rng)
             let url = rig.url()
             _ = try rig.publisher.publish(model, revision: 1, key: .show(model.show.id), to: url, target: .newLocation)
@@ -49,7 +49,7 @@ struct HoldoutProcessTests {
                                      notes: ["Owned helper process killed with SIGKILL exactly at the boundary (publisher path). The separate NSDocument-path random-kill set is reported with the native runner."],
                                      seedFixture: "M1-DUR-021/publisher/\(boundary.rawValue)") { _, seed in
             var rng = SeededGenerator(seed: seed)
-            let rig = Rig(label: "dur021")
+            let rig = PackageRig(label: "dur021")
             let model = HoldoutGen.show(&rng)
             let url = rig.url()
             let (old, base) = try rig.seedTwoRevisions(model, at: url)
@@ -75,7 +75,7 @@ struct HoldoutProcessTests {
                 outcome = "recoveredOld"
             default: throw CaseFailure(description: "zero valid")
             }
-            let priors = try rig.recovery.validatedCheckpoints(for: .show(model.show.id), coder: ShowCoder.show)
+            let priors = try rig.recovery.validatedCheckpoints(for: .show(model.show.id), coder: ShowPackageCoder())
             try check(!priors.isEmpty, "recovery store has no coherent prior")
             let library = try #require(decodeLibrary(libraryURL), "library unreadable")
             let claimed = library.payload.entries.first?.lastKnownPublication
@@ -144,7 +144,7 @@ struct HoldoutProcessTests {
             var rng = SeededGenerator(seed: seed)
             let variant = ["normal", "staleBookmark", "movedDocument", "revokedBookmark", "revokedPermission", "libraryInUserFolder"][index % 6]
             let dir = TempDirectory("dur029")
-            let rig = Rig(dir: dir)
+            let rig = PackageRig(dir: dir)
             let model = HoldoutGen.show(&rng)
             let url = rig.url("Show \(index).wwshow")
             let first = try rig.publisher.publish(model, revision: 1, key: .show(model.show.id), to: url, target: .newLocation)

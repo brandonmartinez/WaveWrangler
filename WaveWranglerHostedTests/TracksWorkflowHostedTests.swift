@@ -114,7 +114,7 @@ struct TracksWorkflowHostedTests {
             #expect(f.model.proposedWaveformStrokes(for: track).isEmpty)
         }
         #expect(reset == (try before.resettingAlignment(in: f.model.episodeID)))
-        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+        let saved = try ShowPackageCoder().decode(
             LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == reset && saved.episodes[0].cleanup?.transcripts.isEmpty == true)
@@ -232,7 +232,7 @@ struct TracksWorkflowHostedTests {
         f.document.store.replaceLoadedModel(accepted.model)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try #require(f.document.verifiedModel == accepted.model)
-        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+        let saved = try ShowPackageCoder().decode(
             LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == accepted.model)
@@ -361,7 +361,7 @@ struct TracksWorkflowHostedTests {
         let correction = try #require(accepted.episodes[0].alignment?.acceptedMap?.sourceCorrections?.first)
         #expect(correction.source == f.target && correction.retainsAllAudio)
         #expect(f.model.selectedTracksAdaptive.isEmpty)
-        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+        let saved = try ShowPackageCoder().decode(
             LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved == accepted)
@@ -508,7 +508,7 @@ struct TracksWorkflowHostedTests {
         undo.undo()
         try await saveSelection()
         #expect(f.document.store.residentModel == selected, "The dialog action restores the editor's selection with one Undo")
-        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(
+        let saved = try ShowPackageCoder().decode(
             LocalFileOperations().read(#require(f.document.fileURL))
         ).payload
         #expect(saved.episodes[0].preferredAlignmentReferenceGroupID == targetGroup)

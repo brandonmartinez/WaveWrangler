@@ -158,7 +158,6 @@ struct Probe {
         case "checkpoint": return await checkpoint()
         case "offer": return offer()
         case "package-trial": return packageTrial()
-        case "package-convert": return packageConvert()
         case "catalog-generate": return catalogGenerate()
         case "catalog-memory": return catalogMemory()
         default:
@@ -251,7 +250,7 @@ struct Probe {
             t = .now
             let showID = document.payload.show.id
             _ = EditCheckpointOffer.assess(recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue, onDisk: fingerprint,
-                                           coder: JSONEnvelopeCoder<ShowDocumentModel>.show, belongsToDocument: { $0.show.id == showID })
+                                           coder: ShowPackageCoder(), belongsToDocument: { $0.show.id == showID })
             out["offerScanMs"] = ms(t)
         }
         // The persistent library path (PersistentLibraryEntryObserver.openShow): resolve the read-write
@@ -270,7 +269,7 @@ struct Probe {
                 guard let grant = try? locations.beginAccess(showID) else { emit(["error": "beginAccess"]); return 1 }
                 out["beginAccessMs"] = ms(t)
                 t = .now
-                _ = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: nil).open(grant.url, key: .show(showID))
+                _ = DocumentOpener<ShowPackageCoder>.show(recovery: nil).open(grant.url, key: .show(showID))
                 out["verifyOpenMs"] = ms(t)
                 locations.endAccess(grant)
             }
@@ -432,7 +431,7 @@ struct Probe {
             _ = await store.load()
             library = store
         }
-        let opener = DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>.show(recovery: recovery)
+        let opener = DocumentOpener<ShowPackageCoder>.show(recovery: recovery)
         let (outcome, saved) = await locations.withReopenedShow(showID, opener: opener) { url, document, fingerprint -> [String: Any] in
             let session = ShowSession(key: .show(showID), url: url, payload: document.payload, base: fingerprint,
                                       revision: document.revision, publisher: DocumentPublisher(coder: coder, recovery: recovery))

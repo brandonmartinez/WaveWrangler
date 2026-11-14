@@ -136,6 +136,9 @@ public enum ShowPackage {
     }
 
     static func decode(_ data: Data) throws -> DecodedDocument<ShowDocumentModel> {
+        guard isSnapshot(data) else {
+            throw PersistenceError.malformed("Expected a show package; pre-container shows are no longer supported")
+        }
         if try storageVersion(of: data) == 2 {
             let document = try ShowCatalogCoder().decode(data)
             return DecodedDocument(payload: try document.payload.materializedModel(), publication: document.publication)
@@ -182,7 +185,7 @@ public enum ShowPackage {
             publicationID: manifest.publicationID, checksum: manifest.checksum))
     }
 
-    /// Match the legacy canonical payload without retaining a whole-catalog JSON allocation.
+    /// Version-1 packages hash the complete canonical payload without a whole-catalog JSON allocation.
     static func canonicalChecksum(_ model: ShowDocumentModel) throws -> String {
         var hash = SHA256()
         let encoder = JSONEnvelopeCoder<ShowDocumentModel>.makeEncoder()
@@ -418,13 +421,19 @@ public enum ShowPackage {
     }
 }
 
-/// Writes packages; reads packages and all still-supported legacy envelopes. No migration is implicit.
+/// Whole-model adapter for show packages. No migration is implicit.
 public struct ShowPackageCoder: CanonicalDocumentCoding {
     public let format = DocumentFormat.show
     public init() {}
 
     public func decode(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowDocumentModel> {
-        try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(data)
+        do {
+            return try ShowPackage.decode(data)
+        } catch let error as PersistenceError { throw error }
+        catch DomainError.unsupportedPublicationArtworkSchema(let found, let supported) {
+            throw .unknownNewerSchema(found: found, supported: supported)
+        }
+        catch { throw .malformed("Unreadable show package: \(error.localizedDescription)") }
     }
 
     public func encodeDocument(_ payload: ShowDocumentModel, revision: Int, publicationID: UUID) throws(PersistenceError) -> EncodedDocument {

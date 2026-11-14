@@ -63,19 +63,16 @@ scratch root. On a ready, exclusively leased VM, use new local paths:
 
 ```sh
 wwpersist-probe catalog-generate --file "$RUN/catalog.wwshow" \
-  --episodes 8 --words 8000 --flat-copy "$RUN/flat.wwshow"
+  --episodes 8 --words 8000
 wwpersist-probe catalog-memory --file "$RUN/catalog.wwshow" --storage package
-wwpersist-probe catalog-memory --file "$RUN/flat.wwshow" --storage flat
 wwpersist-probe catalog-memory --file "$RUN/catalog.wwshow" --storage package \
   --save 1 --recovery "$RUN/package-recovery"
-wwpersist-probe catalog-memory --file "$RUN/flat.wwshow" --storage flat \
-  --save 1 --recovery "$RUN/flat-recovery"
 ```
 
 The generator permits 1-32 episodes and 1-8,000 words per current and historical
 generation per episode, preserving independent identities and historical review
-references, plus one deterministic 256-by-256 generated PNG. The optional flat
-copy has the identical model. It reads no recording content. Run sizes
+references, plus one deterministic 256-by-256 generated PNG. It reads no
+recording content. Run sizes
 sequentially and keep space for exact recovery checkpoints and staged replacement.
 
 Samples report `task_info(TASK_VM_INFO)` resident bytes and physical footprint,
@@ -95,8 +92,7 @@ harness: explicitly set runner variables
 `WW_CATALOG_MEMORY_TESTS=1`, `WW_CATALOG_MEMORY_ROOT` to this run's existing guest
 directory, and `WW_PROBE` to its verified optimized probe (use the corresponding
 `TEST_RUNNER_` prefixes when dispatching Xcode). It generates 1/8/32-episode
-identical-model pairs and runs three fresh-process open/save comparisons per
-format, reversing format order on the second repetition. Collect the generated
+packages and runs three fresh-process open/save measurements. Collect the generated
 `catalog-*/measurements.jsonl` files before cleaning owned guest paths. The
 unhosted harness does not turn its child-probe metrics into app-memory results.
 Use the unhosted runner, not the sandboxed editor's hosted runner: generating
@@ -108,7 +104,7 @@ the identical-model comparisons. `catalog-memory --storage indexed` measures
 catalog-only open; add `--episode 1 --save 1 --recovery "$RUN/indexed-recovery"`
 to load/edit/save one episode and verify all unvisited stored records unchanged.
 `WW_LAZY_CATALOG_MEMORY_TESTS=1` selects three fresh-process repetitions of
-catalog-only, indexed single-episode save, version-1 package save and flat save
+catalog-only, indexed single-episode save and version-1 package save
 for each 1/8/32-episode workload in the same leased unhosted harness.
 
 `LazyCatalogHostedTests` covers native unloaded saves, shared-window pins,

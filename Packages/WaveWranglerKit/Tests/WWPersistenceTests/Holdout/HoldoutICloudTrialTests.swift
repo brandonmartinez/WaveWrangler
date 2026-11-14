@@ -5,7 +5,7 @@ import Testing
 import WWCore
 @testable import WWPersistence
 
-private typealias ShowCoder = JSONEnvelopeCoder<ShowDocumentModel>
+private typealias ShowCoder = ShowPackageCoder
 private typealias ShowSession = CanonicalDocumentSession<ShowCoder>
 
 /// M1-DUR-024 — OBSERVED iCloud Drive trial on this Mac (grant C, 2026-10-04): synthetic documents only, only in
@@ -56,7 +56,7 @@ struct HoldoutICloudTrialTests {
         try fm.createDirectory(at: Self.folder, withIntermediateDirectories: true)
         let recoveryDir = TempDirectory("dur024-recovery")   // device-local recovery store stays on this Mac
         let recovery = RecoveryStore(root: recoveryDir.url)
-        let publisher = DocumentPublisher(coder: ShowCoder.show, recovery: recovery)
+        let publisher = DocumentPublisher(coder: ShowPackageCoder(), recovery: recovery)
         let opener = DocumentOpener<ShowCoder>.show(recovery: recovery)
         var conflictVersionsSeen = 0
         defer {

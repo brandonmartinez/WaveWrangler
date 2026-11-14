@@ -24,7 +24,7 @@ struct AppConfigurationTests {
         let tags = try #require(declaration["UTTypeTagSpecification"] as? [String: Any])
         #expect(tags["public.filename-extension"] as? [String] == [try #require(format.filenameExtension)])
         let conforms = try #require(declaration["UTTypeConformsTo"] as? [String])
-        #expect(conforms.contains("public.json"))
+        #expect(conforms.contains(format == .show ? "com.apple.package" : "public.json"))
     }
 
     @Test func showDocumentTypeIsEditedByShowDocument() throws {
@@ -40,6 +40,8 @@ struct AppConfigurationTests {
         #expect(conforms.contains("com.apple.package") && !conforms.contains("public.json"))
         let tags = try #require(package["UTTypeTagSpecification"] as? [String: Any])
         #expect(tags["public.filename-extension"] as? [String] == ["wwshow"])
+        #expect(types.count == 1)
+        #expect(!exported.contains { $0["UTTypeIdentifier"] as? String == "com.brandonmartinez.wavewrangler.show" })
     }
 
     @Test func recordingDragsAreDataNotAnOpenableDocumentType() throws {

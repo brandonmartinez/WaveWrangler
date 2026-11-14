@@ -98,10 +98,10 @@ struct HoldoutOpenRecoveryTests {
             let first = try rig.publisher.publish(model, revision: 1, key: key, to: url, target: .newLocation)
             let r2 = try model.renamingShow(to: model.show.title + " r2")
             _ = try rig.publisher.publish(r2, revision: 2, key: key, to: url, target: .inPlace(expectedBase: first.fingerprint))
-            let other = try ShowCoder.show.encode(HoldoutGen.show(&rng), revision: 2)
+            let other = try ShowCoder.fixture.encode(HoldoutGen.show(&rng), revision: 2)
             let corrupt = try variant.apply(to: try Data(contentsOf: url), other: other, &rng)
             try corrupt.write(to: url)
-            let opener = DocumentOpener<ShowCoder>.show(recovery: rig.recovery)
+            let opener = DocumentOpener<ShowCoder>.fixture(recovery: rig.recovery)
             guard case let .damaged(error, candidates) = opener.open(url, key: key) else { throw CaseFailure(description: "\(variant) not refused") }
             let reason = "\(error)".prefix { $0 != "(" }
             let first1 = try #require(candidates.first, "no validated checkpoint offered")

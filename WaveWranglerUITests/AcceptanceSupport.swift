@@ -608,23 +608,6 @@ enum AcceptanceAudit {
         return nil
     }
 
-    /// Source file names in the frozen M1 golden shows (`ShowSchema1Fixtures`, F-OLDER), read from their bytes.
-    static let goldenFixtureFileNames: Set<String> = {
-        var names: Set<String> = []
-        func collect(_ value: Any) {
-            if let object = value as? [String: Any] {
-                if let name = object["displayNameHint"] as? String { names.insert(name) }
-                object.values.forEach(collect)
-            } else if let array = value as? [Any] {
-                array.forEach(collect)
-            }
-        }
-        for bytes in [ShowSchema1Fixtures.placeholderOnly, ShowSchema1Fixtures.statedChannels, ShowSchema1Fixtures.mixed] {
-            if let object = try? JSONSerialization.jsonObject(with: bytes) { collect(object) }
-        }
-        return names
-    }()
-
     static func structuralWaiver(for issue: XCUIAccessibilityAuditIssue) -> String? {
         guard let element = issue.element else { return nil }
         if [.window, .toolbar, .splitter, .menuBar, .menuBarItem, .touchBar].contains(element.elementType) { return "system window chrome" }
@@ -632,13 +615,13 @@ enum AcceptanceAudit {
         if issue.auditType == .action, element.elementType == .popUpButton { return "system pop-up button exposes AXShowMenu" }
         // Since #112 the Setup Name cell's label is the source's file name (the visible name, IA §5) and its value
         // carries the hidden columns; the audit's heuristic calls a file name "not human-readable". Scoped to Name
-        // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`) and of the frozen M1 golden shows
-        // (F-OLDER, #159), where the label is verifiably the file's name. This is the M2 baseline's "Setup source-name
+        // cells of the synthetic fixtures (`synthetic-N.wav`, fixture-states `trN.wav`), where the label is
+        // verifiably the file's name. This is the M2 baseline's "Setup source-name
         // cells" artifact class (docs/engineering/gui-testing.md).
         if issue.auditType == .sufficientElementDescription, element.elementType == .staticText,
            element.identifier.range(of: #"^ww\.setup\.source\.[0-9A-F-]{36}$"#, options: .regularExpression) != nil,
            element.label.range(of: #"^(synthetic-[0-9]+|tr[0-9]+)\.wav$"#, options: .regularExpression) != nil
-            || goldenFixtureFileNames.contains(element.label) {
+ {
             return "Setup Name cell labeled with the source's file name '\(element.label)' (the visible name; heuristic finding)"
         }
         if element.elementType == .popUpButton, element.label == "emoji & symbols" { return "system input item, not app UI" }

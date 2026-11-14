@@ -4,20 +4,23 @@ import WWCore
 @testable import WWPersistence
 
 /// Builds a publisher/opener pair rooted in a temp directory.
-struct Rig {
+typealias Rig = PersistenceRig<JSONEnvelopeCoder<ShowDocumentModel>>
+typealias PackageRig = PersistenceRig<ShowPackageCoder>
+
+struct PersistenceRig<Coder: CanonicalDocumentCoding> where Coder.Payload == ShowDocumentModel {
     let dir: TempDirectory
     let docs: URL
     let recovery: RecoveryStore
-    let publisher: DocumentPublisher<JSONEnvelopeCoder<ShowDocumentModel>>
-    let opener: DocumentOpener<JSONEnvelopeCoder<ShowDocumentModel>>
+    let publisher: DocumentPublisher<Coder>
+    let opener: DocumentOpener<Coder>
 
-    init(label: String = "rig", ops: any FileOperations = LocalFileOperations(), hooks: any PublicationHooks = NoPublicationHooks(),
+    init(coder: Coder, label: String = "rig", ops: any FileOperations = LocalFileOperations(), hooks: any PublicationHooks = NoPublicationHooks(),
          dir: TempDirectory? = nil) {
         self.dir = dir ?? TempDirectory(label)
         docs = self.dir.sub("Documents")
         recovery = RecoveryStore(root: self.dir.sub("Recovery"), ops: ops)
-        publisher = DocumentPublisher(coder: .show, ops: ops, coordination: NSFileCoordination(), recovery: recovery, hooks: hooks)
-        opener = DocumentOpener(coder: .show, ops: ops, coordination: NSFileCoordination(), recovery: recovery, migratableSchemas: [0])
+        publisher = DocumentPublisher(coder: coder, ops: ops, coordination: NSFileCoordination(), recovery: recovery, hooks: hooks)
+        opener = DocumentOpener(coder: coder, ops: ops, coordination: NSFileCoordination(), recovery: recovery, migratableSchemas: [0])
     }
 
     func url(_ name: String = "Synthetic.wwshow") -> URL { docs.appending(path: name) }
@@ -28,6 +31,20 @@ struct Rig {
         let second = try model.renamingShow(to: model.show.title + " r2")
         let receipt = try publisher.publish(second, revision: 2, key: .show(model.show.id), to: url, target: .inPlace(expectedBase: first.fingerprint))
         return (second, receipt.fingerprint)
+    }
+}
+
+extension PersistenceRig where Coder == JSONEnvelopeCoder<ShowDocumentModel> {
+    init(label: String = "rig", ops: any FileOperations = LocalFileOperations(),
+         hooks: any PublicationHooks = NoPublicationHooks(), dir: TempDirectory? = nil) {
+        self.init(coder: .fixture, label: label, ops: ops, hooks: hooks, dir: dir)
+    }
+}
+
+extension PersistenceRig where Coder == ShowPackageCoder {
+    init(label: String = "package", ops: any FileOperations = LocalFileOperations(),
+         hooks: any PublicationHooks = NoPublicationHooks(), dir: TempDirectory? = nil) {
+        self.init(coder: ShowPackageCoder(), label: label, ops: ops, hooks: hooks, dir: dir)
     }
 }
 
@@ -46,7 +63,7 @@ struct PublicationTests {
         #expect(second.priorCheckpoint?.fingerprint == first.fingerprint)
         guard case let .editable(document, fingerprint) = rig.opener.open(url) else { Issue.record("not editable"); return }
         #expect(document.payload == edited && document.revision == 2 && fingerprint == second.fingerprint)
-        let checkpoints = try rig.recovery.validatedCheckpoints(for: .show(model.show.id), coder: JSONEnvelopeCoder<ShowDocumentModel>.show)
+        let checkpoints = try rig.recovery.validatedCheckpoints(for: .show(model.show.id), coder: JSONEnvelopeCoder<ShowDocumentModel>.fixture)
         #expect(checkpoints.map(\.document.payload) == [model])
     }
 
@@ -77,7 +94,7 @@ struct PublicationTests {
         } throws: { error in
             guard case let .conflict(conflict) = error as? PublicationError else { return false }
             guard conflict.onDisk == theirsReceipt.fingerprint, let preserved = conflict.preservedCandidate,
-                  let bytes = try? Data(contentsOf: preserved), let decoded = try? JSONEnvelopeCoder<ShowDocumentModel>.show.decode(bytes)
+                  let bytes = try? Data(contentsOf: preserved), let decoded = try? JSONEnvelopeCoder<ShowDocumentModel>.fixture.decode(bytes)
             else { return false }
             return decoded.payload == mine
         }
@@ -322,7 +339,7 @@ struct EditCheckpointTests {
         let url = rig.url()
         let (current, base) = try rig.seedTwoRevisions(model, at: url)
         let key = DocumentKey.show(model.show.id)
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.fixture
         for index in 1...3 {
             let snapshot = try coder.encode(try current.renamingShow(to: "Unsaved \(index)"), revision: 3)
             let record = try rig.recovery.writeEditCheckpoint(snapshot: snapshot, base: base, schemaVersion: 1, for: key)

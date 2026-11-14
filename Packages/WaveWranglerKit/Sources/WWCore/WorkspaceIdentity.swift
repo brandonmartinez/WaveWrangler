@@ -290,14 +290,6 @@ extension ShowDocumentModel {
     func workspaceValidationIssues(expectedSchemaVersion: Int) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
         func invalid(_ detail: String) { issues.append(.init(.invalidWorkspace, detail)) }
-        if expectedSchemaVersion < 7,
-           show.profile != nil || speakers.contains(where: { $0.appearance != nil })
-            || episodes.contains(where: {
-                $0.workspace != nil || $0.speakerAppearanceOverrides != nil || $0.cleanup?.transcriptHistory != nil
-                    || $0.recorderGroups.contains { $0.icon != nil || $0.definitionID != nil }
-            }) {
-            invalid("schemas before 7 cannot contain workspace profiles or preferences")
-        }
         let speakerIDs = Set(speakers.map(\.id))
         let hosts = show.profile?.hosts ?? []
         if Set(hosts).count != hosts.count || !Set(hosts).isSubset(of: speakerIDs) {

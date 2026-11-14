@@ -2,33 +2,26 @@ import Foundation
 import WWCore
 
 extension DocumentMigrator where Coder == ShowCatalogCoder {
-    /// Explicit legacy-envelope/episode-package upgrade, retaining exact originals before publication.
+    /// Explicit version-1 package upgrade, retaining exact originals before publication.
+    /// Register future package/model upgrades here with independent expectations. The shared migrator
+    /// owns consent-time base checks, nonoverwriting backups and verified publication.
     public static func show(publisher: DocumentPublisher<ShowCatalogCoder>) -> Self {
-        var steps = ShowSchemaMigration.steps.map { step in
-            MigrationStep<ShowCatalog>(fromSchema: step.fromSchema, migrate: { original in
-                let migrated = try step.migrate(original)
-                return (try ShowCatalog(migrated.payload), migrated.originalRevision)
-            }, expectations: { original, catalog in
-                do { return step.expectations(original, try catalog.materializedModel()) }
-                catch { return ["Cannot independently verify migrated episodes: \(error.localizedDescription)"] }
-            })
-        }
-        steps.append(MigrationStep(fromSchema: SchemaVersion.show, migrate: { original in
-            guard try ShowPackage.storageVersion(of: original) != 2 else {
-                throw PersistenceError.malformed("This show already uses indexed package storage")
+        let step = MigrationStep<ShowCatalog>(fromSchema: SchemaVersion.show, migrate: { original in
+            guard try ShowPackage.storageVersion(of: original) == 1 else {
+                throw PersistenceError.malformed("Expected a version-1 show package")
             }
-            let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(original)
+            let decoded = try ShowPackageCoder().decode(original)
             return (try ShowCatalog(decoded.payload), decoded.revision)
         }, expectations: { original, catalog in
             do {
-                let before = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(original).payload
+                let before = try ShowPackageCoder().decode(original).payload
                 let after = try catalog.materializedModel()
                 return before == after ? [] : ["Indexed package conversion changed document content"]
             } catch {
                 return ["Cannot independently verify the indexed package conversion: \(error.localizedDescription)"]
             }
-        }))
-        return Self(publisher: publisher, steps: steps,
-            identify: { (try? ShowSchemaMigration.decodeUpgradingOlder($0)).map { .show($0.payload.show.id) } })
+        })
+        return Self(publisher: publisher, steps: [step],
+            identify: { (try? ShowPackageCoder().decode($0)).map { .show($0.payload.show.id) } })
     }
 }

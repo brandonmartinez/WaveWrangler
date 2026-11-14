@@ -7,7 +7,7 @@ import WWCore
 /// on disk, and only removed by an explicit resolution. Damaged and unknown-newer records are reported and kept.
 @Suite("C2b edit-checkpoint offer")
 struct EditCheckpointOfferTests {
-    let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+    let coder = JSONEnvelopeCoder<ShowDocumentModel>.fixture
 
     func assess(_ rig: Rig, _ key: DocumentKey, _ model: ShowDocumentModel, onDisk: RevisionFingerprint?) -> EditCheckpointOffer<ShowDocumentModel> {
         let showID = model.show.id

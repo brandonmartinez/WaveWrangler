@@ -310,7 +310,7 @@ struct LibraryScaleTests {
         let docs = rig.dir.sub("Shows")
         let shows = (0..<100).map { Fixtures.show(seed: 10_000 + UInt64($0), episodes: 2, sourcesPerEpisode: 5) }
         #expect(shows.reduce(0) { $0 + $1.episodes.flatMap(\.sources).count } == 1_000)
-        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: rig.recovery)
+        let publisher = DocumentPublisher(coder: JSONEnvelopeCoder<ShowDocumentModel>.fixture, recovery: rig.recovery)
         var urls: [ShowID: URL] = [:]
         for show in shows {
             let url = docs.appending(path: "\(show.show.id).wwshow")
@@ -321,7 +321,7 @@ struct LibraryScaleTests {
         _ = await setup.load()
         _ = try await setup.update { _ in Fixtures.library(shows: shows, seed: 99) }
 
-        let opener = DocumentOpener(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: rig.recovery)
+        let opener = DocumentOpener(coder: JSONEnvelopeCoder<ShowDocumentModel>.fixture, recovery: rig.recovery)
         var openTimes: [Double] = [], rebuildTimes: [Double] = [], reconcileTimes: [Double] = []
         for _ in 0..<20 {
             var start = ContinuousClock.now

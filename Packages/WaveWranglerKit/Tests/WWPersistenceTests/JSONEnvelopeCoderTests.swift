@@ -5,7 +5,7 @@ import WWCore
 
 @Suite("JSON envelope coder")
 struct JSONEnvelopeCoderTests {
-    let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+    let coder = JSONEnvelopeCoder<ShowDocumentModel>.fixture
 
     func sampleModel() -> ShowDocumentModel {
         let speaker = Speaker(name: "Host")
@@ -37,7 +37,7 @@ struct JSONEnvelopeCoderTests {
         #expect(decoded.revision == 3)
 
         let object = try json(encoded)
-        #expect(object["format"] as? String == "com.brandonmartinez.wavewrangler.show")
+        #expect(object["format"] as? String == "com.brandonmartinez.wavewrangler.persistence-test")
         #expect(object["schemaVersion"] as? Int == SchemaVersion.show)
         #expect(object["revision"] as? Int == 3)
         #expect((object["checksum"] as? String)?.hasPrefix("sha256:") == true)
@@ -91,7 +91,7 @@ struct JSONEnvelopeCoderTests {
 
     @Test func reportsNewerVersionEvenWhenVersionSpecificHeaderShapeDiffers() throws {
         let future: [String: Any] = [
-            "format": DocumentFormat.show.identifier,
+            "format": JSONEnvelopeCoder<ShowDocumentModel>.fixture.format.identifier,
             "schemaVersion": SchemaVersion.show + 1,
             "revision": ["lamport": 7, "device": "synthetic"],
             "integrity": ["algorithm": "blake3", "digest": "00"],
@@ -106,14 +106,14 @@ struct JSONEnvelopeCoderTests {
         var object = try json(coder.encode(sampleModel(), revision: 1))
         object["schemaVersion"] = 0
         #expect(throws: PersistenceError.unsupportedOlderSchema(found: 0, minimum: SchemaVersion.show)) { try coder.decode(data(object)) }
-        // Schema 1 shows (index-0 channel placeholder) need the C5 migration; the current reader never reinterprets them.
+        // The synthetic format still enforces its registered minimum.
         object["schemaVersion"] = 1
         #expect(throws: PersistenceError.unsupportedOlderSchema(found: 1, minimum: SchemaVersion.show)) { try coder.decode(data(object)) }
     }
 
     @Test func refusesOtherFormats() throws {
         let library = try JSONEnvelopeCoder<LibraryModel>.library.encode(LibraryModel(), revision: 1)
-        #expect(throws: PersistenceError.formatMismatch(expected: DocumentFormat.show.identifier, found: DocumentFormat.library.identifier)) {
+        #expect(throws: PersistenceError.formatMismatch(expected: JSONEnvelopeCoder<ShowDocumentModel>.fixture.format.identifier, found: DocumentFormat.library.identifier)) {
             try coder.decode(library)
         }
     }
@@ -244,7 +244,7 @@ struct StrictJSONTests {
     }
 
     @Test func envelopeWithDuplicateRevisionIsRefused() throws {
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = JSONEnvelopeCoder<ShowDocumentModel>.fixture
         var text = String(decoding: try coder.encode(.untitled(), revision: 3), as: UTF8.self)
         text.insert(contentsOf: "\"revision\":9,", at: text.index(after: text.startIndex))
         #expect { try coder.decode(Data(text.utf8)) } throws: { error in

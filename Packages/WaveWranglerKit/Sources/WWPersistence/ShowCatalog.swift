@@ -243,7 +243,7 @@ public struct ShowCatalogDraft: Sendable {
 }
 
 /// Indexed package publications hash the canonical component index, not a reconstructed whole-model JSON.
-/// Legacy package/envelope upgrades remain explicit; this coder never silently upgrades either input.
+/// Older package upgrades remain explicit; this coder never silently upgrades input.
 public struct ShowCatalogCoder: CanonicalDocumentCoding {
     public let format = DocumentFormat.show
     public init() {}
@@ -272,6 +272,9 @@ public struct ShowCatalogCoder: CanonicalDocumentCoding {
 
     public func decode(_ data: Data) throws(PersistenceError) -> DecodedDocument<ShowCatalog> {
         do {
+            guard ShowPackage.isSnapshot(data) else {
+                throw PersistenceError.malformed("Expected a show package; pre-container shows are no longer supported")
+            }
             guard try ShowPackage.storageVersion(of: data) == 2 else {
                 throw PersistenceError.unsupportedOlderSchema(found: 1, minimum: 2)
             }

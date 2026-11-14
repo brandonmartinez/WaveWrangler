@@ -145,9 +145,6 @@ extension ShowDocumentModel {
 
     public func publicationValidationIssues(expectedSchemaVersion: Int) -> [ValidationIssue] {
         var issues: [ValidationIssue] = []
-        if expectedSchemaVersion < 14, show.publication != nil || episodes.contains(where: { $0.publication != nil }) {
-            issues.append(.init(.invalidPublication, "schemas before 14 cannot contain publication metadata or artwork"))
-        }
         if let message = show.publication?.validationMessage {
             issues.append(.init(.invalidPublication, "Show: \(message)"))
         }

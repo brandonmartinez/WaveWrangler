@@ -50,7 +50,7 @@ struct TracksWorkflowTests {
         #expect(accepted.model.episodes[0].sources == before.episodes[0].sources)
         #expect(accepted.model.episodes[0].recorderGroups == before.episodes[0].recorderGroups)
         #expect(await fixture.coordinator.inputs.acceptedMaps.isEmpty, "Only verified publication may activate the result")
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         let restored = try coder.decode(coder.encode(accepted.model, revision: 1)).payload
         #expect(restored == accepted.model)
         try await fixture.pipeline.activate(accepted)

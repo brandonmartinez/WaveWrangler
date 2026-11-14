@@ -63,6 +63,12 @@ public struct DocumentMigrator<Coder: CanonicalDocumentCoding>: Sendable {
             throw PublicationError.conflict(PublicationConflict(expected: RevisionFingerprint(of: expectedOriginal),
                 onDisk: originalFingerprint, preservedCandidate: nil))
         }
+        guard let format = EnvelopeHeaderInfo.peek(original)?.format else {
+            throw PublicationError.invalidCandidate(.malformed("Unreadable migration format header"))
+        }
+        guard format == publisher.coder.format.identifier else {
+            throw PublicationError.invalidCandidate(.formatMismatch(expected: publisher.coder.format.identifier, found: format))
+        }
         guard let schema = originalFingerprint.schemaVersion, let step = steps[schema] else {
             throw PublicationError.failed(stage: .migrationOriginalRead, kind: .other, detail: "no migration from schema \(originalFingerprint.schemaVersion.map(String.init) ?? "?")")
         }

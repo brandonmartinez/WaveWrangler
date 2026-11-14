@@ -66,7 +66,7 @@ struct EnvelopeCompatibilityTests {
         try await f.pipeline.activate(model: f.model, episode: f.episodeID)
         #expect(try await f.pipeline.verifiedAcceptedMap(model: f.model, episode: f.episodeID) == map)
 
-        let encoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(f.model, revision: 1, publicationID: UUID())
+        let encoded = try ShowPackageCoder().encodeDocument(f.model, revision: 1, publicationID: UUID())
         let url = f.directory.url.appendingPathComponent("persisted-envelope-1.wwshow")
         try encoded.data.write(to: url)
         return url
@@ -82,7 +82,7 @@ struct EnvelopeCompatibilityTests {
         let url = try await persistLegacyMap(f, corrected: corrected)
         let bytes = try Data(contentsOf: url)
         let prior = try #require(f.model.episodes[0].alignment?.acceptedMap)
-        let opener = DocumentOpener(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
+        let opener = DocumentOpener(coder: ShowPackageCoder(), recovery: nil,
                                     identityOf: { .show($0.show.id) })
         guard case let .editable(decoded, _) = opener.open(url, key: .show(f.model.show.id)) else {
             Issue.record("legacy show could not reopen"); return
@@ -177,7 +177,7 @@ struct EnvelopeCompatibilityTests {
         #expect(revised.model.episodes[0].alignment?.map(revision: prior.revision) == prior)
         try await currentPipeline.activate(revised)
         let forwardURL = f.directory.url.appendingPathComponent("persisted-recipe-3.wwshow")
-        let saved = try JSONEnvelopeCoder<ShowDocumentModel>.show.encodeDocument(revised.model, revision: 2, publicationID: UUID())
+        let saved = try ShowPackageCoder().encodeDocument(revised.model, revision: 2, publicationID: UUID())
         try saved.data.write(to: forwardURL)
         guard case let .editable(forwardDecoded, _) = opener.open(forwardURL, key: .show(f.model.show.id)) else {
             Issue.record("forward show could not reopen"); return
@@ -201,7 +201,7 @@ struct EnvelopeCompatibilityTests {
             .init(name: "Dynamic", sources: [.init(name: "dynamic", seconds: 12, signal: .sine(hz: 223), sampleRate: 8000)])
         ], label: "legacy-refusal-\(change)")
         let url = try await persistLegacyMap(f, corrected: true)
-        let opener = DocumentOpener(coder: JSONEnvelopeCoder<ShowDocumentModel>.show, recovery: nil,
+        let opener = DocumentOpener(coder: ShowPackageCoder(), recovery: nil,
                                     identityOf: { .show($0.show.id) })
         guard case let .editable(decoded, _) = opener.open(url, key: .show(f.model.show.id)) else {
             Issue.record("legacy show could not reopen"); return

@@ -929,7 +929,7 @@ struct EpisodeCleanupModelTests {
         undo.endUndoGrouping()
         let adjusted = document.store.residentModel
         #expect(document.isDocumentEdited && adjusted != proposed)
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         #expect(try coder.decode(coder.encode(adjusted, revision: 1)).payload == adjusted)
         undo.undo()
         #expect(document.store.residentModel == proposed)
@@ -988,7 +988,7 @@ struct EpisodeCleanupModelTests {
         #expect(model.episode?.sources == original.episodes[0].sources)
         #expect(model.episode?.cleanup?.transcripts == original.episodes[0].cleanup?.transcripts)
         #expect(abs(model.cutTimeline.editedTime(forAlignedTime: 3) - 2.8) < 0.000_001)
-        let coder = JSONEnvelopeCoder<ShowDocumentModel>.show
+        let coder = ShowPackageCoder()
         #expect(try coder.decode(coder.encode(edited, revision: 1)).payload == edited)
         undo.undo()
         model.modelDidChange()

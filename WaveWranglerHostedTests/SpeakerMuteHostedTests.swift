@@ -73,7 +73,7 @@ struct SpeakerMuteHostedTests {
         #expect(store.residentModel == applied)
         try await f.document.save(to: #require(f.document.fileURL), ofType: DocumentTypes.show, for: .saveOperation)
         try await wait { f.document.verifiedModel == store.residentModel }
-        let decoded = try JSONEnvelopeCoder<ShowDocumentModel>.show.decode(LocalFileOperations().read(#require(f.document.fileURL)))
+        let decoded = try ShowPackageCoder().decode(LocalFileOperations().read(#require(f.document.fileURL)))
         #expect(decoded.payload == applied)
         cleanup.removeSpeakerMute(region.id)
         let restored = try await f.runtime.sourceAuditions(model: store.residentModel, episode: episode.id,

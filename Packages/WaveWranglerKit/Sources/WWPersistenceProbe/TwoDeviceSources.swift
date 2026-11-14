@@ -172,7 +172,7 @@ extension Probe {
         try? recovery.setAsideEditCheckpoints(for: key)
         let showID = document.payload.show.id
         let offer = EditCheckpointOffer.assess(recovery.offeredEditCheckpoints(for: key), documentID: key.rawValue, onDisk: fingerprint,
-                                               coder: JSONEnvelopeCoder<ShowDocumentModel>.show, belongsToDocument: { $0.show.id == showID })
+                                               coder: ShowPackageCoder(), belongsToDocument: { $0.show.id == showID })
         emit(["result": "assessed", "currentTitle": document.payload.show.title, "currentRevision": document.revision,
               "candidateTitle": offer.candidate?.payload.show.title ?? "", "relation": offer.candidate.map { "\($0.relation)" } ?? "none",
               "mode": offer.candidateMode(restoreInEffect: false).map { "\($0)" } ?? "none",
