@@ -48,9 +48,8 @@ final class FormatUpdateUITests: XCTestCase {
             check(diskShowTitle(document) == "Stated Show", "content kept: \(String(describing: diskShowTitle(document)))")
             check(diskPrimaryChannels(document) == ["known:1", "known:0"], "user-stated channels kept: \(diskPrimaryChannels(document))")
             check(!app.sheets.firstMatch.exists, "no sheet left over")
-            let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-            if showInfo.waitForExistence(timeout: 5) { showInfo.click() }
-            let title = window.textFields["Show title"]
+            window.buttons["ww.sidebar.episode"].click()
+            let title = window.textFields["ww.inspector.episode.title"]
             check(title.waitForExistence(timeout: 5) && title.isEnabled, "the updated show is editable")
             try audit("T21 updated show window", types: AcceptanceAudit.essentialTypes)
         }
@@ -80,11 +79,10 @@ final class FormatUpdateUITests: XCTestCase {
             check(window.exists, "the window stays open")
             let status = element("ww.show.saveStatus")
             check(Acceptance.waitFor(timeout: 5) { self.value(status).hasPrefix("Read-only") }, "status Read-only: \(value(status))")
-            let showInfo = window.descendants(matching: .any).matching(identifier: "ww.show.sidebar.showInfo").firstMatch
-            check(showInfo.waitForExistence(timeout: 5), "Show Info is available on the read-only show")
-            if showInfo.exists { showInfo.click() }
-            let title = window.textFields["Show title"]
-            check(title.waitForExistence(timeout: 5) && title.value as? String == "Mixed Show", "the older content is shown: \(title.value ?? "nil")")
+            window.buttons["ww.sidebar.episode"].click()
+            let title = window.textFields["ww.inspector.episode.title"]
+            check(title.waitForExistence(timeout: 5) && title.value as? String == "Generated Episode"
+                  && window.title.contains("Mixed Show"), "the older content is shown: \(title.value ?? "nil")")
             check(!title.isEnabled, "the title can't be edited")
             app.menuBars.menuBarItems["File"].click()
             let save = app.menuBars.menuItems["Save"]
@@ -251,9 +249,7 @@ final class FormatUpdateUITests: XCTestCase {
                     app.typeKey(.return, modifierFlags: [])
                     let copy = app.windows.matching(identifier: "ww.show.window").firstMatch
                     check(copy.waitForExistence(timeout: 10), "the recovered copy opens")
-                    let title = copy.staticTexts.matching(
-                        NSPredicate(format: "value == %@", "Unknown Channel Show")).firstMatch
-                    check(title.waitForExistence(timeout: 5),
+                    check(Acceptance.waitFor(timeout: 5) { copy.title.contains("Unknown Channel Show") },
                           "the last complete version opens with its retained Show title")
                     check(!app.buttons["ww.formatUpdate.update"].exists, "a recovered copy is a new current-format show: no update prompt")
                 } else {
